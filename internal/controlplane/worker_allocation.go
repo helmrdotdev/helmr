@@ -22,10 +22,10 @@ func allocationIdentity(in workerapi.AllocationIdentity) (agent.HostAllocation, 
 func allocationWireIdentity(in agent.HostAllocation) workerapi.AllocationIdentity {
 	return workerapi.AllocationIdentity{Kind: in.Kind, EnvironmentID: in.EnvironmentID.String(), OwnerID: in.OwnerID.String(), AllocationID: in.InstanceID.String(), Epoch: in.Epoch}
 }
-func allocationWireReceipt(kind string, in agent.Allocation) workerapi.AllocationIdentity {
+func allocationWireReceipt(kind string, in computer.Allocation) workerapi.AllocationIdentity {
 	return allocationWireIdentity(agent.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})
 }
-func allocationWireShape(in agent.AllocationShape) workerapi.AllocationShape {
+func allocationWireShape(in computer.AllocationShape) workerapi.AllocationShape {
 	return workerapi.AllocationShape{CPUMillis: in.CPUMillis, MemoryBytes: in.MemoryBytes, ScratchBytes: in.ScratchBytes, VMPlatformID: in.VMPlatformID, VCPUCount: in.VCPUCount, CPUConfigDigest: in.CPUConfigDigest}
 }
 func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
@@ -124,7 +124,7 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	shape := agent.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
+	shape := computer.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
 	if err := agent.ObserveFreshComputerReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
 		server.writeAllocationError(w, err)
 		return

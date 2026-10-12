@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -285,9 +286,7 @@ func recordExposure(ctx context.Context, tx pgx.Tx, c db.Command, bindings []run
 	for _, b := range bindings {
 		ids = append(ids, b.id)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation)
- SELECT uuidv7(),$1,$2,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($3::uuid[]) AND s.status='active'
- ON CONFLICT(environment_id,command_id,secret_id) WHERE command_id IS NOT NULL DO NOTHING`, env, id, ids); err != nil {
+	if err := computer.RecordCommandExposures(ctx, tx, env, id, ids); err != nil {
 		return nil, nil, err
 	}
 	result := make([]secret.DeliveryEnvelope, 0, len(bindings))

@@ -115,8 +115,7 @@ func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergr
 		if err = r.requireMembers(ctx, tx, env); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='sealed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
-		return err
+		return computer.SealCheckpoint(ctx, tx, env, checkpoint)
 	}))
 }
 
@@ -161,14 +160,6 @@ func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host
 		}
 		// A disk cut must not already have been recorded for an allegedly absent
 		// capture. Roll back everything if that evidence conflicts.
-		tag, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2 AND status='requested'`, env, r.Save, reason)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return ErrConflict
-		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
-		return err
+		return computer.CancelUnsealedCheckpoint(ctx, tx, env, checkpoint, r.Save, reason)
 	}))
 }

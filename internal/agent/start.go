@@ -381,6 +381,5 @@ func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computerID uu
 	if !available {
 		return ErrNotReady
 	}
-	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computerID)
-	return err
+	return computer.MarkUsed(ctx, tx, env, computerID)
 }

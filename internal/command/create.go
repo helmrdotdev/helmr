@@ -321,7 +321,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 			return idempotency.Completion{}, computer.ErrSecretUnavailable
 		}
 
-		if _, err = tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, request.ComputerID); err != nil {
+		if err = computer.MarkUsed(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
 		created, err := q.CreateCommand(ctx, db.CreateCommandParams{

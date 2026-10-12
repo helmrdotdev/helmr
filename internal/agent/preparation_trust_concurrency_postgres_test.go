@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
@@ -35,7 +36,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	a.trust = issuer
 	const callers = 8
 	start := make(chan struct{})
-	results := make(chan Allocation, callers)
+	results := make(chan computer.Allocation, callers)
 	failures := make(chan error, callers)
 	var group sync.WaitGroup
 	for range callers {

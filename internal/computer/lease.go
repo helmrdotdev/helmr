@@ -77,3 +77,10 @@ func DispatchAvailable(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) 
 	}
 	return nil
 }
+
+// The Computer lock held by the physical-stop owner serializes this release
+// with placement. Expired authority alone never releases a deleted key.
+func ReleaseDeletedKey(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND deleted_at IS NOT NULL AND key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, computerID)
+	return err
+}

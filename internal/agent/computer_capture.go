@@ -127,10 +127,8 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if !supplier {
 			return ErrNotReady
 		}
-		var version, saveSeq int64
-		if err = tx.QueryRow(ctx, `UPDATE computers SET next_control_version=next_control_version+1,next_save_seq=next_save_seq+1
-   WHERE environment_id=$1 AND id=$2 AND integrity_fault_at IS NULL AND deleted_at IS NULL
-   RETURNING next_control_version-1,next_save_seq-1`, req.EnvironmentID, req.ComputerID).Scan(&version, &saveSeq); err != nil {
+		version, saveSeq, err := computer.ReserveCapture(ctx, tx, req.EnvironmentID, req.ComputerID)
+		if err != nil {
 			return err
 		}
 		request := &agentv1.ComputerSessionCapture{CheckpointId: req.CheckpointID.String(), DesiredVersion: version, MembershipRevision: version,
@@ -147,19 +145,12 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 			return err
 		}
 		result.SaveID = uuid.NewV7()
-		if _, err = tx.Exec(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,$4,$5)`, req.EnvironmentID, result.SaveID, req.ComputerID, req.LeaseEpoch, saveSeq); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest)
-   VALUES($1,$2,$3,$4,$5,$6,'capturing',$7,$8,$9)`, req.EnvironmentID, req.CheckpointID, req.ComputerID, req.LeaseEpoch, version, result.SaveID, result.Request, lease.Expires, captureDigest(result.Request)); err != nil {
-			return err
-		}
+		start := computer.CheckpointStart{EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, CheckpointID: req.CheckpointID, SaveID: result.SaveID,
+			LeaseEpoch: req.LeaseEpoch, ControlVersion: version, SaveSeq: saveSeq, Request: result.Request, RequestDigest: captureDigest(result.Request), Expires: lease.Expires}
 		for _, m := range members {
-			if _, err = tx.Exec(ctx, `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,$5)`, req.EnvironmentID, req.ComputerID, req.CheckpointID, m.Session, m.Epoch); err != nil {
-				return err
-			}
+			start.Members = append(start.Members, computer.CheckpointMember{Session: m.Session, Epoch: m.Epoch})
 		}
-		return nil
+		return computer.CreateCheckpoint(ctx, tx, start)
 	})
 	if err != nil {
 		return ComputerCapture{}, hideMissing(err)

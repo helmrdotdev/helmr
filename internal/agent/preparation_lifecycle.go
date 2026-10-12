@@ -59,8 +59,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		if deadline {
 			code = "deadline_exceeded"
 		}
-		_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, id, code)
-		return err
+		return computer.FailImageBuild(ctx, tx, env, id, code)
 	}))
 }
 
@@ -97,11 +96,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		if err = computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
-   WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
-    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`, env, id)
-		return err
+		return computer.FailRevokedImageBuild(ctx, tx, env, id)
 	}))
 }
 
@@ -234,7 +229,7 @@ func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, compu
 		if dispatched {
 			return ErrConflict
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, computerID); err != nil {
+		if err = computer.MarkPreparationFailed(ctx, tx, env, computerID); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp()

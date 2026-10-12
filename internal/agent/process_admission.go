@@ -6,6 +6,7 @@ import (
 	"math"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -153,7 +154,7 @@ func lockInitialComputerSessions(ctx context.Context, tx pgx.Tx, env, computer u
 	return sessions, nil
 }
 
-func assignInitialComputerSessions(ctx context.Context, tx pgx.Tx, r ComputerAllocation, sessions []uuid.UUID) error {
+func assignInitialComputerSessions(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {
 	for _, session := range sessions {
 		var epoch int64
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(max(epoch),0) FROM session_processes WHERE environment_id=$1 AND session_id=$2`, r.EnvironmentID, session).Scan(&epoch); err != nil {

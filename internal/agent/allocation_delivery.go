@@ -46,15 +46,15 @@ func (s materializationSupply) firstExecution() error {
 // Delivery starts the execution lease exactly once. A retry returns the same
 // credential and remaining lifetime; it cannot renew or resurrect authority.
 type PreparationDelivery struct {
-	Allocation
+	computer.Allocation
 	Executor computer.PreparationExecutor
 }
 type ComputerDelivery struct {
-	ComputerAllocation
+	computer.ComputerAllocation
 	ChannelCredential string
 }
 
-func allocationBelongsToHost(r Allocation, host workergroup.HostPrincipal) bool {
+func allocationBelongsToHost(r computer.Allocation, host workergroup.HostPrincipal) bool {
 	return r.HostID == host.HostID && r.HostEpoch == host.Epoch
 }
 
@@ -117,13 +117,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if err := tx.QueryRow(ctx, `UPDATE image_builds p SET delivered_at=COALESCE(delivered_at,clock_timestamp()),
- executor_expires_at=COALESCE(executor_expires_at,LEAST(deadline_at,clock_timestamp()+interval '1 minute'))
- WHERE environment_id=$1 AND id=$2 AND status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp()
- AND (delivered_at IS NULL OR executor_expires_at>clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.image_spec_id=$3 AND s.status='revoked')
- RETURNING delivered_at,executor_expires_at`, env, preparation, p.SpecID).Scan(&r.DeliveredAt, &r.ExpiresAt); err != nil {
+		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverImageBuild(ctx, tx, env, preparation, p.SpecID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrAllocationClosed
 			}
@@ -179,9 +173,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 			}
 			return err
 		}
-		if err := tx.QueryRow(ctx, `UPDATE computer_leases SET delivered_at=COALESCE(delivered_at,clock_timestamp()),expires_at=COALESCE(expires_at,clock_timestamp()+interval '1 minute')
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND fenced_at IS NULL
- AND (delivered_at IS NULL OR expires_at>clock_timestamp()) RETURNING delivered_at,expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&r.DeliveredAt, &r.ExpiresAt); err != nil {
+		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrAllocationClosed
 			}
@@ -204,7 +196,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 // ObserveFreshComputerReady accepts the owning Host's exact materialization
 // receipt before any Session process can be admitted. Restores have their own
 // checkpoint-member validation and may not use this fresh-boot transition.
-func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, shape AllocationShape, base string) error {
+func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, shape computer.AllocationShape, base string) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -238,12 +230,11 @@ func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host
 		if r.DeliveredAt == nil {
 			return ErrNotReady
 		}
-		changed, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp())
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND delivered_at IS NOT NULL AND expires_at>clock_timestamp() AND fenced_at IS NULL`, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
+		initialized, err := computer.InitializeLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
 		if err != nil {
 			return err
 		}
-		if changed.RowsAffected() != 1 {
+		if !initialized {
 			return ErrAllocationClosed
 		}
 		if r.InitializedAt == nil {

@@ -197,20 +197,11 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 				// A live observation that no installation exists permits refreshing the
 				// terminal set before installation. The physical owner, membership and
 				// successor version remain fixed by validateSourceAbort.
-				_, err = tx.Exec(ctx, `UPDATE checkpoints SET abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
-				return err
+				return computer.RecordAbortIdentity(ctx, tx, env, checkpoint, identity)
 			}
 			return matchSourceAbort(ctx, tx, env, checkpoint, identity)
 		}
-		tag, err := tx.Exec(ctx, `UPDATE computers SET next_control_version=next_control_version+1 WHERE environment_id=$1 AND id=$2 AND next_control_version=$3 AND integrity_fault_at IS NULL AND deleted_at IS NULL`, env, r.Computer, p.GetDesiredVersion())
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return ErrConflict
-		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='aborting',abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
-		return err
+		return computer.BeginSourceAbort(ctx, tx, env, r.Computer, checkpoint, p.GetDesiredVersion(), identity)
 	}))
 }
 
@@ -273,8 +264,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
-		return err
+		return computer.ConsumeCheckpoint(ctx, tx, env, checkpoint)
 	}))
 }
 
@@ -325,8 +315,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
-		return err
+		return computer.ReconcileCheckpointControls(ctx, tx, env, checkpoint)
 	}))
 }
 
@@ -387,7 +376,6 @@ func RecordCheckpointSaveAbsence(ctx context.Context, pool db.TxBeginner, host w
 		if state != "requested" {
 			return ErrConflict
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2`, env, r.Save, evidence)
-		return err
+		return computer.FailSave(ctx, tx, env, r.Save, evidence)
 	}))
 }

@@ -58,13 +58,13 @@ func expireComputerLease(ctx context.Context, pool db.TxBeginner, env, computerI
 		if !due {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computerID, epoch); err != nil {
+		if err = computer.MarkLeaseLost(ctx, tx, env, computerID, epoch); err != nil {
 			return err
 		}
 		if err := loseComputerProcesses(ctx, tx, env, computerID, epoch, members, false); err != nil {
 			return err
 		}
-		return settleLostComputerSaves(ctx, tx, env, computerID, epoch)
+		return computer.SettleLostSaves(ctx, tx, env, computerID, epoch)
 	}))
 }
 
@@ -152,7 +152,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		return err
 	}
 	if fenced {
-		return releaseDeletedComputerKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)
+		return computer.ReleaseDeletedKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)
 	}
 
 	if invalidCheckpoint != uuid.Nil() {
@@ -166,7 +166,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		if !bound {
 			return ErrConflict
 		}
-		if _, err := tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='owning worker proved checkpoint contents invalid after physical cleanup',capture_request=NULL WHERE environment_id=$1 AND id=$2`, identity.EnvironmentID, invalidCheckpoint); err != nil {
+		if err := computer.LoseInvalidCheckpoint(ctx, tx, identity.EnvironmentID, invalidCheckpoint); err != nil {
 			return err
 		}
 		for _, member := range members {
@@ -196,24 +196,14 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 	}
 	// Physical closure also settles an unfinished capture owned by this allocation.
 	// Disk publication is reconciled under the same Computer lock below.
-	if _, err = tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL
- WHERE environment_id=$1 AND computer_id=$2 AND COALESCE(target_lease_epoch,source_lease_epoch)=$3
- AND status IN ('capturing','sealed','aborting','consumed') AND controls_reconciled_at IS NULL`, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+	if err = computer.LoseLeaseCheckpoints(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, evidence)
-	if err != nil {
+	if err = computer.FenceLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, evidence); err != nil {
 		return err
 	}
-	if err := settleLostComputerSaves(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+	if err := computer.SettleLostSaves(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err
 	}
-	return releaseDeletedComputerKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)
-}
-
-// The Computer lock held by the physical-stop owner serializes this release
-// with placement. Expired authority alone never releases a deleted key.
-func releaseDeletedComputerKey(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND deleted_at IS NOT NULL AND key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, computerID)
-	return err
+	return computer.ReleaseDeletedKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)
 }

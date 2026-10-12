@@ -94,9 +94,7 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		if result.Start.ComputerID != computerID {
 			return ErrDenied
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
-   SELECT uuidv7(),$1,$2,$3,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($4::uuid[]) AND s.status='active'
-   ON CONFLICT(environment_id,session_id,process_epoch,secret_id) WHERE session_id IS NOT NULL DO NOTHING`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids); err != nil {
+		if err = computer.RecordSessionExposures(ctx, tx, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids); err != nil {
 			return err
 		}
 		result.Secrets = make([]computer.ExposedSecret, 0, len(bindings))

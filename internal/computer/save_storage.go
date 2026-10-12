@@ -342,3 +342,13 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 	_, err = tx.Exec(ctx, `WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at) UPDATE computer_saves SET status='captured',flush_acknowledged_at=observed.at,captured_at=observed.at,captured_root_digest=decode(substring($3::text from 8),'hex'),capture_evidence=$4 FROM observed WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID, c.DiskRoot, c.Evidence)
 	return err
 }
+
+// The caller holds the supply and Computer locks and has irrevocably ended this
+// lease's publication authority. Publication takes the same Computer lock, so a
+// committed receipt is now distinguishable from definitive absence. Storage
+// availability and physical absence alone cannot establish this fact.
+func SettleLostSaves(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
+	_, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence='publication absent after writer authority ended'
+ WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch=$3 AND status IN ('requested','captured')`, env, computer, epoch)
+	return err
+}

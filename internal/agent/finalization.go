@@ -73,20 +73,18 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	if pending {
 		return errResultDrainPending
 	}
-	save.ID = uuid.NewV7()
-	save.ComputerID = o.computer
-	save.LeaseEpoch = e.LeaseEpoch
-	if err = tx.QueryRow(ctx, `UPDATE computers SET next_save_seq=next_save_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_save_seq-1`, e.EnvironmentID, o.computer).Scan(&save.Sequence); err != nil {
-		return err
-	}
 	_, err = tx.Exec(ctx, `UPDATE turns SET status='finalizing',result=$3,result_digest=$4,drain_evidence=$5,result_recorded_at=clock_timestamp(),deadline_at=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, result, digest[:], drainEvidence)
 	if err != nil {
 		return err
 	}
-	err = tx.QueryRow(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING requested_at`, e.EnvironmentID, save.ID, save.ComputerID, e.LeaseEpoch, save.Sequence, turn).Scan(&save.RequestedAt)
+	// The save may reference only a finalizing Turn. The Session lock above
+	// already holds the Computer row, so recording the save here takes no new
+	// lock out of order.
+	requested, err := computer.RequestSave(ctx, tx, e.EnvironmentID, o.computer, e.LeaseEpoch, turn)
 	if err != nil {
 		return err
 	}
+	*save = requested
 	return event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.finalizing")
 }
 

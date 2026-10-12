@@ -1,0 +1,292 @@
+package computer
+
+import (
+	"context"
+	"time"
+	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/jackc/pgx/v5"
+)
+
+// Focused row transitions for Session and dispatch operations. Each runs in
+// the caller's transaction after the caller has taken the locks its operation
+// needs in the global order; none of them takes a lock on its own beyond the
+// rows it writes.
+
+// AssignImageBuild places a queued image build on an allocation and reports
+// whether the build was still assignable.
+func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, credentialDigest []byte, spec uuid.UUID) (bool, error) {
+	changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
+ reserved_cpu_millis=$7,reserved_memory_bytes=$8,reserved_scratch_bytes=$9,vm_platform_id=$10,vm_vcpu_count=$11,cpu_config_digest=$12
+ WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
+ SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$13 AND s.status='revoked')`, a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, credentialDigest, a.Shape.CPUMillis, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, spec)
+	if err != nil {
+		return false, err
+	}
+	return changed.RowsAffected() == 1, nil
+}
+
+// RecordImageBuildProxyTrust stores the attempt-scoped proxy CA of a build.
+func RecordImageBuildProxyTrust(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, trust secret.ProxyTrust) error {
+	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, env, build, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter)
+	return err
+}
+
+// DeliverImageBuild records the first delivery of a running build to its
+// executor. It returns pgx.ErrNoRows when the build no longer admits
+// execution.
+func DeliverImageBuild(ctx context.Context, tx pgx.Tx, env, build, spec uuid.UUID) (delivered, expires *time.Time, err error) {
+	err = tx.QueryRow(ctx, `UPDATE image_builds p SET delivered_at=COALESCE(delivered_at,clock_timestamp()),
+ executor_expires_at=COALESCE(executor_expires_at,LEAST(deadline_at,clock_timestamp()+interval '1 minute'))
+ WHERE environment_id=$1 AND id=$2 AND status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp()
+ AND (delivered_at IS NULL OR executor_expires_at>clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$3 AND s.status='revoked')
+ RETURNING delivered_at,executor_expires_at`, env, build, spec).Scan(&delivered, &expires)
+	return delivered, expires, err
+}
+
+// FailImageBuild ends a build with an error code and wipes its proxy CA.
+func FailImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, code string) error {
+	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, build, code)
+	return err
+}
+
+// FailRevokedImageBuild ends a live build that has exposed a revoked Secret.
+func FailRevokedImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
+   WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
+    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`, env, build)
+	return err
+}
+
+// InsertLease records a new lease allocation in the acquiring state.
+func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation, credentialDigest []byte) error {
+	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,status,
+ reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,restored_from_save_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, credentialDigest, r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom)
+	return err
+}
+
+// DeliverLease records the first delivery of a lease to its host. It returns
+// pgx.ErrNoRows when the lease no longer admits execution.
+func DeliverLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) (delivered, expires *time.Time, err error) {
+	err = tx.QueryRow(ctx, `UPDATE computer_leases SET delivered_at=COALESCE(delivered_at,clock_timestamp()),expires_at=COALESCE(expires_at,clock_timestamp()+interval '1 minute')
+ WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND fenced_at IS NULL
+ AND (delivered_at IS NULL OR expires_at>clock_timestamp()) RETURNING delivered_at,expires_at`, env, computer, epoch).Scan(&delivered, &expires)
+	return delivered, expires, err
+}
+
+// InitializeLease records that the guest of a delivered, live lease reported
+// ready, and reports whether the lease was still live.
+func InitializeLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) (bool, error) {
+	changed, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp())
+ WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND delivered_at IS NOT NULL AND expires_at>clock_timestamp() AND fenced_at IS NULL`, env, computer, epoch)
+	if err != nil {
+		return false, err
+	}
+	return changed.RowsAffected() == 1, nil
+}
+
+// ActivateRestoredLease records the restore target lease as active once the
+// restore has committed.
+func ActivateRestoredLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
+	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch)
+	return err
+}
+
+// MarkLeaseLost ends an unfenced lease whose physical owner is gone; only
+// physical proof may fence it later.
+func MarkLeaseLost(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
+	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch)
+	return err
+}
+
+// FenceLease records physical proof that the lease's VM has stopped.
+func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64, evidence string) error {
+	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch, evidence)
+	return err
+}
+
+// LoseLeaseCheckpoints settles the unfinished checkpoints owned by a lease
+// whose physical owner closed without an eligible restore.
+func LoseLeaseCheckpoints(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL
+ WHERE environment_id=$1 AND computer_id=$2 AND COALESCE(target_lease_epoch,source_lease_epoch)=$3
+ AND status IN ('capturing','sealed','aborting','consumed') AND controls_reconciled_at IS NULL`, env, computer, epoch)
+	return err
+}
+
+// LoseInvalidCheckpoint records that the owning worker proved the
+// checkpoint's contents invalid after physical cleanup.
+func LoseInvalidCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='owning worker proved checkpoint contents invalid after physical cleanup',capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+	return err
+}
+
+// ReserveCapture advances the Computer's control version and save sequence
+// for a new capture and returns the values it reserved.
+func ReserveCapture(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (version, saveSeq int64, err error) {
+	err = tx.QueryRow(ctx, `UPDATE computers SET next_control_version=next_control_version+1,next_save_seq=next_save_seq+1
+   WHERE environment_id=$1 AND id=$2 AND integrity_fault_at IS NULL AND deleted_at IS NULL
+   RETURNING next_control_version-1,next_save_seq-1`, env, computer).Scan(&version, &saveSeq)
+	return version, saveSeq, err
+}
+
+// CheckpointMember is one Session process captured by a checkpoint.
+type CheckpointMember struct {
+	Session uuid.UUID
+	Epoch   int64
+}
+
+// CheckpointStart is a capture's checkpoint, its disk save and its members.
+type CheckpointStart struct {
+	EnvironmentID, ComputerID, CheckpointID, SaveID uuid.UUID
+	LeaseEpoch, ControlVersion, SaveSeq             int64
+	Request, RequestDigest                          []byte
+	Expires                                         time.Time
+	Members                                         []CheckpointMember
+}
+
+// CreateCheckpoint records a capturing checkpoint with its requested disk
+// save and captured members.
+func CreateCheckpoint(ctx context.Context, tx pgx.Tx, c CheckpointStart) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,$4,$5)`, c.EnvironmentID, c.SaveID, c.ComputerID, c.LeaseEpoch, c.SaveSeq); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest)
+   VALUES($1,$2,$3,$4,$5,$6,'capturing',$7,$8,$9)`, c.EnvironmentID, c.CheckpointID, c.ComputerID, c.LeaseEpoch, c.ControlVersion, c.SaveID, c.Request, c.Expires, c.RequestDigest); err != nil {
+		return err
+	}
+	for _, m := range c.Members {
+		if _, err := tx.Exec(ctx, `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,$5)`, c.EnvironmentID, c.ComputerID, c.CheckpointID, m.Session, m.Epoch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SealCheckpoint records that every captured member is frozen.
+func SealCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='sealed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+	return err
+}
+
+// CancelUnsealedCheckpoint cancels a capture that never sealed, together with
+// its still-requested disk save. It returns ErrConflict when the save already
+// has a recorded cut.
+func CancelUnsealedCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint, save uuid.UUID, reason string) error {
+	tag, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2 AND status='requested'`, env, save, reason)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
+	return err
+}
+
+// BeginRestore advances the Computer's control version and records the
+// checkpoint as restoring onto the target lease epoch. It returns the
+// restore's control version.
+func BeginRestore(ctx context.Context, tx pgx.Tx, env, computer, checkpoint uuid.UUID, epoch int64) (int64, error) {
+	var next int64
+	if err := tx.QueryRow(ctx, `UPDATE computers SET next_control_version=next_control_version+1 WHERE environment_id=$1 AND id=$2 RETURNING next_control_version-1`, env, computer).Scan(&next); err != nil {
+		return 0, err
+	}
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='restoring',target_lease_epoch=$3,restore_control_version=$4,restore_identity=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, epoch, next)
+	return next, err
+}
+
+// RecordRestoreIdentity stores the validated identity of a restore.
+func RecordRestoreIdentity(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID, identity []byte) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET restore_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+	return err
+}
+
+// BeginSourceAbort advances the Computer's control version from the expected
+// value and records the checkpoint as aborting. It returns ErrConflict when
+// the version moved.
+func BeginSourceAbort(ctx context.Context, tx pgx.Tx, env, computer, checkpoint uuid.UUID, expectedVersion int64, identity []byte) error {
+	tag, err := tx.Exec(ctx, `UPDATE computers SET next_control_version=next_control_version+1 WHERE environment_id=$1 AND id=$2 AND next_control_version=$3 AND integrity_fault_at IS NULL AND deleted_at IS NULL`, env, computer, expectedVersion)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='aborting',abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+	return err
+}
+
+// RecordAbortIdentity stores the validated identity of a source abort.
+func RecordAbortIdentity(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID, identity []byte) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+	return err
+}
+
+// ConsumeCheckpoint records that a restore or source abort used the
+// checkpoint.
+func ConsumeCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+	return err
+}
+
+// ReconcileCheckpointControls records that the members' controls match the
+// consumed checkpoint and drops its capture request.
+func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+	return err
+}
+
+// FailSave records why a save can no longer publish.
+func FailSave(ctx context.Context, tx pgx.Tx, env, save uuid.UUID, evidence string) error {
+	_, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2`, env, save, evidence)
+	return err
+}
+
+// RequestSave reserves the next save sequence of the Computer and records a
+// save requested by a Turn's finalization.
+func RequestSave(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64, turn uuid.UUID) (SaveRequest, error) {
+	save := SaveRequest{ID: uuid.NewV7(), ComputerID: computer, LeaseEpoch: epoch}
+	if err := tx.QueryRow(ctx, `UPDATE computers SET next_save_seq=next_save_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_save_seq-1`, env, computer).Scan(&save.Sequence); err != nil {
+		return SaveRequest{}, err
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING requested_at`, env, save.ID, computer, epoch, save.Sequence, turn).Scan(&save.RequestedAt)
+	return save, err
+}
+
+// MarkPreparationFailed records that a Computer's image never became ready
+// before its deadline.
+func MarkPreparationFailed(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, computer)
+	return err
+}
+
+// MarkUsed clears the Computer's unused clock when work is admitted to it.
+func MarkUsed(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computer)
+	return err
+}
+
+// RecordSessionExposures records the current versions of the active Secrets
+// exposed to a Session process.
+func RecordSessionExposures(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, secrets []uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
+   SELECT uuidv7(),$1,$2,$3,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($4::uuid[]) AND s.status='active'
+   ON CONFLICT(environment_id,session_id,process_epoch,secret_id) WHERE session_id IS NOT NULL DO NOTHING`, env, session, epoch, secrets)
+	return err
+}
+
+// RecordCommandExposures records the current versions of the active Secrets
+// exposed to a Command.
+func RecordCommandExposures(ctx context.Context, tx pgx.Tx, env, command uuid.UUID, secrets []uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation)
+ SELECT uuidv7(),$1,$2,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($3::uuid[]) AND s.status='active'
+ ON CONFLICT(environment_id,command_id,secret_id) WHERE command_id IS NOT NULL DO NOTHING`, env, command, secrets)
+	return err
+}

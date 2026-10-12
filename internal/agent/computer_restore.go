@@ -92,14 +92,11 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 					return ErrNotReady
 				}
 			}
-			var next int64
-			if err = tx.QueryRow(ctx, `UPDATE computers SET next_control_version=next_control_version+1 WHERE environment_id=$1 AND id=$2 RETURNING next_control_version-1`, env, r.Computer).Scan(&next); err != nil {
+			next, err := computer.BeginRestore(ctx, tx, env, r.Computer, checkpoint, epoch)
+			if err != nil {
 				return err
 			}
 			version = &next
-			if _, err = tx.Exec(ctx, `UPDATE checkpoints SET status='restoring',target_lease_epoch=$3,restore_control_version=$4,restore_identity=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, epoch, next); err != nil {
-				return err
-			}
 		}
 		// No resident may have been admitted outside this captured set.
 		var added bool
@@ -191,8 +188,7 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if r.State != "restoring" || observed.GetInstalled() {
 			return ErrConflict
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET restore_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
-		return err
+		return computer.RecordRestoreIdentity(ctx, tx, env, checkpoint, identity)
 	}))
 }
 
@@ -230,8 +226,7 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
-		return err
+		return computer.ConsumeCheckpoint(ctx, tx, env, checkpoint)
 	}))
 }
 
@@ -269,11 +264,10 @@ func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if _, err = restoreTargetLease(ctx, tx, host, env, r, int64(p.GetEnvelope().GetWriterGeneration())); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, r.Computer, int64(p.GetEnvelope().GetWriterGeneration())); err != nil {
+		if err = computer.ActivateRestoredLease(ctx, tx, env, r.Computer, int64(p.GetEnvelope().GetWriterGeneration())); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
-		return err
+		return computer.ReconcileCheckpointControls(ctx, tx, env, checkpoint)
 	}))
 }
 
