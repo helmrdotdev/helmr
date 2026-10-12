@@ -15,7 +15,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func requireFK(t *testing.T, err error) {
@@ -144,7 +146,7 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 
 type reclaimProbe struct {
 	t          *testing.T
-	q          *db.Queries
+	pool       *pgxpool.Pool
 	uploads    []string
 	versions   int
 	aborts     int
@@ -157,7 +159,11 @@ func (s *reclaimProbe) RetiredUploads(context.Context, string) ([]string, error)
 	return s.uploads, nil
 }
 func (s *reclaimProbe) ReclaimUpload(ctx context.Context, digest, id string) error {
-	retained, err := s.q.ListRetiredCasUploads(ctx, digest)
+	rows, err := s.pool.Query(ctx, `SELECT upload_id FROM cas_upload_reclaims WHERE digest=$1 ORDER BY upload_id`, digest)
+	if err != nil {
+		return err
+	}
+	retained, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return err
 	}
@@ -186,7 +192,7 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 	}
 	// A storage callback is after retirement commit, including on another DB
 	// connection. Attempting adoption must fail before any destructive action.
-	_, err := s.q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: digest, SizeBytes: 1024, MediaType: "application/octet-stream"})
+	_, err := db.New(s.pool).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: digest, SizeBytes: 1024, MediaType: "application/octet-stream"})
 	requireFK(s.t, err)
 	if s.failDelete {
 		return errors.New("remote delete failed")
@@ -196,10 +202,9 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 }
 func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 	f := agenttest.New(t)
-	q := db.New(f.Pool)
 	p := registeredUpload(t, f)
 	abandonUpload(t, f, p)
-	store := &reclaimProbe{t: t, q: q, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
+	store := &reclaimProbe{t: t, pool: f.Pool, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
 	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -246,10 +251,9 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 
 func TestCasReclamationFairMultipartProgress(t *testing.T) {
 	f := agenttest.New(t)
-	q := db.New(f.Pool)
 	p := registeredUpload(t, f)
 	abandonUpload(t, f, p)
-	store := &reclaimProbe{t: t, q: q, slowID: "00", attempted: make(map[string]bool), versions: 1}
+	store := &reclaimProbe{t: t, pool: f.Pool, slowID: "00", attempted: make(map[string]bool), versions: 1}
 	for i := range 25 {
 		store.uploads = append(store.uploads, fmt.Sprintf("%02d", i))
 	}

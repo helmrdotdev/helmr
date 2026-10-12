@@ -11,6 +11,7 @@ sql:
         emit_json_tags: true
         emit_prepared_queries: true
         emit_interface: true
+        omit_unused_structs: true
         rename:
           vm_platform: VMPlatform
           vm_platform_id: VMPlatformID

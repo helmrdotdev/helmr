@@ -1,0 +1,264 @@
+package sqlpolicy
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// Data-access rule: every statement a production package sends to PostgreSQL
+// is a compile-time constant at its call site (so TestStatementsPrepareAgainstSchema
+// parses it against the fresh schema), or a documented exception below; and
+// every table has one owning package that writes it. Generated sqlc queries
+// belong to the owner that calls them. Reads cross owners freely; the owner
+// split narrows writers further.
+
+// dynamicStatementSites are the call sites whose statement is not a constant,
+// keyed as package:declaration, each with the reason the rule tolerates it.
+var dynamicStatementSites = map[string]string{
+	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
+	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
+	"internal/agent:reclaimComputerGraphRow":        "statement is a constant at each caller, which the preparation test covers",
+	"internal/agent:lockSlackPublications":          "two constant lock statements selected by lock strength",
+	"internal/telemetry:BeginDiagnosticAdmission":   "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
+	"internal/telemetry:DiagnosticAdmission.Append": "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
+}
+
+// tableOwners maps each written table to the package that owns its writes.
+// Owner names are import paths without the module prefix.
+var tableOwners = map[string]string{
+	// identity
+	"api_keys": "internal/identity", "auth_identities": "internal/identity", "auth_sessions": "internal/identity",
+	"device_codes": "internal/identity", "magic_links": "internal/identity", "users": "internal/identity",
+	// organizations, projects, environments
+	"environments": "internal/org", "invitations": "internal/org", "org_members": "internal/org",
+	"organizations": "internal/org", "projects": "internal/org",
+	"regions": "internal/region",
+	// deployments and definitions
+	"agent_definitions": "internal/deployment", "agent_schedules": "internal/deployment", "agents": "internal/deployment",
+	"computer_preparation_specs": "internal/deployment", "deployment_objects": "internal/deployment", "deployments": "internal/deployment",
+	"template_definitions": "internal/deployment", "templates": "internal/deployment",
+	// agent runtime: sessions, turns, computers and their storage
+	"agent_schedule_occurrences": "internal/agent", "cas_blobs": "internal/agent", "cas_objects": "internal/agent",
+	"cas_upload_reclaims": "internal/agent", "computer_checkpoint_members": "internal/agent", "computer_checkpoint_objects": "internal/agent",
+	"computer_checkpoints": "internal/agent", "computer_data_keys": "internal/agent", "computer_disk_roots": "internal/agent",
+	"computer_images": "internal/agent", "computer_leases": "internal/agent", "computer_object_edges": "internal/agent",
+	"computer_object_keys": "internal/agent", "computer_object_pins": "internal/agent", "computer_objects": "internal/agent",
+	"computer_preparations": "internal/agent", "computer_saves": "internal/agent", "computer_secret_bindings": "internal/agent",
+	"computers": "internal/agent", "secret_exposures": "internal/agent", "session_controls": "internal/agent",
+	"session_events": "internal/agent", "session_holds": "internal/agent", "session_processes": "internal/agent",
+	"sessions": "internal/agent", "turn_asks": "internal/agent", "turn_messages": "internal/agent", "turns": "internal/agent",
+	// commands
+	"computer_commands": "internal/command", "platform_retry_keys": "internal/idempotency",
+	// secrets
+	"secrets": "internal/secret", "secret_versions": "internal/secret", "control_outbox": "internal/secret",
+	// Slack
+	"agent_publications": "internal/slack", "slack_app_registrations": "internal/slack", "slack_channels": "internal/slack",
+	"slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_requests": "internal/slack",
+	"slack_thread_sources": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
+	// telemetry
+	"telemetry_outbox": "internal/telemetry",
+	// worker supply
+	"vm_platforms": "internal/workergroup", "worker_group_tokens": "internal/workergroup", "worker_groups": "internal/workergroup",
+	"worker_host_secrets": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
+	"worker_pools":      "internal/workergroup",
+	"schema_migrations": "cmd/internal/dev-controlplane",
+}
+
+// coWriters are packages that still write another owner's table. Each entry
+// names the slice that retires it; the owner split (B1) is the default.
+var coWriters = map[string]map[string]string{
+	"agent_definitions":          {"internal/agent": "owner split"},
+	"agent_schedules":            {"internal/agent": "owner split"},
+	"agents":                     {"internal/agent": "owner split"},
+	"computer_preparation_specs": {"internal/agent": "owner split"},
+	"template_definitions":       {"internal/agent": "owner split"},
+	"templates":                  {"internal/agent": "owner split"},
+	"environments":               {"internal/agent": "owner split", "internal/deployment": "owner split"},
+	"computer_checkpoints":       {"internal/computer": "owner split"},
+	"computer_leases":            {"internal/computer": "owner split"},
+	"computers":                  {"internal/computer": "owner split", "internal/command": "owner split"},
+	"secret_exposures":           {"internal/command": "owner split"},
+	"slack_channels":             {"internal/agent": "owner split"},
+	"slack_posts":                {"internal/agent": "owner split"},
+	"slack_requests":             {"internal/agent": "owner split"},
+	"slack_thread_sources":       {"internal/agent": "owner split"},
+	"slack_threads":              {"internal/agent": "owner split"},
+	"telemetry_outbox":           {"internal/deployment": "deployment events move to their own table in the telemetry split"},
+	"auth_sessions":              {"internal/org": "member disablement revokes sessions"},
+	"users":                      {"internal/org": "organization creation records the owner"},
+}
+
+// queryFileOwners maps each sqlc query file to the owner whose writes it
+// performs; a file consumed by several packages is owned by the writer.
+var queryFileOwners = map[string]string{
+	"allocation_planning.sql":   "internal/workergroup",
+	"api_keys.sql":              "internal/identity",
+	"auth_identities.sql":       "internal/identity",
+	"auth_sessions.sql":         "internal/identity",
+	"cas_objects.sql":           "internal/agent",
+	"cas_reclamation.sql":       "internal/agent",
+	"computer_commands.sql":     "internal/command",
+	"computer_disk_roots.sql":   "internal/agent",
+	"computer_objects.sql":      "internal/agent",
+	"control_outbox.sql":        "internal/secret",
+	"device_codes.sql":          "internal/identity",
+	"events.sql":                "internal/deployment",
+	"invitations.sql":           "internal/org",
+	"magic_links.sql":           "internal/identity",
+	"org_members.sql":           "internal/org",
+	"organizations.sql":         "internal/org",
+	"platform_retry_keys.sql":   "internal/idempotency",
+	"projects.sql":              "internal/org",
+	"regions.sql":               "internal/region",
+	"schedule_reads.sql":        "internal/controlplane",
+	"secrets.sql":               "internal/secret",
+	"telemetry_outbox.sql":      "internal/telemetry",
+	"worker_capacity_hosts.sql": "internal/workergroup",
+	"worker_drain.sql":          "internal/workergroup",
+	"worker_groups.sql":         "internal/workergroup",
+	"worker_host_secrets.sql":   "internal/workergroup",
+	"worker_lifecycle.sql":      "internal/workergroup",
+	"worker_liveness.sql":       "internal/workergroup",
+	"worker_startup.sql":        "internal/workergroup",
+}
+
+// seedWriters write arbitrary rows outside ownership: development seeds.
+var seedWriters = map[string]bool{"cmd/internal/dev-controlplane": true}
+
+func allowedWriter(table, pkg string) bool {
+	if seedWriters[pkg] {
+		return true
+	}
+	if owner, ok := tableOwners[table]; ok && owner == pkg {
+		return true
+	}
+	_, ok := coWriters[table][pkg]
+	return ok
+}
+
+// TestStatementsAreConstantOrDocumented fails on a statement the preparation
+// test cannot see unless its site carries a reason, and on stale reasons.
+func TestStatementsAreConstantOrDocumented(t *testing.T) {
+	matched := map[string]bool{}
+	for _, s := range collectStatements(t) {
+		if s.sql != "" {
+			continue
+		}
+		if _, ok := dynamicStatementSites[s.site()]; ok {
+			matched[s.site()] = true
+			continue
+		}
+		t.Errorf("%s: %s sends a statement that is not a compile-time constant", s.position, s.site())
+	}
+	for site := range dynamicStatementSites {
+		if !matched[site] {
+			t.Errorf("exception %s matches no dynamic statement", site)
+		}
+	}
+}
+
+// TestTableWritesStayWithOwners checks handwritten and generated writes
+// against the ownership table and keeps the co-writer list exact.
+func TestTableWritesStayWithOwners(t *testing.T) {
+	used := map[string]map[string]bool{}
+	note := func(table, pkg string) {
+		if used[table] == nil {
+			used[table] = map[string]bool{}
+		}
+		used[table][pkg] = true
+	}
+	for _, s := range collectStatements(t) {
+		for _, table := range writtenTables(s.sql) {
+			note(table, s.pkg)
+			if !allowedWriter(table, s.pkg) {
+				t.Errorf("%s: %s writes %s owned by %q", s.position, s.pkg, table, tableOwners[table])
+			}
+		}
+	}
+	root := repositoryRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "internal", "db", "query"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		owner, ok := queryFileOwners[entry.Name()]
+		if !ok {
+			t.Errorf("query file %s has no owner", entry.Name())
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(root, "internal", "db", "query", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, table := range writtenTables(string(content)) {
+			note(table, owner)
+			if !allowedWriter(table, owner) {
+				t.Errorf("query/%s (%s) writes %s owned by %q", entry.Name(), owner, table, tableOwners[table])
+			}
+		}
+	}
+	for file := range queryFileOwners {
+		if _, err := os.Stat(filepath.Join(root, "internal", "db", "query", file)); err != nil {
+			t.Errorf("query file owner entry %s has no file", file)
+		}
+	}
+	for table, writers := range coWriters {
+		for pkg := range writers {
+			if !used[table][pkg] {
+				t.Errorf("co-writer %s of %s no longer writes it", pkg, table)
+			}
+		}
+	}
+	for table := range tableOwners {
+		if len(used[table]) == 0 {
+			t.Errorf("owned table %s is written by no statement", table)
+		}
+	}
+}
+
+var sqlcTableName = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)`)
+
+// TestEveryTableHasAnOwner keeps the ownership table complete against the schema.
+func TestEveryTableHasAnOwner(t *testing.T) {
+	root := repositoryRoot(t)
+	entries, err := filepath.Glob(filepath.Join(root, "internal", "db", "schema", "migrations", "*.up.sql"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("migrations: %v %v", entries, err)
+	}
+	var missing []string
+	for _, entry := range entries {
+		content, err := os.ReadFile(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range sqlcTableName.FindAllStringSubmatch(string(content), -1) {
+			if _, ok := tableOwners[match[1]]; !ok {
+				missing = append(missing, match[1])
+			}
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("tables without an owner: %s", strings.Join(missing, ", "))
+	}
+	for table := range tableOwners {
+		if table == "schema_migrations" {
+			continue
+		}
+		found := false
+		for _, entry := range entries {
+			content, _ := os.ReadFile(entry)
+			if strings.Contains(string(content), fmt.Sprintf("CREATE TABLE %s", table)) || strings.Contains(string(content), fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s", table)) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("owned table %s is not in the schema", table)
+		}
+	}
+}
