@@ -82,10 +82,8 @@ Promotion changes what **new** work runs. It does not change work that already
 exists:
 
 - **Existing Sessions stay on their Deployment.** A Session is pinned to the
-  Deployment that was current when it was created. Later Turns in that
-  Session, including Turns added by starting with the same Session key, keep
-  running the old code. To move a conversation to new code, start a new
-  Session.
+  Deployment that was current when it was created. Later Turns enqueued in
+  that Session use the same Deployment. To run the new code, create a new Session.
 - **Existing Computers are not rewritten** by promotion.
 - **Triggers are replaced.** Promotion reconciles the Environment's active
   cron triggers with the ones declared in the new Deployment. See

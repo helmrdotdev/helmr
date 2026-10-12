@@ -20,7 +20,7 @@ function agent<I extends InputContent = InputContent, O extends Json = Json, S =
 ```
 
 Returns a frozen definition with `kind: "agent"`. Throws `TypeError` when `id`
-is blank, `computer` is not a Template definition, or `turn` is not a function.
+is blank, `template` is not a Template definition, or `turn` is not a function.
 Export the definition from a file in a discovered source directory (`agents` by
 default; see [Configuration](/docs/reference/config)).
 
@@ -53,7 +53,7 @@ export const reviewer = agent({
 interface AgentDefinition<I extends InputContent = InputContent, O extends Json = Json, S = unknown> {
   readonly kind: "agent"
   readonly id: string
-  readonly computer: TemplateDefinition
+  readonly template: TemplateDefinition
   readonly init?: (ctx: InitContext) => MaybePromise<S>
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<O>
   readonly closeAfterIdle?: Duration

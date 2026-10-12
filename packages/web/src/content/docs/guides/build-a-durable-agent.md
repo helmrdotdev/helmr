@@ -62,8 +62,9 @@ The Agent keeps two kinds of state:
 - `ctx.initResult` is the value `init` returned. It is an ordinary live object;
   it could just as well hold an open client or a child process. It lasts as long
   as the Session's process.
-- `/workspace/log.txt` is a file on the Computer's disk. The disk is saved after
-  every Turn, and a Turn is `completed` only once that save is stored.
+- `/workspace/log.txt` is a file on the Computer's disk. Helmr saves the disk
+  periodically while the Computer runs and after a Turn's handler returns
+  successfully. The Turn becomes `completed` once that final save is stored.
 
 `closeAfterIdle` closes the Session after a day without work, and
 `maxTurnDuration` limits each Turn. See [Agents](/docs/concepts/agents).
@@ -77,9 +78,9 @@ helmr session create assistant --project demo --env staging \
   --idempotency-key tutorial:assistant:1
 ```
 
-Save the `session_id` from the receipt. The session key `user:ada` names this
-conversation: starting `assistant` again with the same key adds input to the same
-Session instead of creating a new one.
+Save the `session_id` from the receipt to enqueue more input. The Session key
+`user:ada` lets you find this conversation later; creating another Session with
+that key conflicts.
 
 Wait for the Turn:
 
