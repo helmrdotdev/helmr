@@ -32,7 +32,6 @@ type ControlPlane struct {
 	Addr                            string
 	DeploymentMode                  string
 	DatabaseURL                     string
-	RedisURL                        string
 	ClickHouseURL                   string
 	ClickHouseUser                  string
 	ClickHousePassword              string

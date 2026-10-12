@@ -400,7 +400,7 @@ variable "capacity_token_kms_key_arn" {
 }
 
 variable "controlplane_environment" {
-  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as REDIS_URL are owned by this module."
+  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as PUBLIC_URL are owned by this module."
   type        = map(string)
   default     = {}
   validation {
@@ -454,29 +454,6 @@ variable "smtp_password_enabled" {
   description = "Create and inject an SMTP password secret when email_provider is smtp."
   type        = bool
   default     = false
-}
-
-variable "redis_engine" {
-  description = "ElastiCache engine for the Helmr Control Plane event stream."
-  type        = string
-  default     = "valkey"
-
-  validation {
-    condition     = contains(["valkey", "redis"], var.redis_engine)
-    error_message = "redis_engine must be valkey or redis."
-  }
-}
-
-variable "redis_node_type" {
-  description = "ElastiCache node type for the Helmr Control Plane event stream."
-  type        = string
-  default     = "cache.t4g.micro"
-}
-
-variable "redis_node_count" {
-  description = "Number of ElastiCache nodes for the Helmr Control Plane event stream. Values greater than 1 enable automatic failover and Multi-AZ."
-  type        = number
-  default     = 1
 }
 
 variable "github_oauth_client_id" {

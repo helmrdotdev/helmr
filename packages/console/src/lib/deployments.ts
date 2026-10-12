@@ -1,15 +1,9 @@
 import { ApiError, postJson, request } from "./api";
 type DeploymentEvent = {
   id: string;
-  deployment_id?: string;
-  category: string;
-  severity: string;
-  source: string;
   kind: string;
   message: string;
   at: string;
-  occurred_at: string;
-  redaction_class: string;
   attributes: unknown;
 };
 

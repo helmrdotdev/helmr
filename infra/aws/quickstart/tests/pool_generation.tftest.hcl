@@ -11,7 +11,6 @@ mock_provider "aws" {
   mock_resource "aws_launch_template" { defaults = { id = "lt-0123456789abcdef0", latest_version = 1 } }
   mock_resource "aws_lb" { defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:111122223333:loadbalancer/app/mock/0000000000000000" } }
   mock_resource "aws_lb_target_group" { defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:111122223333:targetgroup/mock/0000000000000000" } }
-  mock_resource "aws_elasticache_replication_group" { defaults = { primary_endpoint_address = "redis.example.test" } }
   mock_resource "aws_db_instance" {
     defaults = {
       address = "database.example.test"

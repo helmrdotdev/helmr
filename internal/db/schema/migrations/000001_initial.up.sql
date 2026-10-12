@@ -1882,7 +1882,7 @@ CREATE INDEX turn_messages_pending ON turn_messages(environment_id,session_id,tu
 -- One queue retains accepted diagnostics and Deployment events. The typed owner
 -- remains while payload delivery is outstanding; only diagnostic inserts share
 -- the bounded admission gate. Deployment delivery has its own claims/lifetime.
-CREATE TABLE telemetry_outbox (
+CREATE TABLE diagnostic_chunks (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     environment_id uuid NOT NULL REFERENCES environments(id),
     session_id uuid,
@@ -1890,76 +1890,63 @@ CREATE TABLE telemetry_outbox (
     preparation_id uuid,
     preparation_epoch bigint,
     command_id uuid,
-    deployment_id uuid,
-    source_kind text GENERATED ALWAYS AS (CASE WHEN session_id IS NOT NULL THEN 'session' WHEN preparation_id IS NOT NULL THEN 'computer_preparation' WHEN command_id IS NOT NULL THEN 'computer_command' ELSE 'deployment' END) STORED NOT NULL,
-    source_id uuid GENERATED ALWAYS AS (COALESCE(session_id,preparation_id,command_id,deployment_id)) STORED NOT NULL,
+    source_kind text GENERATED ALWAYS AS (CASE WHEN session_id IS NOT NULL THEN 'session' WHEN preparation_id IS NOT NULL THEN 'computer_preparation' ELSE 'computer_command' END) STORED NOT NULL,
+    source_id uuid GENERATED ALWAYS AS (COALESCE(session_id,preparation_id,command_id)) STORED NOT NULL,
     producer_epoch bigint GENERATED ALWAYS AS (COALESCE(process_epoch,preparation_epoch,1)) STORED NOT NULL,
-    stream_kind text NOT NULL CHECK (stream_kind IN ('diagnostic','event')),
-    stream text,
-    sequence bigint,
-    through_sequence bigint,
-    byte_offset bigint,
-    through_byte_offset bigint,
+    stream text NOT NULL CHECK (stream IN ('stdout','stderr')),
+    sequence bigint NOT NULL,
+    through_sequence bigint NOT NULL,
+    byte_offset bigint NOT NULL,
+    through_byte_offset bigint NOT NULL,
     kind text NOT NULL,
-    observed_at_unix_nano bigint,
-    data bytea,
-    dropped_bytes bigint,
-    complete boolean,
+    observed_at_unix_nano bigint NOT NULL,
+    data bytea NOT NULL,
+    dropped_bytes bigint NOT NULL,
+    complete boolean NOT NULL,
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    expires_at timestamptz,
+    expires_at timestamptz NOT NULL,
     export_claim uuid,
     export_after timestamptz NOT NULL DEFAULT '-infinity',
-    category text NOT NULL DEFAULT 'system',
-    severity text NOT NULL DEFAULT 'info',
-    source text NOT NULL DEFAULT 'control',
-    message text NOT NULL DEFAULT '',
-    payload jsonb NOT NULL DEFAULT '{}',
-    redaction_class text NOT NULL DEFAULT 'internal',
-    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    ingest_size_bytes bigint GENERATED ALWAYS AS (CASE WHEN stream_kind='event' THEN octet_length(message)::bigint+octet_length(payload::text)::bigint ELSE octet_length(data)::bigint END) STORED NOT NULL,
-    retry_count integer NOT NULL DEFAULT 0 CHECK (retry_count>=0),
-    next_retry_at timestamptz,
-    written_at timestamptz,
-    published_at timestamptz,
-    publish_attempts integer NOT NULL DEFAULT 0 CHECK (publish_attempts>=0),
-    publish_locked_until timestamptz,
-    ingest_error text NOT NULL DEFAULT '',
-    publish_error text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CHECK (num_nonnulls(session_id,preparation_id,command_id,deployment_id)=1),
+    ingest_size_bytes bigint GENERATED ALWAYS AS (octet_length(data)::bigint) STORED NOT NULL,
+    CHECK (num_nonnulls(session_id,preparation_id,command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
     CHECK ((preparation_id IS NULL)=(preparation_epoch IS NULL)),
     FOREIGN KEY(environment_id,session_id,process_epoch) REFERENCES session_processes(environment_id,session_id,epoch),
     FOREIGN KEY(environment_id,preparation_id,preparation_epoch) REFERENCES computer_preparations(environment_id,id,executor_epoch),
     FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
-    FOREIGN KEY(environment_id,deployment_id) REFERENCES deployments(environment_id,id),
-    CHECK (((stream_kind='event' AND deployment_id IS NOT NULL AND length(kind)>0 AND num_nonnulls(stream,sequence,through_sequence,byte_offset,through_byte_offset,observed_at_unix_nano,data,dropped_bytes,complete,expires_at)=0)
-      OR (stream_kind='diagnostic' AND deployment_id IS NULL AND stream IN ('stdout','stderr') AND sequence>0 AND through_sequence>=sequence
-        AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
+    CHECK (sequence>0 AND through_sequence>=sequence AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
         AND dropped_bytes>=0 AND expires_at=accepted_at+interval '2160 hours'
         AND ((kind='data' AND sequence=through_sequence AND octet_length(data)>0 AND dropped_bytes=0 AND NOT complete AND through_byte_offset=byte_offset+octet_length(data))
           OR (kind='gap' AND octet_length(data)=0 AND dropped_bytes>=through_sequence-sequence+1 AND NOT complete AND through_byte_offset=byte_offset+dropped_bytes)
-          OR (kind='end' AND sequence=through_sequence AND octet_length(data)=0 AND dropped_bytes=0 AND through_byte_offset=byte_offset)))) IS TRUE)
+          OR (kind='end' AND sequence=through_sequence AND octet_length(data)=0 AND dropped_bytes=0 AND through_byte_offset=byte_offset)))
 );
 
-CREATE UNIQUE INDEX telemetry_outbox_diagnostic_identity ON telemetry_outbox(environment_id,source_kind,source_id,producer_epoch,stream,sequence) WHERE stream_kind='diagnostic';
+CREATE TABLE deployment_events (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    environment_id uuid NOT NULL REFERENCES environments(id),
+    deployment_id uuid NOT NULL,
+    kind text NOT NULL CHECK (length(kind)>0),
+    message text NOT NULL DEFAULT '',
+    payload jsonb NOT NULL DEFAULT '{}',
+    accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    FOREIGN KEY(environment_id,deployment_id) REFERENCES deployments(environment_id,id)
+);
 
-CREATE INDEX telemetry_outbox_diagnostic_queue ON telemetry_outbox(id) INCLUDE(environment_id,source_kind,source_id,producer_epoch,ingest_size_bytes) WHERE stream_kind='diagnostic';
+CREATE UNIQUE INDEX diagnostic_chunks_identity ON diagnostic_chunks(environment_id,source_kind,source_id,producer_epoch,stream,sequence);
 
-CREATE INDEX telemetry_outbox_diagnostic_environment ON telemetry_outbox(environment_id,id) INCLUDE(ingest_size_bytes) WHERE stream_kind='diagnostic';
+CREATE INDEX diagnostic_chunks_queue ON diagnostic_chunks(id) INCLUDE(environment_id,source_kind,source_id,producer_epoch,ingest_size_bytes);
 
-CREATE INDEX telemetry_outbox_diagnostic_producer ON telemetry_outbox(environment_id,source_kind,source_id,producer_epoch,id) INCLUDE(ingest_size_bytes) WHERE stream_kind='diagnostic';
+CREATE INDEX diagnostic_chunks_environment ON diagnostic_chunks(environment_id,id) INCLUDE(ingest_size_bytes);
 
-CREATE INDEX telemetry_outbox_diagnostic_pending ON telemetry_outbox(source_kind,export_after,id) WHERE stream_kind='diagnostic';
+CREATE INDEX diagnostic_chunks_producer ON diagnostic_chunks(environment_id,source_kind,source_id,producer_epoch,id) INCLUDE(ingest_size_bytes);
 
-CREATE INDEX telemetry_outbox_diagnostic_expiry ON telemetry_outbox(expires_at,id) WHERE stream_kind='diagnostic';
+CREATE INDEX diagnostic_chunks_pending ON diagnostic_chunks(source_kind,export_after,id);
 
-CREATE INDEX telemetry_outbox_event_pending ON telemetry_outbox(next_retry_at,id) WHERE stream_kind='event' AND written_at IS NULL;
+CREATE INDEX diagnostic_chunks_expiry ON diagnostic_chunks(expires_at,id);
 
-CREATE INDEX telemetry_outbox_event_publish ON telemetry_outbox(id) WHERE stream_kind='event' AND published_at IS NULL;
+CREATE INDEX deployment_events_deployment ON deployment_events(environment_id,deployment_id,id);
 
-CREATE INDEX telemetry_outbox_event_gc ON telemetry_outbox(written_at,id) WHERE stream_kind='event' AND published_at IS NOT NULL AND written_at IS NOT NULL;
+CREATE INDEX deployment_events_accepted ON deployment_events(accepted_at,id);
 
 CREATE TABLE slack_threads (
     id uuid PRIMARY KEY,

@@ -3,7 +3,6 @@
     "postgres": "/opt/helmr-tools/bin/postgres",
     "initdb": "/opt/helmr-tools/bin/initdb",
     "psql": "/opt/helmr-tools/bin/psql",
-    "redis-server": "/opt/helmr-tools/bin/redis-server",
     "clickhouse": "/opt/helmr-tools/bin/clickhouse"
   },
   "control_plane": {

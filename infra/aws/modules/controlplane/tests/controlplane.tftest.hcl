@@ -7,7 +7,6 @@ mock_provider "aws" {
   mock_resource "aws_kms_key" { defaults = { arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000" } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::000000000000:role/mock" } }
   mock_resource "aws_iam_policy" { defaults = { arn = "arn:aws:iam::000000000000:policy/mock" } }
-  mock_resource "aws_elasticache_replication_group" { defaults = { primary_endpoint_address = "redis.example.test" } }
 }
 
 mock_provider "random" {}

@@ -23,7 +23,6 @@ func LoadControlPlane() (ControlPlane, error) {
 		Addr:                            env("CONTROL_PLANE_ADDR", ":8080"),
 		DeploymentMode:                  env("DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:                     envText("DATABASE_URL"),
-		RedisURL:                        env("REDIS_URL", "redis://127.0.0.1:6379/0"),
 		ClickHouseURL:                   envText("CLICKHOUSE_URL"),
 		ClickHouseUser:                  envText("CLICKHOUSE_USER"),
 		ClickHousePassword:              envSecret("CLICKHOUSE_PASSWORD"),

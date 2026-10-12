@@ -428,7 +428,7 @@ func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, e
 	if err := agent.RegisterProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program); err != nil {
 		return Record{}, err
 	}
-	if _, err := q.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{EnvironmentID: pgvalue.UUID(env), DeploymentID: pgvalue.UUID(id), OrgID: pgvalue.UUID(f.orgID), ProjectID: f.projectID, Kind: "deployment.registered", Message: "Deployment registered", Payload: []byte(`{}`)}); err != nil {
+	if err := appendEvent(ctx, tx, env, id, "deployment.registered", "Deployment registered"); err != nil {
 		return Record{}, err
 	}
 	return readRecord(ctx, tx, env, id)

@@ -13,7 +13,6 @@ import (
 type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateWorkerHost(ctx context.Context, arg ActivateWorkerHostParams) (WorkerHost, error)
-	AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (int64, error)
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	// Each dependent stage locks one supply row before the next, matching runtime
 	// admission and lifecycle operations. A joined FOR UPDATE does not guarantee order.
@@ -27,8 +26,6 @@ type Querier interface {
 	// not depend on its inserted row count: every inherited key may already be direct.
 	CertifyComputerObject(ctx context.Context, arg CertifyComputerObjectParams) (int64, error)
 	ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error)
-	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
-	ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error)
 	// Claim only scheduling responsibility, not permission to adopt the digest.
 	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
 	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
@@ -97,7 +94,6 @@ type Querier interface {
 	GetSecretSnapshot(ctx context.Context, arg GetSecretSnapshotParams) (GetSecretSnapshotRow, error)
 	GetSecretSnapshotByName(ctx context.Context, arg GetSecretSnapshotByNameParams) (GetSecretSnapshotByNameRow, error)
 	GetSecretVersion(ctx context.Context, arg GetSecretVersionParams) (SecretVersion, error)
-	GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgtype.Interval) (GetTelemetryOutboxLifecycleRow, error)
 	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
@@ -156,17 +152,12 @@ type Querier interface {
 	LockWorkerHostForActivation(ctx context.Context, arg LockWorkerHostForActivationParams) (WorkerHost, error)
 	LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) (WorkerPool, error)
 	LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerPoolActiveHostsParams) ([]pgtype.UUID, error)
-	MarkLiveTelemetryOutboxBatchFailed(ctx context.Context, arg MarkLiveTelemetryOutboxBatchFailedParams) (int64, error)
-	MarkLiveTelemetryOutboxBatchPublished(ctx context.Context, arg MarkLiveTelemetryOutboxBatchPublishedParams) (int64, error)
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
-	MarkTelemetryOutboxBatchFailed(ctx context.Context, arg MarkTelemetryOutboxBatchFailedParams) (int64, error)
-	MarkTelemetryOutboxWritten(ctx context.Context, arg MarkTelemetryOutboxWrittenParams) (int64, error)
 	MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error)
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneExpiredComputerCommandResults(ctx context.Context, rowLimit int32) (int64, error)
 	PruneExpiredPlatformRetryReceipts(ctx context.Context, rowLimit int32) (int64, error)
-	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	// Host loss revokes credentials without confirming physical absence.
 	// Allocation owners reconcile logical state; only confirmed stop releases custody.
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)

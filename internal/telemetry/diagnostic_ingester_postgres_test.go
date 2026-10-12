@@ -52,7 +52,7 @@ func TestDiagnosticIngesterDoesNotHoldAdmissionDuringSinkIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	var queued int
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&queued); err != nil || queued != 1 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&queued); err != nil || queued != 1 {
 		t.Fatalf("wrong retirement %d %v", queued, err)
 	}
 }
@@ -86,13 +86,13 @@ func TestDiagnosticIngesterLostSinkReceiptAndPoisonIsolation(t *testing.T) {
 		t.Fatal("lost reply treated as durable sink receipt")
 	}
 	var queued int
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&queued); err != nil || queued != 2 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&queued); err != nil || queued != 2 {
 		t.Fatalf("uncertain rows lost %d %v", queued, err)
 	}
 	if err = ingester.ExportOnce(t.Context(), "session"); err != nil {
 		t.Fatal(err)
 	}
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&queued); err != nil || queued != 1 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&queued); err != nil || queued != 1 {
 		t.Fatalf("poison handling lost wrong rows %d %v", queued, err)
 	}
 }

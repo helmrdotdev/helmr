@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/slack"
@@ -85,10 +86,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
-	if err != nil {
-		return fmt.Errorf("configure telemetry ingester: %w", err)
-	}
 	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, cfg.ControlPlaneURL, workergroup.WithStaleHostFenceLogger(log))
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
@@ -119,7 +116,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Agent schedules", run: func(ctx context.Context) error { return agent.RunSchedules(ctx, pool, secretStore, log) }},
 		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},
-		{name: "event telemetry ingestor", run: telemetryIngestor.Run},
+		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
 		{name: "control outbox lifecycle", run: controlOutboxLifecycle.Run},
 	}

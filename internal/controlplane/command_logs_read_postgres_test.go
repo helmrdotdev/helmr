@@ -18,7 +18,7 @@ import (
 )
 
 type commandHistoryReader struct {
-	telemetry.Reader
+	telemetry.CommandLogReader
 	pipes map[string][]telemetry.CommandLogChunk
 }
 

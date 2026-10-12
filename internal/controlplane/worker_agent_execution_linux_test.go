@@ -536,7 +536,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
               (SELECT COALESCE(jsonb_agg(jsonb_build_object('stream',o.stream,'sequence',o.sequence,
                   'acceptedAt',o.accepted_at,'observedAtUnixNano',o.observed_at_unix_nano,
                   'dataBase64',encode(o.data,'base64')) ORDER BY o.id),'[]'::jsonb)
-               FROM telemetry_outbox o WHERE o.environment_id=c.environment_id AND o.command_id=c.id AND o.kind='data') AS output
+               FROM diagnostic_chunks o WHERE o.environment_id=c.environment_id AND o.command_id=c.id AND o.kind='data') AS output
        FROM computer_commands c WHERE c.environment_id=$1) command`, env).Scan(&commands)
 		stopDiagnostic()
 		if commandErr == nil {
@@ -571,7 +571,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		var diagnostics []byte
 		diagnosticErr := database.Pool.QueryRow(diagnosticCtx, `SELECT COALESCE(jsonb_agg(to_jsonb(log) ORDER BY id),'[]'::jsonb)
  FROM (SELECT id,command_id,session_id,stream,sequence,encode(data,'base64') AS data_base64
-       FROM telemetry_outbox WHERE environment_id=$1 AND kind='data'
+       FROM diagnostic_chunks WHERE environment_id=$1 AND kind='data'
          AND (command_id IS NOT NULL OR (session_id IS NOT NULL AND stream='stderr'))
        ORDER BY id DESC LIMIT 100) log`, env).Scan(&diagnostics)
 		stopDiagnostic()

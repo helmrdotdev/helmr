@@ -9,7 +9,7 @@ question details and exact CLI answer instructions.
 
 ## Local development
 
-Run the dashboard against a local control server and managed Postgres/Redis/ClickHouse:
+Run the dashboard against a local control server and managed Postgres/ClickHouse:
 
 ```sh
 make dev
@@ -18,7 +18,7 @@ make dev
 Open `http://127.0.0.1:<console-port>/dev/login` to create a local owner session. The stack
 prints the state directory, socket directory, URLs, and derived ports on startup.
 
-`make dev` starts managed dependencies when `DATABASE_URL`, `REDIS_URL`, and `CLICKHOUSE_URL`
+`make dev` starts managed dependencies when `DATABASE_URL` and `CLICKHOUSE_URL`
 are unset. `CAS_URI` and `PLATFORM_STORE_URI` are required: distinct S3 stores, as described in
 [scripts/README.md](../../scripts/README.md#development-console). A synthetic runtime descriptor is written under the dev state directory; no
 image build or real Deployment build is required. Live mode runs Vite with hot reload on the

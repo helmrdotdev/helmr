@@ -47,7 +47,6 @@ in
 {
   default = pkgs.mkShell {
     packages = toolsets.base ++ [
-      pkgs.redis
       pkgsClickHouse.clickhouse
     ];
     inherit shellHook;
@@ -78,7 +77,6 @@ in
     ) "@playwright/test must match the pinned nixpkgs playwright-driver";
     pkgs.mkShell {
       packages = toolsets.base ++ [
-        pkgs.redis
         pkgsClickHouse.clickhouse
         pkgsUnstable.playwright-driver.browsers
       ];

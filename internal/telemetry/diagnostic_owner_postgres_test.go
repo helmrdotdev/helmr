@@ -3,13 +3,14 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/jackc/pgx/v5"
-	"testing"
-	"time"
-	"uuid"
 )
 
 func TestDiagnosticContentionReleasesAdmissionWithoutBlockingControl(t *testing.T) {
@@ -76,7 +77,7 @@ func TestDiagnosticOneTransactionCannotReuseStaleOccupancy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&count); err != nil || count != 1 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("count=%d %v", count, err)
 	}
 	tx, err := pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
@@ -132,7 +133,7 @@ func TestDiagnosticTypedOwnerRetentionAndExportNeverLockLifecycle(t *testing.T) 
 			if _, err = appendDiagnosticTest(t, pool, source, record, diagnosticTestBounds()); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, t.Context(), pool, `UPDATE telemetry_outbox SET accepted_at=accepted_at-interval '2200 hours',expires_at=expires_at-interval '2200 hours'`)
+			dbtest.MustExec(t, t.Context(), pool, `UPDATE diagnostic_chunks SET accepted_at=accepted_at-interval '2200 hours',expires_at=expires_at-interval '2200 hours'`)
 			blocker, err = pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)

@@ -1,9 +1,9 @@
 # Dedicated runtime host
 
 This is a dedicated development verification profile, not a general deployment target.
-It composes the normal Control Plane, Dispatcher, PostgreSQL 18, Redis,
+It composes the normal Control Plane, Dispatcher, PostgreSQL 18,
 ClickHouse and installed Worker on one dedicated Linux x86_64 KVM/systemd host.
-A passing `start` means CP and native Worker readiness, Redis PING and active
+A passing `start` means CP and native Worker readiness and active
 service processes only. Run the selected Agent cases against the exact candidate
 to verify execution, persistence, service changes, network isolation or recovery.
 
@@ -310,7 +310,7 @@ sudo python3 dev/runtime/host.py apply-services \
 This updates CP **and Dispatcher**, after draining/stopping the old Worker against
 the old database. It requires inactive service units, disconnected owned NBD
 devices and no remaining mounts beneath the reset paths. It clears this profile's
-PostgreSQL, Redis and ClickHouse state, Worker credentials/work state and jailer
+PostgreSQL and ClickHouse state, Worker credentials/work state and jailer
 state, then recreates the database cluster and runs the new native bootstrap and
 migrations. Worker/guest binaries, runtime descriptor, installed guest images and
 scope root keys remain. A new data-generation ID distinguishes observations before

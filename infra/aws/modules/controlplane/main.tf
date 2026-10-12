@@ -115,7 +115,6 @@ locals {
     DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"
     PLATFORM_STORE_URI                 = var.platform_store_uri
     PUBLIC_URL                         = local.controlplane_url
-    REDIS_URL                          = local.redis_url
     GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
     }, var.deployment_mode == "managed-cloud" ? {
     COMPUTER_KMS_KEY_ARN = aws_kms_key.helmr.arn
@@ -189,7 +188,6 @@ locals {
     }, local.clickhouse_ingester_secrets
   )
 
-  redis_url = "rediss://${aws_elasticache_replication_group.event_stream.primary_endpoint_address}:${aws_elasticache_replication_group.event_stream.port}/0"
 }
 
 resource "terraform_data" "bootstrap_preconditions" {
@@ -368,57 +366,6 @@ resource "aws_vpc_security_group_egress_rule" "postgres" {
   security_group_id = aws_security_group.postgres.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-}
-
-resource "aws_security_group" "redis" {
-  name        = "${local.name}-events"
-  description = "Helmr Redis/Valkey event stream access"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-}
-
-resource "aws_vpc_security_group_ingress_rule" "redis_controlplane" {
-  security_group_id            = aws_security_group.redis.id
-  referenced_security_group_id = aws_security_group.controlplane.id
-  from_port                    = 6379
-  ip_protocol                  = "tcp"
-  to_port                      = 6379
-}
-
-resource "aws_vpc_security_group_egress_rule" "redis" {
-  security_group_id = aws_security_group.redis.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_elasticache_subnet_group" "event_stream" {
-  name       = "${local.name}-events"
-  subnet_ids = var.private_subnet_ids
-  tags       = var.tags
-}
-
-resource "aws_elasticache_replication_group" "event_stream" {
-  replication_group_id       = "${local.name}-events"
-  description                = "Helmr Control Plane event stream"
-  engine                     = var.redis_engine
-  node_type                  = var.redis_node_type
-  num_cache_clusters         = var.redis_node_count
-  port                       = 6379
-  at_rest_encryption_enabled = true
-  transit_encryption_enabled = true
-  kms_key_id                 = aws_kms_key.helmr.arn
-  security_group_ids         = [aws_security_group.redis.id]
-  subnet_group_name          = aws_elasticache_subnet_group.event_stream.name
-  automatic_failover_enabled = var.redis_node_count > 1
-  multi_az_enabled           = var.redis_node_count > 1
-  tags                       = var.tags
-
-  lifecycle {
-    precondition {
-      condition     = var.redis_node_count >= 1
-      error_message = "redis_node_count must be at least 1."
-    }
-  }
 }
 
 resource "random_id" "postgres_final_snapshot" {

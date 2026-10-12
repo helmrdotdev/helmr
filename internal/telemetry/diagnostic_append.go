@@ -99,7 +99,7 @@ func BeginDiagnosticAdmission(ctx context.Context, tx pgx.Tx, source DiagnosticS
 		{" AND environment_id=$2", []any{bounds.EnvironmentRecords + 1, source.EnvironmentID}, &a.environment},
 		{" AND environment_id=$2 AND source_kind=$3 AND source_id=$4 AND producer_epoch=$5", []any{bounds.SourceRecords + 1, source.EnvironmentID, source.Kind, source.ID, source.ProducerEpoch}, &a.producer},
 	} {
-		query := `SELECT COALESCE(sum(ingest_size_bytes),0)::bigint,count(*) FROM (SELECT ingest_size_bytes FROM telemetry_outbox WHERE stream_kind='diagnostic'` + scope.where + ` ORDER BY id LIMIT $1) pending`
+		query := `SELECT COALESCE(sum(ingest_size_bytes),0)::bigint,count(*) FROM (SELECT ingest_size_bytes FROM diagnostic_chunks WHERE TRUE` + scope.where + ` ORDER BY id LIMIT $1) pending`
 		if err := tx.QueryRow(ctx, query, scope.args...).Scan(&scope.usage.bytes, &scope.usage.records); err != nil {
 			return a, err
 		}
@@ -194,8 +194,8 @@ func (a *DiagnosticAdmission) Append(ctx context.Context, record diagnostic.Reco
 	if data == nil {
 		data = []byte{}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO telemetry_outbox(environment_id,session_id,process_epoch,preparation_id,preparation_epoch,command_id,stream_kind,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at,expires_at)
- VALUES($1,CASE WHEN $2='session' THEN $3::uuid END,CASE WHEN $2='session' THEN $4::bigint END,CASE WHEN $2='computer_preparation' THEN $3::uuid END,CASE WHEN $2='computer_preparation' THEN $4::bigint END,CASE WHEN $2='computer_command' THEN $3::uuid END,'diagnostic',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, source.EnvironmentID, source.Kind, source.ID, source.ProducerEpoch, record.Stream, record.Sequence, record.ThroughSequence, progress.byteOffset, offset, record.Kind, record.ObservedAtUnixNano, data, record.DroppedBytes, record.Complete, receipt.AcceptedAt, receipt.ExpiresAt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,preparation_id,preparation_epoch,command_id,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at,expires_at)
+ VALUES($1,CASE WHEN $2='session' THEN $3::uuid END,CASE WHEN $2='session' THEN $4::bigint END,CASE WHEN $2='computer_preparation' THEN $3::uuid END,CASE WHEN $2='computer_preparation' THEN $4::bigint END,CASE WHEN $2='computer_command' THEN $3::uuid END,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, source.EnvironmentID, source.Kind, source.ID, source.ProducerEpoch, record.Stream, record.Sequence, record.ThroughSequence, progress.byteOffset, offset, record.Kind, record.ObservedAtUnixNano, data, record.DroppedBytes, record.Complete, receipt.AcceptedAt, receipt.ExpiresAt); err != nil {
 		return DiagnosticReceipt{}, err
 	}
 	digest := diagnosticDigest(source, record)

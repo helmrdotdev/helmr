@@ -16,7 +16,7 @@ spec.loader.exec_module(host)
 
 def config():
     return {
-        'binaries': {name: '/opt/bin/' + name for name in ['postgres', 'initdb', 'psql', 'redis-server', 'clickhouse']},
+        'binaries': {name: '/opt/bin/' + name for name in ['postgres', 'initdb', 'psql', 'clickhouse']},
         'services_candidate': '/opt/candidate',
         'worker_host_receipt': '/opt/worker-host-bundle.json',
         'worker_runtime_receipt': '/opt/worker-runtime-bundle.json',
@@ -197,23 +197,9 @@ class ProfileTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_dead_dispatcher_prevents_success(self):
-        with patch.object(host, 'state', side_effect=['active'] * 4 + ['failed']):
+        with patch.object(host, 'state', side_effect=['active'] * 3 + ['failed']):
             with self.assertRaisesRegex(RuntimeError, 'dispatcher'):
                 host.require_active_services()
-
-    def test_redis_probe_requires_pong(self):
-        for reply, expected in [(b'+PONG\r\n', True), (b'-ERR unavailable\r\n', False)]:
-            client, server = socket.socketpair()
-            def respond():
-                with server:
-                    self.assertEqual(server.recv(128), b'*1\r\n$4\r\nPING\r\n')
-                    server.sendall(reply)
-            thread = threading.Thread(target=respond)
-            thread.start()
-            with patch.object(host.socket, 'create_connection', return_value=client):
-                self.assertEqual(host.redis_ready(), expected)
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
 
     def test_wait_is_bounded(self):
         with patch.object(host.time, 'monotonic', side_effect=[0, 121]), patch.object(host.time, 'sleep') as sleep:

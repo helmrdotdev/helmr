@@ -28,21 +28,18 @@ for migration in "${migration_dir}"/*.sql; do
   done < <(awk 'BEGIN { RS = ";"; ORS = "\036" } NF { print }' "${migration}")
 done
 
-org_id="${HELMR_CLICKHOUSE_CANARY_ORG_ID:-00000000-0000-0000-0000-000000000001}"
-project_id="${HELMR_CLICKHOUSE_CANARY_PROJECT_ID:-00000000-0000-0000-0000-000000000002}"
 environment_id="${HELMR_CLICKHOUSE_CANARY_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000003}"
-subject_id="${HELMR_CLICKHOUSE_CANARY_SUBJECT_ID:-$(new_uuid)}"
-idem="canary:${org_id}:${subject_id}"
+command_id="${HELMR_CLICKHOUSE_CANARY_COMMAND_ID:-$(new_uuid)}"
 
 curl "${curl_args[@]}" "${url}/" --data-binary @- <<SQL
-INSERT INTO helmr_telemetry.events
-    (org_id, project_id, environment_id, subject_kind, subject_id, event_kind, seq, message, body, idempotency_key, retention_class, redaction_class, source, observed_at, accepted_at)
+INSERT INTO helmr_telemetry.computer_command_logs
+    (environment_id, command_id, producer_epoch, stream, sequence, through_sequence, kind, observed_at_unix_nano, data, dropped_bytes, complete, byte_offset, through_byte_offset, accepted_at, expires_at)
 VALUES
-    ('${org_id}', '${project_id}', '${environment_id}', 'canary', '${subject_id}', 'canary.ready', 1, 'ok', '{}', '${idem}', 'standard', 'internal', 'canary', now64(3), now64(3));
+    ('${environment_id}', '${command_id}', 1, 'stdout', 1, 1, 'end', 1, '', 0, true, 0, 0, now64(6), now64(6) + INTERVAL 90 DAY);
 SQL
 
 count="$(
-  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.events FINAL WHERE org_id = '${org_id}' AND subject_kind = 'canary' AND subject_id = '${subject_id}' AND idempotency_key = '${idem}' FORMAT TabSeparatedRaw"
+  curl "${curl_args[@]}" "${url}/" --data-binary "SELECT count() FROM helmr_telemetry.computer_command_logs FINAL WHERE environment_id = '${environment_id}' AND command_id = '${command_id}' AND kind = 'end'"
 )"
 
 if [[ "${count}" != "1" ]]; then

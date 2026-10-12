@@ -354,7 +354,6 @@ ciApps
         toolsets.ciGoConsole
         ++ [
           pkgs.postgresql_18
-          pkgs.redis
           pkgsClickHouse.clickhouse
           pkgs.curl
           pkgsUnstable.playwright-driver.browsers

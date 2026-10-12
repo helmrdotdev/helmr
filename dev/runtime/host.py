@@ -27,7 +27,7 @@ import uuid
 CONFIG = Path('/etc/helmr/verification')
 DATA = Path('/var/lib/helmr-verification')
 USER = 'helmr-services'
-SERVICES = ['postgres', 'redis', 'clickhouse', 'control-plane', 'dispatcher']
+SERVICES = ['postgres', 'clickhouse', 'control-plane', 'dispatcher']
 WORKER_DATA = Path('/var/lib/helmr/verification-worker')
 JAILER_DATA = Path('/var/lib/helmr/jailer')
 SYSTEMD = Path('/etc/systemd/system')
@@ -77,7 +77,7 @@ def compile_config(raw):
     if type(reply_faults) is not bool:
         raise ValueError('capture_reply_faults must be a boolean')
     binaries = raw['binaries']
-    if set(binaries) != {'postgres', 'initdb', 'psql', 'redis-server', 'clickhouse'}:
+    if set(binaries) != {'postgres', 'initdb', 'psql', 'clickhouse'}:
         raise ValueError('binaries must name all backing-service tools')
     for value in binaries.values():
         if not re.fullmatch(r'/[A-Za-z0-9_./+-]+', value) or '..' in Path(value).parts:
@@ -101,7 +101,7 @@ def compile_config(raw):
     db_password = secrets.token_hex(32)
     owned = {
         'DEPLOYMENT_MODE': 'self-hosted', 'DATABASE_URL': f'postgres://helmr:{db_password}@127.0.0.1:55432/helmr?sslmode=disable',
-        'REDIS_URL': 'redis://127.0.0.1:56379/0', 'CLICKHOUSE_URL': 'http://127.0.0.1:58123',
+        'CLICKHOUSE_URL': 'http://127.0.0.1:58123',
         'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'PUBLIC_URL': public_url,
         'BOOTSTRAP_ENABLED': 'true',
         'BOOTSTRAP_REGION_ID': 'default', 'BOOTSTRAP_WORKER_GROUP_NAME': 'default',
@@ -184,7 +184,6 @@ def files(cfg):
     }
     commands = {
         'postgres': f'{b["postgres"]} -D {DATA}/postgres -h 127.0.0.1 -p 55432 -k {DATA}',
-        'redis': f'{b["redis-server"]} --bind 127.0.0.1 --port 56379 --dir {DATA}/redis --appendonly yes --daemonize no',
         'clickhouse': f'{b["clickhouse"]} server --config-file={CONFIG}/clickhouse.xml',
         'control-plane': b['control-plane'], 'dispatcher': b['dispatcher'],
     }
@@ -216,13 +215,6 @@ def wait_for(check, label, seconds=120, unit_name=None):
 def http_ready(url):
     with urllib.request.urlopen(url, timeout=2) as response:
         return response.status == 200
-
-
-def redis_ready():
-    with socket.create_connection(('127.0.0.1', 56379), timeout=2) as connection:
-        connection.sendall(b'*1\r\n$4\r\nPING\r\n')
-        with connection.makefile('rb') as response:
-            return response.readline(64) == b'+PONG\r\n'
 
 
 def require_active_services():
@@ -287,10 +279,9 @@ def install(raw):
     cfg['control_plane']['DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH'] = str(CONFIG / 'runtime-descriptor.json')
     DATA.mkdir(mode=0o700)
     shutil.chown(DATA, user=USER, group=USER)
-    for name in ['redis', 'clickhouse']:
-        path = DATA / name
-        path.mkdir(mode=0o700)
-        shutil.chown(path, user=USER, group=USER)
+    path = DATA / 'clickhouse'
+    path.mkdir(mode=0o700)
+    shutil.chown(path, user=USER, group=USER)
     for name, content in files(cfg).items():
         path = CONFIG / name
         path.write_text(content)
@@ -341,7 +332,6 @@ def start(cfg):
         sql(f"CREATE ROLE helmr LOGIN PASSWORD '{cfg['database_password']}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
     if sql("SELECT count(*) FROM pg_database WHERE datname='helmr'") == '0':
         sql('CREATE DATABASE helmr OWNER helmr')
-    wait_for(redis_ready, 'Redis', unit_name=unit('redis'))
     wait_for(lambda: http_ready('http://127.0.0.1:58123/ping'), 'ClickHouse', unit_name=unit('clickhouse'))
     cp = cfg['control_plane']
     # Commands run as the same service identity, against real backing services.
@@ -630,7 +620,7 @@ def reset_private_data(cfg):
     for device in cfg['worker']['WORKER_COMPUTER_DEVICES'].split():
         if Path('/sys/block', Path(device).name, 'pid').exists():
             raise RuntimeError('a Worker NBD device remains connected; refusing data reset')
-    paths = [DATA / n for n in ['postgres', 'redis', 'clickhouse']] + [WORKER_DATA, JAILER_DATA]
+    paths = [DATA / n for n in ['postgres', 'clickhouse']] + [WORKER_DATA, JAILER_DATA]
     mounts = [line.split()[4] for line in Path('/proc/self/mountinfo').read_text().splitlines()]
     for path in paths:
         if path.is_symlink() or any(m == str(path) or m.startswith(str(path) + '/') for m in mounts):
@@ -638,10 +628,9 @@ def reset_private_data(cfg):
     for path in paths:
         if path.exists():
             shutil.rmtree(path)
-    for name in ['redis', 'clickhouse']:
-        path = DATA / name
-        path.mkdir(mode=0o700)
-        shutil.chown(path, user=USER, group=USER)
+    path = DATA / 'clickhouse'
+    path.mkdir(mode=0o700)
+    shutil.chown(path, user=USER, group=USER)
     JAILER_DATA.mkdir(mode=0o755)
     service_run(cfg['binaries']['initdb'], '-D', str(DATA / 'postgres'), '--auth-local=peer', '--auth-host=scram-sha-256')
 

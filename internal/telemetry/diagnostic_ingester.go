@@ -102,3 +102,14 @@ func (i *DiagnosticIngester) ExportOnce(ctx context.Context, kind string) error 
 	}
 	return errors.Join(retireErr, retryErr)
 }
+
+func sleep(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

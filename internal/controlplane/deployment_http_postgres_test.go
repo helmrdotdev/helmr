@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -74,6 +75,20 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 
 	expectDeployment(t, http.MethodGet, base+"/deployments/current")
 	expectDeployment(t, http.MethodGet, base+"/deployments/"+deploymentID.String())
+	// Promotion recorded one retained event; the page reads it from PostgreSQL in
+	// acceptance order with an opaque cursor.
+	events := fixture.request(t, http.MethodGet, base+"/deployments/"+deploymentID.String()+"/events?limit=1", viewer, "")
+	var eventPage api.DeploymentEventPage
+	if err := json.Unmarshal(events.Body.Bytes(), &eventPage); err != nil {
+		t.Fatal(err)
+	}
+	if events.Code != http.StatusOK || len(eventPage.Events) != 1 || eventPage.Events[0].Kind != "deployment.promoted" || eventPage.Events[0].Message != "Deployment promoted" || eventPage.NextCursor != nil || eventPage.Events[0].ID == "" {
+		t.Fatalf("events = %d %s", events.Code, events.Body.String())
+	}
+	if after := fixture.request(t, http.MethodGet, base+"/deployments/"+deploymentID.String()+"/events?cursor="+eventPage.Events[0].ID, viewer, ""); after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"events":[]`) {
+		t.Fatalf("events after cursor = %d %s", after.Code, after.Body.String())
+	}
+	expectError(t, http.MethodGet, base+"/deployments/"+uuid.NewV7().String()+"/events", owner, http.StatusNotFound, "not_found")
 	expectError(t, http.MethodGet, base+"/deployments/"+uuid.NewV7().String(), owner, http.StatusNotFound, "not_found")
 
 	list := fixture.request(t, http.MethodGet, base+"/deployments", viewer, "")

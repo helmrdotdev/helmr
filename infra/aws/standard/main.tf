@@ -191,8 +191,6 @@ module "controlplane" {
   smtp_addr                                  = var.smtp_addr
   smtp_username                              = var.smtp_username
   smtp_password_enabled                      = var.smtp_password_enabled
-  redis_node_type                            = var.redis_node_type
-  redis_node_count                           = var.redis_node_count
   certificate_arn                            = var.certificate_arn
   allow_insecure_http                        = false
   enable_cloudfront                          = var.enable_cloudfront

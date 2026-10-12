@@ -61,7 +61,7 @@ var tableOwners = map[string]string{
 	"slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_requests": "internal/slack",
 	"slack_thread_sources": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
 	// telemetry
-	"telemetry_outbox": "internal/telemetry",
+	"diagnostic_chunks": "internal/telemetry", "deployment_events": "internal/deployment",
 	// worker supply
 	"vm_platforms": "internal/workergroup", "worker_group_tokens": "internal/workergroup", "worker_groups": "internal/workergroup",
 	"worker_host_secrets": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
@@ -88,7 +88,6 @@ var coWriters = map[string]map[string]string{
 	"slack_requests":             {"internal/agent": "owner split"},
 	"slack_thread_sources":       {"internal/agent": "owner split"},
 	"slack_threads":              {"internal/agent": "owner split"},
-	"telemetry_outbox":           {"internal/deployment": "deployment events move to their own table in the telemetry split"},
 	"auth_sessions":              {"internal/org": "member disablement revokes sessions"},
 	"users":                      {"internal/org": "organization creation records the owner"},
 }
@@ -107,7 +106,6 @@ var queryFileOwners = map[string]string{
 	"computer_objects.sql":      "internal/agent",
 	"control_outbox.sql":        "internal/secret",
 	"device_codes.sql":          "internal/identity",
-	"events.sql":                "internal/deployment",
 	"invitations.sql":           "internal/org",
 	"magic_links.sql":           "internal/identity",
 	"org_members.sql":           "internal/org",
@@ -117,7 +115,6 @@ var queryFileOwners = map[string]string{
 	"regions.sql":               "internal/region",
 	"schedule_reads.sql":        "internal/controlplane",
 	"secrets.sql":               "internal/secret",
-	"telemetry_outbox.sql":      "internal/telemetry",
 	"worker_capacity_hosts.sql": "internal/workergroup",
 	"worker_drain.sql":          "internal/workergroup",
 	"worker_groups.sql":         "internal/workergroup",

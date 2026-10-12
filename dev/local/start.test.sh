@@ -16,7 +16,7 @@ require_cmd() {
   done
 }
 
-require_cmd go bun curl postgres psql redis-server redis-cli clickhouse pg_ctl initdb python3
+require_cmd go bun curl postgres psql clickhouse pg_ctl initdb python3
 
 configure_stack() {
   local dir="$1"
@@ -36,7 +36,7 @@ configure_stack() {
   # Lifecycle checks never touch object storage; the closed endpoint keeps it so.
   export CAS_URI="s3://helmr-dev-test-cas?endpoint=http://127.0.0.1:9"
   export PLATFORM_STORE_URI="s3://helmr-dev-test-platform?endpoint=http://127.0.0.1:9"
-  unset DATABASE_URL REDIS_URL CLICKHOUSE_URL DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH
+  unset DATABASE_URL CLICKHOUSE_URL DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH
   unset CONTROL_PLANE_ADDR HELMR_DEV_BACKEND_URL
   helmr_dev_init "${ROOT}"
 }
@@ -250,9 +250,6 @@ test_concurrent_stacks_isolated() {
   runtime_b="${HELMR_DEV_RUNTIME_DIR}"
   if [ "${runtime_a}" = "${runtime_b}" ]; then
     fail "concurrent stacks share runtime directory ${runtime_a}"
-  fi
-  if [ ! -S "${runtime_a}/redis.sock" ] || [ ! -S "${runtime_b}/redis.sock" ]; then
-    fail "expected isolated redis sockets for concurrent stacks"
   fi
   curl -fsS "http://127.0.0.1:36220/readyz" >/dev/null
   curl -fsS "http://127.0.0.1:36230/readyz" >/dev/null
