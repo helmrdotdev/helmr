@@ -187,11 +187,11 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err = scope.checkKeyClosure(ctx, tx, object); err != nil {
 			return err
 		}
-		raw, err := json.Marshal(root)
+		params, err := retainDiskRootParams(scope.environmentID, root)
 		if err != nil {
 			return err
 		}
-		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: scope.environmentID, Locator: raw})
+		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
@@ -271,7 +271,7 @@ func (s *saveObjectScope) loadSaveStorage(ctx context.Context, tx pgx.Tx) error 
 	}
 	s.writeKey = key.String()
 	s.allowedKeys = map[string]bool{s.writeKey: true}
-	rows, err := tx.Query(ctx, `SELECT k.key_id FROM computer_disk_roots r JOIN computer_object_keys k ON (k.environment_id,k.digest)=(r.environment_id,r.root_pack_digest) WHERE r.environment_id=$1 AND r.id=$2`, s.environmentID, s.baseRoot)
+	rows, err := tx.Query(ctx, `SELECT k.key_id FROM computer_disk_roots r JOIN computer_object_keys k ON (k.environment_id,k.digest)=(r.environment_id,r.pack_digest) WHERE r.environment_id=$1 AND r.id=$2`, s.environmentID, s.baseRoot)
 	if err != nil {
 		return err
 	}

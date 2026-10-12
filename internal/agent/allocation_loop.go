@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"log/slog"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db"
 
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"

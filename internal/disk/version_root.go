@@ -1,11 +1,9 @@
 package disk
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -77,23 +75,4 @@ func (r VersionRoot) Validate(capacity int64) error {
 		return errors.New("invalid version page salt")
 	}
 	return nil
-}
-
-func ParseVersionRoot(raw []byte, capacity int64) (VersionRoot, error) {
-	var root VersionRoot
-	if len(raw) == 0 || len(raw) > 2048 {
-		return root, errors.New("invalid version root encoding size")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&root); err != nil {
-		return VersionRoot{}, errors.New("invalid version root encoding")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return VersionRoot{}, errors.New("trailing version root data")
-	}
-	if err := root.Validate(capacity); err != nil {
-		return VersionRoot{}, err
-	}
-	return root, nil
 }

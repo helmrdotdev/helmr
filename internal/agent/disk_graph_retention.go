@@ -35,7 +35,7 @@ func collectComputerDiskGraph(ctx context.Context, database db.TxDB) error {
 		}
 	}
 	rows, err = database.Query(ctx, `SELECT o.environment_id,o.digest FROM computer_objects o
- WHERE NOT EXISTS(SELECT 1 FROM computer_disk_roots r WHERE r.environment_id=o.environment_id AND r.root_pack_digest=o.digest)
+ WHERE NOT EXISTS(SELECT 1 FROM computer_disk_roots r WHERE r.environment_id=o.environment_id AND r.pack_digest=o.digest)
  AND NOT EXISTS(SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
  AND NOT EXISTS(SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest)
  ORDER BY o.rank DESC,o.environment_id,o.digest LIMIT 100 FOR UPDATE OF o SKIP LOCKED`)

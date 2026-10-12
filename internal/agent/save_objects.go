@@ -419,7 +419,7 @@ func (s saveObjectScope) requireAdmittedObject(ctx context.Context, tx pgx.Tx, d
 	}
 	var admitted bool
 	err := tx.QueryRow(ctx, `WITH RECURSIVE retained(digest,rank) AS (
-      SELECT root_pack_digest,root_pack_rank FROM computer_disk_roots WHERE environment_id=$1 AND id=$5
+      SELECT pack_digest,pack_rank FROM computer_disk_roots WHERE environment_id=$1 AND id=$5
     ), ancestors(digest) AS (
       SELECT $2::text UNION SELECT e.parent_digest FROM computer_object_edges e JOIN ancestors a ON e.child_digest=a.digest WHERE e.environment_id=$1
     ), source(digest,rank) AS (

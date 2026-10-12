@@ -172,7 +172,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
- UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	var resourceList api.ListTemplateDefinitionsResponse
 	if err := json.Unmarshal(get("/v1/templates", reader, http.StatusOK), &resourceList); err != nil {

@@ -340,7 +340,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	independent.deployment = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), p.f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$3,'sha256:'||repeat('9',64) FROM deployments WHERE environment_id=$1 AND id=$2;
  INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'independent-image');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) SELECT environment_id,$3,$3,preparation_spec_id,resources FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2`, pgx.QueryExecModeSimpleProtocol, p.f.env, p.f.deployment, independent.deployment)
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,$3,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2`, pgx.QueryExecModeSimpleProtocol, p.f.env, p.f.deployment, independent.deployment)
 
 	dbtest.MustExec(t, t.Context(), p.f.pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) SELECT environment_id,$3,$4,spec,seed FROM computer_preparation_specs WHERE environment_id=$1 AND id=$2`, p.f.env, p.f.deployment, independent.deployment, "sha256:"+strings.Repeat("9", 64))
 	other, key := preparationPublicationTestFor(t, preparationFixtureFor(t, independent))

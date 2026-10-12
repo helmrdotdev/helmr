@@ -47,8 +47,8 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
  deployment AS (INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat(replace($2::text,'-',''),2))),
  template AS (INSERT INTO templates(environment_id,id,key) VALUES($1,$2,$2::text)),
- definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,resources) VALUES($1,$2,$2,$2,'{}'))
- INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,'{}',34359738368)`, env, s.ID)
+ definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$2,$2,$2,1000,536870912,NULL))
+ INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,1000,536870912,NULL,34359738368)`, env, s.ID)
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'session',uuidv7())`, env, s.ID)
 	default:
 		t.Fatal("unsupported diagnostic test owner")

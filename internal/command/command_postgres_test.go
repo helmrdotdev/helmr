@@ -472,7 +472,7 @@ func TestCommandClaimRacesCaptureUnderComputerLock(t *testing.T) {
 func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	f := commandFixture(t)
 	store, secretID := commandSecrets(t, f)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1 AND deployment_id=$2`, f.Environment, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2`, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed='{"profile":"linux-amd64-ext4-v1"}' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)
 	creator := computer.NewCreator(store)
 	key := "repair-shell"

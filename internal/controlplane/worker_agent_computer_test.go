@@ -457,7 +457,7 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f agenttest.Fixture, request wor
 	key, root, instance := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	targetCredential := "new-target-channel"
 	credentialDigest := sha256.Sum256([]byte(targetCredential))
-	locator := fmt.Sprintf(`{"format_version":1,"logical_bytes":4096,"pack":{"digest":%q,"size_bytes":64,"rank":1},"page":{"key_id":%q},"offset":8}`, pack, key.String())
+	locator := fmt.Sprintf(`{"format_version":1,"logical_bytes":4096,"pack":{"digest":%q,"size_bytes":64,"rank":2},"page":{"digest":%q,"salt":%q,"key_id":%q,"kind":3,"count":1,"size_bytes":32},"offset":8}`, pack, platform, strings.Repeat("ab", 32), key.String())
 	manifest, err := json.Marshal(computercheckpoint.Manifest{Runtime: vm.CheckpointIdentity{RuntimeBackend: "firecracker", RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0", RuntimeID: platform, KernelDigest: platform, InitramfsDigest: platform, RootfsDigest: platform, VMConfigDigest: platform, VMVCPUCount: 1, CPUConfigDigest: platform}})
 	if err != nil {
 		t.Fatal(err)
@@ -466,9 +466,9 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f agenttest.Fixture, request wor
  INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($4,$1,$2,'test',decode('01','hex'));
  INSERT INTO cas_blobs(digest,size_bytes) VALUES($6,64);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,64,'application/octet-stream' FROM environments WHERE id=$1;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',1,'{}',clock_timestamp() FROM environments WHERE id=$1;
+ INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',2,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$4,true);
- INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($1,$5,$7);
+ `+agenttest.DiskRootInsert("$1", "$5", "$7")+`;
  UPDATE computer_saves SET status='published',root_id=$5,captured_root_digest=decode(substring($8::text from 8),'hex'),flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),capture_evidence='fixture coherent cut',publication_evidence='fixture certified root' WHERE id=$3;
  UPDATE computers SET recovery_save_id=$3 WHERE environment_id=$1 AND id=$2;
  UPDATE computer_checkpoints SET status='ready',manifest=$9,vm_platform_id=$8,ready_at=clock_timestamp() WHERE id=$10;

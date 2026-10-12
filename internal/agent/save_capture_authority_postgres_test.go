@@ -2,9 +2,10 @@ package agent
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {

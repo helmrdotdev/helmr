@@ -9,13 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
-	"math"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
+
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -156,18 +155,14 @@ func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, p
 	return s, err
 }
 
-func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSupply, raw []byte) (AllocationShape, error) {
+func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSupply, cpuMillis, memoryBytes int64) (AllocationShape, error) {
 	shape := supply.shape
-	var declared definition.ResourcesManifest
-	if json.Unmarshal(raw, &declared) != nil || definition.ValidateResourcesManifest(declared) != nil || declared.MemoryMiB > math.MaxInt64/(1<<20) {
-		return shape, ErrInvalidInput
-	}
 	var err error
-	shape.CPUMillis, err = vm.ReservedCPUMillis(declared.MilliCPU)
+	shape.CPUMillis, err = vm.ReservedCPUMillis(cpuMillis)
 	if err != nil {
 		return shape, ErrInvalidInput
 	}
-	shape.MemoryBytes = declared.MemoryMiB * (1 << 20)
+	shape.MemoryBytes = memoryBytes
 	shape.VCPUCount = shape.CPUMillis / 1000
 	if shape.MemoryBytes > supply.maxMemory || shape.CPUMillis > supply.maxCPU || shape.ScratchBytes <= 0 {
 		return shape, ErrNotReady
@@ -281,11 +276,11 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		var resources []byte
-		if err := tx.QueryRow(ctx, `SELECT resources FROM template_definitions WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, p.SpecID).Scan(&resources); err != nil {
+		var cpuMillis, memoryBytes int64
+		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes FROM template_definitions WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, p.SpecID).Scan(&cpuMillis, &memoryBytes); err != nil {
 			return err
 		}
-		shape, err := qualifyAllocationShape(ctx, tx, supply, resources)
+		shape, err := qualifyAllocationShape(ctx, tx, supply, cpuMillis, memoryBytes)
 		if err != nil {
 			return err
 		}
@@ -381,15 +376,15 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		var resources []byte
+		var cpuMillis, memoryBytes int64
 		var base string
-		if err := tx.QueryRow(ctx, `SELECT resources,'sha256:'||encode(initial_root_digest,'hex') FROM computers c WHERE environment_id=$1 AND id=$2
+		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes,'sha256:'||encode(initial_root_digest,'hex') FROM computers c WHERE environment_id=$1 AND id=$2
  AND initial_root_id IS NOT NULL AND image_id IS NOT NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND integrity_fault_at IS NULL AND recovery_save_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
- AND (SELECT COALESCE(max(l.epoch),0) FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2)=$3::bigint-1`, env, computer, epoch).Scan(&resources, &base); err != nil {
+ AND (SELECT COALESCE(max(l.epoch),0) FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2)=$3::bigint-1`, env, computer, epoch).Scan(&cpuMillis, &memoryBytes, &base); err != nil {
 			return err
 		}
-		shape, err := qualifyAllocationShape(ctx, tx, supply, resources)
+		shape, err := qualifyAllocationShape(ctx, tx, supply, cpuMillis, memoryBytes)
 		if err != nil {
 			return err
 		}

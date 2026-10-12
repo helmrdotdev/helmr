@@ -149,22 +149,21 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 		if err := tx.QueryRow(ctx, `SELECT restored_from_save_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&restored); err != nil {
 			return err
 		}
-		var raw []byte
-		var logicalBytes int64
+		var root disk.VersionRoot
 		if restored == nil {
 			result.source.BaseVersion = initial
-			err = tx.QueryRow(ctx, `SELECT r.id,r.locator,r.logical_bytes FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, identity.EnvironmentID, identity.ComputerID).Scan(&result.rootID, &raw, &logicalBytes)
+			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, identity.EnvironmentID, identity.ComputerID).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
 		} else {
 			result.source.BaseVersion = restored.String()
-			err = tx.QueryRow(ctx, `SELECT r.id,r.locator,r.logical_bytes FROM computer_saves s JOIN computer_disk_roots r ON (r.environment_id,r.id)=(s.environment_id,s.root_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.id=$3`, identity.EnvironmentID, identity.ComputerID, *restored).Scan(&result.rootID, &raw, &logicalBytes)
+			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves s JOIN computer_disk_roots r ON (r.environment_id,r.id)=(s.environment_id,s.root_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.id=$3`, identity.EnvironmentID, identity.ComputerID, *restored).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
 		}
 		if err != nil {
 			return err
 		}
-		result.source.Root, err = disk.ParseVersionRoot(raw, logicalBytes)
-		if err != nil {
+		if err = root.Validate(root.LogicalBytes); err != nil {
 			return err
 		}
+		result.source.Root = root
 		if restored == nil {
 			digest, err := result.source.Root.Digest()
 			if err != nil {

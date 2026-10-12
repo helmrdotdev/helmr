@@ -23,8 +23,8 @@ func runtimeAdmissionOrigin(t *testing.T) (agenttest.Fixture, agent.Admission, a
 	t.Helper()
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
- UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
- UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
+ UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
 	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if err != nil {
 		t.Fatal(err)

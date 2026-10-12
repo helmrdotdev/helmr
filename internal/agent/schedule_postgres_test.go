@@ -55,7 +55,7 @@ func TestScheduleRejectionRollsBackAdmissionAndRetainsDisposition(t *testing.T) 
 	schedule := seedSchedule(t, f, time.Now().UTC().Truncate(time.Minute))
 	// Force a late admission failure after the token reservation, proving its
 	// savepoint preserves a rejected occurrence without leaking that reservation.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":0}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=1125899906842624 WHERE environment_id=$1`, f.env)
 	var tokens string
 	if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens::text FROM environments WHERE id=$1`, f.env).Scan(&tokens); err != nil {
 		t.Fatal(err)

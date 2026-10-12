@@ -602,7 +602,9 @@ CREATE TABLE template_definitions (
     deployment_id uuid NOT NULL,
     template_id uuid NOT NULL,
     preparation_spec_id uuid NOT NULL,
-    resources jsonb NOT NULL CHECK (jsonb_typeof(resources) = 'object'),
+    cpu_millis bigint NOT NULL CHECK (cpu_millis > 0),
+    memory_bytes bigint NOT NULL CHECK (memory_bytes > 0 AND memory_bytes % 1048576 = 0),
+    disk_bytes bigint CHECK (disk_bytes > 0 AND disk_bytes % 1048576 = 0),
     refresh_every_ms bigint CHECK (refresh_every_ms > 0),
     max_image_age_ms bigint CHECK (max_image_age_ms > 0),
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
@@ -834,21 +836,30 @@ CREATE INDEX computer_object_edges_child ON computer_object_edges(environment_id
 CREATE TABLE computer_disk_roots (
     environment_id UUID NOT NULL,
     id UUID PRIMARY KEY,
-    locator JSONB NOT NULL CHECK ((jsonb_typeof(locator) = 'object' AND locator->>'format_version' = '1') IS TRUE),
-    logical_bytes BIGINT GENERATED ALWAYS AS ((locator->>'logical_bytes')::bigint) STORED NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    format_version INTEGER NOT NULL CHECK (format_version = 1),
+    logical_bytes BIGINT NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    pack_digest TEXT NOT NULL CHECK (pack_digest ~ '^sha256:[0-9a-f]{64}$'),
+    pack_size_bytes BIGINT NOT NULL,
+    pack_rank INTEGER NOT NULL,
+    page_digest TEXT NOT NULL CHECK (page_digest ~ '^sha256:[0-9a-f]{64}$'),
+    page_salt TEXT NOT NULL CHECK (page_salt ~ '^[0-9a-f]{64}$'),
+    page_key_id UUID NOT NULL,
+    page_kind INTEGER NOT NULL,
+    page_count INTEGER NOT NULL,
+    page_size_bytes BIGINT NOT NULL,
+    page_offset BIGINT NOT NULL,
     root_kind TEXT GENERATED ALWAYS AS ('root'::text) STORED,
-    root_pack_digest TEXT GENERATED ALWAYS AS (locator->'pack'->>'digest') STORED NOT NULL,
-    root_pack_size_bytes BIGINT GENERATED ALWAYS AS ((locator->'pack'->>'size_bytes')::bigint) STORED NOT NULL,
-    root_pack_rank INTEGER GENERATED ALWAYS AS ((locator->'pack'->>'rank')::integer) STORED NOT NULL,
-    root_page_key_id UUID GENERATED ALWAYS AS ((locator->'page'->>'key_id')::uuid) STORED NOT NULL,
     direct_key_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    root_page_offset BIGINT GENERATED ALWAYS AS ((locator->>'offset')::bigint) STORED NOT NULL CHECK (root_page_offset >= 8),
+    -- A root is one encrypted metadata page inside a rank-separated pack.
+    CHECK (pack_size_bytes BETWEEN 8 AND 4194304 AND pack_rank BETWEEN 2 AND 6
+        AND page_kind = 3 AND page_count = 1 AND page_size_bytes > 20 AND page_size_bytes <= pack_size_bytes
+        AND page_offset >= 8 AND page_offset <= pack_size_bytes - page_size_bytes),
     UNIQUE (environment_id, id),
-    UNIQUE (environment_id, root_pack_digest, root_page_offset),
-    FOREIGN KEY (environment_id, root_pack_digest, root_pack_size_bytes, root_pack_rank, certification_required, root_kind)
+    UNIQUE (environment_id, pack_digest, page_offset),
+    FOREIGN KEY (environment_id, pack_digest, pack_size_bytes, pack_rank, certification_required, root_kind)
         REFERENCES computer_objects(environment_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, root_pack_digest, root_page_key_id, direct_key_required)
+    FOREIGN KEY (environment_id, pack_digest, page_key_id, direct_key_required)
         REFERENCES computer_object_keys(environment_id, digest, key_id, is_direct) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 );
@@ -887,7 +898,9 @@ CREATE TABLE computers (
     preparation_spec_id uuid,
     origin_deployment_id uuid NOT NULL,
     origin_template_id uuid NOT NULL,
-    resources jsonb NOT NULL CHECK (jsonb_typeof(resources)='object'),
+    cpu_millis bigint NOT NULL CHECK (cpu_millis>0),
+    memory_bytes bigint NOT NULL CHECK (memory_bytes>0 AND memory_bytes%1048576=0),
+    disk_bytes bigint CHECK (disk_bytes>0 AND disk_bytes%1048576=0),
     storage_reservation_bytes bigint CHECK (storage_reservation_bytes>0),
     preparation_id uuid,
     preparation_deadline_at timestamptz,

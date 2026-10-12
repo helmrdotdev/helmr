@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -50,7 +51,9 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		Spec         json.RawMessage `json:"spec"`
 		Seed         json.RawMessage `json:"seed"`
 		BuildRefs    json.RawMessage `json:"build_refs"`
-		Resources    json.RawMessage `json:"resources"`
+		CPUMillis    int64           `json:"cpu_millis"`
+		MemoryBytes  int64           `json:"memory_bytes"`
+		DiskBytes    *int64          `json:"disk_bytes"`
 		RuntimeRefs  json.RawMessage `json:"runtime_refs"`
 		Every        *int64          `json:"every_ms"`
 		MaxAge       *int64          `json:"max_age_ms"`
@@ -81,9 +84,13 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		if err != nil {
 			return err
 		}
-		resources, err := json.Marshal(m.Resources)
-		if err != nil {
-			return err
+		if definition.ValidateResourcesManifest(m.Resources) != nil || m.Resources.MemoryMiB > math.MaxInt64/(1<<20) || (m.Resources.DiskMiB != nil && *m.Resources.DiskMiB > math.MaxInt64/(1<<20)) {
+			return ErrInvalidInput
+		}
+		var diskBytes *int64
+		if m.Resources.DiskMiB != nil {
+			value := *m.Resources.DiskMiB * (1 << 20)
+			diskBytes = &value
 		}
 		runtimeBindings, err := secretbinding.CanonicalReferences(m.Secrets)
 		if err != nil {
@@ -98,7 +105,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			every = &m.Refresh.EveryMs
 			maxAge = m.Refresh.MaxAgeMs
 		}
-		inputs = append(inputs, input{ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, Resources: resources, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
+		inputs = append(inputs, input{ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, CPUMillis: m.Resources.MilliCPU, MemoryBytes: m.Resources.MemoryMiB * (1 << 20), DiskBytes: diskBytes, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
 		digests = append(digests, digest)
 	}
 	if len(inputs) == 0 {
@@ -232,9 +239,9 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if count != len(buildBindings) {
 		return ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
- SELECT $1,$2,v.template_id,s.id,v.resources,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
- FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,resources jsonb,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
+	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
+ SELECT $1,$2,v.template_id,s.id,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
  JOIN computer_preparation_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
 	if err != nil {
 		return err
