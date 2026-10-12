@@ -222,20 +222,6 @@ type ComputerObject struct {
 	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
 }
 
-type ControlOutbox struct {
-	ID             pgtype.UUID        `json:"id"`
-	Topic          string             `json:"topic"`
-	Payload        []byte             `json:"payload"`
-	Status         string             `json:"status"`
-	Attempts       int32              `json:"attempts"`
-	AvailableAt    pgtype.Timestamptz `json:"available_at"`
-	ClaimedBy      pgtype.Text        `json:"claimed_by"`
-	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
-	LastError      pgtype.Text        `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
-}
-
 type DeviceCode struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`

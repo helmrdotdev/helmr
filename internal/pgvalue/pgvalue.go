@@ -37,17 +37,6 @@ func Timestamptz(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
 }
 
-func TimestamptzUTCZeroInvalid(value time.Time) pgtype.Timestamptz {
-	if value.IsZero() {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
-}
-
-func Interval(duration time.Duration) pgtype.Interval {
-	return pgtype.Interval{Microseconds: duration.Microseconds(), Valid: true}
-}
-
 func UUID(value uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: value, Valid: true}
 }

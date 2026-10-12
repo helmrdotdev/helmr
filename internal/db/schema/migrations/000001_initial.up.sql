@@ -1183,56 +1183,6 @@ CREATE UNIQUE INDEX platform_retry_keys_command_creation ON platform_retry_keys(
 
 CREATE INDEX platform_retry_keys_receipt_expiry ON platform_retry_keys(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL;
 
-CREATE TABLE control_outbox (
-    id UUID PRIMARY KEY,
-    topic TEXT NOT NULL CHECK (btrim(topic) <> '' AND octet_length(topic) <= 128),
-    payload JSONB NOT NULL CHECK (
-        jsonb_typeof(payload) = 'object'
-    ),
-    status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'claimed', 'delivered', 'dead_lettered')),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    claimed_by TEXT CHECK (claimed_by IS NULL OR btrim(claimed_by) <> ''),
-    claim_expires_at TIMESTAMPTZ,
-    last_error TEXT CHECK (
-        last_error IS NULL
-        OR (btrim(last_error) <> '' AND octet_length(last_error) <= 2048)
-    ),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    delivered_at TIMESTAMPTZ,
-    CONSTRAINT control_outbox_claim_pair_check CHECK ((claimed_by IS NULL) = (claim_expires_at IS NULL)),
-    CONSTRAINT control_outbox_delivery_lifecycle_check CHECK (
-        (status = 'pending' AND claimed_by IS NULL AND delivered_at IS NULL)
-        OR
-        (status = 'claimed' AND claimed_by IS NOT NULL AND delivered_at IS NULL)
-        OR
-        (status = 'delivered' AND claimed_by IS NULL AND delivered_at IS NOT NULL AND last_error IS NULL)
-        OR
-        (status = 'dead_lettered' AND claimed_by IS NULL AND delivered_at IS NULL AND last_error IS NOT NULL)
-    )
-);
-
-CREATE INDEX control_outbox_delivery_idx
-    ON control_outbox (topic, available_at, id)
-    WHERE status IN ('pending', 'claimed');
-
-CREATE INDEX control_outbox_delivered_prune_idx
-    ON control_outbox (delivered_at, id)
-    WHERE status = 'delivered';
-
-CREATE INDEX control_outbox_pending_created_idx
-    ON control_outbox (created_at, id)
-    WHERE status = 'pending';
-
-CREATE INDEX control_outbox_pending_available_idx
-    ON control_outbox (available_at, id)
-    WHERE status = 'pending';
-
-CREATE INDEX control_outbox_dead_lettered_created_idx
-    ON control_outbox (created_at, id)
-    WHERE status = 'dead_lettered';
-
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
     id uuid PRIMARY KEY,
