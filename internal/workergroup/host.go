@@ -215,12 +215,12 @@ func activationParams(principal HostPrincipal, activation Activation) db.Activat
 func vmPlatformParams(profile vmplatform.Profile) db.UpsertVMPlatformParams {
 	digest := pgtype.Text{String: profile.CPUTemplate.Digest, Valid: profile.CPUTemplate.Digest != ""}
 	return db.UpsertVMPlatformParams{
-		ID: profile.ID, Arch: profile.Arch, Contract: profile.Contract,
+		ID:                profile.ID,
 		DescriptorDigest:  profile.VMRuntimeDescriptorDigest,
 		FirecrackerDigest: profile.FirecrackerDigest, FirecrackerVersion: profile.FirecrackerVersion,
 		SnapshotFormatVersion: profile.SnapshotFormatVersion, HostKernelRelease: profile.HostKernelRelease,
-		CPUTemplateKind: string(profile.CPUTemplate.Kind), CPUTemplateDigest: digest,
-		KernelDigest: profile.KernelDigest, InitramfsDigest: profile.InitramfsDigest, RootfsDigest: profile.RootfsDigest,
+		CPUTemplateDigest: digest,
+		KernelDigest:      profile.KernelDigest, InitramfsDigest: profile.InitramfsDigest, RootfsDigest: profile.RootfsDigest,
 	}
 }
 

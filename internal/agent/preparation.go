@@ -298,7 +298,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			versions = prior // Reconnect never replaces an attempt's already exposed version.
 		} else {
 			for _, id := range ids {
-				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(environment_id,preparation_id,secret_id,version_id,revocation_generation) SELECT $1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.PreparationID, id, versions[id]); err != nil {
+				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,preparation_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.PreparationID, id, versions[id]); err != nil {
 					return err
 				}
 			}

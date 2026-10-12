@@ -129,9 +129,9 @@ func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command
 	}
 	accepted := []int64{current.StdoutAcceptedThrough, current.StderrAcceptedThrough}
 	expired := []int64{current.StdoutExpiredThrough, current.StderrExpiredThrough}
-	expires := []pgtype.Timestamptz{current.StdoutLastExpiresAt, current.StderrLastExpiresAt}
+	lastAccepted := []pgtype.Timestamptz{current.StdoutLastAcceptedAt, current.StderrLastAcceptedAt}
 	for i := range streams {
-		if (expired[i] > positions[i]) || (accepted[i] > positions[i] && expires[i].Valid && !expires[i].Time.After(time.Now())) {
+		if (expired[i] > positions[i]) || (accepted[i] > positions[i] && lastAccepted[i].Valid && !lastAccepted[i].Time.Add(telemetry.DiagnosticRetention).After(time.Now())) {
 			return api.CommandLogPage{}, gone(codedError{code: "command_log_history_unavailable", message: "command log history is outside retention"})
 		}
 	}

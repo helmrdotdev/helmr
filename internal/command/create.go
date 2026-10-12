@@ -74,8 +74,8 @@ func tooLarge(format string, args ...any) InputError {
 
 // Creator is the API key or session that creates a Command.
 type Creator struct {
-	SubjectType string
-	SubjectID   string
+	Kind string
+	ID   uuid.UUID
 }
 
 // CreateRequest asks to run a process on a Computer, once per idempotency
@@ -199,13 +199,12 @@ type createReceipt struct {
 // the Command, and completes the receipt. Secret versions are selected only
 // at the first possible delivery to this Command.
 func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.ComputerCommand, error) {
-	switch request.Creator.SubjectType {
+	switch request.Creator.Kind {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
 		return db.ComputerCommand{}, invalid("creator type is invalid")
 	}
-	creatorID, err := uuid.Parse(request.Creator.SubjectID)
-	if err != nil || creatorID == uuid.Nil() || creatorID.String() != request.Creator.SubjectID {
+	if request.Creator.ID == uuid.Nil() {
 		return db.ComputerCommand{}, invalid("creator ID is invalid")
 	}
 	normalized, err := normalize(request)
@@ -326,16 +325,16 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 			return idempotency.Completion{}, err
 		}
 		created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
-			ID:                   pgvalue.UUID(uuid.NewV7()),
-			EnvironmentID:        pgvalue.UUID(request.EnvironmentID),
-			ComputerID:           pgvalue.UUID(request.ComputerID),
-			Argv:                 normalized.argv,
-			Cwd:                  pgvalue.Text(normalized.cwd),
-			Env:                  normalized.envJSON,
-			TimeoutMs:            normalized.timeoutMS,
-			Stdin:                normalized.stdin,
-			CreatedBySubjectType: request.Creator.SubjectType,
-			CreatedBySubjectID:   request.Creator.SubjectID,
+			ID:            pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			ComputerID:    pgvalue.UUID(request.ComputerID),
+			Argv:          normalized.argv,
+			Cwd:           pgvalue.Text(normalized.cwd),
+			Env:           normalized.envJSON,
+			TimeoutMs:     normalized.timeoutMS,
+			Stdin:         normalized.stdin,
+			CallerKind:    request.Creator.Kind,
+			CallerID:      pgvalue.UUID(request.Creator.ID),
 		})
 		if err != nil {
 			return idempotency.Completion{}, fmt.Errorf("create computer exec: %w", err)

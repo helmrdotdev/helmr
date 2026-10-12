@@ -113,8 +113,6 @@ UPDATE worker_hosts SET updated_at=now() FROM target
 -- name: GetWorkerHostStatus :one
 SELECT worker_hosts.*,
        vm_platforms.rootfs_digest,
-       vm_platforms.contract,
-       vm_platforms.arch,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'

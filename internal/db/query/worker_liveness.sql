@@ -68,21 +68,17 @@ SELECT target.id, target.worker_group_id, target.current_epoch, target.status
 -- Worker Host fence for dispatch and Computer preparation. The caller
 -- (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 -- locks and have validated their status. This query locks the Worker Host and
--- checks epoch, observation freshness and platform. Admission also requires an
+-- checks epoch and observation freshness. Admission also requires an
 -- active host without an admission pause; continuation of admitted work accepts a
 -- draining host and ignores pauses. admitting reports whether the locked host
 -- could admit new work, including the admission pause.
 -- name: LockAdmissionEligibleWorkerHost :one
 SELECT (worker_hosts.status = 'active' AND worker_hosts.admission_paused_reason IS NULL)::boolean AS admitting
   FROM worker_hosts
-  LEFT JOIN vm_platforms
-    ON vm_platforms.id = worker_hosts.vm_platform_id
  WHERE worker_hosts.id = sqlc.arg(id)
    AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)::bigint
    AND (worker_hosts.status = 'active' OR (sqlc.arg(continuation)::boolean AND worker_hosts.status = 'draining'))
    AND worker_hosts.observed_at >= clock_timestamp() - sqlc.arg(worker_freshness_seconds)::bigint * interval '1 second'
    AND (sqlc.arg(continuation)::boolean OR worker_hosts.admission_paused_reason IS NULL)
-   AND vm_platforms.arch = sqlc.arg(runtime_architecture)
-   AND vm_platforms.contract = sqlc.arg(contract)
  FOR UPDATE OF worker_hosts;

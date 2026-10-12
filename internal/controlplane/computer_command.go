@@ -14,16 +14,16 @@ import (
 const computerCommandBodyMaxBytes = int64(2 << 20)
 
 func computerCommandCreatorFromPrincipal(principal auth.Principal) command.Creator {
-	creator := command.Creator{SubjectType: string(principal.Kind)}
+	creator := command.Creator{Kind: string(principal.Kind)}
 	switch principal.Kind {
 	case auth.PrincipalKindAPIKey:
 		if principal.APIKeyID != uuid.Nil() {
-			creator.SubjectID = principal.APIKeyID.String()
+			creator.ID = principal.APIKeyID
 			return creator
 		}
 	case auth.PrincipalKindSession:
 		if principal.SessionID != uuid.Nil() {
-			creator.SubjectID = principal.SessionID.String()
+			creator.ID = principal.SessionID
 			return creator
 		}
 	}

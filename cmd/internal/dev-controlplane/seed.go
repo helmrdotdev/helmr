@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,14 +21,12 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	if _, err := tx.Exec(ctx, devSeedSQL); err != nil {
 		return err
 	}
-	for _, id := range []string{"00000000-0000-7000-8000-000000000401", "00000000-0000-7000-8000-000000000402", "00000000-0000-7000-8000-000000000403"} {
-		env, err := uuid.Parse(id)
-		if err != nil {
-			return err
-		}
-		if err := cfg.environmentExecutionLimits.InitializeEnvironment(ctx, tx, env); err != nil {
-			return err
-		}
+	limits := cfg.environmentExecutionLimits
+	if err := limits.Validate(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, devSeedEnvironmentsSQL, limits.MaxOutstandingAdmissions, limits.MaxCausalDepth, limits.MaxResidentComputers, limits.MaxCPUMillis, limits.MaxMemoryBytes, limits.MaxReservedStorageBytes, limits.PreparationTimeoutMS, limits.AdmissionRatePerSecond, limits.AdmissionBurst); err != nil {
+		return err
 	}
 	if err := seedDemoEnvironmentData(ctx, tx); err != nil {
 		return err
@@ -49,10 +46,18 @@ VALUES ('00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-0000000
 
 INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
 VALUES ('00000000-0000-7000-8000-000000000301', '00000000-0000-7000-8000-000000000201', current_setting('helmr.seed_region_id'), 'console-demo', 'Console Demo', true);
+`
 
-INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default)
-VALUES
-    ('until_environment_deletion','00000000-0000-7000-8000-000000000401', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'production', 'Production', '#315FCE', true),
-    ('until_environment_deletion','00000000-0000-7000-8000-000000000402', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'staging', 'Staging', '#F59E0B', false),
-    ('until_environment_deletion','00000000-0000-7000-8000-000000000403', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'demo', 'Demo', '#9333EA', false);
+// devSeedEnvironmentsSQL writes the demo Environments with the configured
+// execution limits; the token bucket starts full.
+const devSeedEnvironmentsSQL = `
+INSERT INTO environments (history_retention_mode, id, org_id, project_id, slug, name, color_hex, is_default,
+    max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
+SELECT 'until_environment_deletion', seed.id, '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', seed.slug, seed.name, seed.color_hex, seed.is_default,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9::bigint, $9::bigint::numeric, clock_timestamp()
+FROM (VALUES
+    ('00000000-0000-7000-8000-000000000401'::uuid, 'production', 'Production', '#315FCE', true),
+    ('00000000-0000-7000-8000-000000000402'::uuid, 'staging', 'Staging', '#F59E0B', false),
+    ('00000000-0000-7000-8000-000000000403'::uuid, 'demo', 'Demo', '#9333EA', false)
+) AS seed(id, slug, name, color_hex, is_default)
 `

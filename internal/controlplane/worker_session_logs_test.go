@@ -79,7 +79,7 @@ func TestWorkerSessionLogDurableReceiptAndFences(t *testing.T) {
 	if _, err = client.AppendSessionLog(t.Context(), changed); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("foreign physical owner %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours',stdout_last_expires_at=stdout_last_expires_at-interval '2200 hours'`)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours'`)
 	expired, err := client.AppendSessionLog(t.Context(), request)
 	if err != nil || !expired.Expired || expired.ThroughSequence != request.ThroughSequence {
 		t.Fatalf("expired disposition %+v %v", expired, err)

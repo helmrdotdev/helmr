@@ -69,8 +69,6 @@ type bin struct {
 	workerPoolID    pgtype.UUID
 	resources       ResourceVector
 	instanceStarts  int64
-	runtimeArch     string
-	runtimeContract string
 	vmPlatformID    string
 	admissionPaused bool
 	perVM           ResourceVector
@@ -390,7 +388,6 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 	template := bin{
 		workerGroupID: workerGroupID, workerPoolID: row.ID,
 		resources: resources, instanceStarts: resources.VMSlots,
-		runtimeArch: "x86_64", runtimeContract: vmplatform.Contract,
 		vmPlatformID: row.VMPlatformID.String,
 		perVM:        perVM, cpuShapes: shapes,
 	}
@@ -497,8 +494,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 			VMSlots:                 row.AvailableVMSlots,
 		},
 		instanceStarts:  row.AvailableInstanceStarts,
-		runtimeArch:     row.Arch,
-		runtimeContract: row.Contract, vmPlatformID: row.VMPlatformID.String,
+		vmPlatformID:    row.VMPlatformID.String,
 		admissionPaused: row.AdmissionPausedReason.Valid,
 		perVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
@@ -528,9 +524,6 @@ func incompatibility(candidate item, target bin) string {
 		if !qualified {
 			return reasonRuntimeCompatibility
 		}
-	}
-	if target.runtimeArch != "x86_64" || target.runtimeContract != vmplatform.Contract {
-		return reasonRuntimeCompatibility
 	}
 	if candidate.vmPlatformID != "" && candidate.vmPlatformID != target.vmPlatformID {
 		return reasonRuntimeCompatibility

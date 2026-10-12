@@ -27,7 +27,7 @@ func (f supplyFixture) begin(t *testing.T) pgx.Tx {
 func (f supplyFixture) dispatchSupply(hostID uuid.UUID) DispatchSupply {
 	return DispatchSupply{
 		GroupID: f.group.ID, RegionID: fixtureRegionID,
-		HostID: pgvalue.UUID(hostID), Epoch: 1, RuntimeArchitecture: "x86_64",
+		HostID: pgvalue.UUID(hostID), Epoch: 1,
 	}
 }
 

@@ -12,7 +12,8 @@ import (
 )
 
 const createEnvironment = `-- name: CreateEnvironment :one
-INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds)
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds,
+    max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
 VALUES (
     $1,
     $2,
@@ -22,21 +23,31 @@ VALUES (
     $6,
     $7,
     $8,
-    $9
+    $9,
+    $10, $11, $12, $13, $14, $15, $16, $17, $18::bigint, $18::bigint::numeric, clock_timestamp()
 )
 RETURNING history_retention_mode, history_retention_seconds, id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
 `
 
 type CreateEnvironmentParams struct {
-	ID                      pgtype.UUID `json:"id"`
-	OrgID                   pgtype.UUID `json:"org_id"`
-	ProjectID               pgtype.UUID `json:"project_id"`
-	Slug                    string      `json:"slug"`
-	Name                    string      `json:"name"`
-	ColorHex                string      `json:"color_hex"`
-	IsDefault               bool        `json:"is_default"`
-	HistoryRetentionMode    string      `json:"history_retention_mode"`
-	HistoryRetentionSeconds pgtype.Int8 `json:"history_retention_seconds"`
+	ID                       pgtype.UUID `json:"id"`
+	OrgID                    pgtype.UUID `json:"org_id"`
+	ProjectID                pgtype.UUID `json:"project_id"`
+	Slug                     string      `json:"slug"`
+	Name                     string      `json:"name"`
+	ColorHex                 string      `json:"color_hex"`
+	IsDefault                bool        `json:"is_default"`
+	HistoryRetentionMode     string      `json:"history_retention_mode"`
+	HistoryRetentionSeconds  pgtype.Int8 `json:"history_retention_seconds"`
+	MaxOutstandingAdmissions int64       `json:"max_outstanding_admissions"`
+	MaxCausalDepth           int32       `json:"max_causal_depth"`
+	MaxResidentComputers     int64       `json:"max_resident_computers"`
+	MaxCpuMillis             int64       `json:"max_cpu_millis"`
+	MaxMemoryBytes           int64       `json:"max_memory_bytes"`
+	MaxReservedStorageBytes  int64       `json:"max_reserved_storage_bytes"`
+	PreparationTimeoutMs     int64       `json:"preparation_timeout_ms"`
+	AdmissionRatePerSecond   int64       `json:"admission_rate_per_second"`
+	AdmissionBurst           int64       `json:"admission_burst"`
 }
 
 func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error) {
@@ -50,6 +61,15 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		arg.IsDefault,
 		arg.HistoryRetentionMode,
 		arg.HistoryRetentionSeconds,
+		arg.MaxOutstandingAdmissions,
+		arg.MaxCausalDepth,
+		arg.MaxResidentComputers,
+		arg.MaxCpuMillis,
+		arg.MaxMemoryBytes,
+		arg.MaxReservedStorageBytes,
+		arg.PreparationTimeoutMs,
+		arg.AdmissionRatePerSecond,
+		arg.AdmissionBurst,
 	)
 	var i Environment
 	err := row.Scan(
@@ -144,13 +164,15 @@ WITH project AS (
     RETURNING id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
 ),
 environment AS (
-    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds)
-    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default, $7, $8
+    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds,
+        max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default, $7, $8,
+        $9, $10, $11, $12, $13, $14, $15, $16, $17::bigint, $17::bigint::numeric, clock_timestamp()
       FROM project
       CROSS JOIN (
           VALUES
-              ($9::uuid, 'production'::text, 'Production'::text, '#315FCE'::text, true),
-              ($10::uuid, 'staging'::text, 'Staging'::text, '#F59E0B'::text, false)
+              ($18::uuid, 'production'::text, 'Production'::text, '#315FCE'::text, true),
+              ($19::uuid, 'staging'::text, 'Staging'::text, '#F59E0B'::text, false)
       ) AS initial_environment(id, slug, name, color_hex, is_default)
     RETURNING id
 )
@@ -160,16 +182,25 @@ SELECT project.id, project.org_id, project.default_region_id, project.slug, proj
 `
 
 type CreateProjectWithDefaultEnvironmentParams struct {
-	ID                      pgtype.UUID `json:"id"`
-	OrgID                   pgtype.UUID `json:"org_id"`
-	DefaultRegionID         string      `json:"default_region_id"`
-	Slug                    string      `json:"slug"`
-	Name                    string      `json:"name"`
-	IsDefault               bool        `json:"is_default"`
-	HistoryRetentionMode    string      `json:"history_retention_mode"`
-	HistoryRetentionSeconds pgtype.Int8 `json:"history_retention_seconds"`
-	EnvironmentID           pgtype.UUID `json:"environment_id"`
-	StagingEnvironmentID    pgtype.UUID `json:"staging_environment_id"`
+	ID                       pgtype.UUID `json:"id"`
+	OrgID                    pgtype.UUID `json:"org_id"`
+	DefaultRegionID          string      `json:"default_region_id"`
+	Slug                     string      `json:"slug"`
+	Name                     string      `json:"name"`
+	IsDefault                bool        `json:"is_default"`
+	HistoryRetentionMode     string      `json:"history_retention_mode"`
+	HistoryRetentionSeconds  pgtype.Int8 `json:"history_retention_seconds"`
+	MaxOutstandingAdmissions int64       `json:"max_outstanding_admissions"`
+	MaxCausalDepth           int32       `json:"max_causal_depth"`
+	MaxResidentComputers     int64       `json:"max_resident_computers"`
+	MaxCpuMillis             int64       `json:"max_cpu_millis"`
+	MaxMemoryBytes           int64       `json:"max_memory_bytes"`
+	MaxReservedStorageBytes  int64       `json:"max_reserved_storage_bytes"`
+	PreparationTimeoutMs     int64       `json:"preparation_timeout_ms"`
+	AdmissionRatePerSecond   int64       `json:"admission_rate_per_second"`
+	AdmissionBurst           int64       `json:"admission_burst"`
+	EnvironmentID            pgtype.UUID `json:"environment_id"`
+	StagingEnvironmentID     pgtype.UUID `json:"staging_environment_id"`
 }
 
 type CreateProjectWithDefaultEnvironmentRow struct {
@@ -193,6 +224,15 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 		arg.IsDefault,
 		arg.HistoryRetentionMode,
 		arg.HistoryRetentionSeconds,
+		arg.MaxOutstandingAdmissions,
+		arg.MaxCausalDepth,
+		arg.MaxResidentComputers,
+		arg.MaxCpuMillis,
+		arg.MaxMemoryBytes,
+		arg.MaxReservedStorageBytes,
+		arg.PreparationTimeoutMs,
+		arg.AdmissionRatePerSecond,
+		arg.AdmissionBurst,
 		arg.EnvironmentID,
 		arg.StagingEnvironmentID,
 	)

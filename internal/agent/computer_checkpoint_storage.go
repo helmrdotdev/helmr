@@ -224,7 +224,7 @@ func validateCheckpointRuntime(ctx context.Context, tx pgx.Tx, host workergroup.
 		return ErrConflict
 	}
 	var valid bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts h JOIN vm_platforms p ON p.id=h.vm_platform_id JOIN worker_pool_cpu_shapes s ON s.worker_pool_id=h.worker_pool_id WHERE h.id=$1 AND p.id=$2 AND p.arch=$3 AND p.contract=$4 AND p.kernel_digest=$5 AND p.initramfs_digest=$6 AND p.rootfs_digest=$7 AND s.vcpu_count=$8 AND s.cpu_config_digest=$9 AND h.per_vm_cpu_millis >= $8::bigint*1000)`, host.HostID, r.RuntimeID, r.RuntimeArch, r.VMRuntimeContract, r.KernelDigest, r.InitramfsDigest, r.RootfsDigest, r.VMVCPUCount, r.CPUConfigDigest).Scan(&valid)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts h JOIN vm_platforms p ON p.id=h.vm_platform_id JOIN worker_pool_cpu_shapes s ON s.worker_pool_id=h.worker_pool_id WHERE h.id=$1 AND p.id=$2 AND p.kernel_digest=$3 AND p.initramfs_digest=$4 AND p.rootfs_digest=$5 AND s.vcpu_count=$6 AND s.cpu_config_digest=$7 AND h.per_vm_cpu_millis >= $6::bigint*1000)`, host.HostID, r.RuntimeID, r.KernelDigest, r.InitramfsDigest, r.RootfsDigest, r.VMVCPUCount, r.CPUConfigDigest).Scan(&valid)
 	if err != nil {
 		return err
 	}

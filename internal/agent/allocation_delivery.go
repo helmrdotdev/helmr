@@ -8,7 +8,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -64,7 +63,7 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	if err := tx.QueryRow(ctx, `SELECT region_id FROM worker_groups WHERE id=$1`, host.GroupID).Scan(&region); err != nil {
 		return materializationSupply{}, err
 	}
-	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(host.GroupID), HostID: pgvalue.UUID(host.HostID), Epoch: host.Epoch, RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), Continuation: true})
+	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(host.GroupID), HostID: pgvalue.UUID(host.HostID), Epoch: host.Epoch, RegionID: region, Continuation: true})
 	if err != nil {
 		return materializationSupply{}, err
 	}

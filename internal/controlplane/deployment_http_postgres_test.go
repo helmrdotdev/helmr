@@ -162,6 +162,8 @@ func deploymentHTTPEnvironment(t *testing.T, fixture httpPostgresFixture, orgID 
 		HistoryRetentionMode: "until_environment_deletion",
 		ID:                   pgvalue.UUID(environmentID), OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
 		Slug: "staging", Name: "Staging", ColorHex: "#315FCE", IsDefault: true,
+		MaxOutstandingAdmissions: 1024, MaxCausalDepth: 32, MaxResidentComputers: 1024, MaxCpuMillis: 1024000, MaxMemoryBytes: 1 << 40,
+		MaxReservedStorageBytes: 1 << 40, PreparationTimeoutMs: 600000, AdmissionRatePerSecond: 1000000, AdmissionBurst: 1000000,
 	}); err != nil {
 		t.Fatal(err)
 	}

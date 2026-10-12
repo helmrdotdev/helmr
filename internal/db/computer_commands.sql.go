@@ -14,25 +14,25 @@ import (
 const createComputerCommand = `-- name: CreateComputerCommand :one
 INSERT INTO computer_commands (
     id, environment_id, computer_id, argv, cwd, env, stdin,
-    timeout_ms, created_by_subject_type, created_by_subject_id
+    timeout_ms, caller_kind, caller_id
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6, $7, $8,
     $9, $10
-) RETURNING environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, created_by_subject_type, created_by_subject_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stdout_last_expires_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at, stderr_last_expires_at
+) RETURNING environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, caller_kind, caller_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at
 `
 
 type CreateComputerCommandParams struct {
-	ID                   pgtype.UUID `json:"id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	ComputerID           pgtype.UUID `json:"computer_id"`
-	Argv                 []string    `json:"argv"`
-	Cwd                  pgtype.Text `json:"cwd"`
-	Env                  []byte      `json:"env"`
-	Stdin                []byte      `json:"stdin"`
-	TimeoutMs            int64       `json:"timeout_ms"`
-	CreatedBySubjectType string      `json:"created_by_subject_type"`
-	CreatedBySubjectID   string      `json:"created_by_subject_id"`
+	ID            pgtype.UUID `json:"id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	Argv          []string    `json:"argv"`
+	Cwd           pgtype.Text `json:"cwd"`
+	Env           []byte      `json:"env"`
+	Stdin         []byte      `json:"stdin"`
+	TimeoutMs     int64       `json:"timeout_ms"`
+	CallerKind    string      `json:"caller_kind"`
+	CallerID      pgtype.UUID `json:"caller_id"`
 }
 
 func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerCommandParams) (ComputerCommand, error) {
@@ -45,8 +45,8 @@ func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerC
 		arg.Env,
 		arg.Stdin,
 		arg.TimeoutMs,
-		arg.CreatedBySubjectType,
-		arg.CreatedBySubjectID,
+		arg.CallerKind,
+		arg.CallerID,
 	)
 	var i ComputerCommand
 	err := row.Scan(
@@ -61,8 +61,8 @@ func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerC
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -92,7 +92,6 @@ func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerC
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -102,13 +101,12 @@ func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerC
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }
 
 const getCommand = `-- name: GetCommand :one
-SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.created_by_subject_type, command.created_by_subject_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stdout_last_expires_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at, command.stderr_last_expires_at FROM computer_commands command
+SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.caller_kind, command.caller_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at FROM computer_commands command
  JOIN environments e ON e.id=command.environment_id
  WHERE e.org_id=$1 AND e.project_id=$2
  AND command.environment_id=$3 AND command.id=$4
@@ -141,8 +139,8 @@ func (q *Queries) GetCommand(ctx context.Context, arg GetCommandParams) (Compute
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -172,7 +170,6 @@ func (q *Queries) GetCommand(ctx context.Context, arg GetCommandParams) (Compute
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -182,13 +179,12 @@ func (q *Queries) GetCommand(ctx context.Context, arg GetCommandParams) (Compute
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }
 
 const getCommandLogState = `-- name: GetCommandLogState :one
-SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.created_by_subject_type, command.created_by_subject_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stdout_last_expires_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at, command.stderr_last_expires_at FROM computer_commands command
+SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.caller_kind, command.caller_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at FROM computer_commands command
  JOIN environments e ON e.id=command.environment_id
  WHERE e.org_id=$1 AND command.environment_id=$2
  AND command.id=$3
@@ -215,8 +211,8 @@ func (q *Queries) GetCommandLogState(ctx context.Context, arg GetCommandLogState
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -246,7 +242,6 @@ func (q *Queries) GetCommandLogState(ctx context.Context, arg GetCommandLogState
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -256,13 +251,12 @@ func (q *Queries) GetCommandLogState(ctx context.Context, arg GetCommandLogState
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }
 
 const getComputerCommandByRetryKey = `-- name: GetComputerCommandByRetryKey :one
-SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.created_by_subject_type, command.created_by_subject_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stdout_last_expires_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at, command.stderr_last_expires_at FROM computer_commands command
+SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.caller_kind, command.caller_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at FROM computer_commands command
  JOIN platform_retry_keys k ON k.environment_id=command.environment_id AND k.command_id=command.id AND k.operation='computer.exec'
  WHERE k.environment_id=$1 AND k.id=$2
 `
@@ -287,8 +281,8 @@ func (q *Queries) GetComputerCommandByRetryKey(ctx context.Context, arg GetCompu
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -318,7 +312,6 @@ func (q *Queries) GetComputerCommandByRetryKey(ctx context.Context, arg GetCompu
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -328,7 +321,6 @@ func (q *Queries) GetComputerCommandByRetryKey(ctx context.Context, arg GetCompu
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }
@@ -364,7 +356,7 @@ func (q *Queries) GetComputerCommandTarget(ctx context.Context, arg GetComputerC
 }
 
 const lockComputerCommand = `-- name: LockComputerCommand :one
-SELECT environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, created_by_subject_type, created_by_subject_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stdout_last_expires_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at, stderr_last_expires_at FROM computer_commands WHERE environment_id=$1
+SELECT environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, caller_kind, caller_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at FROM computer_commands WHERE environment_id=$1
  AND computer_id=$2 AND id=$3 FOR UPDATE
 `
 
@@ -389,8 +381,8 @@ func (q *Queries) LockComputerCommand(ctx context.Context, arg LockComputerComma
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -420,7 +412,6 @@ func (q *Queries) LockComputerCommand(ctx context.Context, arg LockComputerComma
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -430,7 +421,6 @@ func (q *Queries) LockComputerCommand(ctx context.Context, arg LockComputerComma
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }
@@ -463,7 +453,7 @@ UPDATE computer_commands SET cancel_requested_at=COALESCE(cancel_requested_at,cl
  result_expires_at=CASE WHEN computer_lease_epoch IS NULL THEN clock_timestamp()+interval '30 days' END,
  revision=revision+1,updated_at=clock_timestamp()
  WHERE id=$1 AND environment_id=$2 AND terminal_at IS NULL
- RETURNING environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, created_by_subject_type, created_by_subject_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stdout_last_expires_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at, stderr_last_expires_at
+ RETURNING environment_id, id, computer_id, computer_lease_epoch, status, revision, argv, cwd, env, stdin, timeout_ms, caller_kind, caller_id, started_at, cancel_requested_at, process_exited_at, process_reconciled_at, stdout_final_through, stdout_final_complete, stdout_final_gapped, stderr_final_through, stderr_final_complete, stderr_final_gapped, output_fenced, exit_code, error, terminal_at, terminal_reason_code, failure_reason, result_expires_at, result_pruned_at, created_at, updated_at, stdout_accepted_through, stdout_byte_offset, stdout_ended, stdout_end_complete, stdout_gapped, stdout_expired_through, stdout_last_sequence, stdout_last_digest, stdout_last_accepted_at, stderr_accepted_through, stderr_byte_offset, stderr_ended, stderr_end_complete, stderr_gapped, stderr_expired_through, stderr_last_sequence, stderr_last_digest, stderr_last_accepted_at
 `
 
 type RequestComputerCommandCancellationParams struct {
@@ -486,8 +476,8 @@ func (q *Queries) RequestComputerCommandCancellation(ctx context.Context, arg Re
 		&i.Env,
 		&i.Stdin,
 		&i.TimeoutMs,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
+		&i.CallerKind,
+		&i.CallerID,
 		&i.StartedAt,
 		&i.CancelRequestedAt,
 		&i.ProcessExitedAt,
@@ -517,7 +507,6 @@ func (q *Queries) RequestComputerCommandCancellation(ctx context.Context, arg Re
 		&i.StdoutLastSequence,
 		&i.StdoutLastDigest,
 		&i.StdoutLastAcceptedAt,
-		&i.StdoutLastExpiresAt,
 		&i.StderrAcceptedThrough,
 		&i.StderrByteOffset,
 		&i.StderrEnded,
@@ -527,7 +516,6 @@ func (q *Queries) RequestComputerCommandCancellation(ctx context.Context, arg Re
 		&i.StderrLastSequence,
 		&i.StderrLastDigest,
 		&i.StderrLastAcceptedAt,
-		&i.StderrLastExpiresAt,
 	)
 	return i, err
 }

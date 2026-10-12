@@ -42,7 +42,7 @@ func ClaimDiagnostics(ctx context.Context, pool db.TxBeginner, kind string, boun
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		candidates, err := tx.Query(ctx, `SELECT o.id,octet_length(o.data)::bigint
  FROM diagnostic_chunks o
- WHERE o.source_kind=$1 AND o.export_after<=statement_timestamp() AND o.expires_at>statement_timestamp()
+ WHERE o.source_kind=$1 AND o.export_after<=statement_timestamp() AND o.accepted_at>statement_timestamp()-interval '2160 hours'
  ORDER BY o.export_after,o.id LIMIT $2 FOR UPDATE OF o SKIP LOCKED`, kind, bounds.Records)
 		if err != nil {
 			return err
@@ -79,7 +79,7 @@ func ClaimDiagnostics(ctx context.Context, pool db.TxBeginner, kind string, boun
 		rows, err := tx.Query(ctx, `WITH claimed AS (
  UPDATE diagnostic_chunks SET export_claim=$2,export_after=statement_timestamp()+$3::bigint*interval '1 microsecond'
  WHERE id=ANY($1) RETURNING *
- ) SELECT id,environment_id,source_kind,source_id,producer_epoch,stream,kind,sequence,through_sequence,observed_at_unix_nano,data,dropped_bytes,complete,byte_offset,through_byte_offset,accepted_at,expires_at FROM claimed ORDER BY id`, ids, result.Token, bounds.ClaimFor.Microseconds())
+ ) SELECT id,environment_id,source_kind,source_id,producer_epoch,stream,kind,sequence,through_sequence,observed_at_unix_nano,data,dropped_bytes,complete,byte_offset,through_byte_offset,accepted_at FROM claimed ORDER BY id`, ids, result.Token, bounds.ClaimFor.Microseconds())
 		if err != nil {
 			return err
 		}
@@ -87,9 +87,10 @@ func ClaimDiagnostics(ctx context.Context, pool db.TxBeginner, kind string, boun
 		for rows.Next() {
 			var id int64
 			var r StoredDiagnostic
-			if err = rows.Scan(&id, &r.Source.EnvironmentID, &r.Source.Kind, &r.Source.ID, &r.Source.ProducerEpoch, &r.Record.Stream, &r.Record.Kind, &r.Record.Sequence, &r.Record.ThroughSequence, &r.Record.ObservedAtUnixNano, &r.Record.Data, &r.Record.DroppedBytes, &r.Record.Complete, &r.ByteOffset, &r.ThroughByteOffset, &r.AcceptedAt, &r.ExpiresAt); err != nil {
+			if err = rows.Scan(&id, &r.Source.EnvironmentID, &r.Source.Kind, &r.Source.ID, &r.Source.ProducerEpoch, &r.Record.Stream, &r.Record.Kind, &r.Record.Sequence, &r.Record.ThroughSequence, &r.Record.ObservedAtUnixNano, &r.Record.Data, &r.Record.DroppedBytes, &r.Record.Complete, &r.ByteOffset, &r.ThroughByteOffset, &r.AcceptedAt); err != nil {
 				return err
 			}
+			r.ExpiresAt = r.AcceptedAt.Add(DiagnosticRetention)
 			result.IDs = append(result.IDs, id)
 			result.Records = append(result.Records, r)
 		}
@@ -147,14 +148,14 @@ func retireDiagnostics(ctx context.Context, pool db.TxBeginner, token uuid.UUID,
 		// a concurrent admission scan conservative; all increases hold the gate.
 		if token == uuid.Nil() {
 			return tx.QueryRow(ctx, `WITH candidates AS (
-    SELECT id FROM diagnostic_chunks WHERE TRUE AND expires_at<=statement_timestamp()
-    ORDER BY expires_at,id LIMIT $1 FOR UPDATE SKIP LOCKED
-   ), removed AS (DELETE FROM diagnostic_chunks o USING candidates c WHERE o.id=c.id AND o.expires_at<=statement_timestamp() RETURNING o.id)
+    SELECT id FROM diagnostic_chunks WHERE TRUE AND accepted_at<=statement_timestamp()-interval '2160 hours'
+    ORDER BY accepted_at,id LIMIT $1 FOR UPDATE SKIP LOCKED
+   ), removed AS (DELETE FROM diagnostic_chunks o USING candidates c WHERE o.id=c.id AND o.accepted_at<=statement_timestamp()-interval '2160 hours' RETURNING o.id)
    SELECT 0::bigint,count(*) FROM removed`, limit).Scan(&result.Delivered, &result.Expired)
 		}
 		return tx.QueryRow(ctx, `WITH removed AS (
    DELETE FROM diagnostic_chunks WHERE TRUE AND id=ANY($1) AND export_claim=$2
-   RETURNING expires_at<=statement_timestamp() AS expired
+   RETURNING accepted_at<=statement_timestamp()-interval '2160 hours' AS expired
   ) SELECT count(*) FILTER(WHERE NOT expired),count(*) FILTER(WHERE expired) FROM removed`, ids, token).Scan(&result.Delivered, &result.Expired)
 	})
 	return result, err

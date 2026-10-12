@@ -161,28 +161,25 @@ SELECT *
  FOR UPDATE;
 -- name: UpsertVMPlatform :one
 INSERT INTO vm_platforms (
-    id, arch, contract, descriptor_digest,
+    id, descriptor_digest,
     firecracker_digest, firecracker_version, snapshot_format_version,
-    host_kernel_release, cpu_template_kind, cpu_template_digest,
+    host_kernel_release, cpu_template_digest,
     kernel_digest, initramfs_digest, rootfs_digest, last_seen_at
 )
 VALUES (
-    sqlc.arg(id), sqlc.arg(arch), sqlc.arg(contract),
+    sqlc.arg(id),
     sqlc.arg(descriptor_digest), sqlc.arg(firecracker_digest),
     sqlc.arg(firecracker_version), sqlc.arg(snapshot_format_version),
-    sqlc.arg(host_kernel_release), sqlc.arg(cpu_template_kind),
+    sqlc.arg(host_kernel_release),
     sqlc.narg(cpu_template_digest), sqlc.arg(kernel_digest),
     sqlc.arg(initramfs_digest), sqlc.arg(rootfs_digest), now()
 )
 ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
- WHERE vm_platforms.arch = EXCLUDED.arch
-   AND vm_platforms.contract = EXCLUDED.contract
-   AND vm_platforms.descriptor_digest = EXCLUDED.descriptor_digest
+ WHERE vm_platforms.descriptor_digest = EXCLUDED.descriptor_digest
    AND vm_platforms.firecracker_digest = EXCLUDED.firecracker_digest
    AND vm_platforms.firecracker_version = EXCLUDED.firecracker_version
    AND vm_platforms.snapshot_format_version = EXCLUDED.snapshot_format_version
    AND vm_platforms.host_kernel_release = EXCLUDED.host_kernel_release
-   AND vm_platforms.cpu_template_kind = EXCLUDED.cpu_template_kind
    AND vm_platforms.cpu_template_digest IS NOT DISTINCT FROM EXCLUDED.cpu_template_digest
    AND vm_platforms.kernel_digest = EXCLUDED.kernel_digest
    AND vm_platforms.initramfs_digest = EXCLUDED.initramfs_digest
@@ -264,8 +261,6 @@ WITH live_workers AS (
            worker_hosts.id AS worker_host_id,
            worker_hosts.current_epoch AS worker_epoch,
            worker_hosts.vm_platform_id,
-           vm_platforms.arch,
-           vm_platforms.contract,
            worker_hosts.per_vm_cpu_millis,
            worker_hosts.per_vm_memory_bytes,
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
@@ -284,8 +279,6 @@ WITH live_workers AS (
         ON worker_pools.id = worker_hosts.worker_pool_id
        AND worker_pools.worker_group_id = worker_hosts.worker_group_id
        AND worker_pools.status = 'active'
-      JOIN vm_platforms
-        ON vm_platforms.id = worker_hosts.vm_platform_id
      WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_groups.id = sqlc.narg(worker_group_id))
        AND (sqlc.arg(region_id)::text = '' OR worker_groups.region_id = sqlc.arg(region_id))
        AND worker_groups.status = 'active'
@@ -315,8 +308,6 @@ SELECT live_workers.worker_group_id,
        live_workers.worker_host_id,
        live_workers.worker_epoch,
        live_workers.vm_platform_id,
-       live_workers.arch,
-       live_workers.contract,
        live_workers.per_vm_cpu_millis,
        live_workers.per_vm_memory_bytes,
        live_workers.per_vm_guest_ephemeral_disk_bytes,

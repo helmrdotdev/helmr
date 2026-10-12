@@ -6,8 +6,6 @@
            worker_hosts.id AS worker_host_id,
            worker_hosts.current_epoch AS worker_epoch,
            worker_hosts.vm_platform_id,
-           vm_platforms.arch,
-           vm_platforms.contract,
            worker_hosts.per_vm_cpu_millis,
            worker_hosts.per_vm_memory_bytes,
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
@@ -26,8 +24,6 @@
         ON worker_pools.id = worker_hosts.worker_pool_id
        AND worker_pools.worker_group_id = worker_hosts.worker_group_id
        AND worker_pools.status = 'active'
-      JOIN vm_platforms
-        ON vm_platforms.id = worker_hosts.vm_platform_id
      WHERE worker_groups.region_id = (SELECT args->>'region' FROM input)
        AND worker_groups.status = 'active'
        AND worker_hosts.observed_at >= transaction_timestamp()
@@ -57,8 +53,6 @@ SELECT live_workers.worker_group_id,
        live_workers.worker_host_id,
        live_workers.worker_epoch,
        live_workers.vm_platform_id,
-       live_workers.arch,
-       live_workers.contract,
        live_workers.per_vm_cpu_millis,
        live_workers.per_vm_memory_bytes,
        live_workers.per_vm_guest_ephemeral_disk_bytes,

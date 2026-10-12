@@ -93,16 +93,12 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 const lockAdmissionEligibleWorkerHost = `-- name: LockAdmissionEligibleWorkerHost :one
 SELECT (worker_hosts.status = 'active' AND worker_hosts.admission_paused_reason IS NULL)::boolean AS admitting
   FROM worker_hosts
-  LEFT JOIN vm_platforms
-    ON vm_platforms.id = worker_hosts.vm_platform_id
  WHERE worker_hosts.id = $1
    AND worker_hosts.worker_group_id = $2
    AND worker_hosts.current_epoch = $3::bigint
    AND (worker_hosts.status = 'active' OR ($4::boolean AND worker_hosts.status = 'draining'))
    AND worker_hosts.observed_at >= clock_timestamp() - $5::bigint * interval '1 second'
    AND ($4::boolean OR worker_hosts.admission_paused_reason IS NULL)
-   AND vm_platforms.arch = $6
-   AND vm_platforms.contract = $7
  FOR UPDATE OF worker_hosts
 `
 
@@ -112,14 +108,12 @@ type LockAdmissionEligibleWorkerHostParams struct {
 	WorkerEpoch            int64       `json:"worker_epoch"`
 	Continuation           bool        `json:"continuation"`
 	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
-	RuntimeArchitecture    string      `json:"runtime_architecture"`
-	Contract               string      `json:"contract"`
 }
 
 // Worker Host fence for dispatch and Computer preparation. The caller
 // (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 // locks and have validated their status. This query locks the Worker Host and
-// checks epoch, observation freshness and platform. Admission also requires an
+// checks epoch and observation freshness. Admission also requires an
 // active host without an admission pause; continuation of admitted work accepts a
 // draining host and ignores pauses. admitting reports whether the locked host
 // could admit new work, including the admission pause.
@@ -130,8 +124,6 @@ func (q *Queries) LockAdmissionEligibleWorkerHost(ctx context.Context, arg LockA
 		arg.WorkerEpoch,
 		arg.Continuation,
 		arg.WorkerFreshnessSeconds,
-		arg.RuntimeArchitecture,
-		arg.Contract,
 	)
 	var admitting bool
 	err := row.Scan(&admitting)

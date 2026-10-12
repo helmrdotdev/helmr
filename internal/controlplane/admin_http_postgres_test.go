@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -51,10 +50,10 @@ func (f httpPostgresFixture) sealWorkerPool(t *testing.T, groupID string, poolID
 	t.Helper()
 	platformID := dbtest.Digest("supply-http-runtime")
 	if _, err := f.queries.UpsertVMPlatform(t.Context(), db.UpsertVMPlatformParams{
-		ID: platformID, Arch: "x86_64", Contract: vmplatform.Contract,
+		ID:                platformID,
 		DescriptorDigest:  dbtest.Digest("supply-http-descriptor"),
 		FirecrackerDigest: dbtest.Digest("supply-http-firecracker"), FirecrackerVersion: "1.12.0",
-		SnapshotFormatVersion: "1.0.0", HostKernelRelease: "6.12.0", CPUTemplateKind: "none",
+		SnapshotFormatVersion: "1.0.0", HostKernelRelease: "6.12.0",
 		KernelDigest: dbtest.Digest("supply-http-kernel"), InitramfsDigest: dbtest.Digest("supply-http-initramfs"),
 		RootfsDigest: dbtest.Digest("supply-http-rootfs"),
 	}); err != nil {

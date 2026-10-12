@@ -99,7 +99,7 @@ func TestDiskGraphPinsAndEdgesArbitrateDeletion(t *testing.T) {
 				_, save := f.finalize(t, "publication")
 				// The parent itself remains owned, so collection cannot erase the adopter
 				// merely because this test's graph is smaller than a complete disk.
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_object_pins(environment_id,save_id,digest) VALUES($1,$2,$3)`, f.env, save.ID, parent)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, parent)
 				tx, err := f.pool.Begin(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -107,7 +107,7 @@ func TestDiskGraphPinsAndEdgesArbitrateDeletion(t *testing.T) {
 				defer tx.Rollback(context.Background())
 				adopt := func(tx pgx.Tx) error {
 					if kind == "pin" {
-						_, err := tx.Exec(t.Context(), `INSERT INTO computer_object_pins(environment_id,save_id,digest) VALUES($1,$2,$3)`, f.env, save.ID, child)
+						_, err := tx.Exec(t.Context(), `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, child)
 						return err
 					}
 					_, err := tx.Exec(t.Context(), `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,1,0)`, f.env, parent, child)
@@ -159,7 +159,7 @@ func TestDiskGraphCollectionPreservesSharedChild(t *testing.T) {
 	right := graphRetentionObject(t, f, 112, 1)
 	_, save := f.finalize(t, "shared-child")
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$4,1,0),($1,$3,$4,1,0);
- INSERT INTO computer_object_pins(environment_id,save_id,digest) VALUES($1,$5,$3)`, pgx.QueryExecModeSimpleProtocol, f.env, left, right, child, save.ID)
+ INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$5,$3)`, pgx.QueryExecModeSimpleProtocol, f.env, left, right, child, save.ID)
 	for range 3 {
 		if err := collectComputerDiskGraph(t.Context(), f.pool); err != nil {
 			t.Fatal(err)
