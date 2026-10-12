@@ -13,7 +13,7 @@ const (
 	demoSeedDeploymentID  = "00000000-0000-7000-8000-000000000501"
 	demoSeedSpecID        = "00000000-0000-7000-8000-000000000504"
 	demoSeedAgentID       = "00000000-0000-7000-8000-000000000511"
-	demoSeedScheduleID    = "00000000-0000-7000-8000-000000000521"
+	demoSeedTriggerID     = "00000000-0000-7000-8000-000000000521"
 	demoSeedComputerID    = "00000000-0000-7000-8000-000000000601"
 	demoSeedSessionID     = "00000000-0000-7000-8000-000000000701"
 	demoSeedTurnID        = "00000000-0000-7000-8000-000000000711"
@@ -21,7 +21,7 @@ const (
 
 // This is illustrative terminal history, not an executable Deployment. It has
 // no bundle bytes, VM, lease, process, Save or checkpoint. Revocation and the
-// ended schedule prevent synthetic inputs from becoming Worker demand.
+// ended trigger prevent synthetic inputs from becoming Worker demand.
 func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, `
 INSERT INTO deployments(environment_id,id,bundle_digest,created_at,execution_revoked_at)
@@ -50,7 +50,7 @@ INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,creat
 ($1::uuid,$7::uuid,2,$8::uuid,'turn.failed','{"code":"preparation_deadline"}',now()-interval '1 hour'),
 ($1::uuid,$7::uuid,3,NULL,'session.closed','{}',now()-interval '1 hour');
 `, pgx.QueryExecModeSimpleProtocol, demoSeedEnvironmentID, demoSeedDeploymentID, demoSeedSpecID,
-		demoSeedAgentID, demoSeedScheduleID, demoSeedComputerID, demoSeedSessionID, demoSeedTurnID, demoDigest("terminal-history"))
+		demoSeedAgentID, demoSeedTriggerID, demoSeedComputerID, demoSeedSessionID, demoSeedTurnID, demoDigest("terminal-history"))
 	return err
 }
 

@@ -27,7 +27,7 @@ Pass `next_cursor` unchanged as `cursor` in the next request. A response without
 | `GET /v1/computers` | `computers` | 1–100, default 50 |
 | `GET /v1/computers/{computerID}/sessions` | `sessions` | 1–100, default 50 |
 | `GET /v1/computers/{computerID}/commands` | `commands` | 1–100, default 50 |
-| `GET /v1/schedules` | `schedules` | 1–100, default 50 |
+| `GET /v1/triggers` | `triggers` | 1–100, default 50 |
 | `GET /v1/secrets` | `secrets` | 1–100, default 50 |
 | `GET /v1/deployments` | `deployments` | 1–100, default 50 |
 
@@ -64,6 +64,6 @@ has finished; new events can arrive later. Event kinds are listed in
 the Command is running or output delivery is pending; check the Command outcome
 and `output_state` separately.
 
-Session and Schedule cursors are bound to their scope and filters. Computer
+Session and Trigger cursors are bound to their scope and filters. Computer
 Sessions and Commands cursors are also bound to their collection kind. These
 Computer collections show current usage and pending cleanup, not historical work.

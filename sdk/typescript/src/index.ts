@@ -33,10 +33,10 @@ export type {
 } from "./client-deployment"
 
 export type {
-  ClientSchedulesApi,
-  ScheduleListQuery,
-  Schedule,
-} from "./client-schedule"
+  ClientTriggersApi,
+  TriggerListQuery,
+  Trigger,
+} from "./client-trigger"
 
 export type {
   ClientSecretsApi,

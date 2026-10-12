@@ -43,7 +43,7 @@ INPUTS = {
     'session-state': {'session_id': identifier},
     'session-path': {'session_id': identifier},
     'slack-delivery': {'session_id': identifier},
-    'schedule-path': {'schedule_id': identifier},
+    'trigger-path': {'trigger_id': identifier},
     'deployment-state': {'project': text, 'environment': text},
     'api-key-scope': {'key_prefix': text, 'project': text, 'environment': text},
 }

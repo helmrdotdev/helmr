@@ -11,37 +11,37 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-const maxScheduleListLimit = int32(100)
+const maxTriggerListLimit = int32(100)
 
-type ListSchedulesOptions struct {
+type ListTriggersOptions struct {
 	Agent  string
 	Cursor string
 	Limit  int32
 	EnvironmentScopeOptions
 }
 
-func (c *Client) ListSchedules(
+func (c *Client) ListTriggers(
 	ctx context.Context,
-	opts ListSchedulesOptions,
-) (api.ListSchedulesResponse, error) {
-	if opts.Limit < 0 || opts.Limit > maxScheduleListLimit {
-		return api.ListSchedulesResponse{}, fmt.Errorf(
-			"schedule list limit must be in [1,%d] when present",
-			maxScheduleListLimit,
+	opts ListTriggersOptions,
+) (api.ListTriggersResponse, error) {
+	if opts.Limit < 0 || opts.Limit > maxTriggerListLimit {
+		return api.ListTriggersResponse{}, fmt.Errorf(
+			"trigger list limit must be in [1,%d] when present",
+			maxTriggerListLimit,
 		)
 	}
 	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/schedules",
+		"/triggers",
 	)
 	if err != nil {
-		return api.ListSchedulesResponse{}, err
+		return api.ListTriggersResponse{}, err
 	}
 	query := url.Values{}
 	if opts.Agent != "" {
 		if err := api.ValidateDefinitionID(opts.Agent); err != nil {
-			return api.ListSchedulesResponse{}, err
+			return api.ListTriggersResponse{}, err
 		}
 		query.Set("agent", opts.Agent)
 	}
@@ -57,41 +57,41 @@ func (c *Client) ListSchedules(
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListSchedulesResponse{}, err
+		return api.ListTriggersResponse{}, err
 	}
-	var response api.ListSchedulesResponse
+	var response api.ListTriggersResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListSchedulesResponse{}, err
+		return api.ListTriggersResponse{}, err
 	}
-	if response.Schedules == nil {
-		response.Schedules = []api.ScheduleResponse{}
+	if response.Triggers == nil {
+		response.Triggers = []api.TriggerResponse{}
 	}
 	return response, nil
 }
 
-func (c *Client) GetSchedule(
+func (c *Client) GetTrigger(
 	ctx context.Context,
-	scheduleID string,
+	triggerID string,
 	opts EnvironmentScopeOptions,
-) (api.ScheduleResponse, error) {
-	if err := api.ValidateScheduleID(scheduleID); err != nil {
-		return api.ScheduleResponse{}, err
+) (api.TriggerResponse, error) {
+	if err := api.ValidateTriggerID(triggerID); err != nil {
+		return api.TriggerResponse{}, err
 	}
 	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/schedules/"+url.PathEscape(scheduleID),
+		"/triggers/"+url.PathEscape(triggerID),
 	)
 	if err != nil {
-		return api.ScheduleResponse{}, err
+		return api.TriggerResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ScheduleResponse{}, err
+		return api.TriggerResponse{}, err
 	}
-	var response api.ScheduleResponse
+	var response api.TriggerResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ScheduleResponse{}, err
+		return api.TriggerResponse{}, err
 	}
 	return response, nil
 }

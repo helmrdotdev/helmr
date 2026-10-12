@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Promote atomically switches the current Deployment, closes prior schedule
+// Promote atomically switches the current Deployment, closes prior trigger
 // intervals and recomputes background preparation cadence. Existing Sessions keep
 // their deployment pins. Re-promotion starts new intervals, never reopens old ones.
 func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight agent.SlackStartPreflight) (Record, error) {
@@ -27,13 +27,13 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 	if err != nil {
 		return Record{}, err
 	}
-	routes, err := prepareScheduleRoutes(ctx, txb, principal, pgvalue.MustUUIDValue(env), pgvalue.MustUUIDValue(project), id, preflight)
+	routes, err := prepareTriggerRoutes(ctx, txb, principal, pgvalue.MustUUIDValue(env), pgvalue.MustUUIDValue(project), id, preflight)
 	if err != nil {
 		return Record{}, err
 	}
 	var result Record
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		pins, err := pinScheduleRoutes(ctx, tx, pgvalue.MustUUIDValue(env), routes)
+		pins, err := pinTriggerRoutes(ctx, tx, pgvalue.MustUUIDValue(env), routes)
 		if err != nil {
 			return err
 		}
@@ -59,7 +59,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cutover); err != nil {
 			return err
 		}
-		if err := reconcileSchedules(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover, pins); err != nil {
+		if err := reconcileTriggers(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover, pins); err != nil {
 			return err
 		}
 		if err := reconcilePreparationRefresh(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
@@ -80,7 +80,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 	return result, nil
 }
 
-func reconcileSchedules(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[scheduleRouteKey]uuid.UUID) error {
+func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) error {
 	type entry struct {
 		SlackChannelID *uuid.UUID `json:"slack_channel_id"`
 		Agent          uuid.UUID  `json:"agent"`
@@ -113,7 +113,7 @@ func reconcileSchedules(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUI
 		}
 		var pin *uuid.UUID
 		if d.destination != nil {
-			value, ok := pins[scheduleRouteKey{d.agent, *d.destination}]
+			value, ok := pins[triggerRouteKey{d.agent, *d.destination}]
 			if !ok {
 				return ErrNotDeployable
 			}

@@ -120,7 +120,7 @@ export async function verify(
     client: HelmrClient
     marker: string
     objects: Record<
-      "turn_ids" | "computer_ids" | "session_ids" | "ask_ids" | "secret_ids" | "deployment_ids" | "schedule_ids",
+      "turn_ids" | "computer_ids" | "session_ids" | "ask_ids" | "secret_ids" | "deployment_ids" | "trigger_ids",
       string[]
     >
     cleanup: (action: () => Promise<unknown>) => void
@@ -150,7 +150,7 @@ export async function verify(
     ask_ids: [] as string[],
     secret_ids: [] as string[],
     deployment_ids: [] as string[],
-    schedule_ids: [] as string[],
+    trigger_ids: [] as string[],
   }
   const cleanup: (() => Promise<unknown>)[] = []
   const evidence: Record<string, unknown> = {

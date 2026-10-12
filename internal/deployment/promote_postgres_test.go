@@ -97,7 +97,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	}
 }
 
-func TestScheduleCutoverOwnsExactBoundary(t *testing.T) {
+func TestTriggerCutoverOwnsExactBoundary(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{"minute": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`)}}
 	r, err := register(t.Context(), f.pool, f.request)
@@ -106,7 +106,7 @@ func TestScheduleCutoverOwnsExactBoundary(t *testing.T) {
 	}
 	cutover := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
 	for range 2 {
-		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error { return reconcileSchedules(t.Context(), tx, r.EnvironmentID, r.ID, cutover, nil) }); err != nil {
+		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error { return reconcileTriggers(t.Context(), tx, r.EnvironmentID, r.ID, cutover, nil) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,7 +120,7 @@ func TestScheduleCutoverOwnsExactBoundary(t *testing.T) {
 	}
 }
 
-func TestPromoteRejectsRevokedAndRollsBackInvalidSchedule(t *testing.T) {
+func TestPromoteRejectsRevokedAndRollsBackInvalidTrigger(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	r, err := register(t.Context(), f.pool, f.request)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 	for i, deployment := range []uuid.UUID{first.ID, second.ID, first.ID} {
 		cutover := base.Add(time.Duration(i)*time.Minute + 30*time.Second)
 		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-			return reconcileSchedules(t.Context(), tx, first.EnvironmentID, deployment, cutover, nil)
+			return reconcileTriggers(t.Context(), tx, first.EnvironmentID, deployment, cutover, nil)
 		}); err != nil {
 			t.Fatal(err)
 		}

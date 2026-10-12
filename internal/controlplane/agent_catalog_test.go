@@ -59,7 +59,7 @@ func assertRetainedAgentCatalog(t *testing.T, h httpPostgresFixture, org, projec
 		t.Fatalf("Session projection: %s", raw)
 	}
 	get(strings.TrimSuffix(base, "/agents")+"/sessions?agent_id="+uuid.NewV7().String(), token, http.StatusBadRequest)
-	get(strings.TrimSuffix(base, "/agents")+"/schedules?agent_id="+uuid.NewV7().String(), token, http.StatusBadRequest)
+	get(strings.TrimSuffix(base, "/agents")+"/triggers?agent_id="+uuid.NewV7().String(), token, http.StatusBadRequest)
 	var page struct {
 		Agents     []retainedAgent `json:"agents"`
 		NextCursor string          `json:"next_cursor"`

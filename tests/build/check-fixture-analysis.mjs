@@ -74,7 +74,7 @@ try {
     if (name === "schedule" && (agents.length !== 1 || agents[0].declaredId !== "schedule-smoke" ||
       agents[0].manifest.maxTurnDurationMs !== 300000 ||
       agents[0].manifest.triggers?.["each-minute"]?.cron !== "* * * * *"))
-      throw new Error("Schedule fixture must analyze one bounded schedule-smoke Agent")
+      throw new Error("Scheduled fixture must analyze one bounded schedule-smoke Agent")
     console.log(`analyzed ${name}: ${plan.definitions.length} definitions`)
   }
 } finally {

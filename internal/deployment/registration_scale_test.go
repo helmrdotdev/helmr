@@ -91,9 +91,9 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 	}
 	elapsed = time.Since(started)
 	runtime.ReadMemStats(&after)
-	t.Logf("promotion schedules=%d elapsed=%s statements=%d allocated_bytes=%d", count, elapsed, counter.calls.Load(), after.TotalAlloc-before.TotalAlloc)
+	t.Logf("promotion triggers=%d elapsed=%s statements=%d allocated_bytes=%d", count, elapsed, counter.calls.Load(), after.TotalAlloc-before.TotalAlloc)
 	if counter.calls.Load() > 15 {
-		t.Fatalf("promotion grew database round trips with schedule count: %d", counter.calls.Load())
+		t.Fatalf("promotion grew database round trips with trigger count: %d", counter.calls.Load())
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM trigger_activations WHERE active_until IS NULL`).Scan(&count); err != nil || count != agentCount {
 		t.Fatalf("activated=%d: %v", count, err)

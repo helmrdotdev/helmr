@@ -39,7 +39,7 @@ an Environment require both flags; each accepts the public ID shown in the Conso
 | `helmr deployment` | `list`, `get`, `promote` | Inspect Deployments and promote one to current. | [deployment](/docs/reference/cli/deployment) |
 | `helmr agent` | `list`, `get` | Inspect deployed Agents. | [agent](/docs/reference/cli/agent) |
 | `helmr session` | `create`, `list`, `get`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn interrupt`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
-| `helmr schedule` | `list`, `get` | Inspect Schedules created by triggers. | [schedule](/docs/reference/cli/schedule) |
+| `helmr trigger` | `list`, `get` | Inspect Triggers created by triggers. | [trigger](/docs/reference/cli/trigger) |
 | `helmr template` | `list`, `get` | Inspect deployed Templates. | [template](/docs/reference/cli/template) |
 | `helmr computer` | `create`, `list`, `get`, `sessions`, `commands`, `update`, `delete`, `exec` | Work with Computers and their current usage. | [computer](/docs/reference/cli/computer) |
 | `helmr command` | `get`, `wait`, `logs`, `cancel` | Observe and cancel Commands. | [command](/docs/reference/cli/command) |

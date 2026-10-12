@@ -10,27 +10,27 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-const testScheduleID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+const testTriggerID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
 
-func TestScheduleReadsUseAPIKeyRoutes(t *testing.T) {
-	testScheduleReads(
+func TestTriggerReadsUseAPIKeyRoutes(t *testing.T) {
+	testTriggerReads(
 		t,
 		false,
-		"/v1/schedules",
+		"/v1/triggers",
 		EnvironmentScopeOptions{},
 	)
 }
 
-func TestScheduleReadsUseSessionRoutes(t *testing.T) {
-	testScheduleReads(
+func TestTriggerReadsUseSessionRoutes(t *testing.T) {
+	testTriggerReads(
 		t,
 		true,
-		"/api/projects/project-1/environments/env-1/schedules",
+		"/api/projects/project-1/environments/env-1/triggers",
 		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
 	)
 }
 
-func testScheduleReads(
+func testTriggerReads(
 	t *testing.T,
 	session bool,
 	collectionPath string,
@@ -45,16 +45,16 @@ func testScheduleReads(
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
-			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
-				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, Agent: "nightly", TriggerKey: "daily"}},
+			_ = json.NewEncoder(w).Encode(api.ListTriggersResponse{
+				Triggers:   []api.TriggerResponse{{ID: testTriggerID, Agent: "nightly", TriggerKey: "daily"}},
 				NextCursor: "cursor-next",
 			})
-		case collectionPath + "/" + testScheduleID:
+		case collectionPath + "/" + testTriggerID:
 			if r.Method != http.MethodGet {
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
-			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: testScheduleID, Agent: "nightly", TriggerKey: "daily",
+			_ = json.NewEncoder(w).Encode(api.TriggerResponse{
+				ID: testTriggerID, Agent: "nightly", TriggerKey: "daily",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -70,40 +70,40 @@ func testScheduleReads(
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := controlPlane.ListSchedules(context.Background(), ListSchedulesOptions{
+	page, err := controlPlane.ListTriggers(context.Background(), ListTriggersOptions{
 		Cursor: "cursor-current", Limit: 25, EnvironmentScopeOptions: scope,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Schedules) != 1 || page.NextCursor != "cursor-next" {
+	if len(page.Triggers) != 1 || page.NextCursor != "cursor-next" {
 		t.Fatalf("page = %+v", page)
 	}
-	schedule, err := controlPlane.GetSchedule(context.Background(), testScheduleID, scope)
+	trigger, err := controlPlane.GetTrigger(context.Background(), testTriggerID, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if schedule.ID != testScheduleID || schedule.Agent != "nightly" {
-		t.Fatalf("schedule = %+v", schedule)
+	if trigger.ID != testTriggerID || trigger.Agent != "nightly" {
+		t.Fatalf("trigger = %+v", trigger)
 	}
 }
 
-func TestScheduleReadsValidateInput(t *testing.T) {
+func TestTriggerReadsValidateInput(t *testing.T) {
 	controlPlane, err := New("http://127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controlPlane.ListSchedules(
+	if _, err := controlPlane.ListTriggers(
 		context.Background(),
-		ListSchedulesOptions{Limit: 101},
+		ListTriggersOptions{Limit: 101},
 	); err == nil {
-		t.Fatal("ListSchedules() accepted an oversized limit")
+		t.Fatal("ListTriggers() accepted an oversized limit")
 	}
-	if _, err := controlPlane.GetSchedule(
+	if _, err := controlPlane.GetTrigger(
 		context.Background(),
-		"schedule",
+		"trigger",
 		EnvironmentScopeOptions{},
 	); err == nil {
-		t.Fatal("GetSchedule() accepted an invalid ID")
+		t.Fatal("GetTrigger() accepted an invalid ID")
 	}
 }

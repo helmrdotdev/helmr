@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestScheduleEvaluationBoundsRecoveryAndActivation(t *testing.T) {
+func TestTriggerEvaluationBoundsRecoveryAndActivation(t *testing.T) {
 	at := func(s string) time.Time {
 		t.Helper()
 		v, err := time.Parse(time.RFC3339, s)
@@ -26,12 +26,12 @@ func TestScheduleEvaluationBoundsRecoveryAndActivation(t *testing.T) {
 		{"spring gap", "30 2 * * *", "America/New_York", "2026-03-07T07:30:00Z", "2026-03-08T07:31:00Z", "", "", "2026-03-09T06:30:00Z", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := scheduleActivation{cron: tc.cron, timezone: tc.zone, next: at(tc.next)}
+			s := triggerActivation{cron: tc.cron, timezone: tc.zone, next: at(tc.next)}
 			if tc.until != "" {
 				v := at(tc.until)
 				s.until = &v
 			}
-			got, err := evaluateSchedule(s, at(tc.now))
+			got, err := evaluateTrigger(s, at(tc.now))
 			if err != nil {
 				t.Fatal(err)
 			}

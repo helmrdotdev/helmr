@@ -7,7 +7,7 @@ import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
 import { normalizeInput, type InputContent } from "./content"
 
-export interface Schedule {
+export interface Trigger {
   readonly id: string
   readonly agent: string
   readonly deploymentId: string
@@ -19,20 +19,20 @@ export interface Schedule {
   readonly nextFireAt?: string
 }
 
-export type ScheduleListQuery = Readonly<{ agent?: string; cursor?: string; limit?: number }>
+export type TriggerListQuery = Readonly<{ agent?: string; cursor?: string; limit?: number }>
 
-export interface ClientSchedulesApi {
+export interface ClientTriggersApi {
   get(
-    scheduleId: string,
+    triggerId: string,
     options?: RequestOptions,
-  ): Promise<Schedule>
+  ): Promise<Trigger>
   list(
-    query?: ScheduleListQuery,
+    query?: TriggerListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<Schedule>>
+  ): Promise<CursorPage<Trigger>>
 }
 
-interface ScheduleTransport {
+interface TriggerTransport {
   request(
     method: "GET",
     path: string,
@@ -40,28 +40,28 @@ interface ScheduleTransport {
   ): Promise<unknown>
 }
 
-export function createClientSchedules(
-  transport: ScheduleTransport,
-): ClientSchedulesApi {
+export function createClientTriggers(
+  transport: TriggerTransport,
+): ClientTriggersApi {
   return Object.freeze({
     async get(
-      scheduleId: string,
+      triggerId: string,
       options: RequestOptions = {},
-    ): Promise<Schedule> {
-      return parseSchedule(
+    ): Promise<Trigger> {
+      return parseTrigger(
         await transport.request(
           "GET",
-          `/v1/schedules/${encodeURIComponent(resourceID(scheduleId, "Schedule ID"))}`,
+          `/v1/triggers/${encodeURIComponent(resourceID(triggerId, "Trigger ID"))}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
       )
     },
     async list(
-      query: ScheduleListQuery = {},
+      query: TriggerListQuery = {},
       options: RequestOptions = {},
-    ): Promise<CursorPage<Schedule>> {
+    ): Promise<CursorPage<Trigger>> {
       for (const key of Object.keys(query)) {
-        if (!["agent", "cursor", "limit"].includes(key)) throw new Error(`Unsupported Schedule list query: ${key}`)
+        if (!["agent", "cursor", "limit"].includes(key)) throw new Error(`Unsupported Trigger list query: ${key}`)
       }
       const values = new URLSearchParams()
       if (query.agent !== undefined) {
@@ -69,55 +69,55 @@ export function createClientSchedules(
         values.set("agent", query.agent)
       }
       if (query.cursor !== undefined) {
-        if (query.cursor.length === 0) throw new Error("Schedule cursor is required")
+        if (query.cursor.length === 0) throw new Error("Trigger cursor is required")
         values.set("cursor", query.cursor)
       }
       if (query.limit !== undefined) {
         if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100) {
-          throw new Error("Schedule limit must be an integer in [1,100]")
+          throw new Error("Trigger limit must be an integer in [1,100]")
         }
         values.set("limit", String(query.limit))
       }
       const suffix = values.size === 0 ? "" : `?${values}`
-      const response = scheduleObject(
+      const response = triggerObject(
         await transport.request(
           "GET",
-          `/v1/schedules${suffix}`,
+          `/v1/triggers${suffix}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
-        "Schedule list response",
+        "Trigger list response",
       )
-      if (!Array.isArray(response["schedules"])) {
-        throw new Error("Schedule list response.schedules must be an array")
+      if (!Array.isArray(response["triggers"])) {
+        throw new Error("Trigger list response.triggers must be an array")
       }
       const nextCursor = response["next_cursor"]
       if (nextCursor !== undefined && typeof nextCursor !== "string") {
-        throw new Error("Schedule list response.next_cursor must be a string")
+        throw new Error("Trigger list response.next_cursor must be a string")
       }
       return Object.freeze({
-        items: Object.freeze(response["schedules"].map(parseSchedule)),
+        items: Object.freeze(response["triggers"].map(parseTrigger)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
   })
 }
 
-function parseSchedule(value: unknown): Schedule {
-  const input = scheduleObject(value, "Schedule response")
-  const cron = scheduleObject(input["cron"], "Schedule cron")
-  const agent = requiredString(input, "agent", "Schedule response")
+function parseTrigger(value: unknown): Trigger {
+  const input = triggerObject(value, "Trigger response")
+  const cron = triggerObject(input["cron"], "Trigger cron")
+  const agent = requiredString(input, "agent", "Trigger response")
   validateDefinitionId(agent)
   return Object.freeze({
-    id: resourceID(input["id"], "Schedule response.id"),
+    id: resourceID(input["id"], "Trigger response.id"),
     agent,
     deploymentId: resourceID(input["deployment_id"], "Deployment ID"),
-    triggerKey: requiredString(input, "trigger_key", "Schedule response"),
+    triggerKey: requiredString(input, "trigger_key", "Trigger response"),
     input: normalizeInput(input["input"]),
     activeFrom: timestamp(input["active_from"], "active_from"),
     ...(input["active_until"] === undefined ? {} : {activeUntil: timestamp(input["active_until"], "active_until")}),
     cron: Object.freeze({
-      pattern: requiredString(cron, "pattern", "Schedule cron"),
-      timezone: requiredString(cron, "timezone", "Schedule cron"),
+      pattern: requiredString(cron, "pattern", "Trigger cron"),
+      timezone: requiredString(cron, "timezone", "Trigger cron"),
     }),
     ...(input["next_fire_at"] === undefined
       ? {}
@@ -126,7 +126,7 @@ function parseSchedule(value: unknown): Schedule {
   })
 }
 
-function scheduleObject(
+function triggerObject(
   value: unknown,
   label: string,
 ): Record<string, unknown> {
@@ -149,5 +149,5 @@ function requiredString(
 }
 
 function timestamp(value: unknown, field: string): string {
-  return timestampString(value, `Schedule response.${field}`)
+  return timestampString(value, `Trigger response.${field}`)
 }
