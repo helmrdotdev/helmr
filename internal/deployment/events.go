@@ -83,7 +83,7 @@ func RunEventRetention(ctx context.Context, database db.TxDB, log *slog.Logger) 
 func sweepEvents(ctx context.Context, database db.TxDB, retention time.Duration) (int64, error) {
 	var deleted int64
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `WITH expired AS (SELECT id FROM deployment_events WHERE accepted_at<clock_timestamp()-$1::interval ORDER BY accepted_at,id LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM deployment_events USING expired WHERE deployment_events.id=expired.id`, retention, eventRetentionBatch)
+		tag, err := tx.Exec(ctx, `WITH expired AS (SELECT id FROM deployment_events WHERE accepted_at<statement_timestamp()-$1::interval ORDER BY accepted_at,id LIMIT $2 FOR UPDATE SKIP LOCKED) DELETE FROM deployment_events USING expired WHERE deployment_events.id=expired.id`, retention, eventRetentionBatch)
 		if err != nil {
 			return err
 		}

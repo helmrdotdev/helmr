@@ -55,8 +55,10 @@ func TestSchemaCatalogMatchesSnapshot(t *testing.T) {
 	}
 }
 
-// generatedConstraintName matches the names PostgreSQL assigns to unnamed
-// constraints, which depend on declaration order rather than meaning.
+// generatedConstraintName matches the shape of the names PostgreSQL assigns to
+// unnamed constraints, which depend on declaration order rather than meaning.
+// An explicit name of the same shape is omitted too; its definition still
+// appears. NOT NULL constraints are recorded on the column lines instead.
 func generatedConstraintName(table, name string) bool {
 	return strings.HasPrefix(name, table+"_") && generatedConstraintSuffix.MatchString(name)
 }
@@ -121,7 +123,7 @@ WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisd
 	})
 	query(`SELECT c.relname, k.conname, k.contype::text, pg_get_constraintdef(k.oid, true)
 FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public' AND c.relname <> 'schema_migrations'`, func(v []any) string {
+WHERE n.nspname = 'public' AND c.relname <> 'schema_migrations' AND k.contype <> 'n'`, func(v []any) string {
 		table, name := text(v[0]), text(v[1])
 		if generatedConstraintName(table, name) {
 			name = ""

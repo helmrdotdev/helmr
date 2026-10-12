@@ -1018,31 +1018,15 @@ constraint agent_definitions c CHECK (max_turn_duration_ms > 0)
 constraint agent_definitions f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, template_id, deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
-constraint agent_definitions n agent_definitions_agent_id_not_null NOT NULL agent_id
-constraint agent_definitions n agent_definitions_close_after_idle_never_not_null NOT NULL close_after_idle_never
-constraint agent_definitions n agent_definitions_deployment_id_not_null NOT NULL deployment_id
-constraint agent_definitions n agent_definitions_environment_id_not_null NOT NULL environment_id
-constraint agent_definitions n agent_definitions_has_init_not_null NOT NULL has_init
-constraint agent_definitions n agent_definitions_template_id_not_null NOT NULL template_id
 constraint agent_definitions p PRIMARY KEY (environment_id, agent_id, deployment_id)
 constraint agent_triggers c CHECK (cron <> ''::text)
 constraint agent_triggers c CHECK (octet_length(key) >= 1 AND octet_length(key) <= 256)
 constraint agent_triggers c CHECK (slack_destination ~ '^[CG][A-Z0-9]{1,99}$'::text)
 constraint agent_triggers c CHECK (timezone <> ''::text)
 constraint agent_triggers f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
-constraint agent_triggers n agent_triggers_agent_id_not_null NOT NULL agent_id
-constraint agent_triggers n agent_triggers_cron_not_null NOT NULL cron
-constraint agent_triggers n agent_triggers_deployment_id_not_null NOT NULL deployment_id
-constraint agent_triggers n agent_triggers_environment_id_not_null NOT NULL environment_id
-constraint agent_triggers n agent_triggers_input_not_null NOT NULL input
-constraint agent_triggers n agent_triggers_key_not_null NOT NULL key
-constraint agent_triggers n agent_triggers_timezone_not_null NOT NULL timezone
 constraint agent_triggers p PRIMARY KEY (environment_id, agent_id, deployment_id, key)
 constraint agents c CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
-constraint agents n agents_environment_id_not_null NOT NULL environment_id
-constraint agents n agents_id_not_null NOT NULL id
-constraint agents n agents_key_not_null NOT NULL key
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
@@ -1052,70 +1036,33 @@ constraint api_keys f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELET
 constraint api_keys f FOREIGN KEY (org_id, created_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (created_by_user_id)
 constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
 constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE CASCADE
-constraint api_keys n api_keys_created_at_not_null NOT NULL created_at
-constraint api_keys n api_keys_environment_id_not_null NOT NULL environment_id
-constraint api_keys n api_keys_id_not_null NOT NULL id
-constraint api_keys n api_keys_key_prefix_not_null NOT NULL key_prefix
-constraint api_keys n api_keys_name_not_null NOT NULL name
-constraint api_keys n api_keys_org_id_not_null NOT NULL org_id
-constraint api_keys n api_keys_permissions_not_null NOT NULL permissions
-constraint api_keys n api_keys_project_id_not_null NOT NULL project_id
-constraint api_keys n api_keys_role_not_null NOT NULL role
-constraint api_keys n api_keys_token_hash_not_null NOT NULL token_hash
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (token_hash)
 constraint auth_identities c CHECK (btrim(provider) <> ''::text)
 constraint auth_identities c CHECK (btrim(subject) <> ''::text)
 constraint auth_identities f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-constraint auth_identities n auth_identities_created_at_not_null NOT NULL created_at
-constraint auth_identities n auth_identities_id_not_null NOT NULL id
-constraint auth_identities n auth_identities_provider_not_null NOT NULL provider
-constraint auth_identities n auth_identities_subject_not_null NOT NULL subject
-constraint auth_identities n auth_identities_updated_at_not_null NOT NULL updated_at
-constraint auth_identities n auth_identities_user_id_not_null NOT NULL user_id
 constraint auth_identities p PRIMARY KEY (id)
 constraint auth_identities u UNIQUE (provider, subject)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
-constraint cas_blobs n cas_blobs_digest_not_null NOT NULL digest
-constraint cas_blobs n cas_blobs_size_bytes_not_null NOT NULL size_bytes
 constraint cas_blobs p PRIMARY KEY (digest)
 constraint cas_blobs u UNIQUE (digest, size_bytes, not_retired)
 constraint cas_objects c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_objects c CHECK (size_bytes >= 0)
 constraint cas_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
-constraint cas_objects n cas_objects_created_at_not_null NOT NULL created_at
-constraint cas_objects n cas_objects_digest_not_null NOT NULL digest
-constraint cas_objects n cas_objects_media_type_not_null NOT NULL media_type
-constraint cas_objects n cas_objects_org_id_not_null NOT NULL org_id
-constraint cas_objects n cas_objects_size_bytes_not_null NOT NULL size_bytes
 constraint cas_objects p PRIMARY KEY (org_id, digest)
 constraint cas_objects u UNIQUE (org_id, digest, size_bytes, media_type)
 constraint cas_upload_reclaims c CHECK (upload_id <> ''::text)
 constraint cas_upload_reclaims f FOREIGN KEY (digest) REFERENCES cas_blobs(digest)
-constraint cas_upload_reclaims n cas_upload_reclaims_digest_not_null NOT NULL digest
-constraint cas_upload_reclaims n cas_upload_reclaims_next_reclaim_at_not_null NOT NULL next_reclaim_at
-constraint cas_upload_reclaims n cas_upload_reclaims_upload_id_not_null NOT NULL upload_id
 constraint cas_upload_reclaims p PRIMARY KEY (digest, upload_id)
 constraint checkpoint_objects c CHECK (role = ANY (ARRAY['vm_config'::text, 'vm_state'::text, 'memory'::text, 'scratch_disk'::text]))
 constraint checkpoint_objects c CHECK (size_bytes > 0)
 constraint checkpoint_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
 constraint checkpoint_objects f FOREIGN KEY (environment_id, checkpoint_id) REFERENCES checkpoints(environment_id, id)
-constraint checkpoint_objects n checkpoint_objects_checkpoint_id_not_null NOT NULL checkpoint_id
-constraint checkpoint_objects n checkpoint_objects_digest_not_null NOT NULL digest
-constraint checkpoint_objects n checkpoint_objects_environment_id_not_null NOT NULL environment_id
-constraint checkpoint_objects n checkpoint_objects_media_type_not_null NOT NULL media_type
-constraint checkpoint_objects n checkpoint_objects_role_not_null NOT NULL role
-constraint checkpoint_objects n checkpoint_objects_size_bytes_not_null NOT NULL size_bytes
 constraint checkpoint_objects p PRIMARY KEY (environment_id, checkpoint_id, role)
 constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, checkpoint_id) REFERENCES checkpoints(environment_id, computer_id, id)
 constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, session_id, process_epoch) REFERENCES session_processes(environment_id, computer_id, session_id, epoch)
-constraint checkpoint_processes n checkpoint_processes_checkpoint_id_not_null NOT NULL checkpoint_id
-constraint checkpoint_processes n checkpoint_processes_computer_id_not_null NOT NULL computer_id
-constraint checkpoint_processes n checkpoint_processes_environment_id_not_null NOT NULL environment_id
-constraint checkpoint_processes n checkpoint_processes_process_epoch_not_null NOT NULL process_epoch
-constraint checkpoint_processes n checkpoint_processes_session_id_not_null NOT NULL session_id
 constraint checkpoint_processes p PRIMARY KEY (environment_id, checkpoint_id, session_id)
 constraint checkpoints c CHECK (((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) OR controls_reconciled_at IS NOT NULL) = (capture_request IS NULL))
 constraint checkpoints c CHECK ((manifest IS NULL) = (vm_platform_id IS NULL))
@@ -1139,16 +1086,6 @@ constraint checkpoints f FOREIGN KEY (environment_id, computer_id, disk_save_id)
 constraint checkpoints f FOREIGN KEY (environment_id, computer_id, source_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint checkpoints f FOREIGN KEY (environment_id, computer_id, target_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint checkpoints f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id)
-constraint checkpoints n checkpoints_capture_digest_not_null NOT NULL capture_digest
-constraint checkpoints n checkpoints_capture_expires_at_not_null NOT NULL capture_expires_at
-constraint checkpoints n checkpoints_computer_id_not_null NOT NULL computer_id
-constraint checkpoints n checkpoints_control_version_not_null NOT NULL control_version
-constraint checkpoints n checkpoints_created_at_not_null NOT NULL created_at
-constraint checkpoints n checkpoints_disk_save_id_not_null NOT NULL disk_save_id
-constraint checkpoints n checkpoints_environment_id_not_null NOT NULL environment_id
-constraint checkpoints n checkpoints_id_not_null NOT NULL id
-constraint checkpoints n checkpoints_source_lease_epoch_not_null NOT NULL source_lease_epoch
-constraint checkpoints n checkpoints_status_not_null NOT NULL status
 constraint checkpoints p PRIMARY KEY (environment_id, id)
 constraint checkpoints u UNIQUE (environment_id, computer_id, control_version)
 constraint checkpoints u UNIQUE (environment_id, computer_id, id)
@@ -1187,29 +1124,6 @@ constraint commands c CHECK (stdout_last_digest IS NULL OR octet_length(stdout_l
 constraint commands c CHECK (timeout_ms > 0)
 constraint commands f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint commands f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
-constraint commands n commands_caller_id_not_null NOT NULL caller_id
-constraint commands n commands_caller_kind_not_null NOT NULL caller_kind
-constraint commands n commands_computer_id_not_null NOT NULL computer_id
-constraint commands n commands_created_at_not_null NOT NULL created_at
-constraint commands n commands_environment_id_not_null NOT NULL environment_id
-constraint commands n commands_id_not_null NOT NULL id
-constraint commands n commands_output_fenced_not_null NOT NULL output_fenced
-constraint commands n commands_revision_not_null NOT NULL revision
-constraint commands n commands_status_not_null NOT NULL status
-constraint commands n commands_stderr_accepted_through_not_null NOT NULL stderr_accepted_through
-constraint commands n commands_stderr_byte_offset_not_null NOT NULL stderr_byte_offset
-constraint commands n commands_stderr_end_complete_not_null NOT NULL stderr_end_complete
-constraint commands n commands_stderr_ended_not_null NOT NULL stderr_ended
-constraint commands n commands_stderr_expired_through_not_null NOT NULL stderr_expired_through
-constraint commands n commands_stderr_gapped_not_null NOT NULL stderr_gapped
-constraint commands n commands_stdout_accepted_through_not_null NOT NULL stdout_accepted_through
-constraint commands n commands_stdout_byte_offset_not_null NOT NULL stdout_byte_offset
-constraint commands n commands_stdout_end_complete_not_null NOT NULL stdout_end_complete
-constraint commands n commands_stdout_ended_not_null NOT NULL stdout_ended
-constraint commands n commands_stdout_expired_through_not_null NOT NULL stdout_expired_through
-constraint commands n commands_stdout_gapped_not_null NOT NULL stdout_gapped
-constraint commands n commands_timeout_ms_not_null NOT NULL timeout_ms
-constraint commands n commands_updated_at_not_null NOT NULL updated_at
 constraint commands p PRIMARY KEY (environment_id, id)
 constraint commands u UNIQUE (environment_id, computer_id, id)
 constraint computer_leases c CHECK ((base_root_id IS NULL) = (write_key_id IS NULL))
@@ -1237,20 +1151,6 @@ constraint computer_leases f FOREIGN KEY (environment_id, computer_id, write_key
 constraint computer_leases f FOREIGN KEY (environment_id, retained_base_root_id) REFERENCES disk_roots(environment_id, id)
 constraint computer_leases f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id)
 constraint computer_leases f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id)
-constraint computer_leases n computer_leases_allocation_id_not_null NOT NULL allocation_id
-constraint computer_leases n computer_leases_channel_credential_digest_not_null NOT NULL channel_credential_digest
-constraint computer_leases n computer_leases_computer_id_not_null NOT NULL computer_id
-constraint computer_leases n computer_leases_cpu_config_digest_not_null NOT NULL cpu_config_digest
-constraint computer_leases n computer_leases_environment_id_not_null NOT NULL environment_id
-constraint computer_leases n computer_leases_epoch_not_null NOT NULL epoch
-constraint computer_leases n computer_leases_reserved_cpu_millis_not_null NOT NULL reserved_cpu_millis
-constraint computer_leases n computer_leases_reserved_memory_bytes_not_null NOT NULL reserved_memory_bytes
-constraint computer_leases n computer_leases_reserved_scratch_bytes_not_null NOT NULL reserved_scratch_bytes
-constraint computer_leases n computer_leases_status_not_null NOT NULL status
-constraint computer_leases n computer_leases_vm_platform_id_not_null NOT NULL vm_platform_id
-constraint computer_leases n computer_leases_vm_vcpu_count_not_null NOT NULL vm_vcpu_count
-constraint computer_leases n computer_leases_worker_epoch_not_null NOT NULL worker_epoch
-constraint computer_leases n computer_leases_worker_host_id_not_null NOT NULL worker_host_id
 constraint computer_leases p PRIMARY KEY (environment_id, computer_id, epoch)
 constraint computer_leases u UNIQUE (allocation_id)
 constraint computer_saves c CHECK ((status <> ALL (ARRAY['captured'::text, 'published'::text])) OR flush_acknowledged_at IS NOT NULL AND captured_at IS NOT NULL AND captured_root_digest IS NOT NULL AND capture_evidence IS NOT NULL)
@@ -1266,13 +1166,6 @@ constraint computer_saves c CHECK (status = ANY (ARRAY['requested'::text, 'captu
 constraint computer_saves f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint computer_saves f FOREIGN KEY (environment_id, root_id) REFERENCES disk_roots(environment_id, id)
 constraint computer_saves f FOREIGN KEY (environment_id, turn_id, computer_id, requires_recorded_result) REFERENCES turns(environment_id, id, computer_id, has_recorded_result)
-constraint computer_saves n computer_saves_computer_id_not_null NOT NULL computer_id
-constraint computer_saves n computer_saves_computer_lease_epoch_not_null NOT NULL computer_lease_epoch
-constraint computer_saves n computer_saves_environment_id_not_null NOT NULL environment_id
-constraint computer_saves n computer_saves_id_not_null NOT NULL id
-constraint computer_saves n computer_saves_requested_at_not_null NOT NULL requested_at
-constraint computer_saves n computer_saves_seq_not_null NOT NULL seq
-constraint computer_saves n computer_saves_status_not_null NOT NULL status
 constraint computer_saves p PRIMARY KEY (environment_id, id)
 constraint computer_saves u UNIQUE (environment_id, computer_id, id)
 constraint computer_saves u UNIQUE (environment_id, computer_id, id, published)
@@ -1306,59 +1199,23 @@ constraint computers f FOREIGN KEY (environment_id, image_spec_id, image_build_i
 constraint computers f FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id)
 constraint computers f FOREIGN KEY (environment_id, initial_root_id) REFERENCES disk_roots(environment_id, id)
 constraint computers f FOREIGN KEY (environment_id, origin_template_id, origin_deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
-constraint computers n computers_cpu_millis_not_null NOT NULL cpu_millis
-constraint computers n computers_created_at_not_null NOT NULL created_at
-constraint computers n computers_environment_id_not_null NOT NULL environment_id
-constraint computers n computers_id_not_null NOT NULL id
-constraint computers n computers_last_activity_at_not_null NOT NULL last_activity_at
-constraint computers n computers_memory_bytes_not_null NOT NULL memory_bytes
-constraint computers n computers_next_control_version_not_null NOT NULL next_control_version
-constraint computers n computers_next_save_seq_not_null NOT NULL next_save_seq
-constraint computers n computers_origin_deployment_id_not_null NOT NULL origin_deployment_id
-constraint computers n computers_origin_template_id_not_null NOT NULL origin_template_id
-constraint computers n computers_updated_at_not_null NOT NULL updated_at
 constraint computers p PRIMARY KEY (environment_id, id)
 constraint deployment_events c CHECK (length(kind) > 0)
 constraint deployment_events f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint deployment_events f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
-constraint deployment_events n deployment_events_accepted_at_not_null NOT NULL accepted_at
-constraint deployment_events n deployment_events_deployment_id_not_null NOT NULL deployment_id
-constraint deployment_events n deployment_events_environment_id_not_null NOT NULL environment_id
-constraint deployment_events n deployment_events_id_not_null NOT NULL id
-constraint deployment_events n deployment_events_kind_not_null NOT NULL kind
-constraint deployment_events n deployment_events_message_not_null NOT NULL message
-constraint deployment_events n deployment_events_payload_not_null NOT NULL payload
 constraint deployment_events p PRIMARY KEY (id)
 constraint deployment_objects f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint deployment_objects f FOREIGN KEY (org_id, digest, size_bytes, media_type) REFERENCES cas_objects(org_id, digest, size_bytes, media_type)
 constraint deployment_objects f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id)
-constraint deployment_objects n deployment_objects_deployment_id_not_null NOT NULL deployment_id
-constraint deployment_objects n deployment_objects_digest_not_null NOT NULL digest
-constraint deployment_objects n deployment_objects_environment_id_not_null NOT NULL environment_id
-constraint deployment_objects n deployment_objects_media_type_not_null NOT NULL media_type
-constraint deployment_objects n deployment_objects_org_id_not_null NOT NULL org_id
-constraint deployment_objects n deployment_objects_project_id_not_null NOT NULL project_id
-constraint deployment_objects n deployment_objects_size_bytes_not_null NOT NULL size_bytes
 constraint deployment_objects p PRIMARY KEY (environment_id, deployment_id, digest)
 constraint deployments c CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint deployments f FOREIGN KEY (environment_id) REFERENCES environments(id)
-constraint deployments n deployments_bundle_digest_not_null NOT NULL bundle_digest
-constraint deployments n deployments_created_at_not_null NOT NULL created_at
-constraint deployments n deployments_environment_id_not_null NOT NULL environment_id
-constraint deployments n deployments_id_not_null NOT NULL id
 constraint deployments p PRIMARY KEY (environment_id, id)
 constraint deployments u UNIQUE (environment_id, bundle_digest)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
 constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text]))
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint device_codes f FOREIGN KEY (org_id, decided_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (decided_by_user_id)
-constraint device_codes n device_codes_created_at_not_null NOT NULL created_at
-constraint device_codes n device_codes_device_code_hash_not_null NOT NULL device_code_hash
-constraint device_codes n device_codes_expires_at_not_null NOT NULL expires_at
-constraint device_codes n device_codes_id_not_null NOT NULL id
-constraint device_codes n device_codes_poll_interval_seconds_not_null NOT NULL poll_interval_seconds
-constraint device_codes n device_codes_status_not_null NOT NULL status
-constraint device_codes n device_codes_user_code_hash_not_null NOT NULL user_code_hash
 constraint device_codes p PRIMARY KEY (id)
 constraint device_codes u UNIQUE (device_code_hash)
 constraint device_codes u UNIQUE (user_code_hash)
@@ -1371,24 +1228,6 @@ constraint diagnostic_chunks f FOREIGN KEY (environment_id) REFERENCES environme
 constraint diagnostic_chunks f FOREIGN KEY (environment_id, command_id) REFERENCES commands(environment_id, id)
 constraint diagnostic_chunks f FOREIGN KEY (environment_id, image_build_id, preparation_epoch) REFERENCES image_builds(environment_id, id, executor_epoch)
 constraint diagnostic_chunks f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
-constraint diagnostic_chunks n diagnostic_chunks_accepted_at_not_null NOT NULL accepted_at
-constraint diagnostic_chunks n diagnostic_chunks_byte_offset_not_null NOT NULL byte_offset
-constraint diagnostic_chunks n diagnostic_chunks_complete_not_null NOT NULL complete
-constraint diagnostic_chunks n diagnostic_chunks_data_not_null NOT NULL data
-constraint diagnostic_chunks n diagnostic_chunks_dropped_bytes_not_null NOT NULL dropped_bytes
-constraint diagnostic_chunks n diagnostic_chunks_environment_id_not_null NOT NULL environment_id
-constraint diagnostic_chunks n diagnostic_chunks_export_after_not_null NOT NULL export_after
-constraint diagnostic_chunks n diagnostic_chunks_id_not_null NOT NULL id
-constraint diagnostic_chunks n diagnostic_chunks_ingest_size_bytes_not_null NOT NULL ingest_size_bytes
-constraint diagnostic_chunks n diagnostic_chunks_kind_not_null NOT NULL kind
-constraint diagnostic_chunks n diagnostic_chunks_observed_at_unix_nano_not_null NOT NULL observed_at_unix_nano
-constraint diagnostic_chunks n diagnostic_chunks_producer_epoch_not_null NOT NULL producer_epoch
-constraint diagnostic_chunks n diagnostic_chunks_sequence_not_null NOT NULL sequence
-constraint diagnostic_chunks n diagnostic_chunks_source_id_not_null NOT NULL source_id
-constraint diagnostic_chunks n diagnostic_chunks_source_kind_not_null NOT NULL source_kind
-constraint diagnostic_chunks n diagnostic_chunks_stream_not_null NOT NULL stream
-constraint diagnostic_chunks n diagnostic_chunks_through_byte_offset_not_null NOT NULL through_byte_offset
-constraint diagnostic_chunks n diagnostic_chunks_through_sequence_not_null NOT NULL through_sequence
 constraint diagnostic_chunks p PRIMARY KEY (id)
 constraint disk_encryption_keys c CHECK (octet_length(wrapping_key_id) >= 1 AND octet_length(wrapping_key_id) <= 2048)
 constraint disk_encryption_keys c CHECK (retired_at IS NULL AND wrapped_key IS NOT NULL AND octet_length(wrapped_key) >= 1 AND octet_length(wrapped_key) <= 6144 OR retired_at IS NOT NULL AND wrapped_key IS NULL)
@@ -1396,10 +1235,6 @@ constraint disk_encryption_keys c CHECK (writer_computer_id IS NULL OR writer_im
 constraint disk_encryption_keys f FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 constraint disk_encryption_keys f FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT
 constraint disk_encryption_keys f FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id, id)
-constraint disk_encryption_keys n disk_encryption_keys_created_at_not_null NOT NULL created_at
-constraint disk_encryption_keys n disk_encryption_keys_environment_id_not_null NOT NULL environment_id
-constraint disk_encryption_keys n disk_encryption_keys_id_not_null NOT NULL id
-constraint disk_encryption_keys n disk_encryption_keys_wrapping_key_id_not_null NOT NULL wrapping_key_id
 constraint disk_encryption_keys p PRIMARY KEY (id)
 constraint disk_encryption_keys u UNIQUE (environment_id, id, available)
 constraint disk_encryption_keys u UNIQUE (environment_id, writer_computer_id, id)
@@ -1409,27 +1244,15 @@ constraint disk_encryption_keys u UNIQUE (environment_id, writer_image_build_id,
 constraint disk_object_edges c CHECK (child_rank < parent_rank)
 constraint disk_object_edges f FOREIGN KEY (environment_id, child_digest, child_rank, certification_required) REFERENCES disk_objects(environment_id, digest, rank, certified) ON DELETE RESTRICT
 constraint disk_object_edges f FOREIGN KEY (environment_id, parent_digest, parent_rank) REFERENCES disk_objects(environment_id, digest, rank) ON DELETE CASCADE
-constraint disk_object_edges n disk_object_edges_child_digest_not_null NOT NULL child_digest
-constraint disk_object_edges n disk_object_edges_child_rank_not_null NOT NULL child_rank
-constraint disk_object_edges n disk_object_edges_environment_id_not_null NOT NULL environment_id
-constraint disk_object_edges n disk_object_edges_parent_digest_not_null NOT NULL parent_digest
-constraint disk_object_edges n disk_object_edges_parent_rank_not_null NOT NULL parent_rank
 constraint disk_object_edges p PRIMARY KEY (environment_id, parent_digest, child_digest)
 constraint disk_object_keys f FOREIGN KEY (environment_id, digest) REFERENCES disk_objects(environment_id, digest) ON DELETE CASCADE
 constraint disk_object_keys f FOREIGN KEY (environment_id, key_id, availability_required) REFERENCES disk_encryption_keys(environment_id, id, available) ON DELETE RESTRICT
-constraint disk_object_keys n disk_object_keys_digest_not_null NOT NULL digest
-constraint disk_object_keys n disk_object_keys_environment_id_not_null NOT NULL environment_id
-constraint disk_object_keys n disk_object_keys_is_direct_not_null NOT NULL is_direct
-constraint disk_object_keys n disk_object_keys_key_id_not_null NOT NULL key_id
 constraint disk_object_keys p PRIMARY KEY (environment_id, digest, key_id)
 constraint disk_object_keys u UNIQUE (environment_id, digest, key_id, is_direct)
 constraint disk_object_pins c CHECK (num_nonnulls(save_id, image_build_id) = 1)
 constraint disk_object_pins f FOREIGN KEY (environment_id, digest) REFERENCES disk_objects(environment_id, digest)
 constraint disk_object_pins f FOREIGN KEY (environment_id, image_build_id) REFERENCES image_builds(environment_id, id)
 constraint disk_object_pins f FOREIGN KEY (environment_id, save_id) REFERENCES computer_saves(environment_id, id)
-constraint disk_object_pins n disk_object_pins_digest_not_null NOT NULL digest
-constraint disk_object_pins n disk_object_pins_environment_id_not_null NOT NULL environment_id
-constraint disk_object_pins n disk_object_pins_id_not_null NOT NULL id
 constraint disk_object_pins p PRIMARY KEY (id)
 constraint disk_object_pins u UNIQUE NULLS NOT DISTINCT (environment_id, save_id, image_build_id, digest)
 constraint disk_objects c CHECK (btrim(media_type) <> ''::text)
@@ -1441,15 +1264,6 @@ constraint disk_objects c CHECK (size_bytes > 0)
 constraint disk_objects f FOREIGN KEY (certified_org_id, digest, size_bytes, media_type) REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
 constraint disk_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired) ON DELETE RESTRICT
 constraint disk_objects f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT
-constraint disk_objects n disk_objects_digest_not_null NOT NULL digest
-constraint disk_objects n disk_objects_environment_id_not_null NOT NULL environment_id
-constraint disk_objects n disk_objects_inspection_not_null NOT NULL inspection
-constraint disk_objects n disk_objects_kind_not_null NOT NULL kind
-constraint disk_objects n disk_objects_media_type_not_null NOT NULL media_type
-constraint disk_objects n disk_objects_org_id_not_null NOT NULL org_id
-constraint disk_objects n disk_objects_project_id_not_null NOT NULL project_id
-constraint disk_objects n disk_objects_rank_not_null NOT NULL rank
-constraint disk_objects n disk_objects_size_bytes_not_null NOT NULL size_bytes
 constraint disk_objects p PRIMARY KEY (environment_id, digest)
 constraint disk_objects u UNIQUE (environment_id, digest, rank)
 constraint disk_objects u UNIQUE (environment_id, digest, rank, certified)
@@ -1463,20 +1277,6 @@ constraint disk_roots c CHECK (page_salt ~ '^[0-9a-f]{64}$'::text)
 constraint disk_roots f FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 constraint disk_roots f FOREIGN KEY (environment_id, pack_digest, pack_size_bytes, pack_rank, certification_required, root_kind) REFERENCES disk_objects(environment_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT
 constraint disk_roots f FOREIGN KEY (environment_id, pack_digest, page_key_id, direct_key_required) REFERENCES disk_object_keys(environment_id, digest, key_id, is_direct) ON DELETE RESTRICT
-constraint disk_roots n disk_roots_environment_id_not_null NOT NULL environment_id
-constraint disk_roots n disk_roots_format_version_not_null NOT NULL format_version
-constraint disk_roots n disk_roots_id_not_null NOT NULL id
-constraint disk_roots n disk_roots_logical_bytes_not_null NOT NULL logical_bytes
-constraint disk_roots n disk_roots_pack_digest_not_null NOT NULL pack_digest
-constraint disk_roots n disk_roots_pack_rank_not_null NOT NULL pack_rank
-constraint disk_roots n disk_roots_pack_size_bytes_not_null NOT NULL pack_size_bytes
-constraint disk_roots n disk_roots_page_count_not_null NOT NULL page_count
-constraint disk_roots n disk_roots_page_digest_not_null NOT NULL page_digest
-constraint disk_roots n disk_roots_page_key_id_not_null NOT NULL page_key_id
-constraint disk_roots n disk_roots_page_kind_not_null NOT NULL page_kind
-constraint disk_roots n disk_roots_page_offset_not_null NOT NULL page_offset
-constraint disk_roots n disk_roots_page_salt_not_null NOT NULL page_salt
-constraint disk_roots n disk_roots_page_size_bytes_not_null NOT NULL page_size_bytes
 constraint disk_roots p PRIMARY KEY (id)
 constraint disk_roots u UNIQUE (environment_id, id)
 constraint disk_roots u UNIQUE (environment_id, pack_digest, page_offset)
@@ -1498,27 +1298,6 @@ constraint environments c CHECK (max_resident_computers > 0)
 constraint environments c CHECK (preparation_timeout_ms > 0)
 constraint environments f FOREIGN KEY (id, current_deployment_id) REFERENCES deployments(environment_id, id)
 constraint environments f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
-constraint environments n environments_admission_burst_not_null NOT NULL admission_burst
-constraint environments n environments_admission_rate_per_second_not_null NOT NULL admission_rate_per_second
-constraint environments n environments_admission_refilled_at_not_null NOT NULL admission_refilled_at
-constraint environments n environments_admission_tokens_not_null NOT NULL admission_tokens
-constraint environments n environments_color_hex_not_null NOT NULL color_hex
-constraint environments n environments_created_at_not_null NOT NULL created_at
-constraint environments n environments_history_retention_mode_not_null NOT NULL history_retention_mode
-constraint environments n environments_id_not_null NOT NULL id
-constraint environments n environments_is_default_not_null NOT NULL is_default
-constraint environments n environments_max_causal_depth_not_null NOT NULL max_causal_depth
-constraint environments n environments_max_cpu_millis_not_null NOT NULL max_cpu_millis
-constraint environments n environments_max_memory_bytes_not_null NOT NULL max_memory_bytes
-constraint environments n environments_max_outstanding_admissions_not_null NOT NULL max_outstanding_admissions
-constraint environments n environments_max_reserved_storage_bytes_not_null NOT NULL max_reserved_storage_bytes
-constraint environments n environments_max_resident_computers_not_null NOT NULL max_resident_computers
-constraint environments n environments_name_not_null NOT NULL name
-constraint environments n environments_org_id_not_null NOT NULL org_id
-constraint environments n environments_preparation_timeout_ms_not_null NOT NULL preparation_timeout_ms
-constraint environments n environments_project_id_not_null NOT NULL project_id
-constraint environments n environments_slug_not_null NOT NULL slug
-constraint environments n environments_updated_at_not_null NOT NULL updated_at
 constraint environments p PRIMARY KEY (id)
 constraint environments u UNIQUE (org_id, project_id, id)
 constraint environments u UNIQUE (org_id, project_id, slug)
@@ -1539,12 +1318,6 @@ constraint idempotency_receipts f FOREIGN KEY (environment_id, scope_computer_id
 constraint idempotency_receipts f FOREIGN KEY (environment_id, scope_secret_id) REFERENCES secrets(environment_id, id)
 constraint idempotency_receipts f FOREIGN KEY (environment_id, secret_id) REFERENCES secrets(environment_id, id)
 constraint idempotency_receipts f FOREIGN KEY (secret_id, secret_version_id) REFERENCES secret_versions(secret_id, id)
-constraint idempotency_receipts n idempotency_receipts_accepted_at_not_null NOT NULL accepted_at
-constraint idempotency_receipts n idempotency_receipts_environment_id_not_null NOT NULL environment_id
-constraint idempotency_receipts n idempotency_receipts_id_not_null NOT NULL id
-constraint idempotency_receipts n idempotency_receipts_operation_not_null NOT NULL operation
-constraint idempotency_receipts n idempotency_receipts_request_fingerprint_not_null NOT NULL request_fingerprint
-constraint idempotency_receipts n idempotency_receipts_slot_hash_not_null NOT NULL slot_hash
 constraint idempotency_receipts p PRIMARY KEY (environment_id, id)
 constraint idempotency_receipts u UNIQUE (environment_id, operation, slot_hash)
 constraint image_builds c CHECK ((capture_root IS NULL) = (capture_evidence IS NULL))
@@ -1593,25 +1366,6 @@ constraint image_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES
 constraint image_builds f FOREIGN KEY (environment_id, image_spec_id, successor_of) REFERENCES image_builds(environment_id, image_spec_id, id)
 constraint image_builds f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id)
 constraint image_builds f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id)
-constraint image_builds n image_builds_deadline_at_not_null NOT NULL deadline_at
-constraint image_builds n image_builds_environment_id_not_null NOT NULL environment_id
-constraint image_builds n image_builds_executor_epoch_not_null NOT NULL executor_epoch
-constraint image_builds n image_builds_id_not_null NOT NULL id
-constraint image_builds n image_builds_idempotency_key_not_null NOT NULL idempotency_key
-constraint image_builds n image_builds_image_spec_id_not_null NOT NULL image_spec_id
-constraint image_builds n image_builds_status_not_null NOT NULL status
-constraint image_builds n image_builds_stderr_accepted_through_not_null NOT NULL stderr_accepted_through
-constraint image_builds n image_builds_stderr_byte_offset_not_null NOT NULL stderr_byte_offset
-constraint image_builds n image_builds_stderr_end_complete_not_null NOT NULL stderr_end_complete
-constraint image_builds n image_builds_stderr_ended_not_null NOT NULL stderr_ended
-constraint image_builds n image_builds_stderr_expired_through_not_null NOT NULL stderr_expired_through
-constraint image_builds n image_builds_stderr_gapped_not_null NOT NULL stderr_gapped
-constraint image_builds n image_builds_stdout_accepted_through_not_null NOT NULL stdout_accepted_through
-constraint image_builds n image_builds_stdout_byte_offset_not_null NOT NULL stdout_byte_offset
-constraint image_builds n image_builds_stdout_end_complete_not_null NOT NULL stdout_end_complete
-constraint image_builds n image_builds_stdout_ended_not_null NOT NULL stdout_ended
-constraint image_builds n image_builds_stdout_expired_through_not_null NOT NULL stdout_expired_through
-constraint image_builds n image_builds_stdout_gapped_not_null NOT NULL stdout_gapped
 constraint image_builds p PRIMARY KEY (environment_id, id)
 constraint image_builds u UNIQUE (allocation_id)
 constraint image_builds u UNIQUE (environment_id, id, executor_epoch)
@@ -1624,12 +1378,6 @@ constraint image_specs c CHECK (jsonb_typeof(spec) = 'object'::text)
 constraint image_specs c CHECK (refresh_every_ms > 0)
 constraint image_specs c CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint image_specs f FOREIGN KEY (environment_id) REFERENCES environments(id)
-constraint image_specs n image_specs_created_at_not_null NOT NULL created_at
-constraint image_specs n image_specs_environment_id_not_null NOT NULL environment_id
-constraint image_specs n image_specs_id_not_null NOT NULL id
-constraint image_specs n image_specs_seed_not_null NOT NULL seed
-constraint image_specs n image_specs_spec_digest_not_null NOT NULL spec_digest
-constraint image_specs n image_specs_spec_not_null NOT NULL spec
 constraint image_specs p PRIMARY KEY (environment_id, id)
 constraint image_specs u UNIQUE (environment_id, spec_digest)
 constraint images c CHECK ((root_id IS NOT NULL) <> (payload_retired_at IS NOT NULL))
@@ -1637,13 +1385,6 @@ constraint images c CHECK (octet_length(publication_evidence) >= 1 AND octet_len
 constraint images c CHECK (seq > 0)
 constraint images f FOREIGN KEY (environment_id, image_spec_id, image_build_id) REFERENCES image_builds(environment_id, image_spec_id, id)
 constraint images f FOREIGN KEY (environment_id, root_id) REFERENCES disk_roots(environment_id, id)
-constraint images n images_environment_id_not_null NOT NULL environment_id
-constraint images n images_id_not_null NOT NULL id
-constraint images n images_image_build_id_not_null NOT NULL image_build_id
-constraint images n images_image_spec_id_not_null NOT NULL image_spec_id
-constraint images n images_publication_evidence_not_null NOT NULL publication_evidence
-constraint images n images_published_at_not_null NOT NULL published_at
-constraint images n images_seq_not_null NOT NULL seq
 constraint images p PRIMARY KEY (environment_id, id)
 constraint images u UNIQUE (environment_id, image_build_id)
 constraint images u UNIQUE (environment_id, image_spec_id, id)
@@ -1652,75 +1393,33 @@ constraint invitations f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DE
 constraint invitations f FOREIGN KEY (org_id, accepted_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (accepted_by_user_id) DEFERRABLE INITIALLY DEFERRED
 constraint invitations f FOREIGN KEY (org_id, invited_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (invited_by_user_id)
 constraint invitations f FOREIGN KEY (org_id, revoked_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (revoked_by_user_id)
-constraint invitations n invitations_created_at_not_null NOT NULL created_at
-constraint invitations n invitations_expires_at_not_null NOT NULL expires_at
-constraint invitations n invitations_id_not_null NOT NULL id
-constraint invitations n invitations_invitee_email_not_null NOT NULL invitee_email
-constraint invitations n invitations_org_id_not_null NOT NULL org_id
-constraint invitations n invitations_role_not_null NOT NULL role
-constraint invitations n invitations_token_hash_not_null NOT NULL token_hash
 constraint invitations p PRIMARY KEY (id)
 constraint invitations u UNIQUE (token_hash)
 constraint login_sessions f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-constraint login_sessions n login_sessions_created_at_not_null NOT NULL created_at
-constraint login_sessions n login_sessions_expires_at_not_null NOT NULL expires_at
-constraint login_sessions n login_sessions_id_not_null NOT NULL id
-constraint login_sessions n login_sessions_last_seen_at_not_null NOT NULL last_seen_at
-constraint login_sessions n login_sessions_token_hash_not_null NOT NULL token_hash
-constraint login_sessions n login_sessions_user_id_not_null NOT NULL user_id
 constraint login_sessions p PRIMARY KEY (id)
 constraint login_sessions u UNIQUE (token_hash)
 constraint magic_links f FOREIGN KEY (consumed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 constraint magic_links f FOREIGN KEY (invitation_id) REFERENCES invitations(id) ON DELETE CASCADE
 constraint magic_links f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint magic_links n magic_links_created_at_not_null NOT NULL created_at
-constraint magic_links n magic_links_email_not_null NOT NULL email
-constraint magic_links n magic_links_expires_at_not_null NOT NULL expires_at
-constraint magic_links n magic_links_id_not_null NOT NULL id
-constraint magic_links n magic_links_purpose_not_null NOT NULL purpose
-constraint magic_links n magic_links_token_hash_not_null NOT NULL token_hash
 constraint magic_links p PRIMARY KEY (id)
 constraint magic_links u UNIQUE (token_hash)
 constraint org_members f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint org_members f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-constraint org_members n org_members_created_at_not_null NOT NULL created_at
-constraint org_members n org_members_org_id_not_null NOT NULL org_id
-constraint org_members n org_members_role_not_null NOT NULL role
-constraint org_members n org_members_updated_at_not_null NOT NULL updated_at
-constraint org_members n org_members_user_id_not_null NOT NULL user_id
 constraint org_members p PRIMARY KEY (org_id, user_id)
 constraint organizations c CHECK (btrim(name) <> ''::text)
 constraint organizations c CHECK (btrim(slug) <> ''::text)
-constraint organizations n organizations_created_at_not_null NOT NULL created_at
-constraint organizations n organizations_id_not_null NOT NULL id
-constraint organizations n organizations_name_not_null NOT NULL name
-constraint organizations n organizations_slug_not_null NOT NULL slug
-constraint organizations n organizations_updated_at_not_null NOT NULL updated_at
 constraint organizations p PRIMARY KEY (id)
 constraint organizations u UNIQUE (slug)
 constraint projects c CHECK (btrim(name) <> ''::text)
 constraint projects c CHECK (btrim(slug) <> ''::text)
 constraint projects f FOREIGN KEY (default_region_id) REFERENCES regions(id) ON DELETE RESTRICT
 constraint projects f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint projects n projects_created_at_not_null NOT NULL created_at
-constraint projects n projects_default_region_id_not_null NOT NULL default_region_id
-constraint projects n projects_id_not_null NOT NULL id
-constraint projects n projects_is_default_not_null NOT NULL is_default
-constraint projects n projects_name_not_null NOT NULL name
-constraint projects n projects_org_id_not_null NOT NULL org_id
-constraint projects n projects_slug_not_null NOT NULL slug
-constraint projects n projects_updated_at_not_null NOT NULL updated_at
 constraint projects p PRIMARY KEY (id)
 constraint projects u UNIQUE (org_id, id)
 constraint projects u UNIQUE (org_id, slug)
 constraint regions c CHECK (btrim(display_name) <> ''::text)
 constraint regions c CHECK (id = btrim(id) AND octet_length(id) >= 1 AND octet_length(id) <= 255 AND id !~ '[[:cntrl:]]'::text AND id !~ '(^[[:space:]])|([[:space:]]$)'::text)
-constraint regions n regions_created_at_not_null NOT NULL created_at
-constraint regions n regions_display_name_not_null NOT NULL display_name
-constraint regions n regions_id_not_null NOT NULL id
-constraint regions n regions_location_not_null NOT NULL location
-constraint regions n regions_updated_at_not_null NOT NULL updated_at
 constraint regions p PRIMARY KEY (id)
 constraint secret_bindings c CHECK ((deployment_id IS NULL) = (template_id IS NULL))
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$'::text OR mode = 'raw'::text AND placeholder IS NULL)
@@ -1733,12 +1432,6 @@ constraint secret_bindings f FOREIGN KEY (environment_id, computer_id) REFERENCE
 constraint secret_bindings f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
 constraint secret_bindings f FOREIGN KEY (environment_id, secret_id) REFERENCES secrets(environment_id, id)
 constraint secret_bindings f FOREIGN KEY (environment_id, template_id, deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
-constraint secret_bindings n secret_bindings_allowed_origins_not_null NOT NULL allowed_origins
-constraint secret_bindings n secret_bindings_environment_id_not_null NOT NULL environment_id
-constraint secret_bindings n secret_bindings_mode_not_null NOT NULL mode
-constraint secret_bindings n secret_bindings_placement_kind_not_null NOT NULL placement_kind
-constraint secret_bindings n secret_bindings_placement_target_not_null NOT NULL placement_target
-constraint secret_bindings n secret_bindings_secret_id_not_null NOT NULL secret_id
 constraint secret_bindings u UNIQUE NULLS NOT DISTINCT (environment_id, image_spec_id, deployment_id, template_id, computer_id, placement_kind, placement_target)
 constraint secret_exposures c CHECK ((session_id IS NULL) = (process_epoch IS NULL))
 constraint secret_exposures c CHECK (num_nonnulls(image_build_id, session_id, command_id) = 1)
@@ -1749,23 +1442,11 @@ constraint secret_exposures f FOREIGN KEY (environment_id, image_build_id) REFER
 constraint secret_exposures f FOREIGN KEY (environment_id, secret_id) REFERENCES secrets(environment_id, id)
 constraint secret_exposures f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
 constraint secret_exposures f FOREIGN KEY (secret_id, version_id) REFERENCES secret_versions(secret_id, id)
-constraint secret_exposures n secret_exposures_environment_id_not_null NOT NULL environment_id
-constraint secret_exposures n secret_exposures_exposed_at_not_null NOT NULL exposed_at
-constraint secret_exposures n secret_exposures_id_not_null NOT NULL id
-constraint secret_exposures n secret_exposures_revocation_generation_not_null NOT NULL revocation_generation
-constraint secret_exposures n secret_exposures_secret_id_not_null NOT NULL secret_id
-constraint secret_exposures n secret_exposures_version_id_not_null NOT NULL version_id
 constraint secret_exposures p PRIMARY KEY (id)
 constraint secret_versions c CHECK (octet_length(ciphertext) >= 16)
 constraint secret_versions c CHECK (octet_length(nonce) = 12)
 constraint secret_versions c CHECK (version > 0)
 constraint secret_versions f FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT
-constraint secret_versions n secret_versions_ciphertext_not_null NOT NULL ciphertext
-constraint secret_versions n secret_versions_created_at_not_null NOT NULL created_at
-constraint secret_versions n secret_versions_id_not_null NOT NULL id
-constraint secret_versions n secret_versions_nonce_not_null NOT NULL nonce
-constraint secret_versions n secret_versions_secret_id_not_null NOT NULL secret_id
-constraint secret_versions n secret_versions_version_not_null NOT NULL version
 constraint secret_versions p PRIMARY KEY (id)
 constraint secret_versions u UNIQUE (secret_id, id)
 constraint secret_versions u UNIQUE (secret_id, version)
@@ -1775,13 +1456,6 @@ constraint secrets c CHECK (status = 'active'::text AND current_version_id IS NO
 constraint secrets c CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text]))
 constraint secrets f FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 constraint secrets f secrets_current_version_fk FOREIGN KEY (id, current_version_id) REFERENCES secret_versions(secret_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
-constraint secrets n secrets_created_at_not_null NOT NULL created_at
-constraint secrets n secrets_environment_id_not_null NOT NULL environment_id
-constraint secrets n secrets_id_not_null NOT NULL id
-constraint secrets n secrets_name_not_null NOT NULL name
-constraint secrets n secrets_revocation_generation_not_null NOT NULL revocation_generation
-constraint secrets n secrets_status_not_null NOT NULL status
-constraint secrets n secrets_updated_at_not_null NOT NULL updated_at
 constraint secrets p PRIMARY KEY (id)
 constraint secrets u UNIQUE (environment_id, id)
 constraint secrets u UNIQUE (environment_id, name)
@@ -1794,15 +1468,6 @@ constraint session_controls c CHECK (octet_length(request_digest) = 32)
 constraint session_controls f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
 constraint session_controls f FOREIGN KEY (environment_id, session_id, hold_id) REFERENCES session_holds(environment_id, session_id, id)
 constraint session_controls f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint session_controls n session_controls_accepted_at_not_null NOT NULL accepted_at
-constraint session_controls n session_controls_caller_id_not_null NOT NULL caller_id
-constraint session_controls n session_controls_caller_kind_not_null NOT NULL caller_kind
-constraint session_controls n session_controls_environment_id_not_null NOT NULL environment_id
-constraint session_controls n session_controls_id_not_null NOT NULL id
-constraint session_controls n session_controls_idempotency_key_not_null NOT NULL idempotency_key
-constraint session_controls n session_controls_kind_not_null NOT NULL kind
-constraint session_controls n session_controls_request_digest_not_null NOT NULL request_digest
-constraint session_controls n session_controls_session_id_not_null NOT NULL session_id
 constraint session_controls p PRIMARY KEY (environment_id, id)
 constraint session_controls u UNIQUE (environment_id, session_id, id)
 constraint session_controls u UNIQUE NULLS NOT DISTINCT (environment_id, session_id, turn_id, caller_kind, caller_id, kind, idempotency_key)
@@ -1813,11 +1478,6 @@ constraint session_events c CHECK (operation_id IS NULL OR turn_id IS NOT NULL A
 constraint session_events c CHECK (seq > 0)
 constraint session_events f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
 constraint session_events f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint session_events n session_events_created_at_not_null NOT NULL created_at
-constraint session_events n session_events_environment_id_not_null NOT NULL environment_id
-constraint session_events n session_events_kind_not_null NOT NULL kind
-constraint session_events n session_events_seq_not_null NOT NULL seq
-constraint session_events n session_events_session_id_not_null NOT NULL session_id
 constraint session_events p PRIMARY KEY (environment_id, session_id, seq)
 constraint session_events u UNIQUE (environment_id, session_id, turn_id, operation_id)
 constraint session_holds c CHECK ((issuer_kind = 'system'::text) = (issuer_id IS NULL))
@@ -1825,13 +1485,6 @@ constraint session_holds c CHECK (issuer_kind = ANY (ARRAY['user'::text, 'api_ke
 constraint session_holds c CHECK (octet_length(reason) <= 4096)
 constraint session_holds c CHECK (scope = ANY (ARRAY['local'::text, 'subtree'::text]))
 constraint session_holds f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
-constraint session_holds n session_holds_created_at_not_null NOT NULL created_at
-constraint session_holds n session_holds_environment_id_not_null NOT NULL environment_id
-constraint session_holds n session_holds_id_not_null NOT NULL id
-constraint session_holds n session_holds_issuer_kind_not_null NOT NULL issuer_kind
-constraint session_holds n session_holds_reason_not_null NOT NULL reason
-constraint session_holds n session_holds_scope_not_null NOT NULL scope
-constraint session_holds n session_holds_session_id_not_null NOT NULL session_id
 constraint session_holds p PRIMARY KEY (environment_id, id)
 constraint session_holds u UNIQUE (environment_id, session_id, id)
 constraint session_processes c CHECK (NOT stderr_end_complete OR stderr_ended)
@@ -1859,29 +1512,6 @@ constraint session_processes c CHECK (stop_turn_id IS NULL OR stop_deadline_at I
 constraint session_processes f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint session_processes f FOREIGN KEY (environment_id, session_id, computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint session_processes f FOREIGN KEY (environment_id, session_id, stop_turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint session_processes n session_processes_attachment_sequence_not_null NOT NULL attachment_sequence
-constraint session_processes n session_processes_computer_id_not_null NOT NULL computer_id
-constraint session_processes n session_processes_computer_lease_epoch_not_null NOT NULL computer_lease_epoch
-constraint session_processes n session_processes_control_attachment_not_null NOT NULL control_attachment
-constraint session_processes n session_processes_control_generation_not_null NOT NULL control_generation
-constraint session_processes n session_processes_control_sequence_not_null NOT NULL control_sequence
-constraint session_processes n session_processes_environment_id_not_null NOT NULL environment_id
-constraint session_processes n session_processes_epoch_not_null NOT NULL epoch
-constraint session_processes n session_processes_session_id_not_null NOT NULL session_id
-constraint session_processes n session_processes_status_not_null NOT NULL status
-constraint session_processes n session_processes_stderr_accepted_through_not_null NOT NULL stderr_accepted_through
-constraint session_processes n session_processes_stderr_byte_offset_not_null NOT NULL stderr_byte_offset
-constraint session_processes n session_processes_stderr_end_complete_not_null NOT NULL stderr_end_complete
-constraint session_processes n session_processes_stderr_ended_not_null NOT NULL stderr_ended
-constraint session_processes n session_processes_stderr_expired_through_not_null NOT NULL stderr_expired_through
-constraint session_processes n session_processes_stderr_gapped_not_null NOT NULL stderr_gapped
-constraint session_processes n session_processes_stdout_accepted_through_not_null NOT NULL stdout_accepted_through
-constraint session_processes n session_processes_stdout_byte_offset_not_null NOT NULL stdout_byte_offset
-constraint session_processes n session_processes_stdout_end_complete_not_null NOT NULL stdout_end_complete
-constraint session_processes n session_processes_stdout_ended_not_null NOT NULL stdout_ended
-constraint session_processes n session_processes_stdout_expired_through_not_null NOT NULL stdout_expired_through
-constraint session_processes n session_processes_stdout_gapped_not_null NOT NULL stdout_gapped
-constraint session_processes n session_processes_stop_sequence_not_null NOT NULL stop_sequence
 constraint session_processes p PRIMARY KEY (environment_id, session_id, epoch)
 constraint session_processes u UNIQUE (environment_id, computer_id, session_id, epoch)
 constraint sessions c CHECK (authority_generation > 0)
@@ -1913,18 +1543,6 @@ constraint sessions f FOREIGN KEY (environment_id, parent_session_id, root_sessi
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id) REFERENCES sessions(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint sessions f FOREIGN KEY (environment_id, root_session_id) REFERENCES sessions(environment_id, id)
-constraint sessions n sessions_agent_id_not_null NOT NULL agent_id
-constraint sessions n sessions_authority_generation_not_null NOT NULL authority_generation
-constraint sessions n sessions_causal_depth_not_null NOT NULL causal_depth
-constraint sessions n sessions_created_at_not_null NOT NULL created_at
-constraint sessions n sessions_deployment_id_not_null NOT NULL deployment_id
-constraint sessions n sessions_environment_id_not_null NOT NULL environment_id
-constraint sessions n sessions_history_retention_mode_not_null NOT NULL history_retention_mode
-constraint sessions n sessions_id_not_null NOT NULL id
-constraint sessions n sessions_next_event_seq_not_null NOT NULL next_event_seq
-constraint sessions n sessions_next_turn_seq_not_null NOT NULL next_turn_seq
-constraint sessions n sessions_root_session_id_not_null NOT NULL root_session_id
-constraint sessions n sessions_status_not_null NOT NULL status
 constraint sessions p PRIMARY KEY (environment_id, id)
 constraint sessions u UNIQUE (environment_id, agent_id, key)
 constraint sessions u UNIQUE (environment_id, creation_caller_kind, creation_caller_id, creation_method, agent_id, creation_idempotency_key)
@@ -1940,24 +1558,11 @@ constraint slack_app_registrations c CHECK (credential_nonce IS NULL OR octet_le
 constraint slack_app_registrations c CHECK (credential_revision >= 0)
 constraint slack_app_registrations f FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 constraint slack_app_registrations f FOREIGN KEY (org_id) REFERENCES organizations(id)
-constraint slack_app_registrations n slack_app_registrations_created_at_not_null NOT NULL created_at
-constraint slack_app_registrations n slack_app_registrations_created_by_user_id_not_null NOT NULL created_by_user_id
-constraint slack_app_registrations n slack_app_registrations_credential_revision_not_null NOT NULL credential_revision
-constraint slack_app_registrations n slack_app_registrations_id_not_null NOT NULL id
-constraint slack_app_registrations n slack_app_registrations_org_id_not_null NOT NULL org_id
 constraint slack_app_registrations p PRIMARY KEY (id)
 constraint slack_app_registrations u UNIQUE (id, org_id)
 constraint slack_channel_bindings c CHECK (slack_channel_id <> ''::text)
 constraint slack_channel_bindings f FOREIGN KEY (connection_id, environment_id, installation_id) REFERENCES slack_connections(id, environment_id, slack_installation_id)
 constraint slack_channel_bindings f FOREIGN KEY (installation_id, org_id, team_id) REFERENCES slack_installations(id, org_id, team_id)
-constraint slack_channel_bindings n slack_channel_bindings_connection_id_not_null NOT NULL connection_id
-constraint slack_channel_bindings n slack_channel_bindings_created_at_not_null NOT NULL created_at
-constraint slack_channel_bindings n slack_channel_bindings_environment_id_not_null NOT NULL environment_id
-constraint slack_channel_bindings n slack_channel_bindings_id_not_null NOT NULL id
-constraint slack_channel_bindings n slack_channel_bindings_installation_id_not_null NOT NULL installation_id
-constraint slack_channel_bindings n slack_channel_bindings_org_id_not_null NOT NULL org_id
-constraint slack_channel_bindings n slack_channel_bindings_slack_channel_id_not_null NOT NULL slack_channel_id
-constraint slack_channel_bindings n slack_channel_bindings_team_id_not_null NOT NULL team_id
 constraint slack_channel_bindings p PRIMARY KEY (id)
 constraint slack_channel_bindings u UNIQUE (connection_id, slack_channel_id)
 constraint slack_channel_bindings u UNIQUE (id, environment_id)
@@ -1966,12 +1571,6 @@ constraint slack_connections f FOREIGN KEY (created_by_user_id) REFERENCES users
 constraint slack_connections f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint slack_connections f FOREIGN KEY (slack_app_registration_id) REFERENCES slack_app_registrations(id)
 constraint slack_connections f FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
-constraint slack_connections n slack_connections_agent_id_not_null NOT NULL agent_id
-constraint slack_connections n slack_connections_created_at_not_null NOT NULL created_at
-constraint slack_connections n slack_connections_created_by_user_id_not_null NOT NULL created_by_user_id
-constraint slack_connections n slack_connections_environment_id_not_null NOT NULL environment_id
-constraint slack_connections n slack_connections_id_not_null NOT NULL id
-constraint slack_connections n slack_connections_slack_app_registration_id_not_null NOT NULL slack_app_registration_id
 constraint slack_connections p PRIMARY KEY (environment_id, id)
 constraint slack_connections u UNIQUE (id)
 constraint slack_connections u UNIQUE (id, environment_id, slack_installation_id)
@@ -1987,20 +1586,6 @@ constraint slack_installations c CHECK (team_id <> ''::text)
 constraint slack_installations f FOREIGN KEY (app_registration_id, org_id) REFERENCES slack_app_registrations(id, org_id)
 constraint slack_installations f FOREIGN KEY (connected_by_user_id) REFERENCES users(id)
 constraint slack_installations f FOREIGN KEY (org_id) REFERENCES organizations(id)
-constraint slack_installations n slack_installations_app_id_not_null NOT NULL app_id
-constraint slack_installations n slack_installations_app_registration_id_not_null NOT NULL app_registration_id
-constraint slack_installations n slack_installations_authorized_at_not_null NOT NULL authorized_at
-constraint slack_installations n slack_installations_bot_user_id_not_null NOT NULL bot_user_id
-constraint slack_installations n slack_installations_connected_at_not_null NOT NULL connected_at
-constraint slack_installations n slack_installations_connected_by_user_id_not_null NOT NULL connected_by_user_id
-constraint slack_installations n slack_installations_credential_revision_not_null NOT NULL credential_revision
-constraint slack_installations n slack_installations_delivery_next_at_not_null NOT NULL delivery_next_at
-constraint slack_installations n slack_installations_granted_scopes_not_null NOT NULL granted_scopes
-constraint slack_installations n slack_installations_history_next_at_not_null NOT NULL history_next_at
-constraint slack_installations n slack_installations_id_not_null NOT NULL id
-constraint slack_installations n slack_installations_org_id_not_null NOT NULL org_id
-constraint slack_installations n slack_installations_refresh_next_at_not_null NOT NULL refresh_next_at
-constraint slack_installations n slack_installations_team_id_not_null NOT NULL team_id
 constraint slack_installations p PRIMARY KEY (id)
 constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
@@ -2055,29 +1640,6 @@ constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id) REFER
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id, ask_id) REFERENCES turn_asks(environment_id, session_id, turn_id, id)
 constraint slack_posts f FOREIGN KEY (source_thread_id, environment_id) REFERENCES slack_threads(id, environment_id)
 constraint slack_posts f FOREIGN KEY (thread_id, environment_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, environment_id, id)
-constraint slack_posts n slack_posts_attempt_count_not_null NOT NULL attempt_count
-constraint slack_posts n slack_posts_claim_epoch_not_null NOT NULL claim_epoch
-constraint slack_posts n slack_posts_confirmed_revision_not_null NOT NULL confirmed_revision
-constraint slack_posts n slack_posts_confirmed_stream_text_not_null NOT NULL confirmed_stream_text
-constraint slack_posts n slack_posts_continuation_ordinal_not_null NOT NULL continuation_ordinal
-constraint slack_posts n slack_posts_created_at_not_null NOT NULL created_at
-constraint slack_posts n slack_posts_desired_revision_not_null NOT NULL desired_revision
-constraint slack_posts n slack_posts_environment_id_not_null NOT NULL environment_id
-constraint slack_posts n slack_posts_id_not_null NOT NULL id
-constraint slack_posts n slack_posts_next_attempt_at_not_null NOT NULL next_attempt_at
-constraint slack_posts n slack_posts_payload_digest_not_null NOT NULL payload_digest
-constraint slack_posts n slack_posts_post_key_not_null NOT NULL post_key
-constraint slack_posts n slack_posts_presentation_path_not_null NOT NULL presentation_path
-constraint slack_posts n slack_posts_reconciliation_cursor_not_null NOT NULL reconciliation_cursor
-constraint slack_posts n slack_posts_reconciliation_pages_not_null NOT NULL reconciliation_pages
-constraint slack_posts n slack_posts_role_not_null NOT NULL role
-constraint slack_posts n slack_posts_seq_not_null NOT NULL seq
-constraint slack_posts n slack_posts_session_id_not_null NOT NULL session_id
-constraint slack_posts n slack_posts_status_not_null NOT NULL status
-constraint slack_posts n slack_posts_stream_state_not_null NOT NULL stream_state
-constraint slack_posts n slack_posts_suppressed_revision_not_null NOT NULL suppressed_revision
-constraint slack_posts n slack_posts_thread_id_not_null NOT NULL thread_id
-constraint slack_posts n slack_posts_thread_source_id_not_null NOT NULL thread_source_id
 constraint slack_posts p PRIMARY KEY (id)
 constraint slack_posts u UNIQUE (thread_source_id, post_key, continuation_ordinal)
 constraint slack_posts u UNIQUE (thread_source_id, seq)
@@ -2101,28 +1663,12 @@ constraint slack_requests f FOREIGN KEY (installation_id) REFERENCES slack_insta
 constraint slack_requests f FOREIGN KEY (thread_id) REFERENCES slack_threads(id)
 constraint slack_requests f FOREIGN KEY (thread_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, id)
 constraint slack_requests f FOREIGN KEY (user_id) REFERENCES users(id)
-constraint slack_requests n slack_requests_expires_at_not_null NOT NULL expires_at
-constraint slack_requests n slack_requests_id_not_null NOT NULL id
-constraint slack_requests n slack_requests_installation_id_not_null NOT NULL installation_id
-constraint slack_requests n slack_requests_next_attempt_at_not_null NOT NULL next_attempt_at
-constraint slack_requests n slack_requests_received_at_not_null NOT NULL received_at
-constraint slack_requests n slack_requests_request_digest_not_null NOT NULL request_digest
-constraint slack_requests n slack_requests_request_key_not_null NOT NULL request_key
-constraint slack_requests n slack_requests_slack_user_id_not_null NOT NULL slack_user_id
-constraint slack_requests n slack_requests_source_occurred_at_not_null NOT NULL source_occurred_at
-constraint slack_requests n slack_requests_status_not_null NOT NULL status
 constraint slack_requests p PRIMARY KEY (id)
 constraint slack_requests u UNIQUE (environment_id, session_id, id)
 constraint slack_requests u UNIQUE (installation_id, request_key)
 constraint slack_thread_sources c CHECK (projected_event_seq >= 0)
 constraint slack_thread_sources f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
 constraint slack_thread_sources f FOREIGN KEY (thread_id, environment_id) REFERENCES slack_threads(id, environment_id)
-constraint slack_thread_sources n slack_thread_sources_created_at_not_null NOT NULL created_at
-constraint slack_thread_sources n slack_thread_sources_environment_id_not_null NOT NULL environment_id
-constraint slack_thread_sources n slack_thread_sources_id_not_null NOT NULL id
-constraint slack_thread_sources n slack_thread_sources_projected_event_seq_not_null NOT NULL projected_event_seq
-constraint slack_thread_sources n slack_thread_sources_session_id_not_null NOT NULL session_id
-constraint slack_thread_sources n slack_thread_sources_thread_id_not_null NOT NULL thread_id
 constraint slack_thread_sources p PRIMARY KEY (id)
 constraint slack_thread_sources u UNIQUE (environment_id, session_id)
 constraint slack_thread_sources u UNIQUE (environment_id, session_id, id)
@@ -2142,23 +1688,6 @@ constraint slack_threads c CHECK (thread_ts <> ''::text)
 constraint slack_threads c CHECK (thread_ts IS NOT NULL OR opening_post_key IS NOT NULL)
 constraint slack_threads f FOREIGN KEY (channel_id, environment_id, org_id, team_id, slack_channel_id) REFERENCES slack_channel_bindings(id, environment_id, org_id, team_id, slack_channel_id)
 constraint slack_threads f FOREIGN KEY (environment_id, front_session_id, front_root_session_id) REFERENCES sessions(environment_id, id, root_session_id)
-constraint slack_threads n slack_threads_channel_id_not_null NOT NULL channel_id
-constraint slack_threads n slack_threads_claim_epoch_not_null NOT NULL claim_epoch
-constraint slack_threads n slack_threads_confirmed_revision_not_null NOT NULL confirmed_revision
-constraint slack_threads n slack_threads_created_at_not_null NOT NULL created_at
-constraint slack_threads n slack_threads_desired_revision_not_null NOT NULL desired_revision
-constraint slack_threads n slack_threads_desired_status_not_null NOT NULL desired_status
-constraint slack_threads n slack_threads_environment_id_not_null NOT NULL environment_id
-constraint slack_threads n slack_threads_front_root_session_id_not_null NOT NULL front_root_session_id
-constraint slack_threads n slack_threads_front_session_id_not_null NOT NULL front_session_id
-constraint slack_threads n slack_threads_id_not_null NOT NULL id
-constraint slack_threads n slack_threads_next_attempt_at_not_null NOT NULL next_attempt_at
-constraint slack_threads n slack_threads_org_id_not_null NOT NULL org_id
-constraint slack_threads n slack_threads_refresh_at_not_null NOT NULL refresh_at
-constraint slack_threads n slack_threads_slack_channel_id_not_null NOT NULL slack_channel_id
-constraint slack_threads n slack_threads_status_confirmation_not_null NOT NULL status_confirmation
-constraint slack_threads n slack_threads_stream_status_repair_not_null NOT NULL stream_status_repair
-constraint slack_threads n slack_threads_team_id_not_null NOT NULL team_id
 constraint slack_threads p PRIMARY KEY (id)
 constraint slack_threads u UNIQUE (channel_id, opening_post_key)
 constraint slack_threads u UNIQUE (environment_id, front_session_id)
@@ -2167,10 +1696,6 @@ constraint slack_threads u UNIQUE (org_id, team_id, slack_channel_id, thread_ts)
 constraint slack_user_links c CHECK (slack_user_id <> ''::text)
 constraint slack_user_links c CHECK (team_id <> ''::text)
 constraint slack_user_links f FOREIGN KEY (user_id) REFERENCES users(id)
-constraint slack_user_links n slack_user_links_linked_at_not_null NOT NULL linked_at
-constraint slack_user_links n slack_user_links_slack_user_id_not_null NOT NULL slack_user_id
-constraint slack_user_links n slack_user_links_team_id_not_null NOT NULL team_id
-constraint slack_user_links n slack_user_links_user_id_not_null NOT NULL user_id
 constraint slack_user_links p PRIMARY KEY (team_id, slack_user_id)
 constraint slack_user_links u UNIQUE (team_id, user_id)
 constraint template_definitions c CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL)
@@ -2183,45 +1708,21 @@ constraint template_definitions c CHECK (refresh_every_ms > 0)
 constraint template_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint template_definitions f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
 constraint template_definitions f FOREIGN KEY (environment_id, template_id) REFERENCES templates(environment_id, id)
-constraint template_definitions n template_definitions_cpu_millis_not_null NOT NULL cpu_millis
-constraint template_definitions n template_definitions_delete_after_unused_never_not_null NOT NULL delete_after_unused_never
-constraint template_definitions n template_definitions_deployment_id_not_null NOT NULL deployment_id
-constraint template_definitions n template_definitions_environment_id_not_null NOT NULL environment_id
-constraint template_definitions n template_definitions_image_spec_id_not_null NOT NULL image_spec_id
-constraint template_definitions n template_definitions_memory_bytes_not_null NOT NULL memory_bytes
-constraint template_definitions n template_definitions_template_id_not_null NOT NULL template_id
 constraint template_definitions p PRIMARY KEY (environment_id, template_id, deployment_id)
 constraint templates c CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
 constraint templates f FOREIGN KEY (environment_id) REFERENCES environments(id)
-constraint templates n templates_environment_id_not_null NOT NULL environment_id
-constraint templates n templates_id_not_null NOT NULL id
-constraint templates n templates_key_not_null NOT NULL key
 constraint templates p PRIMARY KEY (environment_id, id)
 constraint templates u UNIQUE (environment_id, key)
 constraint trigger_activations c CHECK (active_until IS NULL OR active_until >= active_from)
 constraint trigger_activations c CHECK (next_fire_at >= active_from)
 constraint trigger_activations f FOREIGN KEY (environment_id, agent_id, deployment_id, trigger_key) REFERENCES agent_triggers(environment_id, agent_id, deployment_id, key)
 constraint trigger_activations f FOREIGN KEY (slack_channel_id, environment_id) REFERENCES slack_channel_bindings(id, environment_id)
-constraint trigger_activations n trigger_activations_active_from_not_null NOT NULL active_from
-constraint trigger_activations n trigger_activations_agent_id_not_null NOT NULL agent_id
-constraint trigger_activations n trigger_activations_deployment_id_not_null NOT NULL deployment_id
-constraint trigger_activations n trigger_activations_environment_id_not_null NOT NULL environment_id
-constraint trigger_activations n trigger_activations_id_not_null NOT NULL id
-constraint trigger_activations n trigger_activations_next_fire_at_not_null NOT NULL next_fire_at
-constraint trigger_activations n trigger_activations_trigger_key_not_null NOT NULL trigger_key
 constraint trigger_activations p PRIMARY KEY (environment_id, id)
 constraint trigger_activations u UNIQUE (environment_id, id, agent_id, trigger_key)
 constraint trigger_occurrences c CHECK (disposition = 'admitted'::text AND session_id IS NOT NULL AND turn_id IS NOT NULL OR disposition <> 'admitted'::text AND session_id IS NULL AND turn_id IS NULL AND reason IS NOT NULL)
 constraint trigger_occurrences c CHECK (disposition = ANY (ARRAY['admitted'::text, 'rejected'::text, 'missed'::text]))
 constraint trigger_occurrences f FOREIGN KEY (environment_id, activation_id, agent_id, trigger_key) REFERENCES trigger_activations(environment_id, id, agent_id, trigger_key)
 constraint trigger_occurrences f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint trigger_occurrences n trigger_occurrences_activation_id_not_null NOT NULL activation_id
-constraint trigger_occurrences n trigger_occurrences_agent_id_not_null NOT NULL agent_id
-constraint trigger_occurrences n trigger_occurrences_disposition_not_null NOT NULL disposition
-constraint trigger_occurrences n trigger_occurrences_environment_id_not_null NOT NULL environment_id
-constraint trigger_occurrences n trigger_occurrences_evaluated_at_not_null NOT NULL evaluated_at
-constraint trigger_occurrences n trigger_occurrences_scheduled_at_not_null NOT NULL scheduled_at
-constraint trigger_occurrences n trigger_occurrences_trigger_key_not_null NOT NULL trigger_key
 constraint trigger_occurrences p PRIMARY KEY (environment_id, agent_id, trigger_key, scheduled_at)
 constraint turn_asks c CHECK ((status = 'cancelled'::text) = (cancelled_at IS NOT NULL))
 constraint turn_asks c CHECK ((status = 'responded'::text) = (responded_at IS NOT NULL))
@@ -2235,15 +1736,6 @@ constraint turn_asks f FOREIGN KEY (environment_id, session_id, created_event_se
 constraint turn_asks f FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch)
 constraint turn_asks f FOREIGN KEY (responded_by_api_key_id) REFERENCES api_keys(id)
 constraint turn_asks f FOREIGN KEY (responded_by_user_id) REFERENCES users(id)
-constraint turn_asks n turn_asks_created_at_not_null NOT NULL created_at
-constraint turn_asks n turn_asks_created_event_seq_not_null NOT NULL created_event_seq
-constraint turn_asks n turn_asks_environment_id_not_null NOT NULL environment_id
-constraint turn_asks n turn_asks_id_not_null NOT NULL id
-constraint turn_asks n turn_asks_process_epoch_not_null NOT NULL process_epoch
-constraint turn_asks n turn_asks_question_digest_not_null NOT NULL question_digest
-constraint turn_asks n turn_asks_session_id_not_null NOT NULL session_id
-constraint turn_asks n turn_asks_status_not_null NOT NULL status
-constraint turn_asks n turn_asks_turn_id_not_null NOT NULL turn_id
 constraint turn_asks p PRIMARY KEY (environment_id, session_id, turn_id, id)
 constraint turn_asks u UNIQUE (environment_id, id)
 constraint turn_asks u UNIQUE (environment_id, session_id, created_event_seq)
@@ -2262,19 +1754,6 @@ constraint turn_messages c CHECK (seq > 0)
 constraint turn_messages c CHECK (status = ANY (ARRAY['admitted'::text, 'started'::text, 'delivered'::text, 'rejected'::text]))
 constraint turn_messages f FOREIGN KEY (environment_id, caller_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint turn_messages f FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch)
-constraint turn_messages n turn_messages_admission_method_not_null NOT NULL admission_method
-constraint turn_messages n turn_messages_caller_id_not_null NOT NULL caller_id
-constraint turn_messages n turn_messages_caller_kind_not_null NOT NULL caller_kind
-constraint turn_messages n turn_messages_created_at_not_null NOT NULL created_at
-constraint turn_messages n turn_messages_environment_id_not_null NOT NULL environment_id
-constraint turn_messages n turn_messages_id_not_null NOT NULL id
-constraint turn_messages n turn_messages_process_epoch_not_null NOT NULL process_epoch
-constraint turn_messages n turn_messages_request_digest_not_null NOT NULL request_digest
-constraint turn_messages n turn_messages_seq_not_null NOT NULL seq
-constraint turn_messages n turn_messages_session_id_not_null NOT NULL session_id
-constraint turn_messages n turn_messages_status_not_null NOT NULL status
-constraint turn_messages n turn_messages_target_id_not_null NOT NULL target_id
-constraint turn_messages n turn_messages_turn_id_not_null NOT NULL turn_id
 constraint turn_messages p PRIMARY KEY (environment_id, id)
 constraint turn_messages u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
 constraint turn_messages u UNIQUE (environment_id, session_id, turn_id, id)
@@ -2305,20 +1784,6 @@ constraint turns f FOREIGN KEY (environment_id, caller_id, origin_turn_id) REFER
 constraint turns f FOREIGN KEY (environment_id, computer_id, id, completion_save_id, completion_published) REFERENCES computer_saves(environment_id, computer_id, turn_id, id, published)
 constraint turns f FOREIGN KEY (environment_id, session_id, computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint turns f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
-constraint turns n turns_admission_method_not_null NOT NULL admission_method
-constraint turns n turns_caller_id_not_null NOT NULL caller_id
-constraint turns n turns_caller_kind_not_null NOT NULL caller_kind
-constraint turns n turns_computer_id_not_null NOT NULL computer_id
-constraint turns n turns_created_at_not_null NOT NULL created_at
-constraint turns n turns_environment_id_not_null NOT NULL environment_id
-constraint turns n turns_id_not_null NOT NULL id
-constraint turns n turns_next_message_seq_not_null NOT NULL next_message_seq
-constraint turns n turns_progress_bytes_not_null NOT NULL progress_bytes
-constraint turns n turns_request_digest_not_null NOT NULL request_digest
-constraint turns n turns_seq_not_null NOT NULL seq
-constraint turns n turns_session_id_not_null NOT NULL session_id
-constraint turns n turns_status_not_null NOT NULL status
-constraint turns n turns_target_id_not_null NOT NULL target_id
 constraint turns p PRIMARY KEY (environment_id, id)
 constraint turns u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
 constraint turns u UNIQUE (environment_id, id, computer_id)
@@ -2328,11 +1793,6 @@ constraint turns u UNIQUE (environment_id, session_id, id, process_epoch)
 constraint turns u UNIQUE (environment_id, session_id, seq)
 constraint users c CHECK (btrim(display_name) <> ''::text)
 constraint users c CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''::text)
-constraint users n users_admin_not_null NOT NULL admin
-constraint users n users_created_at_not_null NOT NULL created_at
-constraint users n users_display_name_not_null NOT NULL display_name
-constraint users n users_id_not_null NOT NULL id
-constraint users n users_updated_at_not_null NOT NULL updated_at
 constraint users p PRIMARY KEY (id)
 constraint vm_platforms c CHECK (btrim(host_kernel_release) <> ''::text AND octet_length(host_kernel_release) <= 255)
 constraint vm_platforms c CHECK (cpu_template_digest IS NULL OR cpu_template_digest ~ '^sha256:[0-9a-f]{64}$'::text)
@@ -2344,22 +1804,8 @@ constraint vm_platforms c CHECK (initramfs_digest ~ '^sha256:[0-9a-f]{64}$'::tex
 constraint vm_platforms c CHECK (kernel_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint vm_platforms c CHECK (rootfs_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint vm_platforms c CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'::text)
-constraint vm_platforms n vm_platforms_descriptor_digest_not_null NOT NULL descriptor_digest
-constraint vm_platforms n vm_platforms_firecracker_digest_not_null NOT NULL firecracker_digest
-constraint vm_platforms n vm_platforms_firecracker_version_not_null NOT NULL firecracker_version
-constraint vm_platforms n vm_platforms_host_kernel_release_not_null NOT NULL host_kernel_release
-constraint vm_platforms n vm_platforms_id_not_null NOT NULL id
-constraint vm_platforms n vm_platforms_initramfs_digest_not_null NOT NULL initramfs_digest
-constraint vm_platforms n vm_platforms_kernel_digest_not_null NOT NULL kernel_digest
-constraint vm_platforms n vm_platforms_last_seen_at_not_null NOT NULL last_seen_at
-constraint vm_platforms n vm_platforms_rootfs_digest_not_null NOT NULL rootfs_digest
-constraint vm_platforms n vm_platforms_snapshot_format_version_not_null NOT NULL snapshot_format_version
 constraint vm_platforms p PRIMARY KEY (id)
 constraint worker_group_tokens c CHECK (octet_length(token_hash) = 32)
-constraint worker_group_tokens n worker_group_tokens_created_at_not_null NOT NULL created_at
-constraint worker_group_tokens n worker_group_tokens_id_not_null NOT NULL id
-constraint worker_group_tokens n worker_group_tokens_token_hash_not_null NOT NULL token_hash
-constraint worker_group_tokens n worker_group_tokens_updated_at_not_null NOT NULL updated_at
 constraint worker_group_tokens p PRIMARY KEY (id)
 constraint worker_group_tokens u UNIQUE (token_hash)
 constraint worker_groups c CHECK (btrim(name) <> ''::text)
@@ -2368,15 +1814,6 @@ constraint worker_groups c CHECK (status = ANY (ARRAY['active'::text, 'paused'::
 constraint worker_groups f FOREIGN KEY (id, primary_pool_id) REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT
 constraint worker_groups f FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE RESTRICT
 constraint worker_groups f FOREIGN KEY (token_id) REFERENCES worker_group_tokens(id) ON DELETE RESTRICT
-constraint worker_groups n worker_groups_claim_version_not_null NOT NULL claim_version
-constraint worker_groups n worker_groups_created_at_not_null NOT NULL created_at
-constraint worker_groups n worker_groups_description_not_null NOT NULL description
-constraint worker_groups n worker_groups_id_not_null NOT NULL id
-constraint worker_groups n worker_groups_name_not_null NOT NULL name
-constraint worker_groups n worker_groups_region_id_not_null NOT NULL region_id
-constraint worker_groups n worker_groups_status_not_null NOT NULL status
-constraint worker_groups n worker_groups_token_id_not_null NOT NULL token_id
-constraint worker_groups n worker_groups_updated_at_not_null NOT NULL updated_at
 constraint worker_groups p PRIMARY KEY (id)
 constraint worker_groups u UNIQUE (region_id, name)
 constraint worker_groups u UNIQUE (token_id)
@@ -2384,13 +1821,6 @@ constraint worker_host_secrets c CHECK (btrim(key_prefix) <> ''::text)
 constraint worker_host_secrets c CHECK (claim_version > 0)
 constraint worker_host_secrets c CHECK (octet_length(secret_hash) > 0)
 constraint worker_host_secrets f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
-constraint worker_host_secrets n worker_host_secrets_claim_version_not_null NOT NULL claim_version
-constraint worker_host_secrets n worker_host_secrets_created_at_not_null NOT NULL created_at
-constraint worker_host_secrets n worker_host_secrets_id_not_null NOT NULL id
-constraint worker_host_secrets n worker_host_secrets_key_prefix_not_null NOT NULL key_prefix
-constraint worker_host_secrets n worker_host_secrets_secret_hash_not_null NOT NULL secret_hash
-constraint worker_host_secrets n worker_host_secrets_worker_group_id_not_null NOT NULL worker_group_id
-constraint worker_host_secrets n worker_host_secrets_worker_host_id_not_null NOT NULL worker_host_id
 constraint worker_host_secrets p PRIMARY KEY (id)
 constraint worker_host_secrets u UNIQUE (key_prefix)
 constraint worker_host_secrets u UNIQUE (secret_hash)
@@ -2421,30 +1851,11 @@ constraint worker_hosts c CHECK (status <> 'active'::text OR vm_platform_id IS N
 constraint worker_hosts c CHECK (status = ANY (ARRAY['registering'::text, 'active'::text, 'draining'::text, 'termination_ready'::text, 'lost'::text]))
 constraint worker_hosts f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id) ON DELETE RESTRICT
 constraint worker_hosts f FOREIGN KEY (worker_group_id, worker_pool_id) REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT
-constraint worker_hosts n worker_hosts_claim_version_not_null NOT NULL claim_version
-constraint worker_hosts n worker_hosts_created_at_not_null NOT NULL created_at
-constraint worker_hosts n worker_hosts_epoch_cpu_millis_not_null NOT NULL epoch_cpu_millis
-constraint worker_hosts n worker_hosts_epoch_guest_ephemeral_disk_bytes_not_null NOT NULL epoch_guest_ephemeral_disk_bytes
-constraint worker_hosts n worker_hosts_epoch_memory_bytes_not_null NOT NULL epoch_memory_bytes
-constraint worker_hosts n worker_hosts_id_not_null NOT NULL id
-constraint worker_hosts n worker_hosts_max_vm_slots_not_null NOT NULL max_vm_slots
-constraint worker_hosts n worker_hosts_max_vm_starts_not_null NOT NULL max_vm_starts
-constraint worker_hosts n worker_hosts_per_vm_cpu_millis_not_null NOT NULL per_vm_cpu_millis
-constraint worker_hosts n worker_hosts_per_vm_guest_ephemeral_disk_bytes_not_null NOT NULL per_vm_guest_ephemeral_disk_bytes
-constraint worker_hosts n worker_hosts_per_vm_memory_bytes_not_null NOT NULL per_vm_memory_bytes
-constraint worker_hosts n worker_hosts_resource_id_not_null NOT NULL resource_id
-constraint worker_hosts n worker_hosts_status_not_null NOT NULL status
-constraint worker_hosts n worker_hosts_updated_at_not_null NOT NULL updated_at
-constraint worker_hosts n worker_hosts_worker_group_id_not_null NOT NULL worker_group_id
-constraint worker_hosts n worker_hosts_worker_pool_id_not_null NOT NULL worker_pool_id
 constraint worker_hosts p PRIMARY KEY (id)
 constraint worker_hosts u UNIQUE (id, worker_group_id)
 constraint worker_pool_cpu_shapes c CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint worker_pool_cpu_shapes c CHECK (vcpu_count > 0)
 constraint worker_pool_cpu_shapes f FOREIGN KEY (worker_pool_id) REFERENCES worker_pools(id) ON DELETE RESTRICT
-constraint worker_pool_cpu_shapes n worker_pool_cpu_shapes_cpu_config_digest_not_null NOT NULL cpu_config_digest
-constraint worker_pool_cpu_shapes n worker_pool_cpu_shapes_vcpu_count_not_null NOT NULL vcpu_count
-constraint worker_pool_cpu_shapes n worker_pool_cpu_shapes_worker_pool_id_not_null NOT NULL worker_pool_id
 constraint worker_pool_cpu_shapes p PRIMARY KEY (worker_pool_id, vcpu_count)
 constraint worker_pools c CHECK ((status = ANY (ARRAY['pending'::text, 'disabled'::text])) AND sealed_at IS NULL AND vm_platform_id IS NULL AND capacity_cpu_millis IS NULL AND capacity_memory_bytes IS NULL AND capacity_guest_ephemeral_disk_bytes IS NULL AND per_vm_cpu_millis IS NULL AND per_vm_memory_bytes IS NULL AND per_vm_guest_ephemeral_disk_bytes IS NULL AND max_vm_slots IS NULL OR (status = ANY (ARRAY['active'::text, 'draining'::text, 'disabled'::text])) AND sealed_at IS NOT NULL AND vm_platform_id IS NOT NULL AND capacity_cpu_millis IS NOT NULL AND capacity_memory_bytes IS NOT NULL AND capacity_guest_ephemeral_disk_bytes IS NOT NULL AND per_vm_cpu_millis IS NOT NULL AND per_vm_memory_bytes IS NOT NULL AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL AND max_vm_slots IS NOT NULL)
 constraint worker_pools c CHECK (btrim(name) <> ''::text AND octet_length(name) <= 128)
@@ -2463,13 +1874,6 @@ constraint worker_pools c CHECK (sealed_at IS NULL OR per_vm_memory_bytes <= cap
 constraint worker_pools c CHECK (status = ANY (ARRAY['pending'::text, 'active'::text, 'draining'::text, 'disabled'::text]))
 constraint worker_pools f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id) ON DELETE RESTRICT
 constraint worker_pools f FOREIGN KEY (worker_group_id) REFERENCES worker_groups(id) ON DELETE RESTRICT
-constraint worker_pools n worker_pools_claim_version_not_null NOT NULL claim_version
-constraint worker_pools n worker_pools_created_at_not_null NOT NULL created_at
-constraint worker_pools n worker_pools_id_not_null NOT NULL id
-constraint worker_pools n worker_pools_name_not_null NOT NULL name
-constraint worker_pools n worker_pools_status_not_null NOT NULL status
-constraint worker_pools n worker_pools_updated_at_not_null NOT NULL updated_at
-constraint worker_pools n worker_pools_worker_group_id_not_null NOT NULL worker_group_id
 constraint worker_pools p PRIMARY KEY (id)
 constraint worker_pools u UNIQUE (worker_group_id, id)
 constraint worker_pools u UNIQUE (worker_group_id, name)

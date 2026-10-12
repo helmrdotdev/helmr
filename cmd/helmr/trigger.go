@@ -77,7 +77,7 @@ func triggerGetCommand() *cobra.Command {
 	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "get SCHEDULE",
+		Use:   "get TRIGGER",
 		Short: "Show Trigger status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
