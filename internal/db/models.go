@@ -208,9 +208,9 @@ type DiskObject struct {
 }
 
 type Environment struct {
+	ID                       pgtype.UUID        `json:"id"`
 	HistoryRetentionMode     string             `json:"history_retention_mode"`
 	HistoryRetentionSeconds  pgtype.Int8        `json:"history_retention_seconds"`
-	ID                       pgtype.UUID        `json:"id"`
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	Slug                     string             `json:"slug"`
