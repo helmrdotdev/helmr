@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -16,14 +18,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
-func runtimeSecretsFixture(t *testing.T) (fixture, Execution, *secret.Store, uuid.UUID, int64, uuid.UUID) {
+func runtimeSecretsFixture(t *testing.T) (fixture, agent.Execution, *secret.Store, uuid.UUID, int64, uuid.UUID) {
 	t.Helper()
 	f, _, e := startingSessionFixture(t)
 	f.session = e.SessionID
 	return runtimeSecretsOnFixture(t, f, e)
 }
 
-func runtimeSecretsOnFixture(t *testing.T, f fixture, e Execution) (fixture, Execution, *secret.Store, uuid.UUID, int64, uuid.UUID) {
+func runtimeSecretsOnFixture(t *testing.T, f fixture, e agent.Execution) (fixture, agent.Execution, *secret.Store, uuid.UUID, int64, uuid.UUID) {
 	t.Helper()
 	var instance uuid.UUID
 	if err := f.pool.QueryRow(t.Context(), `SELECT s.computer_id,l.allocation_id FROM sessions s JOIN computer_leases l ON l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=$3 WHERE s.environment_id=$1 AND s.id=$2`, f.env, e.SessionID, e.LeaseEpoch).Scan(&f.computer, &instance); err != nil {
@@ -55,7 +57,7 @@ func runtimeSecretsOnFixture(t *testing.T, f fixture, e Execution) (fixture, Exe
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET proxy_ca_certificate=$3,proxy_ca_not_after=$4,proxy_ca_private_key_nonce=$5,proxy_ca_private_key_ciphertext=$6 WHERE environment_id=$1 AND id=$2`, f.env, f.computer, trust.Certificate, trust.NotAfter, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.worker)
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,14 +66,14 @@ func runtimeSecretsOnFixture(t *testing.T, f fixture, e Execution) (fixture, Exe
 
 func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	f, e, store, secretID, attachment, instance := runtimeSecretsFixture(t)
-	first, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil || len(first.Secrets) != 4 || len(first.ProtectedEnv) != 2 {
 		t.Fatalf("first delivery: %+v %v", first, err)
 	}
 	if _, err = store.Rotate(t.Context(), f.env, secretID, []byte("v2"), "runtime-rotate"); err != nil {
 		t.Fatal(err)
 	}
-	retry, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	retry, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +89,11 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='starting' WHERE environment_id=$1 AND session_id=$2`, f.env, peer.session)
 	peerExecution := e
 	peerExecution.SessionID = peer.session
-	peerAttachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), peerExecution)
+	peerAttachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), peerExecution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence)
+	second, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +117,12 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if err != nil || string(values[markers[0]]) != "v1" || string(values[markers[1]]) != "v2" {
 		t.Fatalf("simultaneous pins: %v", err)
 	}
-	if _, err = resolve([]string{first.ProtectedEnv["OTHER_TOKEN"]}); !errors.Is(err, ErrDenied) {
+	if _, err = resolve([]string{first.ProtectedEnv["OTHER_TOKEN"]}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("cross-origin alias: %v", err)
 	}
 	// Ending the first process cannot leave its selector authorized by a live peer.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID)
-	if _, err = resolve(markers); !errors.Is(err, ErrDenied) {
+	if _, err = resolve(markers); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("partial selection leaked an ended pin: %v", err)
 	}
 	if _, err = resolve(markers[1:]); err != nil {
@@ -129,14 +131,14 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), f.env, secretID, "runtime-revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = resolve(markers[1:]); !errors.Is(err, ErrDenied) {
+	if _, err = resolve(markers[1:]); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked pin: %v", err)
 	}
 	var retained bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(revocation_generation=0) FROM secret_exposures WHERE environment_id=$1 AND secret_id=$2`, f.env, secretID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("exposure history: %v %v", retained, err)
 	}
-	if _, err = AuthorizeSessionStart(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence); !errors.Is(err, ErrNotReady) {
+	if _, err = agent.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("revoked final release: %v", err)
 	}
 	var quarantine bool
@@ -161,7 +163,7 @@ func TestRuntimeSecretExposureRejectsStaleStartupWithoutRecording(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 			}
-			if _, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment); err == nil {
+			if _, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment); err == nil {
 				t.Fatal("invalid startup received secrets")
 			}
 			var count int
@@ -176,11 +178,11 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 	original := newFixture(t)
 	dbtest.MustExec(t, t.Context(), original.pool, `UPDATE session_processes SET status='starting' WHERE environment_id=$1 AND session_id=$2`, original.env, original.session)
 	f, e, store, id, attachment, sourceInstance := runtimeSecretsOnFixture(t, original, original.execution())
-	first, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment); err != nil {
+	if err = agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment); err != nil {
 		t.Fatal(err)
 	}
 	capture := checkpointStorageForFixture(t, f)
@@ -203,18 +205,18 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 	restored := &computerRestoreFixture{checkpointStorageFixture: capture, host: host}
 	restored.newTarget(t)
 	p := restored.prepare(t)
-	if err = ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err = agent.ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err = CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err = agent.CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, host, p)
-	if err = CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err = agent.CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	selectors := []string{first.ProtectedEnv["TOKEN"]}
-	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, ErrDenied) {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("old source: %v", err)
 	}
 	rows, err := computer.CaptureProtectedSecrets(t.Context(), f.pool, host, uuid.MustParse(p.Envelope.ComputerInstanceId), "https://api.example.com", selectors)
@@ -235,7 +237,7 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 	original, allocator, e := startingSessionFixture(t)
 	original.session = e.SessionID
 	f, e, store, id, attachment, _ := runtimeSecretsOnFixture(t, original, e)
-	first, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,11 +250,11 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.ProcessEpoch = 2
-	next, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	next, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, next.Sequence)
+	second, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, next.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +274,7 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 
 func TestRuntimeSecretConcurrentLostAcknowledgementKeepsOnePin(t *testing.T) {
 	f, e, store, id, attachment, _ := runtimeSecretsFixture(t)
-	first, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +282,7 @@ func TestRuntimeSecretConcurrentLostAcknowledgementKeepsOnePin(t *testing.T) {
 		t.Fatal(err)
 	}
 	replay := func() error {
-		retry, err := RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+		retry, err := agent.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
 		if err == nil && (retry.ProtectedEnv["TOKEN"] != first.ProtectedEnv["TOKEN"] || retry.Secrets[0].VersionID != first.Secrets[0].VersionID) {
 			err = errors.New("concurrent retry changed pin")
 		}
@@ -292,7 +294,7 @@ func TestRuntimeSecretConcurrentLostAcknowledgementKeepsOnePin(t *testing.T) {
 	}
 	var contended int
 	for range 8 {
-		if err := <-results; errors.Is(err, ErrNotReady) {
+		if err := <-results; errors.Is(err, agent.ErrNotReady) {
 			contended++
 		} else if err != nil {
 			t.Error(err)
@@ -336,7 +338,7 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 				if err != nil {
 					t.Fatalf("committed acquiring allocation lost trust on Host drain: %v", err)
 				}
-			} else if !errors.Is(err, ErrDenied) {
+			} else if !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("acquiring on unavailable supply: %v", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='active' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)

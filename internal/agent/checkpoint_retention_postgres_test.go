@@ -1,7 +1,9 @@
-package agent
+package agent_test
 
 import (
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -37,10 +39,10 @@ func TestCheckpointRetentionRequiresBothPhysicalClosures(t *testing.T) {
 func TestCheckpointRetentionKeepsUnreconciledConsumedImage(t *testing.T) {
 	f := newComputerRestoreFixture(t)
 	installation := f.prepare(t)
-	if err := ValidateComputerRestore(t.Context(), f.f.pool, f.host, f.f.env, installation, restoreReceipt(installation, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(t.Context(), f.f.pool, f.host, f.f.env, installation, restoreReceipt(installation, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(t.Context(), f.f.pool, f.host, f.f.env, installation, restoreReceipt(installation, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(t.Context(), f.f.pool, f.host, f.f.env, installation, restoreReceipt(installation, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
@@ -69,14 +71,14 @@ func TestCheckpointRetentionPreservesConsumedManifestAfterUnpinning(t *testing.T
 	f := newComputerRestoreFixture(t)
 	p := f.prepare(t)
 	ctx := t.Context()
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
-	if err := CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)

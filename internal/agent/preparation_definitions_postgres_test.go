@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
@@ -25,7 +27,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return registerTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
+			return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
 		})
 	}
 	if err := register(f.deployment, output); err != nil {
@@ -58,7 +60,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		if err := registerTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
+		if err := agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
 			return err
 		}
 		return sentinel
@@ -79,7 +81,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
@@ -104,7 +106,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if err == nil {
 		t.Fatal("registered conflicting seed projection")
@@ -126,7 +128,7 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return RegisterProgramDefinitions(t.Context(), tx, f.env, deployment, output)
+			return agent.RegisterProgramDefinitions(t.Context(), tx, f.env, deployment, output)
 		})
 	}
 	if err := register(f.deployment); err != nil {
@@ -190,7 +192,7 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return RegisterProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
+			return agent.RegisterProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
 		})
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}

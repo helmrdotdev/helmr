@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -24,14 +26,14 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			} else {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, installation)
 			}
-			caller := Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
+			caller := agent.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
-			if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrSourceConversationUnavailable) {
+			if _, err := agent.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, agent.ErrSourceConversationUnavailable) {
 				t.Fatal(err)
 			}
 			req.IdempotencyKey = "child"
-			child, err := Spawn(t.Context(), f.pool, nil, caller, req)
+			child, err := agent.Spawn(t.Context(), f.pool, nil, caller, req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +43,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = RuntimeOutput(t.Context(), f.pool, *c.host(), c.execution(), child.TurnID, uuid.NewV7(), json.RawMessage(`"child output"`)); err != nil {
+			if _, err = agent.RuntimeOutput(t.Context(), f.pool, *c.host(), c.execution(), child.TurnID, uuid.NewV7(), json.RawMessage(`"child output"`)); err != nil {
 				t.Fatal(err)
 			}
 			var exact bool
@@ -68,7 +70,7 @@ func TestSlackRuntimeContentPreservesAdmissionRoute(t *testing.T) {
 				operation := uuid.NewV7()
 				var first int64
 				for range 2 {
-					seq, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, operation, json.RawMessage(raw))
+					seq, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, operation, json.RawMessage(raw))
 					if err != nil || seq < 1 || (first != 0 && seq != first) {
 						t.Fatal(seq, err)
 					}
@@ -77,7 +79,7 @@ func TestSlackRuntimeContentPreservesAdmissionRoute(t *testing.T) {
 			}
 			ask := uuid.NewV7()
 			for range 2 {
-				if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
+				if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -100,14 +102,14 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response {
-				if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[]`)); err != nil {
+				if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[]`)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+			if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 				t.Fatal(err)
 			}
-			if result, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result != nil {
+			if result, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result != nil {
 				t.Fatalf("prepare: %s %v", result, err)
 			}
 			var count int
@@ -126,7 +128,7 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+				if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -6,16 +6,18 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func runtimeReadCaller(t *testing.T, f fixture) Caller {
+func runtimeReadCaller(t *testing.T, f fixture) agent.Caller {
 	t.Helper()
 	a := f.enqueue(t, "caller")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	return Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
+	return agent.Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
 }
 
 func TestRuntimeTurnObservationScope(t *testing.T) {
@@ -23,31 +25,31 @@ func TestRuntimeTurnObservationScope(t *testing.T) {
 	caller := runtimeReadCaller(t, f)
 	peer := f.peer(t)
 	unrelated := peer.enqueue(t, "unrelated")
-	own, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
+	own, err := agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, own.TurnID)
+	view, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, own.TurnID)
 	if err != nil || view.Status != "queued" || view.Input != nil || view.ID != own.TurnID {
 		t.Fatalf("own receipt: %+v %v", view, err)
 	}
-	if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unrelated: %v", err)
 	}
-	if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, f.session, own.TurnID); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, f.session, own.TurnID); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("wrong Session: %v", err)
 	}
 	other := newFixture(t)
 	foreign := other.enqueue(t, "foreign")
-	if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, other.session, foreign.TurnID); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, other.session, foreign.TurnID); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("foreign Environment: %v", err)
 	}
 	// Session-bound MCP has no inferred source Turn, but retains exact admission attribution.
 	caller.TurnID = uuid.Nil()
-	if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, own.TurnID); err != nil {
+	if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, own.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("MCP unrelated: %v", err)
 	}
 }
@@ -64,7 +66,7 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 			}
 			storage := newSaveStorageFixture(t, peer)
 			a, save := peer.finalize(t, "result")
-			view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
+			view, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
 			if err != nil || view.Status != "finalizing" || view.Result != nil || view.Response != nil {
 				t.Fatalf("provisional: %+v %v", view, err)
 			}
@@ -76,21 +78,21 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 			if err := storage.publish(t, save.ID, root); err != nil {
 				t.Fatal(err)
 			}
-			if err := Complete(t.Context(), f.pool, f.env, peer.session, a.TurnID); err != nil {
+			if err := agent.Complete(t.Context(), f.pool, f.env, peer.session, a.TurnID); err != nil {
 				t.Fatal(err)
 			}
-			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
+			view, err = agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
 			var result map[string]int
 			decodeErr := json.Unmarshal(view.Result, &result)
 			if err != nil || view.Status != "completed" || decodeErr != nil || result["result"] != 1 {
 				t.Fatalf("settled: %+v %v", view, err)
 			}
-			session, err := RuntimeGetSession(t.Context(), f.pool, caller, peer.session)
+			session, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, peer.session)
 			if err != nil || session.InitialTurnID == nil || *session.InitialTurnID != a.TurnID || session.InitialTurnStatus == nil || *session.InitialTurnStatus != "completed" {
 				t.Fatalf("completed discovery: %+v %v", session, err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET input=NULL,result=NULL,response=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, a.TurnID)
-			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
+			view, err = agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
 			if err != nil || view.Status != "completed" || view.PayloadExpiredAt == nil || view.Result != nil {
 				t.Fatalf("expired: %+v %v", view, err)
 			}
@@ -104,7 +106,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
 			peer := f.peer(t)
-			a, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[]`)})
+			a, err := agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +128,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			case "deployment":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
 			}
-			if _, err := RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID); !errors.Is(err, ErrDenied) {
+			if _, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("stale caller: %v", err)
 			}
 		})
@@ -140,11 +142,11 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 			caller := runtimeReadCaller(t, f)
 			// Fractional declared CPU still reserves a whole physical vCPU.
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500,memory_bytes=536870912 WHERE environment_id=$1`, f.env)
-			receipt, err := Start(t.Context(), f.pool, nil, caller, f.startRequest("target"))
+			receipt, err := agent.Start(t.Context(), f.pool, nil, caller, f.startRequest("target"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID); err != nil || view.WaitBlocked != "" {
+			if view, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID); err != nil || view.WaitBlocked != "" {
 				t.Fatalf("ordinary pending %+v %v", view, err)
 			}
 			switch limit {
@@ -155,21 +157,21 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 			case "memory":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_memory_bytes=1073741823 WHERE id=$1`, f.env)
 			}
-			view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
+			view, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
 			if err != nil || view.Status != "queued" || view.WaitBlocked != "capacity_wait_blocked" {
 				t.Fatalf("missing dependency %+v %v", view, err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "interrupt", IdempotencyKey: "held-target"}); err != nil {
+			if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "interrupt", IdempotencyKey: "held-target"}); err != nil {
 				t.Fatal(err)
 			}
-			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
+			view, err = agent.RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
 			if err != nil || view.Status != "queued" || view.WaitBlocked != "" {
 				t.Fatalf("held target misclassified %+v %v", view, err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "cancel", IdempotencyKey: "cancel-target"}); err != nil {
+			if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "cancel", IdempotencyKey: "cancel-target"}); err != nil {
 				t.Fatal(err)
 			}
-			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
+			view, err = agent.RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
 			if err != nil || view.Status != "cancelled" || view.WaitBlocked != "" {
 				t.Fatalf("terminal lost to capacity %+v %v", view, err)
 			}
@@ -180,12 +182,12 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 		caller := runtimeReadCaller(t, f)
 		request := f.startRequest("shared")
 		request.ComputerID = f.computer
-		receipt, err := Start(t.Context(), f.pool, nil, caller, request)
+		receipt, err := agent.Start(t.Context(), f.pool, nil, caller, request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_resident_computers=1,max_cpu_millis=1000,max_memory_bytes=536870912 WHERE id=$1`, f.env)
-		view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
+		view, err := agent.RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
 		if err != nil || view.WaitBlocked != "" {
 			t.Fatalf("shared allocation %+v %v", view, err)
 		}

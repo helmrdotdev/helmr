@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -21,7 +20,7 @@ type ProcessAllocation struct {
 	Status                                                   string
 }
 
-func readProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUID, epoch int64) (ProcessAllocation, error) {
+func ReadProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUID, epoch int64) (ProcessAllocation, error) {
 	r := ProcessAllocation{EnvironmentID: env, SessionID: session, Epoch: epoch}
 	err := q.QueryRow(ctx, `SELECT p.computer_id,p.computer_lease_epoch,p.status,l.allocation_id,l.worker_host_id,l.worker_epoch
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
@@ -29,73 +28,42 @@ func readProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUI
 	return r, err
 }
 
-// AllocateSessionProcess is called by trusted CP discovery after VM readiness.
-// The retained epoch is the retry identity; a live or unfenced old process never
-// becomes permission to rerun setup. Explicit resume must clear failure holds,
-// and physical stop must be confirmed before a replacement can be admitted.
-func (a *Allocator) AllocateSessionProcess(ctx context.Context, env, session uuid.UUID, epoch int64) (ProcessAllocation, error) {
-	if env == uuid.Nil() || session == uuid.Nil() || epoch <= 0 {
-		return ProcessAllocation{}, ErrInvalidInput
+// AdmitProcess assigns the next process of a Session on its Computer's live
+// lease, or returns the retained assignment for the same epoch. The caller
+// holds the worker supply gate; admitting reports whether supply still admits
+// continuation work.
+func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch int64, admitting bool) (ProcessAllocation, error) {
+	o, err := lockSession(ctx, tx, env, session)
+	if err != nil {
+		return ProcessAllocation{}, err
 	}
-	if r, err := readProcessAllocation(ctx, a.database, env, session, epoch); err == nil {
+	if r, err := ReadProcessAllocation(ctx, tx, env, session, epoch); err == nil {
 		return r, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return ProcessAllocation{}, err
 	}
-	var result ProcessAllocation
-	err := db.RunTx(ctx, a.database, func(tx pgx.Tx) error {
-		if err := allocationLockTimeout(ctx, tx); err != nil {
-			return err
-		}
-		var group, host uuid.UUID
-		var hostEpoch int64
-		var region string
-		if err := tx.QueryRow(ctx, `SELECT h.worker_group_id,h.id,l.worker_epoch,g.region_id FROM sessions s JOIN computer_leases l
- ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) JOIN worker_hosts h ON h.id=l.worker_host_id JOIN worker_groups g ON g.id=h.worker_group_id
- WHERE s.environment_id=$1 AND s.id=$2 AND l.fenced_at IS NULL`, env, session).Scan(&group, &host, &hostEpoch, &region); err != nil {
-			return err
-		}
-		admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(group), HostID: pgvalue.UUID(host), Epoch: hostEpoch, RegionID: region, Continuation: true})
-		if err != nil {
-			return err
-		}
-		o, err := lockSession(ctx, tx, env, session)
-		if err != nil {
-			return err
-		}
-		if r, err := readProcessAllocation(ctx, tx, env, session, epoch); err == nil {
-			result = r
-			return nil
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if !admitting || (o.lifecycle != "open" && o.lifecycle != "closing") {
-			return ErrNotReady
-		}
-		assigned, err := assignSessionProcess(ctx, tx, env, session, epoch, host, hostEpoch, 0)
-		if err != nil {
-			return err
-		}
-		if !assigned {
-			return ErrNotReady
-		}
-		result, err = readProcessAllocation(ctx, tx, env, session, epoch)
-		if err != nil {
-			return err
-		}
-		// Foreign-key waits cannot turn an expired VM lease into fresh setup authority.
-		return executionPhysical(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch, LeaseEpoch: result.LeaseEpoch, WorkerHostID: host, WorkerEpoch: hostEpoch}, true, true)
-	})
-	if err != nil {
-		return ProcessAllocation{}, allocationError(err)
+	if !admitting || (o.lifecycle != "open" && o.lifecycle != "closing") {
+		return ProcessAllocation{}, ErrNotReady
 	}
-	return result, nil
+	assigned, err := AssignProcess(ctx, tx, env, session, epoch, host, hostEpoch, 0)
+	if err != nil {
+		return ProcessAllocation{}, err
+	}
+	if !assigned {
+		return ProcessAllocation{}, ErrNotReady
+	}
+	result, err := ReadProcessAllocation(ctx, tx, env, session, epoch)
+	if err != nil {
+		return ProcessAllocation{}, err
+	}
+	// Foreign-key waits cannot turn an expired VM lease into fresh setup authority.
+	return result, executionPhysical(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch, LeaseEpoch: result.LeaseEpoch, WorkerHostID: host, WorkerEpoch: hostEpoch}, true, true)
 }
 
-// assignSessionProcess shares initial-cohort and later admission eligibility.
+// AssignProcess shares initial-cohort and later admission eligibility.
 // freshLease is nonzero only inside the transaction creating that acquiring lease.
 // Assignment does not authorize attachment or setup before VM readiness.
-func assignSessionProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
+func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
 	changed, err := tx.Exec(ctx, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
  SELECT s.environment_id,s.id,$3,c.id,l.epoch,'starting' FROM sessions s
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
@@ -106,7 +74,7 @@ func assignSessionProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID
  AND (($6::bigint=0 AND l.status='active' AND l.expires_at>clock_timestamp())
  OR ($6::bigint>0 AND l.epoch=$6 AND l.status='acquiring' AND l.delivered_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL))
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND d.execution_revoked_at IS NULL
- AND `+noSessionHoldsSQL+`
+ AND `+NoSessionHoldsSQL+`
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
@@ -120,10 +88,10 @@ func assignSessionProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID
 	return changed.RowsAffected() == 1, nil
 }
 
-// lockInitialComputerSessions discovers roots before the Computer lock. The
+// LockInitialSessions discovers roots before the Computer lock. The
 // Environment admission lock prevents new Sessions or inputs crossing this cut;
 // controls serialize on the roots and final eligibility is checked under locks.
-func lockInitialComputerSessions(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]uuid.UUID, error) {
+func LockInitialSessions(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing') ORDER BY id`, env, computer)
 	if err != nil {
 		return nil, err
@@ -141,7 +109,7 @@ func lockInitialComputerSessions(ctx context.Context, tx pgx.Tx, env, computer u
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := lockSessionsAndComputers(ctx, tx, env, sessions, []uuid.UUID{computer}); err != nil {
+	if _, err := LockSessionsAndComputers(ctx, tx, env, sessions, []uuid.UUID{computer}); err != nil {
 		return nil, err
 	}
 	var changed bool
@@ -154,7 +122,7 @@ func lockInitialComputerSessions(ctx context.Context, tx pgx.Tx, env, computer u
 	return sessions, nil
 }
 
-func assignInitialComputerSessions(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {
+func AssignInitialProcesses(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {
 	for _, session := range sessions {
 		var epoch int64
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(max(epoch),0) FROM session_processes WHERE environment_id=$1 AND session_id=$2`, r.EnvironmentID, session).Scan(&epoch); err != nil {
@@ -163,7 +131,7 @@ func assignInitialComputerSessions(ctx context.Context, tx pgx.Tx, r computer.Co
 		if epoch == math.MaxInt64 {
 			continue
 		}
-		if _, err := assignSessionProcess(ctx, tx, r.EnvironmentID, session, epoch+1, r.HostID, r.HostEpoch, r.Epoch); err != nil {
+		if _, err := AssignProcess(ctx, tx, r.EnvironmentID, session, epoch+1, r.HostID, r.HostEpoch, r.Epoch); err != nil {
 			return err
 		}
 	}
@@ -178,8 +146,8 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 	if attachment <= 0 {
 		return ErrInvalidInput
 	}
-	return allocationError(db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := allocationLockTimeout(ctx, tx); err != nil {
+	return notReadyOnLock(db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := shortLockTimeout(ctx, tx); err != nil {
 			return err
 		}
 		if _, err := lockRuntimeAuthority(ctx, tx, host, e); err != nil {

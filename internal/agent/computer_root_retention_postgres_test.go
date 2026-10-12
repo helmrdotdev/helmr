@@ -1,8 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -19,7 +23,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, admission.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, admission.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	// Deletion may be accepted after the Session process ends while its physical
@@ -35,7 +39,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT initial_root_id IS NOT NULL AND recovery_save_id=$3 AND storage_reservation_bytes IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, save.ID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("accepted deletion lost physical source: %v %v", retained, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.pool.Begin(t.Context())

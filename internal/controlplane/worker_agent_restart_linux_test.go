@@ -26,6 +26,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
@@ -76,7 +78,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator, err := agent.NewAllocator(pool, input.Key, secrets)
+	allocator, err := dispatch.NewAllocator(pool, input.Key, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +135,9 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 		reclaimer.Run,
 		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return allocator.Run(ctx, log) },
-		func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunPreparationLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunComputerLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
 		func(context.Context) error { return server.Serve(listener) },
 	} {

@@ -33,10 +33,10 @@ func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Exe
 	return err == nil, err
 }
 
-// reconcileComputerSecretRevocation interrupts exposed peers and preserves queued
+// ReconcileComputerSecretRevocation interrupts exposed peers and preserves queued
 // input for explicit disposition. It does not cancel descendants on other Computers or erase
 // recorded results. Only existing exact lease stop evidence may fence a process.
-func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
+func ReconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -54,7 +54,7 @@ func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 		if err != nil {
 			return err
 		}
-		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computerID}); err != nil {
+		if _, err = LockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computerID}); err != nil {
 			return err
 		}
 		after, err := read()

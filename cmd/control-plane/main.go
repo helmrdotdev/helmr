@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -203,7 +205,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	allocator, err := agent.NewAllocator(pool, cfg.ComputerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.ComputerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
@@ -273,8 +275,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
-		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
-		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunComputerLifecycle(ctx, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunPreparationLifecycle(ctx, pool, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "operation receipt retention", run: func(ctx context.Context) error {
 			return idempotency.CollectReceipts(ctx, queries, log)

@@ -1,4 +1,4 @@
-package agent
+package dispatch
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -107,7 +108,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&digest); err != nil {
 			return err
 		}
-		r, err := readPreparationAllocation(ctx, tx, env, preparation)
+		r, err := ReadImageBuildAllocation(ctx, tx, env, preparation)
 		if err != nil {
 			return err
 		}
@@ -150,14 +151,14 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 		if err != nil {
 			return err
 		}
-		if _, err := lockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if _, err := agent.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
 		var digest []byte
 		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&digest); err != nil {
 			return err
 		}
-		r, err := readComputerAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
+		r, err := ReadLeaseAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
 		if err != nil {
 			return err
 		}
@@ -208,10 +209,10 @@ func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host
 		if err != nil {
 			return err
 		}
-		if _, err := lockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if _, err := agent.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
-		r, err := readComputerAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
+		r, err := ReadLeaseAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
 		if err != nil {
 			return err
 		}

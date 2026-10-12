@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/helmrdotdev/helmr/internal/org"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/org"
 )
 
 func TestLoadConfigAcceptsEmptyBootstrap(t *testing.T) {

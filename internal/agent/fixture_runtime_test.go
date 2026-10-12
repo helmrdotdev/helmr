@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -20,7 +22,7 @@ import (
 // operations with the fixture Worker's host principal, so the same authority,
 // attachment and lease checks apply as in the Control Plane.
 
-func testHostFor(ctx context.Context, pool db.TxBeginner, e Execution) (workergroup.HostPrincipal, error) {
+func testHostFor(ctx context.Context, pool db.TxBeginner, e agent.Execution) (workergroup.HostPrincipal, error) {
 	var group uuid.UUID
 	if err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT worker_group_id FROM worker_hosts WHERE id=$1`, e.WorkerHostID).Scan(&group)
@@ -30,7 +32,7 @@ func testHostFor(ctx context.Context, pool db.TxBeginner, e Execution) (workergr
 	return workergroup.HostPrincipal{HostID: e.WorkerHostID, GroupID: group, Epoch: e.WorkerEpoch, HostClaimVersion: 1, GroupClaimVersion: 1}, nil
 }
 
-func currentAttachment(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution) (int64, error) {
+func currentAttachment(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e agent.Execution) (int64, error) {
 	var sequence int64
 	if err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT attachment_sequence FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&sequence)
@@ -40,46 +42,46 @@ func currentAttachment(ctx context.Context, pool db.TxBeginner, host workergroup
 	if sequence > 0 {
 		return sequence, nil
 	}
-	a, err := AcquireRuntimeAttachment(ctx, pool, host, e)
+	a, err := agent.AcquireRuntimeAttachment(ctx, pool, host, e)
 	if err != nil {
 		return 0, err
 	}
 	return a.Sequence, nil
 }
 
-func dispatchTurnForTest(ctx context.Context, pool db.TxBeginner, e Execution) (TurnDispatch, error) {
+func dispatchTurnForTest(ctx context.Context, pool db.TxBeginner, e agent.Execution) (agent.TurnDispatch, error) {
 	host, err := testHostFor(ctx, pool, e)
 	if err != nil {
-		return TurnDispatch{}, err
+		return agent.TurnDispatch{}, err
 	}
 	attachment, err := currentAttachment(ctx, pool, host, e)
 	if err != nil {
-		return TurnDispatch{}, fmt.Errorf("acquire attachment: %w", err)
+		return agent.TurnDispatch{}, fmt.Errorf("acquire attachment: %w", err)
 	}
-	dispatch, err := DispatchRuntimeTurn(ctx, pool, host, e, attachment)
+	dispatch, err := agent.DispatchRuntimeTurn(ctx, pool, host, e, attachment)
 	if err != nil {
-		return TurnDispatch{}, fmt.Errorf("dispatch: %w", err)
+		return agent.TurnDispatch{}, fmt.Errorf("dispatch: %w", err)
 	}
 	if dispatch == nil {
-		return TurnDispatch{}, ErrNotReady
+		return agent.TurnDispatch{}, agent.ErrNotReady
 	}
 	return *dispatch, nil
 }
 
-func closeProcessingForTest(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID) error {
+func closeProcessingForTest(ctx context.Context, pool db.TxBeginner, e agent.Execution, turn uuid.UUID) error {
 	host, err := testHostFor(ctx, pool, e)
 	if err != nil {
 		return err
 	}
-	return RuntimeCloseProcessing(ctx, pool, host, e, turn)
+	return agent.RuntimeCloseProcessing(ctx, pool, host, e, turn)
 }
 
-func recordResultForTest(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
+func recordResultForTest(ctx context.Context, pool db.TxBeginner, e agent.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
 	host, err := testHostFor(ctx, pool, e)
 	if err != nil {
 		return computer.SaveRequest{}, err
 	}
-	if _, err := RuntimeFinalize(ctx, pool, host, e, turn, result, evidence); err != nil {
+	if _, err := agent.RuntimeFinalize(ctx, pool, host, e, turn, result, evidence); err != nil {
 		return computer.SaveRequest{}, err
 	}
 	var save computer.SaveRequest
@@ -87,17 +89,17 @@ func recordResultForTest(ctx context.Context, pool db.TxBeginner, e Execution, t
 		return tx.QueryRow(ctx, `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return computer.SaveRequest{}, ErrNotReady
+		return computer.SaveRequest{}, agent.ErrNotReady
 	}
 	return save, err
 }
 
 func recordCaptureForTest(ctx context.Context, pool db.TxBeginner, c computer.CaptureEvidence) error {
 	if !sha256sum.ValidDigest(c.DiskRoot) {
-		return ErrInvalidInput
+		return agent.ErrInvalidInput
 	}
 	if c.Evidence == "" {
-		return ErrNotReady
+		return agent.ErrNotReady
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return computer.RecordCapture(ctx, tx, c) })
 }
@@ -105,7 +107,7 @@ func recordCaptureForTest(ctx context.Context, pool db.TxBeginner, c computer.Ca
 func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) (computer.ImageBuild, error) {
 	var result computer.ImageBuild
 	if env == uuid.Nil() || computerID == uuid.Nil() {
-		return result, ErrInvalidInput
+		return result, agent.ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var err error
@@ -113,16 +115,16 @@ func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, e
 		return err
 	})
 	if err != nil {
-		return computer.ImageBuild{}, hideMissing(err)
+		return computer.ImageBuild{}, agent.HideMissing(err)
 	}
 	return result, nil
 }
 
 func releaseComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID, epoch int64) error {
 	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 {
-		return ErrInvalidInput
+		return agent.ErrInvalidInput
 	}
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+	return agent.HideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return computer.ReleaseLeaseDisk(ctx, tx, env, computerID, epoch)
 	}))
 }
@@ -132,22 +134,22 @@ func releaseComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, en
 // published.
 func savePublicationForTest(ctx context.Context, pool db.TxBeginner, env, saveID uuid.UUID, diskRoot string) error {
 	if !sha256sum.ValidDigest(diskRoot) {
-		return ErrInvalidInput
+		return agent.ErrInvalidInput
 	}
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+	return agent.HideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var state string
 		var root *string
 		if err := tx.QueryRow(ctx, `SELECT status,'sha256:'||encode(captured_root_digest,'hex') FROM computer_saves WHERE environment_id=$1 AND id=$2`, env, saveID).Scan(&state, &root); err != nil {
 			return err
 		}
 		if state == "failed" {
-			return ErrTerminal
+			return agent.ErrTerminal
 		}
 		if root != nil && *root != diskRoot {
-			return ErrConflict
+			return agent.ErrConflict
 		}
 		if state != "published" {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		return nil
 	}))
@@ -158,7 +160,7 @@ func savePublicationForTest(ctx context.Context, pool db.TxBeginner, env, saveID
 func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, computerID uuid.UUID, epoch int64, writeKey uuid.UUID) (disk.VersionRoot, error) {
 	var result disk.VersionRoot
 	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 || writeKey == uuid.Nil() {
-		return result, ErrInvalidInput
+		return result, agent.ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
@@ -188,11 +190,11 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return err
 		}
 		if restored == nil && identity != initial {
-			return ErrConflict
+			return agent.ErrConflict
 		}
 		var authorizedKey uuid.UUID
 		if err = tx.QueryRow(ctx, `SELECT id FROM disk_encryption_keys WHERE environment_id=$1 AND writer_computer_id=$2 AND id=$3 AND available FOR KEY SHARE`, env, computerID, writeKey).Scan(&authorizedKey); err != nil {
-			return hideMissing(err)
+			return agent.HideMissing(err)
 		}
 		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET base_root_id=$4,write_key_id=$5 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NULL AND disk_released_at IS NULL`, env, computerID, epoch, rootID, writeKey); err != nil {
 			return err
@@ -202,19 +204,19 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return err
 		}
 		if priorRoot != rootID || priorKey != writeKey {
-			return ErrConflict
+			return agent.ErrConflict
 		}
 		var valid bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('acquiring','active','releasing') AND expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computerID, epoch).Scan(&valid); err != nil {
 			return err
 		}
 		if !valid {
-			return ErrDenied
+			return agent.ErrDenied
 		}
 		return nil
 	})
 	if err != nil {
-		return disk.VersionRoot{}, hideMissing(err)
+		return disk.VersionRoot{}, agent.HideMissing(err)
 	}
 	return result, nil
 }
@@ -222,7 +224,7 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 // loseUnreadyComputerCaptureForTest applies the reconciler's loss transition for
 // a checkpoint whose owning lease is fenced or whose Worker epoch was replaced.
 func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, env, checkpoint uuid.UUID) error {
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+	return agent.HideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var host, group uuid.UUID
 		var ownerEpoch int64
 		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id,h.worker_group_id,l.epoch FROM checkpoints c JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,COALESCE(c.target_lease_epoch,c.source_lease_epoch)) JOIN worker_hosts h ON h.id=l.worker_host_id WHERE c.environment_id=$1 AND c.id=$2`, env, checkpoint).Scan(&host, &group, &ownerEpoch); err != nil {
@@ -234,7 +236,7 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 		if _, err := tx.Exec(ctx, `SELECT id FROM worker_hosts WHERE id=$1 FOR SHARE`, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := agent.LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -242,24 +244,24 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 			return nil
 		}
 		if r.ControlsReconciled || (r.State != "capturing" && r.State != "sealed" && r.State != "aborting" && r.State != "consumed") {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		currentEpoch := r.SourceEpoch
 		if r.TargetEpoch != nil {
 			currentEpoch = *r.TargetEpoch
 		}
 		if currentEpoch != ownerEpoch {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		var fenced, replaced bool
 		if err = tx.QueryRow(ctx, `SELECT l.fenced_at IS NOT NULL,COALESCE(h.current_epoch>l.worker_epoch,false) FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, r.Computer, ownerEpoch).Scan(&fenced, &replaced); err != nil {
 			return err
 		}
 		if !fenced && !replaced {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		for _, m := range r.Members {
-			if err = loseSessionProcess(ctx, tx, Execution{EnvironmentID: env, SessionID: m.Session, ProcessEpoch: m.Epoch, LeaseEpoch: ownerEpoch}, fenced); err != nil {
+			if err = agent.LoseProcess(ctx, tx, agent.Execution{EnvironmentID: env, SessionID: m.Session, ProcessEpoch: m.Epoch, LeaseEpoch: ownerEpoch}, fenced); err != nil {
 				return err
 			}
 		}

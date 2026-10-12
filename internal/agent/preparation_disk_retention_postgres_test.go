@@ -1,9 +1,10 @@
-package agent
+package agent_test
 
 import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -19,7 +20,7 @@ func TestPreparationDiskRetentionRequiresPhysicalClosure(t *testing.T) {
 				}
 			}
 			dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID)
-			if err := expirePreparation(t.Context(), p.f.pool, p.f.env, p.ref.ImageBuildID); err != nil {
+			if err := dispatch.ExpireImageBuild(t.Context(), p.f.pool, p.f.env, p.ref.ImageBuildID); err != nil {
 				t.Fatal(err)
 			}
 			reconcile := func() {

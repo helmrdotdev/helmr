@@ -1,10 +1,11 @@
-package agent
+package dispatch
 
 import (
 	"context"
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -78,7 +79,7 @@ func ObserveProviderAbsentHostComputers(ctx context.Context, absence workergroup
 		for i, m := range before {
 			sessions[i] = m.session
 		}
-		if _, err = lockSessionsAndComputers(ctx, tx, env, sessions, computers); err != nil {
+		if _, err = agent.LockSessionsAndComputers(ctx, tx, env, sessions, computers); err != nil {
 			return err
 		}
 		after, err := read()

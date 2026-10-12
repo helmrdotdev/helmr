@@ -1,4 +1,4 @@
-package agent
+package dispatch
 
 import (
 	"context"
@@ -12,7 +12,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
@@ -84,17 +86,6 @@ type allocationSupply struct {
 
 // Every wait is bounded, including implicit FK/unique waits after Host UPDATE.
 // A failed candidate rolls back before the caller tries another Host.
-func allocationLockTimeout(ctx context.Context, tx pgx.Tx) error {
-	_, err := tx.Exec(ctx, `SET LOCAL lock_timeout='100ms'`)
-	return err
-}
-
-func allocationError(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) || db.IsLockNotAvailable(err) {
-		return ErrNotReady
-	}
-	return err
-}
 
 func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, primary bool) (allocationSupply, error) {
 	s := allocationSupply{host: host}
@@ -139,7 +130,7 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 	return shape, err
 }
 
-func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy admissionEnvironment, shape computer.AllocationShape, computerID bool) error {
+func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy org.AdmissionPolicy, shape computer.AllocationShape, computerID bool) error {
 	var environment, host allocationCapacity
 	var computers int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(computers),0) FROM (
@@ -153,8 +144,8 @@ func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, su
 		return err
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }
-	if !fits(environment.cpu, shape.CPUMillis, policy.maxCPU) || !fits(environment.memory, shape.MemoryBytes, policy.maxMemory) ||
-		(computerID && !fits(computers, 1, policy.maxResident)) {
+	if !fits(environment.cpu, shape.CPUMillis, policy.MaxCPU) || !fits(environment.memory, shape.MemoryBytes, policy.MaxMemory) ||
+		(computerID && !fits(computers, 1, policy.MaxResident)) {
 		return errEnvironmentCapacity
 	}
 	if !fits(host.cpu, shape.CPUMillis, supply.capacity.cpu) ||
@@ -177,7 +168,7 @@ func requireAllocationFreshSupply(ctx context.Context, tx pgx.Tx, supply allocat
 	return nil
 }
 
-func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation uuid.UUID) (computer.Allocation, error) {
+func ReadImageBuildAllocation(ctx context.Context, q db.DBTX, env, preparation uuid.UUID) (computer.Allocation, error) {
 	r := computer.Allocation{EnvironmentID: env, OwnerID: preparation}
 	err := q.QueryRow(ctx, `SELECT allocation_id,executor_epoch,worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at FROM image_builds
@@ -187,7 +178,7 @@ func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation 
 	return r, err
 }
 
-func readComputerAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (computer.ComputerAllocation, error) {
+func ReadLeaseAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (computer.ComputerAllocation, error) {
 	r := computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}}
 	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
  l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at
@@ -204,7 +195,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 	if env == uuid.Nil() || preparation == uuid.Nil() || host == uuid.Nil() {
 		return computer.Allocation{}, ErrInvalidInput
 	}
-	if prior, err := readPreparationAllocation(ctx, a.database, env, preparation); err == nil {
+	if prior, err := ReadImageBuildAllocation(ctx, a.database, env, preparation); err == nil {
 		return prior, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return computer.Allocation{}, err
@@ -218,7 +209,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		if err != nil {
 			return err
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, env)
+		policy, err := org.LockAdmission(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -236,7 +227,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		if err := tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&locked); err != nil {
 			return err
 		}
-		if prior, err := readPreparationAllocation(ctx, tx, env, preparation); err == nil {
+		if prior, err := ReadImageBuildAllocation(ctx, tx, env, preparation); err == nil {
 			result = prior
 			return nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -304,7 +295,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID u
 	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return computer.ComputerAllocation{}, ErrInvalidInput
 	}
-	if prior, err := readComputerAllocation(ctx, a.database, env, computerID, epoch); err == nil {
+	if prior, err := ReadLeaseAllocation(ctx, a.database, env, computerID, epoch); err == nil {
 		if prior.RestoredFrom != nil {
 			return computer.ComputerAllocation{}, ErrConflict
 		}
@@ -321,15 +312,15 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID u
 		if err != nil {
 			return err
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, env)
+		policy, err := org.LockAdmission(ctx, tx, env)
 		if err != nil {
 			return err
 		}
-		sessions, err := lockInitialComputerSessions(ctx, tx, env, computerID)
+		sessions, err := agent.LockInitialSessions(ctx, tx, env, computerID)
 		if err != nil {
 			return err
 		}
-		if prior, err := readComputerAllocation(ctx, tx, env, computerID, epoch); err == nil {
+		if prior, err := ReadLeaseAllocation(ctx, tx, env, computerID, epoch); err == nil {
 			if prior.RestoredFrom != nil {
 				return ErrConflict
 			}
@@ -357,7 +348,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID u
 		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
 			return err
 		}
-		if err := assignInitialComputerSessions(ctx, tx, result, sessions); err != nil {
+		if err := agent.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
@@ -386,7 +377,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 	if err := a.database.QueryRow(ctx, `SELECT computer_id,disk_save_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&computerID, &save); err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
 	}
-	if r, err := readComputerAllocation(ctx, a.database, env, computerID, epoch); err == nil {
+	if r, err := ReadLeaseAllocation(ctx, a.database, env, computerID, epoch); err == nil {
 		if r.RestoredFrom == nil || *r.RestoredFrom != save {
 			return computer.ComputerAllocation{}, ErrConflict
 		}
@@ -403,15 +394,15 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if err != nil {
 			return err
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, env)
+		policy, err := org.LockAdmission(ctx, tx, env)
 		if err != nil {
 			return err
 		}
-		capture, err := lockCapture(ctx, tx, env, checkpoint)
+		capture, err := agent.LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
-		if r, err := readComputerAllocation(ctx, tx, env, computerID, epoch); err == nil {
+		if r, err := ReadLeaseAllocation(ctx, tx, env, computerID, epoch); err == nil {
 			if r.RestoredFrom == nil || *r.RestoredFrom != save {
 				return ErrConflict
 			}
@@ -423,7 +414,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if (capture.State != "ready" && capture.State != "restoring") || epoch <= capture.SourceEpoch {
 			return ErrNotReady
 		}
-		eligible, err := checkpointDiskEligible(ctx, tx, env, computerID, save)
+		eligible, err := computer.CheckpointDiskEligible(ctx, tx, env, computerID, save)
 		if err != nil {
 			return err
 		}
@@ -438,7 +429,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if !noWriter {
 			return ErrNotReady
 		}
-		source, err := readComputerAllocation(ctx, tx, env, computerID, capture.SourceEpoch)
+		source, err := ReadLeaseAllocation(ctx, tx, env, computerID, capture.SourceEpoch)
 		if err != nil {
 			return err
 		}

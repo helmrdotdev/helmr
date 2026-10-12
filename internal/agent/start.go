@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
@@ -137,7 +138,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				return err
 			}
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, req.EnvironmentID)
+		policy, err := org.LockAdmission(ctx, tx, req.EnvironmentID)
 		if err != nil {
 			return err
 		}
@@ -168,10 +169,10 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				return err
 			}
 		} else {
-			if policy.deployment == nil {
+			if policy.Deployment == nil {
 				return ErrNotReady
 			}
-			deployment = *policy.deployment
+			deployment = *policy.Deployment
 		}
 		var revoked bool
 		if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NOT NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, req.EnvironmentID, deployment).Scan(&revoked); err != nil {
@@ -207,7 +208,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		}
 		computerID := req.ComputerID
 		if computerID == uuid.Nil() && hasInput {
-			computerID, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy.computerLimits())
+			computerID, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, computerLimits(policy))
 			if err != nil {
 				return err
 			}
@@ -219,7 +220,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		if computerID != uuid.Nil() {
 			computerIDs = append(computerIDs, computerID)
 		}
-		locked, err := lockSessionsAndComputers(ctx, tx, req.EnvironmentID, callerIDs, computerIDs)
+		locked, err := LockSessionsAndComputers(ctx, tx, req.EnvironmentID, callerIDs, computerIDs)
 		if err != nil {
 			return err
 		}
@@ -247,7 +248,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		if hasInput {
 			err = consumeAdmission(ctx, tx, req.EnvironmentID, policy)
 		} else {
-			err = consumeAdmissionToken(ctx, tx, req.EnvironmentID, policy)
+			err = consumeAdmissionToken(ctx, tx, req.EnvironmentID)
 		}
 		if err != nil {
 			return err
@@ -269,7 +270,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			if method == "spawn" {
 				parent, root = caller.ID, locked[caller.ID].root
 			}
-			if causal > policy.maxCausal {
+			if causal > policy.MaxCausal {
 				return ErrInvalidInput
 			}
 		}

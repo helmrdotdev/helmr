@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -192,7 +194,7 @@ func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return agent.ObserveProviderAbsentHostComputers(t.Context(), absence)
+		return dispatch.ObserveProviderAbsentHostComputers(t.Context(), absence)
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-package agent
+package dispatch
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db"
 
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-type allocationPosition struct {
+type AllocationPosition struct {
 	environment uuid.UUID
 	kind        string
 	owner, host uuid.UUID
@@ -22,13 +23,8 @@ type allocationPosition struct {
 // No Host identity can sort after this cursor when the whole demand is blocked.
 var lastAllocationHost = uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
 
-const noSessionHoldsSQL = `NOT EXISTS(WITH RECURSIVE ancestors AS (
- SELECT s.id,s.parent_session_id
- UNION ALL SELECT parent.id,parent.parent_session_id FROM sessions parent JOIN ancestors a ON parent.id=a.parent_session_id WHERE parent.environment_id=s.environment_id)
- SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id WHERE hold.environment_id=s.environment_id AND hold.released_at IS NULL AND (hold.session_id=s.id OR hold.scope='subtree'))`
-
 type allocationCandidate struct {
-	allocationPosition
+	AllocationPosition
 	epoch int64
 }
 
@@ -42,9 +38,9 @@ func (a *Allocator) Run(ctx context.Context, log *slog.Logger) error {
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var after allocationPosition
+	var after AllocationPosition
 	for {
-		next, more, err := a.reconcile(ctx, after)
+		next, more, err := a.Reconcile(ctx, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -63,7 +59,7 @@ func (a *Allocator) Run(ctx context.Context, log *slog.Logger) error {
 	}
 }
 
-func (a *Allocator) discoverAllocations(ctx context.Context, after allocationPosition) ([]allocationCandidate, error) {
+func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPosition) ([]allocationCandidate, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := a.database.Query(scanCtx, `WITH demand AS (
@@ -74,19 +70,19 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after allocationPos
  WHERE c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.recovery_save_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
- AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
+ AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+agent.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.epoch=9223372036854775807)
  UNION ALL
  SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid
  FROM checkpoints cp WHERE cp.status IN ('ready','restoring')
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND (EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
- WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
+ WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+agent.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=cp.environment_id AND revoked.computer_id=cp.computer_id)
  UNION ALL
  SELECT s.environment_id,s.id,'process',COALESCE((SELECT max(p.epoch) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id),0)+1,l.worker_host_id
  FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id)
- WHERE s.status IN ('open','closing') AND `+noSessionHoldsSQL+` AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
+ WHERE s.status IN ('open','closing') AND `+agent.NoSessionHoldsSQL+` AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND (p.fenced_at IS NULL OR p.epoch=9223372036854775807))
  ) SELECT d.environment_id,d.kind,d.id,h.id,d.epoch FROM demand d JOIN environments e ON e.id=d.environment_id AND e.retired_at IS NULL
@@ -111,13 +107,13 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after allocationPos
 	})
 }
 
-func (a *Allocator) reconcile(ctx context.Context, after allocationPosition) (allocationPosition, bool, error) {
+func (a *Allocator) Reconcile(ctx context.Context, after AllocationPosition) (AllocationPosition, bool, error) {
 	candidates, err := a.discoverAllocations(ctx, after)
 	if err != nil {
 		return after, false, err
 	}
 	if len(candidates) == 0 {
-		return allocationPosition{}, false, nil
+		return AllocationPosition{}, false, nil
 	}
 	var failures []error
 	for _, c := range candidates {
@@ -138,7 +134,7 @@ func (a *Allocator) reconcile(ctx context.Context, after allocationPosition) (al
 			_, err = a.AllocateFreshComputer(attemptCtx, c.environment, c.owner, c.epoch, c.host)
 		}
 		stop()
-		after = c.allocationPosition
+		after = c.AllocationPosition
 		if errors.Is(err, errEnvironmentCapacity) {
 			after.host = lastAllocationHost
 		}
@@ -147,7 +143,7 @@ func (a *Allocator) reconcile(ctx context.Context, after allocationPosition) (al
 		}
 	}
 	if len(candidates) < 100 {
-		return allocationPosition{}, false, errors.Join(failures...)
+		return AllocationPosition{}, false, errors.Join(failures...)
 	}
 	return after, true, errors.Join(failures...)
 }

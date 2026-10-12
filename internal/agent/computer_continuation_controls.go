@@ -29,13 +29,13 @@ func ReadComputerContinuationControls(ctx context.Context, pool db.TxBeginner, h
 	}
 	var result *agentv1.ComputerSessionControls
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var r captureRecord
+		var r CaptureRecord
 		var err error
 		if p.GetSourceAbort() {
 			if err = computer.LockHost(ctx, tx, host); err != nil {
 				return err
 			}
-			r, err = lockCapture(ctx, tx, env, checkpoint)
+			r, err = LockCapture(ctx, tx, env, checkpoint)
 			if err != nil {
 				return err
 			}

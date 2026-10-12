@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -17,23 +19,23 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
+	req := agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
 	canonicalInput, err := content.Input(req.Input)
 	req.Input = canonicalInput
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, ErrMessageClosed) {
+	if _, err := agent.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, agent.ErrMessageClosed) {
 		t.Fatalf("unregistered: %v", err)
 	}
-	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := agent.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	results := make(chan SendReceipt, 8)
+	results := make(chan agent.SendReceipt, 8)
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			r, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+			r, err := agent.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 			if err != nil {
 				t.Error(err)
 			}
@@ -42,7 +44,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	}
 	wg.Wait()
 	close(results)
-	var admitted SendReceipt
+	var admitted agent.SendReceipt
 	for r := range results {
 		if admitted.MessageID == uuid.Nil() {
 			admitted = r
@@ -52,49 +54,49 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		}
 	}
 	req.IdempotencyKey = "later"
-	later, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	later, err := agent.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
+	message, err := agent.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
 	if err != nil || message == nil || message.ID != admitted.MessageID || string(message.Input) != string(req.Input) {
 		t.Fatalf("claim: %+v %v", message, err)
 	}
-	repeated, err := ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
+	repeated, err := agent.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
 	if err != nil || repeated == nil || repeated.ID != message.ID {
 		t.Fatalf("claim retry: %+v %v", repeated, err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='rejected' AND rejection_reason='turn_closed' FROM turn_messages WHERE id=$1`, later.MessageID).Scan(&rejected); err != nil || !rejected {
 		t.Fatalf("unstarted message survived: %v %v", rejected, err)
 	}
-	if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
+	if outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
 		t.Fatalf("started callback finalized: %s %v", outcome, err)
 	}
-	if err := CompleteRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, message.ID, "message_rejected"); err != nil {
+	if err := agent.CompleteRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, message.ID, "message_rejected"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "steer"
-	retried, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+	retried, err := agent.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {
 		t.Fatalf("rejected steering fell back: %+v %v", retried, err)
 	}
 	req.Input = json.RawMessage(`[{"type":"text","text":"false"}]`)
-	if _, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err := agent.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
 	req.IdempotencyKey = "new"
-	queued, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+	queued, err := agent.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || queued.MessageID != uuid.Nil() || queued.TurnID == first.TurnID {
 		t.Fatalf("new send didn't queue: %+v %v", queued, err)
 	}
@@ -105,15 +107,15 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := agent.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[]`)}
-	admitted, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	req := agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[]`)}
+	admitted, err := agent.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
@@ -121,12 +123,12 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 		t.Fatalf("cancel didn't reject: %v %v", rejected, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turn_messages SET message=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, admitted.MessageID)
-	repeated, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	repeated, err := agent.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
 	if err != nil || repeated.MessageID != admitted.MessageID {
 		t.Fatalf("expired retry: %+v %v", repeated, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user)
-	if _, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, ErrDenied) {
+	if _, err := agent.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -137,32 +139,32 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := agent.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
-	for _, caller := range []Caller{f.caller()} {
-		req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}
-		exact, err := SendTurn(t.Context(), f.pool, caller, req, first.TurnID)
+	runtime := agent.Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
+	for _, caller := range []agent.Caller{f.caller()} {
+		req := agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}
+		exact, err := agent.SendTurn(t.Context(), f.pool, caller, req, first.TurnID)
 		if err != nil || exact.MessageID == uuid.Nil() {
 			t.Fatalf("closing exact %s: %+v %v", caller.Kind, exact, err)
 		}
-		routed, err := RouteSlackInput(t.Context(), f.pool, nil, caller, req)
+		routed, err := agent.RouteSlackInput(t.Context(), f.pool, nil, caller, req)
 		if err != nil || routed.MessageID == uuid.Nil() {
 			t.Fatalf("closing send %s: %+v %v", caller.Kind, routed, err)
 		}
-		if _, err := Enqueue(t.Context(), f.pool, nil, caller, req); err == nil {
+		if _, err := agent.Enqueue(t.Context(), f.pool, nil, caller, req); err == nil {
 			t.Fatalf("closing enqueue allowed: %s", caller.Kind)
 		}
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	for _, caller := range []Caller{f.caller(), runtime} {
-		if _, err := RouteSlackInput(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
+	for _, caller := range []agent.Caller{f.caller(), runtime} {
+		if _, err := agent.RouteSlackInput(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
 			t.Fatalf("closing send fell back: %s", caller.Kind)
 		}
 	}
@@ -179,16 +181,16 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 		if _, err := dispatchTurnForTest(t.Context(), target.pool, target.execution()); err != nil {
 			t.Fatal(err)
 		}
-		if err := RuntimeRegisterMessages(t.Context(), target.pool, *target.host(), target.execution(), admission.TurnID); err != nil {
+		if err := agent.RuntimeRegisterMessages(t.Context(), target.pool, *target.host(), target.execution(), admission.TurnID); err != nil {
 			t.Fatal(err)
 		}
 		turns[target.session] = admission.TurnID
 	}
-	rootCaller := Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	childCaller := Caller{Kind: "session", ID: child.session, Execution: child.execution(), Host: child.host()}
+	rootCaller := agent.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+	childCaller := agent.Caller{Kind: "session", ID: child.session, Execution: child.execution(), Host: child.host()}
 	for _, test := range []struct {
 		name    string
-		caller  Caller
+		caller  agent.Caller
 		target  fixture
 		allowed bool
 	}{
@@ -199,10 +201,10 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 		{"sibling", childCaller, sibling, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, IdempotencyKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
-			first, err := SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
+			req := agent.EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, IdempotencyKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
+			first, err := agent.SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
 			if !test.allowed {
-				if !errors.Is(err, ErrDenied) {
+				if !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("non-owned send: %v", err)
 				}
 				return
@@ -210,7 +212,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
+			replay, err := agent.SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
 			if err != nil || replay != first {
 				t.Fatalf("retry: %+v %v", replay, err)
 			}

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -8,10 +8,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/content"
 )
 
-func askFixture(t *testing.T) (fixture, Admission, uuid.UUID, json.RawMessage) {
+func askFixture(t *testing.T) (fixture, agent.Admission, uuid.UUID, json.RawMessage) {
 	t.Helper()
 	f := newFixture(t)
 	a := f.enqueue(t, "ask")
@@ -20,68 +22,68 @@ func askFixture(t *testing.T) (fixture, Admission, uuid.UUID, json.RawMessage) {
 	}
 	id := uuid.NewV7()
 	q := json.RawMessage(`{"prompt":[{"type":"text","text":"choose\u0000雪"}],"answer":{"type":"text"}}`)
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
 	return f, a, id, q
 }
 func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	f, a, id, q := askFixture(t)
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); !errors.Is(err, ErrConflict) {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed question: %v", err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
+	if outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
 		t.Fatalf("pending question finalization did not wait: %s %v", outcome, err)
 	}
 	var waiting bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='running' AND result_digest IS NULL AND NOT EXISTS(SELECT 1 FROM computer_saves WHERE turn_id=$1) FROM turns WHERE id=$1`, a.TurnID).Scan(&waiting); err != nil || !waiting {
 		t.Fatalf("question drainage prepared a result/save: %v %v", waiting, err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, ErrNotReady) {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("late ask: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
-	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "reply", Answer: json.RawMessage(`""`)}
-	view, err := RespondAsk(t.Context(), f.pool, f.caller(), req)
+	req := agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "reply", Answer: json.RawMessage(`""`)}
+	view, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req)
 	if err != nil || view.Status != "responded" || string(view.Answer) != `""` || view.RespondedByUserID == nil || *view.RespondedByUserID != f.user {
 		t.Fatalf("viewer reply after close: %+v %v", view, err)
 	}
-	if err := RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id); err != nil {
+	if err := agent.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id); err != nil {
 		t.Fatal(err)
 	}
-	observed, err := RuntimeObserveAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id)
+	observed, err := agent.RuntimeObserveAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id)
 	if err != nil || observed.Status != "responded" {
 		t.Fatalf("withdraw erased answer: %+v %v", observed, err)
 	}
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "joined"); err != nil {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
 	// Receipts remain valid after finalization and content expiry.
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turn_asks SET question=NULL,answer=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatalf("expired reply retry: %v", err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatalf("expired question retry: %v", err)
 	}
 	req.Answer = json.RawMessage(`"changed"`)
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed reply: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -91,7 +93,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			_, err := RespondAsk(t.Context(), f.pool, f.caller(), AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)})
+			_, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)})
 			errs <- err
 		})
 	}
@@ -101,7 +103,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 	for err := range errs {
 		if err == nil {
 			won++
-		} else if !errors.Is(err, ErrAskAlreadyResponded) {
+		} else if !errors.Is(err, agent.ErrAskAlreadyResponded) {
 			t.Fatal(err)
 		}
 	}
@@ -109,21 +111,21 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 		t.Fatalf("winners %d", won)
 	}
 	pending := uuid.NewV7()
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); err != nil {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); err != nil {
 		t.Fatal(err)
 	}
-	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: pending, ResponseID: "invalid", Answer: json.RawMessage(`null`)}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, content.ErrAnswerInvalid) {
+	req := agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: pending, ResponseID: "invalid", Answer: json.RawMessage(`null`)}
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, content.ErrAnswerInvalid) {
 		t.Fatal(err)
 	}
-	if err := RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
+	if err := agent.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
+	if err := agent.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
 		t.Fatal(err)
 	}
 	req.Answer = json.RawMessage(`"yes"`)
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrAskCancelled) {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, agent.ErrAskCancelled) {
 		t.Fatal(err)
 	}
 	var count int
@@ -136,43 +138,43 @@ func TestAskTerminalCancellationAndBudget(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turns SET progress_bytes=8388608 WHERE id=$1`, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, content.ErrLimit) {
+	if err := agent.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, content.ErrLimit) {
 		t.Fatalf("budget %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "late", Answer: json.RawMessage(`""`)}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrNotReady) {
+	req := agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "late", Answer: json.RawMessage(`""`)}
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("deadline answer %v", err)
 	}
-	if err := expireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := agent.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-	view, err := GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
+	view, err := agent.GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
 	if err != nil || view.Status != "cancelled" {
 		t.Fatalf("terminal ask %+v %v", view, err)
 	}
-	page, err := ListAsks(t.Context(), f.pool, f.caller(), TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 1}, a.TurnID)
+	page, err := agent.ListAsks(t.Context(), f.pool, f.caller(), agent.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 1}, a.TurnID)
 	if err != nil || len(page.Asks) != 1 {
 		t.Fatalf("page %+v %v", page, err)
 	}
-	if _, err := GetAsk(t.Context(), f.pool, f.caller(), f.env, uuid.NewV7(), a.TurnID, id); !errors.Is(err, ErrDenied) {
+	if _, err := agent.GetAsk(t.Context(), f.pool, f.caller(), f.env, uuid.NewV7(), a.TurnID, id); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("containment %v", err)
 	}
 }
 
-func askKey(t *testing.T, f fixture, role string, permissions []string) Caller {
+func askKey(t *testing.T, f fixture, role string, permissions []string) agent.Caller {
 	t.Helper()
 	id := uuid.NewV7()
 	_, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,role,permissions,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,$3,$4,$2::uuid::text,'test',$5 FROM environments WHERE id=$1`, f.env, id, role, permissions, id[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Caller{Kind: "api_key", ID: id}
+	return agent.Caller{Kind: "api_key", ID: id}
 }
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	f, a, id, _ := askFixture(t)
@@ -188,29 +190,29 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "response", Answer: json.RawMessage(`""`)}
-	for _, caller := range []Caller{reader, developer, cross, {Kind: "session", ID: f.session}} {
-		if _, err := RespondAsk(t.Context(), f.pool, caller, req); !errors.Is(err, ErrDenied) {
+	req := agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "response", Answer: json.RawMessage(`""`)}
+	for _, caller := range []agent.Caller{reader, developer, cross, {Kind: "session", ID: f.session}} {
+		if _, err := agent.RespondAsk(t.Context(), f.pool, caller, req); !errors.Is(err, agent.ErrDenied) {
 			t.Fatalf("ungranted answer %+v: %v", caller, err)
 		}
 	}
-	if _, err := GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); !errors.Is(err, ErrDenied) {
+	if _, err := agent.GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("answer implies read: %v", err)
 	}
-	if _, err := GetAsk(t.Context(), f.pool, reader, f.env, f.session, a.TurnID, id); err != nil {
+	if _, err := agent.GetAsk(t.Context(), f.pool, reader, f.env, f.session, a.TurnID, id); err != nil {
 		t.Fatal(err)
 	}
-	view, err := RespondAsk(t.Context(), f.pool, answerer, req)
+	view, err := agent.RespondAsk(t.Context(), f.pool, answerer, req)
 	if err != nil || view.RespondedByAPIKeyID == nil || *view.RespondedByAPIKeyID != answerer.ID || view.RespondedByUserID != nil {
 		t.Fatalf("key attribution %+v %v", view, err)
 	}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("responder identity omitted from retry: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, answerer.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RespondAsk(t.Context(), f.pool, answerer, req); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RespondAsk(t.Context(), f.pool, answerer, req); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked key retry: %v", err)
 	}
 }
@@ -231,7 +233,7 @@ func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := RespondAsk(t.Context(), f.pool, key, AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "delayed", Answer: json.RawMessage(`""`)})
+		_, err := agent.RespondAsk(t.Context(), f.pool, key, agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "delayed", Answer: json.RawMessage(`""`)})
 		done <- err
 	}()
 	// Confirm the operation passed its first authorization and is waiting on the
@@ -253,10 +255,10 @@ func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; !errors.Is(err, ErrDenied) {
+	if err := <-done; !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired key crossed owner wait: %v", err)
 	}
-	view, err := GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
+	view, err := agent.GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
 	if err != nil || view.Status != "pending" {
 		t.Fatalf("expired answer changed state: %+v %v", view, err)
 	}
@@ -270,7 +272,7 @@ func TestChildCannotAskHuman(t *testing.T) {
 		t.Fatal(err)
 	}
 	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Approve?"}],"answer":{"type":"text"}}`)
-	if err := RuntimeAsk(t.Context(), child.pool, *child.host(), child.execution(), turn.TurnID, uuid.NewV7(), question); !errors.Is(err, ErrRootSessionRequired) {
+	if err := agent.RuntimeAsk(t.Context(), child.pool, *child.host(), child.execution(), turn.TurnID, uuid.NewV7(), question); !errors.Is(err, agent.ErrRootSessionRequired) {
 		t.Fatalf("child human question: %v", err)
 	}
 	var unchanged bool

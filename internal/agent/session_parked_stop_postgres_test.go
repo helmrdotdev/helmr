@@ -1,9 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -19,18 +23,18 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				ctx := t.Context()
 				park := func() {
 					t.Helper()
-					if err := ObserveComputerStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+					if err := dispatch.ObserveComputerStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if order == "park-before-control" {
 					park()
 				}
-				if _, err := ControlSession(ctx, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
+				if _, err := agent.ControlSession(ctx, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
 					t.Fatal(err)
 				}
 				if order == "control-before-park" {
-					if _, _, err := reconcileSessionLifecycle(ctx, f.pool, sessionLifecyclePosition{}); err != nil {
+					if _, _, err := agent.ReconcileSessionLifecycle(ctx, f.pool, agent.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 					assertParkedProcessStopped(t, f, false)
@@ -41,7 +45,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 					t.Fatal(err)
 				}
 				for range 2 {
-					if _, _, err := reconcileSessionLifecycle(ctx, f.pool, sessionLifecyclePosition{}); err != nil {
+					if _, _, err := agent.ReconcileSessionLifecycle(ctx, f.pool, agent.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -66,14 +70,14 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				if len(installation.StoppedSessions) != 1 || installation.StoppedSessions[0].SessionId != f.session.String() {
 					t.Fatal("terminal captured member omitted from restore stop set")
 				}
-				if err := ValidateComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, false, false)); err != nil {
+				if err := agent.ValidateComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, false, false)); err != nil {
 					t.Fatal(err)
 				}
-				if err := CommitComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, false)); err != nil {
+				if err := agent.CommitComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, false)); err != nil {
 					t.Fatal(err)
 				}
 				acknowledgeComputerMembers(t, f, restored.host, installation)
-				if err := CompleteComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
+				if err := agent.CompleteComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -97,17 +101,17 @@ func TestSessionLifecycleRequiresPhysicalStopForParkedControl(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1 AND epoch=2`, f.computer)
 				}
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+			if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := reconcileSessionLifecycle(t.Context(), f.pool, sessionLifecyclePosition{}); err != nil {
+			if _, _, err := agent.ReconcileSessionLifecycle(t.Context(), f.pool, agent.SessionLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			assertParkedProcessStopped(t, f, false)
 			// Revisit durable control after physical cleanup; no second user control
 			// or live attachment is needed to finish the accepted cancellation.
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='joined physical closure' WHERE computer_id=$1 AND fenced_at IS NULL`, f.computer)
-			if _, _, err := reconcileSessionLifecycle(t.Context(), f.pool, sessionLifecyclePosition{}); err != nil {
+			if _, _, err := agent.ReconcileSessionLifecycle(t.Context(), f.pool, agent.SessionLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			assertParkedProcessStopped(t, f, true)
@@ -127,10 +131,10 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	checkpoint := readyCheckpointFixture(t)
 	f := checkpoint.f
 	ctx := t.Context()
-	if err := ObserveComputerStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(ctx, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := agent.ControlSession(ctx, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(ctx)
@@ -144,7 +148,7 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- reconcileTerminalSessionStop(ctx, f.pool, f.env, f.session) }()
+	go func() { done <- agent.ReconcileTerminalSessionStop(ctx, f.pool, f.env, f.session) }()
 	waitSessionLifecycleLock(t, f)
 	if _, err = tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,
  allocation_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,

@@ -1,13 +1,13 @@
-package agent
+package dispatch
 
 import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// expirePreparation makes deadline/authority loss visible without asserting that
+// ExpireImageBuild makes deadline/authority loss visible without asserting that
 // the physical writer stopped. A never-claimed attempt has no physical blocker.
-func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID) error {
+func ExpireImageBuild(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -63,9 +63,9 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 	}))
 }
 
-// reconcilePreparationRevocation closes logical execution permission. It does
+// ReconcileImageBuildRevocation closes logical execution permission. It does
 // not release the unfenced-writer index or claim that the host has stopped.
-func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID) error {
+func ReconcileImageBuildRevocation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -175,90 +175,7 @@ func observeRecoveredHostPreparations(ctx context.Context, database db.TxDB, hos
 	return nil
 }
 
-// expirePreparationWaiter fails only never-dispatched work. Computer storage and
-// the executor's physical lifetime remain owned by their separate reconcilers.
-func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
-			return err
-		}
-		var spec *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID).Scan(&spec); err != nil {
-			return err
-		}
-		if spec == nil {
-			return nil
-		}
-		if err := computer.LockImageSpec(ctx, tx, env, *spec); err != nil {
-			return err
-		}
-		read := func() ([]uuid.UUID, error) {
-			rows, err := tx.Query(ctx, `WITH roots AS (SELECT DISTINCT root_session_id AS id FROM sessions WHERE environment_id=$1 AND computer_id=$2)
-    SELECT s.id FROM sessions s JOIN roots r ON r.id=s.root_session_id WHERE s.environment_id=$1 ORDER BY s.id`, env, computerID)
-			if err != nil {
-				return nil, err
-			}
-			return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-		}
-		before, err := read()
-		if err != nil {
-			return err
-		}
-		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computerID}); err != nil {
-			return err
-		}
-		after, err := read()
-		if err != nil {
-			return err
-		}
-		if !slices.Equal(before, after) {
-			return ErrNotReady
-		}
-		var due bool
-		if err = tx.QueryRow(ctx, `SELECT initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at<=clock_timestamp()
-   FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID).Scan(&due); err != nil {
-			return err
-		}
-		if !due {
-			return nil
-		}
-		var dispatched bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND started_at IS NOT NULL)`, env, computerID).Scan(&dispatched); err != nil {
-			return err
-		}
-		if dispatched {
-			return ErrConflict
-		}
-		if err = computer.MarkPreparationFailed(ctx, tx, env, computerID); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp()
-   WHERE environment_id=$1 AND computer_id=$2 AND status='queued' RETURNING id,session_id`, env, computerID)
-		if err != nil {
-			return err
-		}
-		type failed struct{ turn, session uuid.UUID }
-		failedTurns, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (failed, error) {
-			var f failed
-			err := row.Scan(&f.turn, &f.session)
-			return f, err
-		})
-		if err != nil {
-			return err
-		}
-		for _, turn := range failedTurns {
-			if err = eventData(ctx, tx, env, turn.session, turn.turn, "turn.failed", []byte(`{"code":"preparation_deadline"}`)); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, env, computerID); err != nil {
-			return err
-		}
-		return drainClosingSessions(ctx, tx, env, after)
-	}))
-}
-
-type preparationLifecyclePosition struct {
+type ImageBuildLifecyclePosition struct {
 	environment, id uuid.UUID
 	kind            string
 }
@@ -271,9 +188,9 @@ func RunPreparationLifecycle(ctx context.Context, database db.TxDB, log *slog.Lo
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var after preparationLifecyclePosition
+	var after ImageBuildLifecyclePosition
 	for {
-		next, more, err := reconcilePreparationLifecycle(ctx, database, after)
+		next, more, err := ReconcileImageBuildLifecycle(ctx, database, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -291,7 +208,7 @@ func RunPreparationLifecycle(ctx context.Context, database db.TxDB, log *slog.Lo
 		}
 	}
 }
-func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after preparationLifecyclePosition) (preparationLifecyclePosition, bool, error) {
+func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after ImageBuildLifecyclePosition) (ImageBuildLifecyclePosition, bool, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := database.Query(scanCtx, `WITH candidates AS (
@@ -320,8 +237,8 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 	if err != nil {
 		return after, false, err
 	}
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (preparationLifecyclePosition, error) {
-		var p preparationLifecyclePosition
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ImageBuildLifecyclePosition, error) {
+		var p ImageBuildLifecyclePosition
 		err := row.Scan(&p.environment, &p.id, &p.kind)
 		return p, err
 	})
@@ -329,7 +246,7 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 		return after, false, err
 	}
 	if len(candidates) == 0 {
-		return preparationLifecyclePosition{}, false, nil
+		return ImageBuildLifecyclePosition{}, false, nil
 	}
 	var failures []error
 	for _, candidate := range candidates {
@@ -341,17 +258,17 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 		var err error
 		switch candidate.kind {
 		case "waiter":
-			err = expirePreparationWaiter(ctx, database, candidate.environment, candidate.id)
+			err = agent.ExpireImageWaiter(ctx, database, candidate.environment, candidate.id)
 		case "attempt":
-			err = expirePreparation(ctx, database, candidate.environment, candidate.id)
+			err = ExpireImageBuild(ctx, database, candidate.environment, candidate.id)
 		case "unattached":
 			err = reconcileUnattachedComputer(ctx, database, candidate.environment, candidate.id)
 		case "image":
 			err = reconcileComputerImage(ctx, database, candidate.environment, candidate.id)
 		case "secret_revocation":
-			err = reconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
+			err = agent.ReconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
 		case "revocation":
-			err = reconcilePreparationRevocation(ctx, database, candidate.environment, candidate.id)
+			err = ReconcileImageBuildRevocation(ctx, database, candidate.environment, candidate.id)
 		}
 		if err != nil {
 			failures = append(failures, err)
@@ -359,7 +276,7 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 	}
 	more := len(candidates) == 100 || after != candidates[len(candidates)-1]
 	if !more {
-		after = preparationLifecyclePosition{}
+		after = ImageBuildLifecyclePosition{}
 	}
 	return after, more, errors.Join(failures...)
 }

@@ -83,7 +83,7 @@ var coWriters = map[string]map[string]string{
 	"image_specs":          {"internal/agent": "owner split"},
 	"template_definitions": {"internal/agent": "owner split"},
 	"templates":            {"internal/agent": "owner split"},
-	"environments":         {"internal/agent": "owner split", "internal/deployment": "owner split"},
+	"environments":         {"internal/deployment": "owner split"},
 	"slack_posts":          {"internal/agent": "owner split"},
 	"slack_requests":       {"internal/agent": "owner split"},
 	"slack_threads":        {"internal/agent": "owner split"},

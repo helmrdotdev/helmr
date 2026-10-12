@@ -14,6 +14,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -76,10 +77,10 @@ func lockSession(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (owners
 }
 
 func lockSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]owners, error) {
-	return lockSessionsAndComputers(ctx, tx, env, ids, nil)
+	return LockSessionsAndComputers(ctx, tx, env, ids, nil)
 }
 
-func lockSessionsAndComputers(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids, additionalComputers []uuid.UUID) (map[uuid.UUID]owners, error) {
+func LockSessionsAndComputers(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids, additionalComputers []uuid.UUID) (map[uuid.UUID]owners, error) {
 	rows := make(map[uuid.UUID]owners, len(ids))
 	roots, computers := make(map[uuid.UUID]bool), make(map[uuid.UUID]bool)
 	for _, id := range additionalComputers {
@@ -201,7 +202,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, req.EnvironmentID)
+		policy, err := org.LockAdmission(ctx, tx, req.EnvironmentID)
 		if err != nil {
 			return err
 		}
@@ -279,7 +280,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 			if err = tx.QueryRow(ctx, `SELECT t.key FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&templateKey); err != nil {
 				return err
 			}
-			o.computer, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy.computerLimits())
+			o.computer, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, computerLimits(policy))
 			if err != nil {
 				return err
 			}

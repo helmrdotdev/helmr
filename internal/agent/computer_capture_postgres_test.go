@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -18,12 +20,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (f fixture) captureRequest() ComputerCaptureRequest {
-	return ComputerCaptureRequest{EnvironmentID: f.env, ComputerID: f.computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
+func (f fixture) captureRequest() agent.ComputerCaptureRequest {
+	return agent.ComputerCaptureRequest{EnvironmentID: f.env, ComputerID: f.computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
 }
-func beginCapture(t *testing.T, f fixture, req ComputerCaptureRequest) (ComputerCapture, *agentv1.ComputerSessionCapture) {
+func beginCapture(t *testing.T, f fixture, req agent.ComputerCaptureRequest) (agent.ComputerCapture, *agentv1.ComputerSessionCapture) {
 	t.Helper()
-	result, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
+	result, err := agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 	if len(request.Sessions) != 2 || request.Envelope.ChannelCredential != agenttest.ChannelCredential || request.Envelope.ComputerInstanceId != f.computer.String() {
 		t.Fatalf("capture membership/owner differs")
 	}
-	retry, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
+	retry, err := agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
 	if err != nil || !bytes.Equal(retry.Request, result.Request) || retry.SaveID != result.SaveID {
 		t.Fatalf("uncertain retry changed capture: %v", err)
 	}
@@ -51,24 +53,24 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		if admitted.TurnID == uuid.Nil() {
 			t.Fatal("public queue rejected")
 		}
-		if _, err = dispatchTurnForTest(t.Context(), f.pool, member.execution()); !errors.Is(err, ErrNotReady) {
+		if _, err = dispatchTurnForTest(t.Context(), f.pool, member.execution()); !errors.Is(err, agent.ErrNotReady) {
 			t.Fatalf("dispatch bypassed seal: %v", err)
 		}
-		if _, err = AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), member.execution()); err != nil {
+		if _, err = agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), member.execution()); err != nil {
 			t.Fatalf("capture blocked control attachment: %v", err)
 		}
 	}
-	caller := Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	if _, err = Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
+	caller := agent.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+	if _, err = agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}
 	other := req
 	other.CheckpointID = uuid.NewV7()
-	if _, err = BeginComputerCapture(t.Context(), f.pool, *f.host(), other); !errors.Is(err, ErrNotReady) {
+	if _, err = agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), other); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("second capture = %v", err)
 	}
 	req.ChannelCredential = "wrong"
-	if _, err = BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, ErrDenied) {
+	if _, err = agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("wrong credential obtained secret capture: %v", err)
 	}
 }
@@ -82,7 +84,7 @@ func TestComputerCaptureRacesDispatch(t *testing.T) {
 		var captureErr, dispatchErr error
 		group.Go(func() {
 			<-start
-			_, captureErr = BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
+			_, captureErr = agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
 		})
 		group.Go(func() { <-start; _, dispatchErr = dispatchTurnForTest(t.Context(), f.pool, f.execution()) })
 		close(start)
@@ -94,7 +96,7 @@ func TestComputerCaptureRacesDispatch(t *testing.T) {
 		if loser == nil {
 			loser = dispatchErr
 		}
-		if !errors.Is(loser, ErrNotReady) {
+		if !errors.Is(loser, agent.ErrNotReady) {
 			t.Fatal(loser)
 		}
 	}
@@ -104,17 +106,17 @@ func TestComputerCaptureNeverSealedCancellationAndVersion(t *testing.T) {
 	f := newFixture(t)
 	req := f.captureRequest()
 	result, request := beginCapture(t, f, req)
-	early := UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}
-	if err := CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, early); !errors.Is(err, ErrNotReady) {
+	early := agent.UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}
+	if err := agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, early); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("early absence unsealed dispatch: %v", err)
 	}
-	rejected := UnsealedCaptureEvidence{Rejected: true}
+	rejected := agent.UnsealedCaptureEvidence{Rejected: true}
 	for range 2 {
-		if err := CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, rejected); err != nil {
+		if err := agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, rejected); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if replay, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, ErrNotReady) || len(replay.Request) != 0 || replay.SaveID != uuid.Nil() {
+	if replay, err := agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, agent.ErrNotReady) || len(replay.Request) != 0 || replay.SaveID != uuid.Nil() {
 		t.Fatalf("cancelled capture reissued an executable envelope: %v", err)
 	}
 	var state string
@@ -133,16 +135,16 @@ func TestComputerCaptureSealedCannotBeCancelledAsAbsent(t *testing.T) {
 	req := f.captureRequest()
 	_, request := beginCapture(t, f, req)
 	receipt := &agentv1.ComputerSessionReceipt{CheckpointId: req.CheckpointID.String(), DesiredVersion: request.DesiredVersion, Frozen: true, ActivationStarted: true}
-	if err := RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, receipt); !errors.Is(err, ErrConflict) {
+	if err := agent.RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, receipt); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("activated receipt accepted: %v", err)
 	}
 	receipt.ActivationStarted = false
 	for range 2 {
-		if err := RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, receipt); err != nil {
+		if err := agent.RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, receipt); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, ErrNotReady) {
+	if err := agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, agent.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("sealed capture discarded: %v", err)
 	}
 }
@@ -153,7 +155,7 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 	req := f.captureRequest()
 	beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); !errors.Is(err, ErrNotReady) {
+	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("bearer expiry treated as physical fence: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited'`)
@@ -180,7 +182,7 @@ func TestComputerCaptureRejectsActivePeerWithoutAllocatingSave(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, ErrNotReady) {
+	if _, err := agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("active peer captured: %v", err)
 	}
 	var saves, checkpoints int
@@ -204,10 +206,10 @@ func TestComputerCaptureAbsentEvidenceMustFollowExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
-	if err = CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, ErrNotReady) {
+	if err = agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, agent.UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("late delivery of old absence accepted: %v", err)
 	}
-	if err = CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}); err != nil {
+	if err = agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, agent.UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	f.enqueue(t, "after-cancel")
@@ -221,7 +223,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 	req := f.captureRequest()
 	result, _ := beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='captured',captured_root_digest=decode(repeat('1',64),'hex'),capture_evidence='cut',flush_acknowledged_at=clock_timestamp(),captured_at=clock_timestamp() WHERE id=$1`, result.SaveID)
-	if err := CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, ErrConflict) {
+	if err := agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, agent.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("disk cut was silently discarded: %v", err)
 	}
 	var state string
@@ -237,7 +239,7 @@ func TestComputerCaptureRejectsStaleProcessLease(t *testing.T) {
   SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE epoch=1`, uuid.NewV7())
 	req := f.captureRequest()
 	req.LeaseEpoch = 2
-	if result, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, ErrNotReady) || len(result.Request) != 0 {
+	if result, err := agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, agent.ErrNotReady) || len(result.Request) != 0 {
 		t.Fatalf("stale process placement admitted: %v", err)
 	}
 }
@@ -248,7 +250,7 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 	req := f.captureRequest()
 	beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
-	if err := CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{Rejected: true}); err != nil {
+	if err := agent.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, agent.UnsealedCaptureEvidence{Rejected: true}); err != nil {
 		t.Fatalf("membership drift trapped never-sealed source: %v", err)
 	}
 	var scrubbed bool
@@ -294,7 +296,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			if err := savePublicationForTest(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, ErrNotReady) {
+			if err := savePublicationForTest(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("uncommitted cut became published after source loss: %v", err)
 			}
 			var noHead bool

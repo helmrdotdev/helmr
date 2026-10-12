@@ -4,26 +4,28 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func allocationIdentity(in workerapi.AllocationIdentity) (agent.HostAllocation, error) {
+func allocationIdentity(in workerapi.AllocationIdentity) (dispatch.HostAllocation, error) {
 	env, e1 := agentComputerID(in.EnvironmentID)
 	owner, e2 := agentComputerID(in.OwnerID)
 	instance, e3 := agentComputerID(in.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation") {
-		return agent.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, agent.ErrInvalidInput
 	}
-	return agent.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
+	return dispatch.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
 }
-func allocationWireIdentity(in agent.HostAllocation) workerapi.AllocationIdentity {
+func allocationWireIdentity(in dispatch.HostAllocation) workerapi.AllocationIdentity {
 	return workerapi.AllocationIdentity{Kind: in.Kind, EnvironmentID: in.EnvironmentID.String(), OwnerID: in.OwnerID.String(), AllocationID: in.InstanceID.String(), Epoch: in.Epoch}
 }
 func allocationWireReceipt(kind string, in computer.Allocation) workerapi.AllocationIdentity {
-	return allocationWireIdentity(agent.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})
+	return allocationWireIdentity(dispatch.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})
 }
 func allocationWireShape(in computer.AllocationShape) workerapi.AllocationShape {
 	return workerapi.AllocationShape{CPUMillis: in.CPUMillis, MemoryBytes: in.MemoryBytes, ScratchBytes: in.ScratchBytes, VMPlatformID: in.VMPlatformID, VCPUCount: in.VCPUCount, CPUConfigDigest: in.CPUConfigDigest}
@@ -34,7 +36,7 @@ func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
 		writeError(w, err)
 		return
 	}
-	if errors.Is(err, agent.ErrAllocationClosed) {
+	if errors.Is(err, dispatch.ErrAllocationClosed) {
 		writeError(w, conflict(codedError{code: workerapi.AllocationClosed, message: "allocation requires physical stop confirmation"}))
 		return
 	}
@@ -46,7 +48,7 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 		server.writeAllocationError(w, err)
 		return
 	}
-	var after *agent.HostAllocation
+	var after *dispatch.HostAllocation
 	if request.After != nil {
 		parsed, err := allocationIdentity(*request.After)
 		if err != nil {
@@ -55,7 +57,7 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 		}
 		after = &parsed
 	}
-	records, err := agent.ListHostAllocations(r.Context(), server.tx, workerFromContext(r.Context()), after)
+	records, err := dispatch.ListHostAllocations(r.Context(), server.tx, workerFromContext(r.Context()), after)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -66,13 +68,13 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-func decodeAllocationIdentity(r *http.Request, kind string) (agent.HostAllocation, error) {
+func decodeAllocationIdentity(r *http.Request, kind string) (dispatch.HostAllocation, error) {
 	var request workerapi.AllocationIdentity
 	if err := decodeRequestJSON(r, &request); err != nil {
-		return agent.HostAllocation{}, err
+		return dispatch.HostAllocation{}, err
 	}
 	if request.Kind != kind {
-		return agent.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, agent.ErrInvalidInput
 	}
 	return allocationIdentity(request)
 }
@@ -89,7 +91,7 @@ func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, 
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationAllocationDelivery{Identity: allocationWireReceipt("preparation", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.Executor.ChannelCredential})
 }
-func computerAllocationIdentity(in agent.HostAllocation) computer.LeaseIdentity {
+func computerAllocationIdentity(in dispatch.HostAllocation) computer.LeaseIdentity {
 	return computer.LeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
 }
 func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +127,7 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		return
 	}
 	shape := computer.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
-	if err := agent.ObserveFreshComputerReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshComputerReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -155,16 +157,16 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 		server.writeAllocationError(w, agent.ErrInvalidInput)
 		return
 	}
-	var after *agent.ProcessIdentity
+	var after *dispatch.ProcessIdentity
 	if request.After != nil {
 		id, err := agentComputerID(request.After.SessionID)
 		if err != nil || request.After.Epoch <= 0 {
 			server.writeAllocationError(w, agent.ErrInvalidInput)
 			return
 		}
-		after = &agent.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
+		after = &dispatch.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
 	}
-	processes, err := agent.ListComputerProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
+	processes, err := dispatch.ListComputerProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

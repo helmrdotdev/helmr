@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -24,18 +26,18 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 				t.Fatal(err)
 			}
 			queued := f.enqueue(t, "queued")
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
 			// A public subtree hold is distinct from the failed process's local hold.
 			if alreadyInterrupted {
-				if _, err = ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
+				if _, err = agent.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			for range 2 {
-				if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+				if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -59,10 +61,10 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			}
 			req := controlRequest(f, "resume", "release-failure")
 			req.HoldID = hold
-			if _, err = ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+			if _, err = agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 				t.Fatal(err)
 			}
-			if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
@@ -72,7 +74,7 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
 				t.Fatalf("peer: %+v %v", got, err)
 			}
-			if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
@@ -85,11 +87,11 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 	f := newFixture(t)
 	result, save := f.finalize(t, "result")
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)
@@ -98,7 +100,7 @@ func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 	if err = storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err = Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
+	if err = agent.Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -109,47 +111,47 @@ func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 
 func TestSessionRuntimeFailureRejectsObsoleteAttachment(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	newer, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, ErrDenied) {
+	if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("obsolete attachment: %v", err)
 	}
-	if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), newer.Sequence); err != nil {
+	if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), newer.Sequence); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestSessionRuntimeFailureSurvivesControlReattachment(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	original, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, original.Sequence, original.Generation, original.Kind, "failed native resume", 0); err != nil {
+	if err = agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, original.Sequence, original.Generation, original.Kind, "failed native resume", 0); err != nil {
 		t.Fatal(err)
 	}
-	next, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	next, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence)
+	got, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence)
 	if err != nil || got.Error != "failed native resume" || got.Sequence != original.Sequence {
 		t.Fatalf("reattachment erased failure: %+v %v", got, err)
 	}
-	if err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence); err != nil {
+	if err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	stop, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence)
+	stop, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence)
 	if err != nil || stop.Kind != "shutdown" || stop.Error != "" || stop.Sequence <= got.Sequence {
 		t.Fatalf("recorded failure did not allow stop: %+v %v", stop, err)
 	}
@@ -167,7 +169,7 @@ func TestSessionRuntimeFailureRespectsLeaseExpiryAndRevocation(t *testing.T) {
 			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -176,8 +178,8 @@ func TestSessionRuntimeFailureRespectsLeaseExpiryAndRevocation(t *testing.T) {
 			} else {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
 			}
-			err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
-			if expired && !errors.Is(err, ErrDenied) {
+			err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+			if expired && !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("expired failure accepted: %v", err)
 			}
 			if !expired && err != nil {
@@ -218,49 +220,49 @@ func TestSessionRuntimeFailureSurvivesContinuationCommit(t *testing.T) {
 				r := newComputerRestoreFixture(t)
 				f, host = r.f, r.host
 				p = r.prepare(t)
-				if err := ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
+				if err := agent.ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false))
+					return agent.CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false))
 				}
 			} else {
 				f = newFixture(t)
 				host = *f.host()
 				p, _ = sourceAbort(t, f)
-				if err := ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := agent.ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
+					return agent.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
 				}
 			}
 			e := f.execution()
 			e.WorkerHostID = host.HostID
 			e.WorkerEpoch = host.Epoch
 			e.LeaseEpoch = p.Grants[0].ComputerLeaseEpoch
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, host, e)
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, host, e)
 			if err != nil {
 				t.Fatal(err)
 			}
-			d, err := PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
+			d, err := agent.PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, "retained rejection", 0); err != nil {
+			if err = agent.AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, "retained rejection", 0); err != nil {
 				t.Fatal(err)
 			}
 			if err = commit(); err != nil {
 				t.Fatal(err)
 			}
-			got, err := PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
+			got, err := agent.PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
 			if err != nil || got.Error != "retained rejection" || got.Kind != d.Kind || got.Sequence != d.Sequence {
 				t.Fatalf("continuation erased failure: %+v %v", got, err)
 			}
-			if err = ObserveSessionFailure(t.Context(), f.pool, host, e, a.Sequence); err != nil {
+			if err = agent.ObserveSessionFailure(t.Context(), f.pool, host, e, a.Sequence); err != nil {
 				t.Fatal(err)
 			}
-			got, err = PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
+			got, err = agent.PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)
 			if err != nil || got.Kind != "shutdown" || got.Error != "" {
 				t.Fatalf("pending failure did not reconcile: %+v %v", got, err)
 			}

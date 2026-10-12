@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -34,7 +36,7 @@ func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Go(func() { errs <- EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger) })
+		wg.Go(func() { errs <- agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger) })
 	}
 	wg.Wait()
 	close(errs)
@@ -61,14 +63,14 @@ func TestTriggerRejectionRollsBackAdmissionAndRetainsDisposition(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens::text FROM environments WHERE id=$1`, f.env).Scan(&tokens); err != nil {
 		t.Fatal(err)
 	}
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT disposition='rejected' AND reason='invalid_definition' AND turn_id IS NULL FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2) AND (SELECT count(*) FROM turns WHERE environment_id=$1)=0 AND (SELECT count(*) FROM computers WHERE environment_id=$1)=1 AND (SELECT admission_tokens::text FROM environments WHERE id=$1)=$3`, f.env, trigger, tokens).Scan(&valid); err != nil || !valid {
 		t.Fatalf("rejection leaked work: %v %v", valid, err)
 	}
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -77,7 +79,7 @@ func TestTriggerCommitFailureRetriesSameOccurrence(t *testing.T) {
 	trigger := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected storage failure' USING ERRCODE='40001'; END $$;
  CREATE TRIGGER reject_occurrence BEFORE INSERT ON trigger_occurrences FOR EACH ROW EXECUTE FUNCTION reject_occurrence();`, pgx.QueryExecModeSimpleProtocol)
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err == nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err == nil {
 		t.Fatal("injected failure accepted")
 	}
 	var valid bool
@@ -85,14 +87,14 @@ func TestTriggerCommitFailureRetriesSameOccurrence(t *testing.T) {
 		t.Fatalf("failed commit left work: %v %v", valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_occurrence ON trigger_occurrences`)
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestTriggerLoopRecoversLatestOnly(t *testing.T) {
 	f := newAdmissionFixture(t)
 	trigger := seedTrigger(t, f, time.Now().UTC().Add(-24*time.Hour).Truncate(time.Minute))
-	if _, _, err := reconcileTriggers(t.Context(), f.pool, nil, triggerPosition{}); err != nil {
+	if _, _, err := agent.ReconcileTriggers(t.Context(), f.pool, nil, agent.TriggerPosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var admitted, missed int
@@ -104,7 +106,7 @@ func TestTriggerLoopRecoversLatestOnly(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT session_id FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2 AND disposition='admitted'`, f.env, trigger).Scan(&session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Enqueue(context.Background(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: session, Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(context.Background(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: session, Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -120,14 +122,14 @@ func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
 			case "tokens":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
 			case "outstanding":
-				if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("occupy")); err != nil {
+				if _, err := agent.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("occupy")); err != nil {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_outstanding_admissions=1 WHERE id=$1`, f.env)
 			case "storage":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
 			}
-			if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, ErrNotReady) {
+			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("temporary shortage: %v", err)
 			}
 			var unchanged bool
@@ -136,7 +138,7 @@ func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=100,max_outstanding_admissions=100,max_reserved_storage_bytes=1099511627776 WHERE id=$1`, f.env)
 			for range 2 {
-				if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+				if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -154,12 +156,12 @@ func TestTriggerTemporaryShortageBecomesMissedAfterGrace(t *testing.T) {
 	trigger := seedTrigger(t, f, due)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_until=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, due.Add(time.Second))
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, ErrNotReady) {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("shortage: %v", err)
 	}
 	// Age the activation past the lateness window without sleeping.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_from=active_from-interval '10 minutes',next_fire_at=next_fire_at-interval '10 minutes',active_until=active_until-interval '10 minutes' WHERE environment_id=$1 AND id=$2`, f.env, trigger)
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 		t.Fatal(err)
 	}
 	var missed bool
@@ -177,7 +179,7 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorized_at=$2 WHERE id=$1`, installation, due.Add(-time.Minute))
 			trigger := seedTrigger(t, f, due)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET slack_channel_id=$3,active_until=$4 WHERE environment_id=$1 AND id=$2`, f.env, trigger, channel, due.Add(time.Minute))
-			if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 				t.Fatal(err)
 			}
 			var pinned bool
@@ -197,14 +199,14 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorization_lost_at=NULL,authorized_at=clock_timestamp() WHERE id=$1`, installation)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_until=NULL,next_fire_at=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, due.Add(time.Minute))
-			if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 				t.Fatal(err)
 			}
 			var valid bool
 			if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions WHERE environment_id=$1)=2 AND (SELECT count(*) FROM computers WHERE environment_id=$1)=2 AND EXISTS(SELECT 1 FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2 AND scheduled_at=$3 AND disposition='rejected' AND reason='slack_channel_unavailable' AND session_id IS NULL AND turn_id IS NULL)`, f.env, trigger, due.Add(time.Minute)).Scan(&valid); err != nil || !valid {
 				t.Fatalf("revoked fire created work: %v %v", valid, err)
 			}
-			if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
+			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 				t.Fatal(err)
 			}
 		})

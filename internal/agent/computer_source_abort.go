@@ -64,7 +64,7 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 
 // validateSourceAbort runs with supply and captured ownership locks held. No
 // public caller can supply this installation: worker authentication owns it.
-func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r captureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
+func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
 	if p.GetDesiredVersion() != r.Version+1 {
 		return ErrConflict
 	}
@@ -171,7 +171,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -284,7 +284,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -321,7 +321,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 
 func captureDigest(encoded []byte) []byte { digest := sha256.Sum256(encoded); return digest[:] }
 
-func validateComputerInstallationReceipt(r captureRecord, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt, commit bool) error {
+func validateComputerInstallationReceipt(r CaptureRecord, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt, commit bool) error {
 	if observed.GetCheckpointId() != p.GetCapture().GetCheckpointId() || observed.GetError() != "" || (observed.GetActivated() && !observed.GetActivationStarted()) || (observed.GetActivationStarted() && !observed.GetInstalled()) {
 		return ErrConflict
 	}
@@ -354,7 +354,7 @@ func RecordCheckpointSaveAbsence(ctx context.Context, pool db.TxBeginner, host w
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}

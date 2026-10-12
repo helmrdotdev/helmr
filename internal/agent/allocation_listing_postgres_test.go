@@ -1,9 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -20,11 +24,11 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1;
  UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.group, f.env, p.ID)
-	records, err := ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
+	records, err := dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found *HostAllocation
+	var found *dispatch.HostAllocation
 	for i := range records {
 		if records[i].Kind == "preparation" && records[i].OwnerID == p.ID {
 			found = &records[i]
@@ -33,7 +37,7 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != allocation.Epoch || found.EnvironmentID != f.env {
 		t.Fatalf("closed allocation disappeared: %+v", records)
 	}
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("closed preparation delivered: %v", err)
 	}
 	var untouched bool
@@ -43,7 +47,7 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), computer.ImageBuildIdentity{EnvironmentID: found.EnvironmentID, ImageBuildID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
 		t.Fatal(err)
 	}
-	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
+	records, err = dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +69,7 @@ func TestHostAllocationListingRejectsForeignAndStaleAuthority(t *testing.T) {
 	} {
 		host := *f.host()
 		change(&host)
-		records, err := ListHostAllocations(t.Context(), f.pool, host, nil)
+		records, err := dispatch.ListHostAllocations(t.Context(), f.pool, host, nil)
 		if err == nil || len(records) != 0 {
 			t.Fatalf("invalid authority exposed records: %+v %v", records, err)
 		}
@@ -79,11 +83,11 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computerID)
-	records, err := ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
+	records, err := dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found *HostAllocation
+	var found *dispatch.HostAllocation
 	for i := range records {
 		if records[i].Kind == "computer" && records[i].OwnerID == computerID {
 			found = &records[i]
@@ -92,17 +96,17 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != 1 {
 		t.Fatalf("lost undelivered Computer disappeared: %+v", records)
 	}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("lost allocation delivered: %v", err)
 	}
-	next, err := ListHostAllocations(t.Context(), f.pool, *f.host(), &records[len(records)-1])
+	next, err := dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), &records[len(records)-1])
 	if err != nil || len(next) != 0 {
 		t.Fatalf("cursor did not advance: %+v %v", next, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
+	records, err = dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +128,10 @@ func TestHostAllocationListingPagesBeyondOneHundred(t *testing.T) {
  SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,status,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, f.env, computerID)
 	}
 	seen := map[uuid.UUID]bool{}
-	var cursor *HostAllocation
+	var cursor *dispatch.HostAllocation
 	pages := 0
 	for {
-		records, err := ListHostAllocations(t.Context(), f.pool, *f.host(), cursor)
+		records, err := dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), cursor)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +168,7 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	for _, change := range []func(*computer.ImageBuildIdentity){func(i *computer.ImageBuildIdentity) { i.Epoch++ }, func(i *computer.ImageBuildIdentity) { i.InstanceID = uuid.NewV7() }} {
 		wrong := correct
 		change(&wrong)
-		if _, err := a.DeliverPreparation(t.Context(), *f.host(), wrong); !errors.Is(err, ErrDenied) {
+		if _, err := a.DeliverPreparation(t.Context(), *f.host(), wrong); !errors.Is(err, agent.ErrDenied) {
 			t.Fatalf("wrong identity delivered: %v", err)
 		}
 	}

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -42,7 +44,7 @@ func TestPreparationLogAcceptanceBindsAttemptExecutor(t *testing.T) {
 		t.Fatal("foreign physical host accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, ref.ImageBuildID)
-	if _, err := computer.AppendImageBuildLog(t.Context(), f.pool, *f.host(), ref, record, bounds); !errors.Is(err, ErrDenied) {
+	if _, err := computer.AppendImageBuildLog(t.Context(), f.pool, *f.host(), ref, record, bounds); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired executor: %v", err)
 	}
 	var count int

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -38,7 +42,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
 	for range 2 {
-		if err := expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+		if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,7 +66,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 	if !errors.As(err, &unique) || unique.Code != "23505" || unique.ConstraintName != "computer_leases_one_writer" {
 		t.Fatalf("expected exact live-writer exclusion, got %v", err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range []fixture{f, peer} {
@@ -72,12 +76,12 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 		}
 		req := controlRequest(s, "resume", "release-loss")
 		req.HoldID = hold
-		if _, err := ControlSession(t.Context(), f.pool, s.caller(), req); err != nil {
+		if _, err := agent.ControlSession(t.Context(), f.pool, s.caller(), req); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for range 2 {
-		if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,17 +104,17 @@ func TestComputerLeaseRenewalRequiresLiveExactOwner(t *testing.T) {
 	}
 	wrong := identity
 	wrong.InstanceID = uuid.NewV7()
-	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, ErrDenied) {
+	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("wrong instance renewed: %v", err)
 	}
-	if err = ObserveComputerStopped(t.Context(), f.pool, *f.host(), wrong, uuid.Nil()); !errors.Is(err, ErrDenied) {
+	if err = dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), wrong, uuid.Nil()); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("wrong instance fenced: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); !errors.Is(err, ErrDenied) {
+	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired lease resurrected: %v", err)
 	}
-	if err = ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err = dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatalf("expired owner could not record physical closure: %v", err)
 	}
 }
@@ -137,7 +141,7 @@ func TestComputerLeaseRenewalRechecksExpiryAfterLock(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !errors.Is(err, ErrDenied) {
+	if err = <-done; !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired while waiting: %v", err)
 	}
 }
@@ -163,10 +167,10 @@ func TestComputerLeaseLossPreservesEligibleContinuation(t *testing.T) {
  UPDATE computer_leases SET status='active',fenced_at=NULL,fence_evidence=NULL WHERE epoch=1`, pgx.QueryExecModeSimpleProtocol)
 			}
 			dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE epoch=$1`, identity.Epoch)
-			if err := expireComputerLease(t.Context(), r.f.pool, r.f.env, r.f.computer, identity.Epoch); err != nil {
+			if err := dispatch.ExpireLease(t.Context(), r.f.pool, r.f.env, r.f.computer, identity.Epoch); err != nil {
 				t.Fatal(err)
 			}
-			if err := ObserveComputerStopped(t.Context(), r.f.pool, host, identity, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, host, identity, uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var preserved bool
@@ -186,14 +190,14 @@ func TestComputerLeaseLossPreservesEligibleContinuation(t *testing.T) {
 func TestComputerLeaseLossAfterConsumptionDoesNotReplayCheckpoint(t *testing.T) {
 	r := newComputerRestoreFixture(t)
 	p := r.prepare(t)
-	if err := ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE epoch=$1`, r.epoch)
-	if err := expireComputerLease(t.Context(), r.f.pool, r.f.env, r.f.computer, r.epoch); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), r.f.pool, r.f.env, r.f.computer, r.epoch); err != nil {
 		t.Fatal(err)
 	}
 	var lost bool
@@ -220,7 +224,9 @@ func TestComputerLifecycleWorkerExpiresWithoutWorkerConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- RunComputerLifecycle(ctx, f.pool, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	go func() {
+		done <- dispatch.RunComputerLifecycle(ctx, f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
 	until := time.Now().Add(5 * time.Second)
 	for {
 		var lost bool
@@ -262,11 +268,11 @@ func TestComputerLifecycleScanProgressesPastBlockedAllocation(t *testing.T) {
 	if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	cursor, more, err := reconcileComputerLifecycle(t.Context(), f.pool, computerLifecyclePosition{})
+	cursor, more, err := dispatch.ReconcileLeaseLifecycle(t.Context(), f.pool, dispatch.LeaseLifecyclePosition{})
 	if err == nil || !more {
 		t.Fatalf("blocked first batch %+v %v %v", cursor, more, err)
 	}
-	cursor, more, err = reconcileComputerLifecycle(t.Context(), f.pool, cursor)
+	cursor, more, err = dispatch.ReconcileLeaseLifecycle(t.Context(), f.pool, cursor)
 	if err != nil || more {
 		t.Fatalf("later allocations starved %+v %v %v", cursor, more, err)
 	}
@@ -277,7 +283,7 @@ func TestComputerLifecycleScanProgressesPastBlockedAllocation(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = reconcileComputerLifecycle(t.Context(), f.pool, cursor); err != nil {
+	if _, _, err = dispatch.ReconcileLeaseLifecycle(t.Context(), f.pool, cursor); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE status='lost'`).Scan(&lost); err != nil || lost != 101 {
@@ -299,7 +305,7 @@ func TestComputerLeaseExpiryKeepsSeparatelyPlacedHelperRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.computer)
-	if err := expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
 		t.Fatal(err)
 	}
 	var unaffected bool
@@ -316,7 +322,7 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -324,7 +330,7 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 			if graceful {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopping' WHERE session_id=$1`, f.session)
 			}
-			if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if !graceful {
@@ -334,7 +340,7 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 				}
 				req := controlRequest(f, "resume", "release-stop-hold")
 				req.HoldID = hold
-				if _, err := ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+				if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -365,7 +371,7 @@ func TestComputerLifecycleDetectsHostAuthorityLoss(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			f := newFixture(t)
 			dbtest.MustExec(t, t.Context(), f.pool, change)
-			if _, _, err := reconcileComputerLifecycle(t.Context(), f.pool, computerLifecyclePosition{}); err != nil {
+			if _, _, err := dispatch.ReconcileLeaseLifecycle(t.Context(), f.pool, dispatch.LeaseLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			var lost bool
@@ -398,7 +404,7 @@ func TestComputerLeaseLossSettlesUnpublishedCapturePreservingIdentity(t *testing
 	storage := newSaveStorageFixture(t, f)
 	_, root := storage.cut(t, 2)
 	f.capture(t, save, root)
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -412,14 +418,14 @@ func TestPhysicalStopReleasesOnlyDeletedComputerKey(t *testing.T) {
 		t.Run(fmt.Sprint(deleted), func(t *testing.T) {
 			f := newFixture(t)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET key='retained-key',deleted_at=CASE WHEN $2 THEN clock_timestamp() END WHERE environment_id=$1; UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, deleted)
-			if err := expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+			if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
 			var key *string
 			if err := f.pool.QueryRow(t.Context(), `SELECT key FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer).Scan(&key); err != nil || key == nil {
 				t.Fatalf("expiry released physical key: %v %v", key, err)
 			}
-			if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.pool.QueryRow(t.Context(), `SELECT key FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer).Scan(&key); err != nil || (key == nil) != deleted {
@@ -444,7 +450,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				return id
 			}
 			if phase == "later-target-before-preparation" {
-				if err := ObserveComputerStopped(t.Context(), r.f.pool, r.host, identity(), uuid.Nil()); err != nil {
+				if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, r.host, identity(), uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
 				r.newTarget(t)
@@ -452,11 +458,11 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 			current := identity()
 			wrongInstance := current
 			wrongInstance.InstanceID = uuid.NewV7()
-			if err := ObserveComputerStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, ErrDenied) {
+			if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("wrong instance report: %v", err)
 			}
 			queued := r.f.enqueue(t, "queued-through-invalid-restore")
-			if err := ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, ErrDenied) {
+			if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("unbound checkpoint report: %v", err)
 			}
 			var intact bool
@@ -464,7 +470,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				t.Fatalf("unbound report mutated state: %v %v", intact, err)
 			}
 			for range 2 {
-				if err := ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
+				if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -483,10 +489,10 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 			if err := r.f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, r.f.session).Scan(&resume.HoldID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ControlSession(t.Context(), r.f.pool, r.f.caller(), resume); err != nil {
+			if _, err := agent.ControlSession(t.Context(), r.f.pool, r.f.caller(), resume); err != nil {
 				t.Fatal(err)
 			}
-			if err := ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
+			if err := dispatch.ObserveComputerStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
 				t.Fatal(err)
 			}
 			if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, r.f.session).Scan(&holds); err != nil || holds != 0 {
@@ -509,7 +515,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, completed.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, completed.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var before string
@@ -532,7 +538,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&old.InstanceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, old, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, r.host, old, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	r.newTarget(t)
@@ -541,14 +547,14 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&current.InstanceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, old, r.manifest.CheckpointID); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, r.host, old, r.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	var intact bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND l.fenced_at IS NULL FROM checkpoints cp JOIN computer_leases l ON l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
 		t.Fatalf("stale report changed current restore: %v %v", intact, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	var after string

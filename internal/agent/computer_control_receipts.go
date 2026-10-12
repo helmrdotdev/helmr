@@ -9,7 +9,7 @@ import (
 
 // The caller holds the captured members' ownership locks. Durable receipts
 // prove the current controls without relying on host-reported generations.
-func requireComputerControlReceipts(ctx context.Context, tx pgx.Tx, env uuid.UUID, r captureRecord) error {
+func requireComputerControlReceipts(ctx context.Context, tx pgx.Tx, env uuid.UUID, r CaptureRecord) error {
 	for _, m := range r.Members {
 		var stopped, acknowledged bool
 		var kind *string

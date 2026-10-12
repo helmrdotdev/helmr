@@ -1,9 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -41,10 +45,10 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 				for range 2 {
 					var err error
 					if stop {
-						err = ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil())
+						err = dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil())
 					} else {
 						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-						err = expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1)
+						err = dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1)
 					}
 					if err != nil {
 						t.Fatal(err)
@@ -52,7 +56,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 				}
 				if state != "published" {
 					for range 2 {
-						if err := reconcileSessionCompletion(t.Context(), f.pool, f.env, f.session); err != nil {
+						if err := agent.ReconcileSessionCompletion(t.Context(), f.pool, f.env, f.session); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -65,7 +69,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 					if saveState != "published" || turnState != "finalizing" {
 						t.Fatalf("committed receipt changed: %s %s", saveState, turnState)
 					}
-					if err := Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); err != nil {
+					if err := agent.Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -75,7 +79,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 					if err := storage.publisher.Publish(t.Context(), storage.ref(save.ID), cut, "late publication"); err == nil {
 						t.Fatal("lost writer published fresh bytes")
 					}
-					if err := Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); !errors.Is(err, ErrTerminal) {
+					if err := agent.Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); !errors.Is(err, agent.ErrTerminal) {
 						t.Fatalf("absent save completed: %v", err)
 					}
 					var events int
@@ -102,13 +106,13 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 func TestComputerSaveLossPreservesCancellation(t *testing.T) {
 	f := newFixture(t)
 	turn, save := f.finalize(t, "cancelled-save")
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reconcileSessionLifecycle(t.Context(), f.pool, sessionLifecyclePosition{}); err != nil {
+	if _, _, err := agent.ReconcileSessionLifecycle(t.Context(), f.pool, agent.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -156,9 +160,9 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				}
 				endAuthority := func(pool db.TxBeginner) error {
 					if loss == "stop" {
-						return ObserveComputerStopped(t.Context(), pool, *f.host(), leaseIdentity(f), uuid.Nil())
+						return dispatch.ObserveComputerStopped(t.Context(), pool, *f.host(), leaseIdentity(f), uuid.Nil())
 					}
-					return expireComputerLease(t.Context(), pool, f.env, f.computer, 1)
+					return dispatch.ExpireLease(t.Context(), pool, f.env, f.computer, 1)
 				}
 				if publishFirst {
 					err = first.Publish(t.Context(), ref, cut, "publication before stop")
@@ -189,13 +193,13 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				if publishFirst && err != nil {
 					t.Fatal(err)
 				}
-				if !publishFirst && !errors.Is(err, ErrTerminal) && !errors.Is(err, ErrDenied) {
+				if !publishFirst && !errors.Is(err, agent.ErrTerminal) && !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("fenced publication result: %v", err)
 				}
 				// Use the real lifecycle scan, including Sessions no longer in the live
 				// Computer member set, rather than calling the settlement helper directly.
 				for range 2 {
-					if _, _, err := reconcileSessionLifecycle(t.Context(), f.pool, sessionLifecyclePosition{}); err != nil {
+					if _, _, err := agent.ReconcileSessionLifecycle(t.Context(), f.pool, agent.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 				}

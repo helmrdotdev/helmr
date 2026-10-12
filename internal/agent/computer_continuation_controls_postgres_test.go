@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -30,22 +32,22 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			}
 			ctx := t.Context()
 			initial := restoreReceipt(p, false, false)
-			if _, err := ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, initial); !errors.Is(err, ErrNotReady) && !errors.Is(err, ErrConflict) {
+			if _, err := agent.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, initial); !errors.Is(err, agent.ErrNotReady) && !errors.Is(err, agent.ErrConflict) {
 				t.Fatalf("uncommitted controls: %v", err)
 			}
 			installed := restoreReceipt(p, true, false)
 			if p.SourceAbort {
-				if err := ValidateComputerSourceAbort(ctx, f.pool, host, f.env, p, initial); err != nil {
+				if err := agent.ValidateComputerSourceAbort(ctx, f.pool, host, f.env, p, initial); err != nil {
 					t.Fatal(err)
 				}
-				if err := CommitComputerSourceAbort(ctx, f.pool, host, f.env, p, installed); err != nil {
+				if err := agent.CommitComputerSourceAbort(ctx, f.pool, host, f.env, p, installed); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				if err := ValidateComputerRestore(ctx, f.pool, host, f.env, p, initial); err != nil {
+				if err := agent.ValidateComputerRestore(ctx, f.pool, host, f.env, p, initial); err != nil {
 					t.Fatal(err)
 				}
-				if err := CommitComputerRestore(ctx, f.pool, host, f.env, p, installed); err != nil {
+				if err := agent.CommitComputerRestore(ctx, f.pool, host, f.env, p, installed); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -55,7 +57,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			}
 			dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','new human hold')`, f.env, uuid.NewV7(), f.session)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1; UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, peer)
-			controls, err := ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed)
+			controls, err := agent.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +82,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			installed.ActivationStarted = true
 			installed.Activated = true
 			installed.Frozen = false
-			if _, err := ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed); !errors.Is(err, ErrNotReady) {
+			if _, err := agent.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("activated guest used pre-activation controls: %v", err)
 			}
 		})

@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -12,7 +14,7 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 	for _, mode := range []string{"current", "stale attachment", "held", "cancelled", "revoked", "ready", "stopping", "failed", "expired", "acquiring", "deleted"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _, e := startingSessionFixture(t)
-			attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+			attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -37,20 +39,20 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 			case "deleted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 			}
-			start, err := AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, sequence)
+			start, err := agent.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, sequence)
 			if mode == "current" {
 				if err != nil || start.BundleDigest == "" || start.AgentKey == "" || start.Authority.Generation != 1 || !start.Authority.ExpiresAt.After(time.Now()) {
 					t.Fatalf("start: %+v %v", start, err)
 				}
-				again, err := AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, sequence)
+				again, err := agent.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, sequence)
 				if err != nil || again.BundleDigest != start.BundleDigest || again.DeploymentID != start.DeploymentID {
 					t.Fatalf("retry: %+v %v", again, err)
 				}
-			} else if !errors.Is(err, ErrNotReady) {
+			} else if !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("invalid start: %+v %v", start, err)
 			}
 			if mode == "held" || mode == "cancelled" || mode == "revoked" || mode == "stopping" {
-				if _, err := RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), e); err != nil {
+				if _, err := agent.RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), e); err != nil {
 					t.Fatalf("control still required: %v", err)
 				}
 			}

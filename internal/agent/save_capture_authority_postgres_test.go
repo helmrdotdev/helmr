@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -21,7 +23,7 @@ func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {
 	ref := s.ref(save.ID)
 	foreign := ref
 	foreign.Host.HostID = other
-	if err := s.publisher.Capture(t.Context(), foreign, root, "foreign"); !errors.Is(err, ErrDenied) {
+	if err := s.publisher.Capture(t.Context(), foreign, root, "foreign"); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("foreign capture: %v", err)
 	}
 	var state string
@@ -35,11 +37,11 @@ func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed, _ := s.cut(t, 8)
-	if err := s.publisher.Capture(t.Context(), ref, changed, "new cut"); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Capture(t.Context(), ref, changed, "new cut"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed capture: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
-	if err := s.publisher.Capture(t.Context(), ref, root, "expired"); !errors.Is(err, ErrDenied) {
+	if err := s.publisher.Capture(t.Context(), ref, root, "expired"); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired writer: %v", err)
 	}
 }
@@ -56,7 +58,7 @@ func TestPublishedSaveCompletesWithoutSourceWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
-	if _, _, err := reconcileSessionLifecycle(t.Context(), f.pool, sessionLifecyclePosition{}); err != nil {
+	if _, _, err := agent.ReconcileSessionLifecycle(t.Context(), f.pool, agent.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var completed bool

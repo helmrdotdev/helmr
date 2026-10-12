@@ -10,7 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -139,7 +140,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 	for i, value := range request.Quarantined {
 		quarantined[i] = uuid.MustParse(value)
 	}
-	if err := agent.ObserveRecoveredHostComputers(r.Context(), s.tx, worker, quarantined); err != nil {
+	if err := dispatch.ObserveRecoveredHostComputers(r.Context(), s.tx, worker, quarantined); err != nil {
 		s.writeAgentComputerError(w, err)
 		return
 	}

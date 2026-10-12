@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -9,6 +9,10 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -16,7 +20,7 @@ import (
 )
 
 type countingPreparationTrustIssuer struct {
-	PreparationTrustIssuer
+	dispatch.PreparationTrustIssuer
 	calls atomic.Int32
 }
 
@@ -33,7 +37,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	issuer := &countingPreparationTrustIssuer{PreparationTrustIssuer: f.secrets}
-	a.trust = issuer
+	a = testAllocator(t, f.pool, issuer)
 	const callers = 8
 	start := make(chan struct{})
 	results := make(chan computer.Allocation, callers)
@@ -52,7 +56,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	close(results)
 	close(failures)
 	for err := range failures {
-		if err != nil && !errors.Is(err, ErrNotReady) {
+		if err != nil && !errors.Is(err, agent.ErrNotReady) {
 			t.Fatal(err)
 		}
 	}
@@ -72,7 +76,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&before); err != nil || len(before) == 0 {
 		t.Fatalf("committed signer: %v", err)
 	}
-	restarted, err := NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), issuer)
+	restarted, err := dispatch.NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), issuer)
 	if err != nil {
 		t.Fatal(err)
 	}

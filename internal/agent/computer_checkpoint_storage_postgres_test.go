@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -22,7 +24,7 @@ import (
 
 type checkpointStorageFixture struct {
 	*saveStorageFixture
-	ref      CheckpointPublication
+	ref      agent.CheckpointPublication
 	manifest computercheckpoint.Manifest
 	save     uuid.UUID
 }
@@ -43,7 +45,7 @@ func checkpointStorageForSaveFixture(t *testing.T, s *saveStorageFixture) checkp
 	f.peer(t)
 	req := f.captureRequest()
 	capture, p := beginCapture(t, f, req)
-	if err := RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, &agentv1.ComputerSessionReceipt{CheckpointId: req.CheckpointID.String(), DesiredVersion: p.DesiredVersion, Frozen: true}); err != nil {
+	if err := agent.RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, &agentv1.ComputerSessionReceipt{CheckpointId: req.CheckpointID.String(), DesiredVersion: p.DesiredVersion, Frozen: true}); err != nil {
 		t.Fatal(err)
 	}
 	root, identity := s.cut(t, 42)
@@ -78,7 +80,7 @@ func checkpointStorageForSaveFixture(t *testing.T, s *saveStorageFixture) checkp
 			m.ScratchDisk = value
 		}
 	}
-	return checkpointStorageFixture{s, CheckpointPublication{EnvironmentID: f.env, Host: *f.host()}, m, capture.SaveID}
+	return checkpointStorageFixture{s, agent.CheckpointPublication{EnvironmentID: f.env, Host: *f.host()}, m, capture.SaveID}
 }
 func (f checkpointStorageFixture) upload(t *testing.T) {
 	t.Helper()
@@ -97,7 +99,7 @@ func (f checkpointStorageFixture) upload(t *testing.T) {
 func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 	f := newCheckpointStorageFixture(t)
 	ctx := t.Context()
-	if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrNotReady) {
+	if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unregistered: %v", err)
 	}
 	if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); err != nil {
@@ -110,14 +112,14 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatal("memory pin did not prevent reclamation")
 	}
 	f.upload(t)
-	if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrNotReady) {
+	if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unpublished disk: %v", err)
 	}
 	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
 	// Recreating the publisher retains exact operation identity through DB/CAS.
-	restarted, err := NewCheckpointPublisher(f.f.pool, f.remote)
+	restarted, err := agent.NewCheckpointPublisher(f.f.pool, f.remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,11 +132,11 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 	}
 	// Ready does not dispatch the still-sealed source, including newly queued work.
 	f.f.enqueue(t, "queued-while-ready")
-	if _, err = dispatchTurnForTest(ctx, f.f.pool, f.f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = dispatchTurnForTest(ctx, f.f.pool, f.f.execution()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("ready dispatched: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.f.computer)
-	unavailable, _ := NewCheckpointPublisher(f.f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	unavailable, _ := agent.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		t.Fatal("committed receipt consulted storage")
 		return cas.Object{}, nil
 	}))
@@ -149,7 +151,7 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 	}
 	changed := f.manifest
 	changed.VMState.SizeBytes++
-	if err = unavailable.CompleteCheckpoint(ctx, f.ref, changed); !errors.Is(err, ErrConflict) {
+	if err = unavailable.CompleteCheckpoint(ctx, f.ref, changed); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed ready receipt: %v", err)
 	}
 }
@@ -175,9 +177,9 @@ func TestCheckpointRuntimeRejectsMismatchedCapture(t *testing.T) {
 			case "media":
 				m.Memory.MediaType = cas.CheckpointVMStateMediaType
 			}
-			expected := ErrConflict
+			expected := agent.ErrConflict
 			if which == "config" || which == "media" {
-				expected = ErrInvalidInput
+				expected = agent.ErrInvalidInput
 			}
 			if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, m); !errors.Is(err, expected) {
 				t.Fatalf("mismatch accepted: %v", err)
@@ -201,7 +203,7 @@ func TestCheckpointRuntimeRechecksAuthorityAfterIO(t *testing.T) {
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	blocked, _ := agent.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
@@ -215,14 +217,14 @@ func TestCheckpointRuntimeRechecksAuthorityAfterIO(t *testing.T) {
 	// This update must complete while object storage is blocked.
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.f.computer)
 	close(release)
-	if err := <-done; !errors.Is(err, ErrDenied) {
+	if err := <-done; !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired publication: %v", err)
 	}
 	var ready bool
 	if err := f.f.pool.QueryRow(ctx, `SELECT ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&ready); err != nil || ready {
 		t.Fatalf("ready=%v %v", ready, err)
 	}
-	if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrDenied) {
+	if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("expired register: %v", err)
 	}
 }
@@ -243,21 +245,21 @@ func TestCheckpointRuntimeForeignReceiptsAndAbortRace(t *testing.T) {
 				// The source-abort transaction and readiness contend on the checkpoint.
 				// Use the retained request to exercise the real abort arbitration.
 				p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
-				if err := ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := agent.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrNotReady) {
+				if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrNotReady) {
 					t.Fatalf("aborting image became ready: %v", err)
 				}
 				return
 			}
 			if action == "changed-descriptor" {
-				wrong, _ := NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+				wrong, _ := agent.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 					o, e := f.remote.Stat(ctx, d)
 					o.SizeBytes++
 					return o, e
 				}))
-				if err := wrong.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrConflict) {
+				if err := wrong.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrConflict) {
 					t.Fatalf("wrong remote descriptor: %v", err)
 				}
 				return
@@ -274,17 +276,17 @@ func TestCheckpointRuntimeForeignReceiptsAndAbortRace(t *testing.T) {
 				dbtest.MustExec(t, ctx, f.f.pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.f.worker)
 				ref.Host.Epoch = 2
 			}
-			if err := f.checkpoints.RegisterCheckpoint(ctx, ref, f.manifest); !errors.Is(err, ErrDenied) {
+			if err := f.checkpoints.RegisterCheckpoint(ctx, ref, f.manifest); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign registration: %v", err)
 			}
-			if err := f.checkpoints.CompleteCheckpoint(ctx, ref, f.manifest); !errors.Is(err, ErrDenied) {
+			if err := f.checkpoints.CompleteCheckpoint(ctx, ref, f.manifest); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign completion: %v", err)
 			}
 			wrong := f.manifest
 			wrong.ComputerID = uuid.NewV7()
 			wrong.LeaseEpoch++
 			wrong.ControlVersion++
-			if err := f.checkpoints.CompleteCheckpoint(ctx, ref, wrong); !errors.Is(err, ErrDenied) {
+			if err := f.checkpoints.CompleteCheckpoint(ctx, ref, wrong); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign identity probing: %v", err)
 			}
 		})
@@ -305,19 +307,19 @@ func TestCheckpointRuntimeReadyCannotReplayAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
-	if err := ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"aborting", "consumed"} {
 		if state == "consumed" {
-			if err := CommitComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, true, false)); err != nil {
+			if err := agent.CommitComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, true, false)); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrNotReady) {
+		if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrNotReady) {
 			t.Fatalf("%s registration replay: %v", state, err)
 		}
-		if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrNotReady) {
+		if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, agent.ErrNotReady) {
 			t.Fatalf("%s ready replay: %v", state, err)
 		}
 	}
@@ -336,7 +338,7 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+	blocked, _ := agent.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
@@ -347,13 +349,13 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- blocked.CompleteCheckpoint(ctx, f.ref, f.manifest) }()
 	<-entered
-	if err := ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		close(release)
 		<-done
 		t.Fatal(err)
 	}
 	close(release)
-	if err := <-done; !errors.Is(err, ErrNotReady) {
+	if err := <-done; !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("aborted candidate became ready: %v", err)
 	}
 	var state string

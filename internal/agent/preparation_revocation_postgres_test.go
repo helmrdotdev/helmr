@@ -1,10 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -38,11 +41,11 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	}
 	queued := f.enqueue(t, "queued-behind-running")
 	finalizing, _ := peer.finalize(t, "result-recorded")
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	resume, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
+	resume, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
 	if err != nil || resume.Kind != "resume" {
 		t.Fatalf("initial delivery: %v %v", resume, err)
 	}
@@ -50,24 +53,24 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 		t.Fatal(err)
 	}
 	// These checks run before reconciliation, including the unchanged-control fast path.
-	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {
+	if _, err = agent.Enqueue(t.Context(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("revoked enqueue: %v", err)
 	}
-	shutdown, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
+	shutdown, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
 	if err != nil || shutdown.Kind != "shutdown" || shutdown.Sequence <= resume.Sequence {
 		t.Fatalf("shutdown: %v %v", shutdown, err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, resume.Sequence, resume.Generation, resume.Kind, "", 0); !errors.Is(err, ErrConflict) {
+	if err = agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, resume.Sequence, resume.Generation, resume.Kind, "", 0); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
-	if _, err = BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, ErrDenied) {
+	if _, err = agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked capture: %v", err)
 	}
 	for range 2 {
-		if err = reconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+		if err = agent.ReconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,14 +92,14 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, f.env, finalizing.TurnID).Scan(&status); err != nil || status != "finalizing" {
 		t.Fatalf("recorded result %s: %v", status, err)
 	}
-	shutdown, err = PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
+	shutdown, err = agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
 	if err != nil || shutdown.Kind != "shutdown" {
 		t.Fatalf("control after reaper: %v %v", shutdown, err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, shutdown.Sequence, shutdown.Generation, shutdown.Kind, "", 0); err != nil {
+	if err = agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, shutdown.Sequence, shutdown.Generation, shutdown.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence); err != nil {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -119,7 +122,7 @@ func TestPreparationImageRevocationLifecycleAndLease(t *testing.T) {
 	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
 		t.Fatal("revoked lease extended")
 	}
-	if _, _, err := reconcilePreparationLifecycle(t.Context(), f.pool, preparationLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var pending bool
@@ -157,34 +160,34 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 			r := newComputerRestoreFixture(t)
 			secrets := checkpointImageExposure(t, r.f)
 			request := r.prepare(t)
-			if err := ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, false, false)); err != nil {
+			if err := agent.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, false, false)); err != nil {
 				t.Fatal(err)
 			}
 			observed := restoreReceipt(request, true, false)
 			if phase == "consumed" {
-				if err := CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); err != nil {
+				if err := agent.CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if _, err := secrets.secrets.Revoke(t.Context(), r.f.env, secrets.secretID, "revoke"); err != nil {
 				t.Fatal(err)
 			}
-			if err := ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); !errors.Is(err, ErrDenied) {
+			if err := agent.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("validate revoked: %v", err)
 			}
-			err := CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed)
-			if phase == "consumed" && err != nil || phase == "prepared" && !errors.Is(err, ErrDenied) {
+			err := agent.CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed)
+			if phase == "consumed" && err != nil || phase == "prepared" && !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("commit revoked %s: %v", phase, err)
 			}
-			attachment, err := AcquireRuntimeAttachment(t.Context(), r.f.pool, r.host, r.execution())
+			attachment, err := agent.AcquireRuntimeAttachment(t.Context(), r.f.pool, r.host, r.execution())
 			if err != nil {
 				t.Fatalf("stop transport: %v", err)
 			}
-			delivery, err := PrepareSessionDelivery(t.Context(), r.f.pool, r.host, r.execution(), attachment.Sequence)
+			delivery, err := agent.PrepareSessionDelivery(t.Context(), r.f.pool, r.host, r.execution(), attachment.Sequence)
 			if err != nil || delivery.Kind != "shutdown" {
 				t.Fatalf("restore shutdown: %v %v", delivery, err)
 			}
-			if err = reconcileComputerSecretRevocation(t.Context(), r.f.pool, r.f.env, r.f.computer); err != nil {
+			if err = agent.ReconcileComputerSecretRevocation(t.Context(), r.f.pool, r.f.env, r.f.computer); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -199,7 +202,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 				t.Fatalf("cleanup protocol lost: %s", state)
 			}
 			if phase == "consumed" {
-				if err = CompleteComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, ErrDenied) {
+				if err = agent.CompleteComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("activate revoked: %v", err)
 				}
 			}
@@ -213,7 +216,7 @@ func TestPreparationImageRevocationDeniesCheckpointProgress(t *testing.T) {
 	if _, err := secrets.secrets.Revoke(t.Context(), f.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); !errors.Is(err, ErrDenied) {
+	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked checkpoint registration: %v", err)
 	}
 }
@@ -221,13 +224,13 @@ func TestPreparationImageRevocationDeniesCheckpointProgress(t *testing.T) {
 func TestPreparationImageRevocationDeniesCaptureReplay(t *testing.T) {
 	p := preparationResidentImage(t)
 	req := p.f.captureRequest()
-	if _, err := BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); err != nil {
+	if _, err := agent.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); !errors.Is(err, ErrDenied) {
+	if _, err := agent.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("revoked capture replay: %v", err)
 	}
 }
@@ -240,11 +243,11 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := reconcileComputerSecretRevocation(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
+		if err := agent.ReconcileComputerSecretRevocation(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
 			t.Fatal(err)
 		}
-		next, more, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{})
-		if err != nil || more || next != (preparationLifecyclePosition{}) {
+		next, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{})
+		if err != nil || more || next != (dispatch.ImageBuildLifecyclePosition{}) {
 			t.Fatalf("retained queue scheduled unnecessary reconciliation: %+v %v %v", next, more, err)
 		}
 	}
@@ -259,7 +262,7 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing')`, p.f.env).Scan(&outstanding); err != nil || outstanding != 1 {
 		t.Fatalf("admission was released without disposition: %d %v", outstanding, err)
 	}
-	if _, err := ControlSession(t.Context(), p.f.pool, p.f.caller(), controlRequest(p.f.fixture, "cancel", "cancel-revoked-input")); err != nil {
+	if _, err := agent.ControlSession(t.Context(), p.f.pool, p.f.caller(), controlRequest(p.f.fixture, "cancel", "cancel-revoked-input")); err != nil {
 		t.Fatalf("explicit cancellation of retained input: %v", err)
 	}
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='cancelled' AND terminal_at IS NOT NULL FROM turns WHERE environment_id=$1 AND id=$2`, p.f.env, admission.TurnID).Scan(&retained); err != nil || !retained {
@@ -273,7 +276,7 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 		t.Run(observer, func(t *testing.T) {
 			p := preparationResidentImage(t)
 			f := p.f.fixture
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,12 +285,12 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 			}
 			switch observer {
 			case "stop":
-				err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+				err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 			case "failure":
-				err = ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+				err = agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 			case "lease-expiry":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-				err = expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1)
+				err = dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -297,7 +300,7 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 				t.Fatalf("observer explanation %d: %v", holds, err)
 			}
 			for range 2 {
-				if err = reconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+				if err = agent.ReconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -314,14 +317,14 @@ func TestPreparationImageRevocationSettlesHibernatedSource(t *testing.T) {
 	if _, err := secrets.secrets.Revoke(t.Context(), r.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reconcilePreparationLifecycle(t.Context(), r.f.pool, preparationLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), r.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var inherited bool
 	if err := r.f.pool.QueryRow(t.Context(), `SELECT p.status='lost' AND p.fenced_at=l.fenced_at AND p.failure_recorded_at IS NOT NULL FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE p.environment_id=$1 AND p.session_id=$2`, r.f.env, r.f.session).Scan(&inherited); err != nil || !inherited {
 		t.Fatalf("source physical evidence not retained: %v", err)
 	}
-	if _, err := PrepareComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, r.manifest.CheckpointID, r.epoch, r.credential); !errors.Is(err, ErrNotReady) {
+	if _, err := agent.PrepareComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, r.manifest.CheckpointID, r.epoch, r.credential); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("revoked hibernation restore: %v", err)
 	}
 }

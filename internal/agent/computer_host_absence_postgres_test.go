@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -21,7 +25,7 @@ func confirmComputerHostAbsent(ctx context.Context, f fixture, host uuid.UUID) e
 		if err != nil {
 			return err
 		}
-		return ObserveProviderAbsentHostComputers(ctx, absence)
+		return dispatch.ObserveProviderAbsentHostComputers(ctx, absence)
 	})
 }
 
@@ -60,7 +64,7 @@ func TestComputerHostAbsencePreservesAcceptedWorkAndFencesAllEpochs(t *testing.T
 			t.Fatalf("turn status %s want %s: %v", status, want, err)
 		}
 	}
-	if err := Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	host, err := workergroup.GetHost(t.Context(), db.New(f.pool), f.worker)
@@ -160,7 +164,7 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +172,7 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 			if graceful {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopping' WHERE session_id=$1`, f.session)
 			}
-			if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if !graceful {
@@ -178,7 +182,7 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 				}
 				req := controlRequest(f, "resume", "release-stop-hold")
 				req.HoldID = hold
-				if _, err := ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+				if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -269,7 +273,7 @@ func TestComputerHostAbsenceOrdersRootsAcrossWorkerGroups(t *testing.T) {
 }
 
 func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
-	if err := ObserveProviderAbsentHostComputers(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, ErrInvalidInput) {
+	if err := dispatch.ObserveProviderAbsentHostComputers(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, agent.ErrInvalidInput) {
 		t.Fatalf("missing confirmation: %v", err)
 	}
 	f := newFixture(t)
@@ -284,7 +288,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveProviderAbsentHostComputers(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
+	if err = dispatch.ObserveProviderAbsentHostComputers(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
 		t.Fatalf("confirmation escaped its transaction: %v", err)
 	}
 }

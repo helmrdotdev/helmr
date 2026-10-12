@@ -31,13 +31,13 @@ func AuthorizeSessionStart(ctx context.Context, database db.TxBeginner, host wor
 		return checkSessionStart(ctx, tx, host, e, attachment, &result)
 	})
 	if err != nil {
-		return ProcessStart{}, allocationError(err)
+		return ProcessStart{}, notReadyOnLock(err)
 	}
 	return result, nil
 }
 
 func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, e Execution, attachment int64, result *ProcessStart) error {
-	if err := allocationLockTimeout(ctx, tx); err != nil {
+	if err := shortLockTimeout(ctx, tx); err != nil {
 		return err
 	}
 	if _, err := lockRuntimeAuthority(ctx, tx, host, e); err != nil {

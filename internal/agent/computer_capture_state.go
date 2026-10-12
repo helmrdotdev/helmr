@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type captureRecord struct {
+type CaptureRecord struct {
 	Computer           uuid.UUID
 	SourceEpoch        int64
 	TargetEpoch        *int64
@@ -23,13 +23,13 @@ type captureRecord struct {
 	State              string
 	ControlsReconciled bool
 	Expires            time.Time
-	Members            []computerMember
+	Members            []ComputerMember
 }
 
 // The caller takes supply locks before this function. Captured members remain
 // lockable after loss/fencing; their immutable membership owns recovery holds.
-func lockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (captureRecord, error) {
-	var r captureRecord
+func LockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (CaptureRecord, error) {
+	var r CaptureRecord
 	if err := tx.QueryRow(ctx, `SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&r.Computer); err != nil {
 		return r, err
 	}
@@ -39,7 +39,7 @@ func lockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (cap
 	}
 	var ids []uuid.UUID
 	for rows.Next() {
-		var m computerMember
+		var m ComputerMember
 		if err := rows.Scan(&m.Session, &m.Epoch); err != nil {
 			rows.Close()
 			return r, err
@@ -62,15 +62,15 @@ func lockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (cap
 	return r, err
 }
 
-func (r captureRecord) requireMembers(ctx context.Context, tx pgx.Tx, env uuid.UUID) error {
+func (r CaptureRecord) requireMembers(ctx context.Context, tx pgx.Tx, env uuid.UUID) error {
 	rows, err := tx.Query(ctx, `SELECT session_id,epoch,computer_lease_epoch FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL ORDER BY session_id`, env, r.Computer)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	var actual []computerMember
+	var actual []ComputerMember
 	for rows.Next() {
-		var m computerMember
+		var m ComputerMember
 		var lease int64
 		if err := rows.Scan(&m.Session, &m.Epoch, &lease); err != nil {
 			return err
@@ -83,7 +83,7 @@ func (r captureRecord) requireMembers(ctx context.Context, tx pgx.Tx, env uuid.U
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !slices.EqualFunc(actual, r.Members, func(a, b computerMember) bool { return a.Session == b.Session && a.Epoch == b.Epoch }) {
+	if !slices.EqualFunc(actual, r.Members, func(a, b ComputerMember) bool { return a.Session == b.Session && a.Epoch == b.Epoch }) {
 		return ErrNotReady
 	}
 	return nil
@@ -96,7 +96,7 @@ func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergr
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -134,7 +134,7 @@ func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}

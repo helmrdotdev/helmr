@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -39,7 +41,7 @@ func TestComputerCheckpointReadRequiresExactLiveRestoreAllocation(t *testing.T) 
 			case "revoked":
 				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='test' WHERE environment_id=$1 AND id=$2`, id.EnvironmentID, id.ComputerID)
 			}
-			got, err := ReadComputerCheckpoint(t.Context(), f.f.pool, host, id)
+			got, err := agent.ReadComputerCheckpoint(t.Context(), f.f.pool, host, id)
 			if change != "none" {
 				if err == nil {
 					t.Fatalf("%s exposed checkpoint", change)
@@ -55,16 +57,16 @@ func TestComputerCheckpointReadRequiresExactLiveRestoreAllocation(t *testing.T) 
 				t.Fatal("checkpoint manifest changed")
 			}
 			p := f.prepare(t)
-			if _, err := ReadComputerCheckpoint(t.Context(), f.f.pool, host, id); err != nil {
+			if _, err := agent.ReadComputerCheckpoint(t.Context(), f.f.pool, host, id); err != nil {
 				t.Fatalf("prepared target retry: %v", err)
 			}
-			if err := ValidateComputerRestore(t.Context(), f.f.pool, host, id.EnvironmentID, p, restoreReceipt(p, false, false)); err != nil {
+			if err := agent.ValidateComputerRestore(t.Context(), f.f.pool, host, id.EnvironmentID, p, restoreReceipt(p, false, false)); err != nil {
 				t.Fatal(err)
 			}
-			if err := CommitComputerRestore(t.Context(), f.f.pool, host, id.EnvironmentID, p, restoreReceipt(p, true, false)); err != nil {
+			if err := agent.CommitComputerRestore(t.Context(), f.f.pool, host, id.EnvironmentID, p, restoreReceipt(p, true, false)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ReadComputerCheckpoint(t.Context(), f.f.pool, host, id); err == nil {
+			if _, err := agent.ReadComputerCheckpoint(t.Context(), f.f.pool, host, id); err == nil {
 				t.Fatal("committed image became readable for a second physical attempt")
 			}
 		})

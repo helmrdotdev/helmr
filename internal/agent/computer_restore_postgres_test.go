@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"crypto/sha256"
@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -70,13 +72,13 @@ func (r *computerRestoreFixture) newTarget(t *testing.T) {
 }
 func (r *computerRestoreFixture) prepare(t *testing.T) *agentv1.ComputerSessionInstallation {
 	t.Helper()
-	p, err := PrepareComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, r.manifest.CheckpointID, r.epoch, r.credential)
+	p, err := agent.PrepareComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, r.manifest.CheckpointID, r.epoch, r.credential)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
-func (r *computerRestoreFixture) execution() Execution {
+func (r *computerRestoreFixture) execution() agent.Execution {
 	e := r.f.execution()
 	e.WorkerHostID = r.host.HostID
 	e.LeaseEpoch = r.epoch
@@ -92,7 +94,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 	f := newComputerRestoreFixture(t)
 	ctx := t.Context()
 	e := f.execution()
-	if _, err := AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e); err == nil {
+	if _, err := agent.AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e); err == nil {
 		t.Fatal("unclaimed acquiring target attached")
 	}
 	p := f.prepare(t)
@@ -104,49 +106,49 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 			t.Fatal("stale grant")
 		}
 	}
-	if _, err := dispatchTurnForTest(ctx, f.f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.f.pool, e); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
-	caller := Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
-	if _, err := Enqueue(ctx, f.f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
+	caller := agent.Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
+	if _, err := agent.Enqueue(ctx, f.f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("control authority admitted business mutation: %v", err)
 	}
-	attachment, err := AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e)
+	attachment, err := agent.AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e)
 	if err != nil || attachment.Authority.Generation != 2 {
 		t.Fatalf("target control attachment: %+v %v", attachment, err)
 	}
-	if _, err = AcquireRuntimeAttachment(ctx, f.f.pool, *f.f.host(), f.f.execution()); err == nil {
+	if _, err = agent.AcquireRuntimeAttachment(ctx, f.f.pool, *f.f.host(), f.f.execution()); err == nil {
 		t.Fatal("old source still attached")
 	}
 	initial := restoreReceipt(p, false, false)
-	if err = ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); err != nil {
+	if err = agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); err != nil {
 		t.Fatal(err)
 	}
-	if err = CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, ErrNotReady) {
+	if err = agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("uninstalled consumed: %v", err)
 	}
 	installed := restoreReceipt(p, true, false)
-	if err = CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, installed); err != nil {
+	if err = agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, installed); err != nil {
 		t.Fatal(err)
 	}
-	if err = ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, ErrNotReady) {
+	if err = agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("old image retried: %v", err)
 	}
-	if err = loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); !errors.Is(err, ErrNotReady) {
+	if err = loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("historical source fence lost current target: %v", err)
 	}
 	admitted := f.f.enqueue(t, "queued-through-restore")
-	if err = CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, installed); !errors.Is(err, ErrNotReady) {
+	if err = agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, installed); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unactivated admitted: %v", err)
 	}
 	// Current controls are mandatory even after the activation reply is received.
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET authority_generation=3 WHERE environment_id=$1 AND id=$2`, f.f.env, f.f.session)
-	if err = CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); !errors.Is(err, ErrNotReady) {
+	if err = agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("stale controls admitted: %v", err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
 	for range 2 {
-		if err = CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+		if err = agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,7 +166,7 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 	f := newComputerRestoreFixture(t)
 	ctx := t.Context()
 	first := f.prepare(t)
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	f.newTarget(t)
@@ -172,17 +174,17 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 	if second.DesiredVersion <= first.DesiredVersion || second.Envelope.ComputerInstanceId == first.Envelope.ComputerInstanceId {
 		t.Fatal("physical attempt identity reused")
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err == nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err == nil {
 		t.Fatal("fenced attempt validated")
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	f.newTarget(t)
-	if _, err := PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential); !errors.Is(err, ErrNotReady) {
+	if _, err := agent.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("consumed snapshot reloaded: %v", err)
 	}
 	// Loss follows the consumed physical owner, not the newly admitted fixture lease.
@@ -223,7 +225,7 @@ func TestComputerRestoreRejectsChangedInstallation(t *testing.T) {
 			case "foreign":
 				host = *f.f.host()
 			}
-			if err := ValidateComputerRestore(t.Context(), f.f.pool, host, f.f.env, p, observed); err == nil {
+			if err := agent.ValidateComputerRestore(t.Context(), f.f.pool, host, f.f.env, p, observed); err == nil {
 				t.Fatal("invalid installation accepted")
 			}
 		})
@@ -243,14 +245,14 @@ func TestComputerRestoreRetainsStopsAndHolds(t *testing.T) {
 	if len(p.StoppedSessions) != 1 || p.StoppedSessions[0].SessionId != peer.String() {
 		t.Fatal("cancelled captured member was not stopped")
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
-	if err := CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -262,10 +264,10 @@ func TestRuntimeControlRenewalSurvivesDeploymentRevocation(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	if _, err := RenewRuntimeAuthority(ctx, f.pool, *f.host(), f.execution()); err != nil {
+	if _, err := agent.RenewRuntimeAuthority(ctx, f.pool, *f.host(), f.execution()); err != nil {
 		t.Fatalf("revocation blocked control delivery: %v", err)
 	}
-	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("revoked business admission: %v", err)
 	}
 }
@@ -291,7 +293,7 @@ func TestComputerRestoreRejectsChangedPhysicalMembership(t *testing.T) {
 				p.Envelope.WriterGeneration = 99
 				p.DesiredVersion++
 			}
-			if err := ValidateComputerRestore(ctx, f.f.pool, host, f.f.env, p, restoreReceipt(p, false, false)); err == nil {
+			if err := agent.ValidateComputerRestore(ctx, f.f.pool, host, f.f.env, p, restoreReceipt(p, false, false)); err == nil {
 				t.Fatal("changed ownership admitted")
 			}
 		})
@@ -318,7 +320,7 @@ func TestComputerRestorePreparationRejectsWrongTarget(t *testing.T) {
 			case "pending-save":
 				dbtest.MustExec(t, ctx, f.f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,seq,computer_lease_epoch,status) VALUES($1,$2,$3,99,1,'requested')`, f.f.env, uuid.NewV7(), f.f.computer)
 			}
-			if _, err := PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, credential); err == nil {
+			if _, err := agent.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, credential); err == nil {
 				t.Fatal("invalid target prepared")
 			}
 		})
@@ -330,7 +332,7 @@ func TestComputerRestoreRefreshesOnlyUninstalledTransportGrants(t *testing.T) {
 	ctx := t.Context()
 	p := f.prepare(t)
 	p.Envelope.OperationExpiresAtUnixNano = time.Now().Add(-time.Second).UnixNano()
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); !errors.Is(err, ErrNotReady) {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("expired uninstalled grant: %v", err)
 	}
 	p = f.prepare(t)
@@ -338,19 +340,19 @@ func TestComputerRestoreRefreshesOnlyUninstalledTransportGrants(t *testing.T) {
 	for _, g := range p.Grants {
 		g.ExpiresAtUnixNano = p.Envelope.OperationExpiresAtUnixNano
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	// The physical host retained this exact request after successful installation.
 	// Expiring transport fields do not change its durable identity.
 	time.Sleep(550 * time.Millisecond)
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RenewRuntimeAuthority(ctx, f.f.pool, f.host, f.execution()); err != nil {
+	if _, err := agent.RenewRuntimeAuthority(ctx, f.f.pool, f.host, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); !errors.Is(err, ErrNotReady) {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, false, false)); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("consumed image refreshed as uninstalled: %v", err)
 	}
 }
@@ -365,7 +367,7 @@ func TestComputerRestorePreparationPreservesProcessFence(t *testing.T) {
 				f.newTarget(t)
 			}
 			dbtest.MustExec(t, ctx, f.f.pool, `UPDATE session_processes SET fenced_at=clock_timestamp(),status='lost' WHERE environment_id=$1 AND session_id=$2`, f.f.env, f.f.session)
-			p, err := PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential)
+			p, err := agent.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -384,31 +386,31 @@ func TestComputerRestoreRefreshesStopsBeforeInstallation(t *testing.T) {
 	f := newComputerRestoreFixture(t)
 	ctx := t.Context()
 	first := f.prepare(t)
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, f.f.session)
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); !errors.Is(err, ErrNotReady) {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("stale controls validated: %v", err)
 	}
 	second := f.prepare(t)
 	if len(second.StoppedSessions) != 1 || second.StoppedSessions[0].SessionId != f.f.session.String() {
 		t.Fatal("new stop missing")
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, true, false)); !errors.Is(err, ErrConflict) {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, true, false)); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("replaced installation consumed: %v", err)
 	}
-	if err := CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, true, false)); !errors.Is(err, ErrConflict) {
+	if err := agent.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, true, false)); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("installed identity replaced: %v", err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, second)
-	if err := CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, true)); err != nil {
+	if err := agent.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, true)); err != nil {
 		t.Fatal(err)
 	}
 }

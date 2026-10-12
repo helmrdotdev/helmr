@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -17,11 +19,11 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	req.Input = json.RawMessage(`[{"type":"text","text":"a\u0000雪"}]`)
 	key := "conversation"
 	req.SessionKey = &key
-	first, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	first, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := GetTurn(t.Context(), f.pool, f.caller(), f.env, first.SessionID, first.TurnID)
+	view, err := agent.GetTurn(t.Context(), f.pool, f.caller(), f.env, first.SessionID, first.TurnID)
 	canonical, _ := content.Input(req.Input)
 	if err != nil || string(view.Input) != string(canonical) {
 		t.Fatalf("input changed %s: %v", view.Input, err)
@@ -33,10 +35,10 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	bad := json.RawMessage(`[{"type":"json","value":null}]`)
 	req.Input = bad
 	req.IdempotencyKey = "json"
-	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrUnsupported) {
+	if _, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("existing start ignored pin: %v", err)
 	}
-	if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
+	if _, err := agent.Enqueue(t.Context(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("enqueue ignored pin: %v", err)
 	}
 	var count int
@@ -44,7 +46,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 		t.Fatalf("rejection admitted work %d: %v", count, err)
 	}
 	for _, invalid := range []string{`{"type":"job","content":12}`, `{"type":"message","content":12}`, `null`, `"hello"`} {
-		if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, content.ErrInvalid) {
+		if _, err := agent.Enqueue(t.Context(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, content.ErrInvalid) {
 			t.Fatalf("accepted non-content input %s: %v", invalid, err)
 		}
 	}
@@ -56,7 +58,7 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	input := json.RawMessage(`[{"type":"text","text":"scheduled\u0000"}]`)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, input)
-	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte

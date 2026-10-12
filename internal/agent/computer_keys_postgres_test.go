@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -7,6 +7,10 @@ import (
 	"sync"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -112,7 +116,7 @@ func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 						case "delete":
 							dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, id.ComputerID)
 						case "stop":
-							if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil()); err != nil {
+							if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil()); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -151,7 +155,7 @@ func TestComputerDiskSourceRejectsUndeliveredAllocation(t *testing.T) {
 	}
 	broker, _ := computer.NewKeyBroker(f.pool, preparationWrapper(t))
 	source, err := broker.Source(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch})
-	if !errors.Is(err, ErrDenied) || len(source.Keys) != 0 {
+	if !errors.Is(err, agent.ErrDenied) || len(source.Keys) != 0 {
 		source.Clear()
 		t.Fatalf("undelivered source: %v", err)
 	}

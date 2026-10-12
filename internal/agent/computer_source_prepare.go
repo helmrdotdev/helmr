@@ -30,7 +30,7 @@ func PrepareComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wo
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, env, checkpoint)
+		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}

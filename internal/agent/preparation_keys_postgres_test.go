@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -89,7 +91,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 	}
 	wrong := ref
 	wrong.ChannelCredential = bytes.Repeat([]byte{9}, 32)
-	if k, err := broker.WriteKey(t.Context(), *f.host(), wrong); !errors.Is(err, ErrDenied) || k.Key != nil {
+	if k, err := broker.WriteKey(t.Context(), *f.host(), wrong); !errors.Is(err, agent.ErrDenied) || k.Key != nil {
 		t.Fatalf("wrong channel: %v", err)
 	}
 }
@@ -122,7 +124,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				}
 				broker, _ := computer.NewImageBuildKeyBroker(f.pool, provider)
 				key, err := broker.WriteKey(t.Context(), *f.host(), ref)
-				if !errors.Is(err, ErrDenied) || key.Key != nil {
+				if !errors.Is(err, agent.ErrDenied) || key.Key != nil {
 					t.Fatalf("key escaped: %v", err)
 				}
 				if phase == "unwrap" && (len(provider.lastPlain) != 32 || !bytes.Equal(provider.lastPlain, make([]byte, 32))) {

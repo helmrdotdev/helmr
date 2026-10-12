@@ -21,6 +21,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 
@@ -168,7 +170,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
-	allocator, err := agent.NewAllocator(pool, cfg.computerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.computerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
@@ -219,8 +221,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
-		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
-		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunComputerLifecycle(ctx, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunPreparationLifecycle(ctx, pool, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 	}
 	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"

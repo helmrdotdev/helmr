@@ -8,6 +8,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -66,7 +68,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err := agent.ObserveComputerStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)

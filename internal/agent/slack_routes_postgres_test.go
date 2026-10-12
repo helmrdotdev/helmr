@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
@@ -43,7 +45,7 @@ func bindFixtureSlackRoot(t *testing.T, f fixture, channel uuid.UUID) {
 		if err != nil {
 			return err
 		}
-		return createSlackRoot(t.Context(), tx, f.env, f.session, uuid.Nil(), channel, slackroute.StartRoute{Target: connection, HumanThreadTS: "123.456", HumanActor: "human"})
+		return agent.CreateSlackRoot(t.Context(), tx, f.env, f.session, uuid.Nil(), channel, slackroute.StartRoute{Target: connection, HumanThreadTS: "123.456", HumanActor: "human"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +65,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		calls++
 		return acceptedStartPreflight(ctx, value)
 	})
-	first, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	first, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,16 +74,16 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	retry, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	retry, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || retry.TurnID != first.TurnID || calls != 1 {
 		t.Fatal(retry, calls, err)
 	}
 	req.IdempotencyKey = "continue"
 	req.SlackChannelID = nil
-	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("duplicate key: %v", err)
 	}
-	next, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input})
+	next, err := agent.Enqueue(t.Context(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input})
 	if err != nil || next.Sequence != 2 || calls != 1 {
 		t.Fatal(next, calls, err)
 	}
@@ -92,13 +94,13 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	other := "COTHER"
 	req.IdempotencyKey = "different-channel"
 	req.SlackChannelID = &other
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err = agent.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, agent.ErrConflict) {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "fresh"
 	req.SessionKey = nil
 	req.SlackChannelID = &channel
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, slackroute.ErrTargetNotPublished) {
+	if _, err = agent.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, slackroute.ErrTargetNotPublished) {
 		t.Fatal(err)
 	}
 }
@@ -117,7 +119,7 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 			req.SlackChannelID = &channel
 			req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 				if kind == "access" {
-					return nil, ErrSlackChannelUnavailable
+					return nil, agent.ErrSlackChannelUnavailable
 				}
 				// This independent write would block if preflight retained the SQL gates.
 				if _, err := f.pool.Exec(ctx, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, value.Route.Target.ConnectionID); err != nil {
@@ -125,8 +127,8 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 				}
 				return acceptedStartPreflight(ctx, value)
 			})
-			_, err := Start(t.Context(), f.pool, nil, f.caller(), req)
-			want := ErrSlackChannelUnavailable
+			_, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
+			want := agent.ErrSlackChannelUnavailable
 			if kind == "changed" {
 				want = slackroute.ErrConversationChanged
 			}
@@ -149,14 +151,14 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := agent.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
 	req.SlackPreflight = startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 		t.Fatal("spawn performed Slack preflight")
 		return nil, nil
 	})
-	child, err := Spawn(t.Context(), f.pool, nil, caller, req)
+	child, err := agent.Spawn(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +179,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		}
 		return acceptedStartPreflight(ctx, value)
 	})
-	independent, err := Start(t.Context(), f.pool, nil, caller, req)
+	independent, err := agent.Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,12 +187,12 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	retry, err := Start(t.Context(), f.pool, nil, caller, req)
+	retry, err := agent.Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil || retry.TurnID != independent.TurnID {
 		t.Fatal(retry, err)
 	}
 	req.IdempotencyKey = "unavailable"
-	if _, err = Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrSourceConversationUnavailable) {
+	if _, err = agent.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, agent.ErrSourceConversationUnavailable) {
 		t.Fatal(err)
 	}
 }
@@ -202,7 +204,7 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 	req := f.startRequest("root")
 	req.SlackChannelID = &channel
 	req.SlackPreflight = startPreflightFunc(acceptedStartPreflight)
-	root, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	root, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,13 +212,13 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 		var source *slackroute.StartSource
 		err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			var err error
-			source, err = readSlackStartSource(t.Context(), tx, f.env, root.SessionID)
+			source, err = agent.ReadSlackStartSource(t.Context(), tx, f.env, root.SessionID)
 			return err
 		})
 		return source, err
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status='suppressed',suppressed_revision=desired_revision,error='publication_authority_unavailable' WHERE session_id=$1`, root.SessionID)
-	if _, err = read(); !errors.Is(err, ErrSourceConversationUnavailable) {
+	if _, err = read(); !errors.Is(err, agent.ErrSourceConversationUnavailable) {
 		t.Fatal("unconfirmed unavailable root accepted", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_threads SET thread_ts='123.789' WHERE front_session_id=$1; UPDATE slack_posts SET message_ts='123.789',confirmed_revision=desired_revision,posted_at=clock_timestamp() WHERE session_id=$1`, pgx.QueryExecModeSimpleProtocol, root.SessionID)
@@ -224,7 +226,7 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 		t.Fatal("positive root discarded", source, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET delivery_disposed_at=clock_timestamp(),delivery_disposed_by=$2,closed_at=clock_timestamp() WHERE session_id=$1`, root.SessionID, f.user)
-	if _, err = read(); !errors.Is(err, ErrSourceConversationUnavailable) {
+	if _, err = read(); !errors.Is(err, agent.ErrSourceConversationUnavailable) {
 		t.Fatal("explicit abandonment revived", err)
 	}
 }

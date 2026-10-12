@@ -1,10 +1,14 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -26,7 +30,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 	first := initialSession(t, f, computerID)
 	req := f.startRequest("initial-peer")
 	req.ComputerID = computerID
-	peer, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	peer, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +39,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "later-peer"
-	later, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+	later, err := agent.Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,24 +49,24 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); err != nil {
 			t.Fatalf("committed initial assignment unavailable: %v", err)
 		}
-		e := Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-		if _, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e); !errors.Is(err, ErrNotReady) {
+		e := agent.Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		if _, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e); !errors.Is(err, agent.ErrNotReady) {
 			t.Fatalf("pre-ready attachment: %v", err)
 		}
 	}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
 	for _, session := range []uuid.UUID{first, peer.SessionID} {
-		e := Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-		attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+		e := agent.Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+		if err := agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 			t.Fatal(err)
 		}
 		acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
@@ -70,7 +74,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 			t.Fatalf("committed initial work refused on drain: %v", err)
 		}
 	}
-	if _, err := a.AllocateSessionProcess(t.Context(), f.env, later.SessionID, 1); !errors.Is(err, ErrNotReady) {
+	if _, err := a.AllocateSessionProcess(t.Context(), f.env, later.SessionID, 1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("later independent admission bypassed drain: %v", err)
 	}
 }
@@ -90,7 +94,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computerID)
-				if err := expireComputerLease(t.Context(), f.pool, f.env, computerID, 1); err != nil {
+				if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, computerID, 1); err != nil {
 					t.Fatal(err)
 				}
 				var retained bool
@@ -101,7 +105,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 					t.Fatal("replacement before physical absence")
 				}
 			}
-			if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var clean bool
@@ -131,7 +135,7 @@ func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.allocation_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -173,8 +177,7 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 			allocateDone := make(chan error, 1)
 			if allocationFirst {
 				barrier := &cohortCommitBarrier{TxDB: f.pool, reached: make(chan struct{}), release: make(chan struct{})}
-				candidate := *a
-				candidate.database = barrier
+				candidate := testAllocator(t, barrier, nil)
 				go func() {
 					_, err := candidate.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 					allocateDone <- err
@@ -225,7 +228,7 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 	f, a, computerID := freshComputerAllocationFixture(t)
 	session := initialSession(t, f, computerID)
-	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "before-allocation", Reason: "wait"})
+	hold, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "before-allocation", Reason: "wait"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,13 +245,13 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-allocation", HoldID: hold.HoldID}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-allocation", HoldID: hold.HoldID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); !errors.Is(err, ErrNotReady) {
+	if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("post-cut resume bypassed new admission: %v", err)
 	}
 }
@@ -260,11 +263,11 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", IdempotencyKey: "before-ready"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", IdempotencyKey: "before-ready"}); err != nil {
 		t.Fatal(err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var cancelled bool
@@ -280,15 +283,15 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "after-cohort", Reason: "wait"})
+	hold, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "after-cohort", Reason: "wait"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-stop", HoldID: hold.HoldID}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-stop", HoldID: hold.HoldID}); err != nil {
 		t.Fatal(err)
 	}
 	var holds int

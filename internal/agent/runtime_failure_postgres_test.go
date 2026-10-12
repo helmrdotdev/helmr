@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -14,14 +16,14 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	failure := TurnError{Code: "application_error", Message: "bad\x00input"}
+	failure := agent.TurnError{Code: "application_error", Message: "bad\x00input"}
 	fail := func() (json.RawMessage, error) {
-		return RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, failure, "drained")
+		return agent.RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, failure, "drained")
 	}
-	if _, err := fail(); !errors.Is(err, ErrNotReady) {
+	if _, err := fail(); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unclosed failure: %v", err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	first, err := fail()
@@ -30,7 +32,7 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 	}
 	var got struct {
 		Status string
-		Error  TurnError
+		Error  agent.TurnError
 	}
 	if err := json.Unmarshal(first, &got); err != nil || got.Status != "failed" || got.Error != failure {
 		t.Fatalf("outcome %s: %v", first, err)
@@ -45,7 +47,7 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 		t.Fatalf("replay %s: %v", replay, err)
 	}
 	failure.Message = "different"
-	if _, err := fail(); !errors.Is(err, ErrConflict) {
+	if _, err := fail(); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed failure: %v", err)
 	}
 	var saves, holds int
@@ -60,11 +62,11 @@ func TestRuntimeFailureHonorsElapsedDeadline(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID)
-	outcome, err := RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, TurnError{Code: "error"}, "drained")
+	outcome, err := agent.RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, agent.TurnError{Code: "error"}, "drained")
 	if err != nil || string(outcome) != `{"status":"interrupted"}` {
 		t.Fatalf("deadline outcome %s: %v", outcome, err)
 	}

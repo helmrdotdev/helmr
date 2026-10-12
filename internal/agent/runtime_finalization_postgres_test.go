@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -18,11 +20,11 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	result := json.RawMessage(`{"answer":42}`)
-	if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
+	if outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
 		t.Fatalf("prepared result reported terminal: %s %v", outcome, err)
 	}
 	var save computer.SaveRequest
@@ -30,11 +32,11 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatalf("close replay: %v", err)
 	}
 	for range 2 {
-		if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
+		if outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
 			t.Fatalf("pending replay: %s %v", outcome, err)
 		}
 	}
@@ -42,7 +44,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_saves WHERE turn_id=$1`, a.TurnID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("save identity replaced: %d %v", count, err)
 	}
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"answer":43}`), "drained"); !errors.Is(err, ErrConflict) {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"answer":43}`), "drained"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed result: %v", err)
 	}
 	root, _ := s.cut(t, 8)
@@ -52,10 +54,10 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained")
+	outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	}
 	foreign := f.execution()
 	foreign.ProcessEpoch++
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), foreign, a.TurnID, result, "drained"); err == nil {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), foreign, a.TurnID, result, "drained"); err == nil {
 		t.Fatal("other process observed result")
 	}
 }
@@ -79,11 +81,11 @@ func TestRuntimeFinalizationDoesNotPromoteStaleGrantForNewResult(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "drained"); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "drained"); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("stale grant admitted result: %v", err)
 	}
 	var count int
@@ -103,7 +105,7 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	cp := checkpointStorageForSaveFixture(t, s)
@@ -119,28 +121,28 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 	}
 	r := restoreCheckpointFixture(t, cp)
 	p := r.prepare(t)
-	if err := ValidateComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, r.host, p)
-	if err := CompleteComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := agent.CompleteComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	// HTTP authentication replaces only Host identity, leaving the retained
 	// operation's original lease and business generation unchanged.
 	original := f.execution()
 	original.WorkerHostID = r.host.HostID
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, r.host, original, a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, r.host, original, a.TurnID); err != nil {
 		t.Fatalf("restored close receipt: %v", err)
 	}
-	outcome, err := RuntimeFinalize(t.Context(), f.pool, r.host, original, a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt")
+	outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, r.host, original, a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt")
 	if err != nil || string(outcome) != `{"result":{"result":1},"status":"completed"}` {
 		t.Fatalf("restored terminal winner: %s %v", outcome, err)
 	}
-	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt"); err == nil {
+	if _, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt"); err == nil {
 		t.Fatal("retired source observed restored process")
 	}
 }
@@ -168,14 +170,14 @@ func TestResultAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				if runtime {
-					outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
+					outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
 					if err == nil && string(outcome) != `{"status":"interrupted"}` {
 						err = fmt.Errorf("outcome = %s", outcome)
 					}
 					done <- err
 				} else {
 					_, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
-					if errors.Is(err, ErrNotReady) {
+					if errors.Is(err, agent.ErrNotReady) {
 						done <- nil
 					} else {
 						done <- fmt.Errorf("late result error = %v", err)

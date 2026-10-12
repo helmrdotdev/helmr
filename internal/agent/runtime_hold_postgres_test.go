@@ -1,8 +1,10 @@
-package agent
+package agent_test
 
 import (
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -13,7 +15,7 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 	queued := f.enqueue(t, "queued")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.session)
 	for range 2 {
-		if err := RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "setup_failed"); err != nil {
+		if err := agent.RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "setup_failed"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,10 +40,10 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "release-setup")
 	req.HoldID = hold
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "setup_failed"); err != nil {
+	if err := agent.RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "setup_failed"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&count); err != nil || count != 0 {
@@ -52,7 +54,7 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 func TestRuntimeHoldPreservesRecordedSave(t *testing.T) {
 	f := newFixture(t)
 	a, save := f.finalize(t, "prepared")
-	if err := RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "native_convergence_failed"); err != nil {
+	if err := agent.RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "native_convergence_failed"); err != nil {
 		t.Fatal(err)
 	}
 	var turnStatus, saveStatus string

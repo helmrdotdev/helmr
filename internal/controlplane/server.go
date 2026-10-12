@@ -14,6 +14,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
@@ -57,7 +59,7 @@ type Server struct {
 	slackConfig                *SlackConfig
 	diagnosticDB               db.TxDB
 	diagnosticBounds           diagnostic.Bounds
-	allocator                  *agent.Allocator
+	allocator                  *dispatch.Allocator
 	environmentExecutionLimits org.ExecutionLimits
 	allocationKeys             *computer.KeyBroker
 	preparationKeys            *computer.ImageBuildKeyBroker
@@ -101,7 +103,7 @@ type ServerConfig struct {
 	Slack                      *SlackConfig
 	DiagnosticDB               db.TxDB
 	DiagnosticBounds           diagnostic.Bounds
-	Allocator                  *agent.Allocator
+	Allocator                  *dispatch.Allocator
 	EnvironmentExecutionLimits org.ExecutionLimits
 	ComputerKeys               computer.DataKeyWrapper
 	Log                        *slog.Logger

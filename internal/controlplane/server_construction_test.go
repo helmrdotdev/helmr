@@ -7,6 +7,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -14,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -32,7 +33,7 @@ type constructionTelemetry struct{ telemetry.CommandLogReader }
 func completeServerConfig(t *testing.T) ServerConfig {
 	t.Helper()
 	store := newTestUploadStore(t)
-	allocator, err := agent.NewAllocator(constructionDB{}, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(constructionDB{}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

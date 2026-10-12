@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -74,7 +76,7 @@ func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, capacity); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, agent.ErrDenied) || values != nil {
 		t.Fatalf("sealed delivery: %v", err)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "disk")
@@ -116,11 +118,11 @@ func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.
 }
 func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	p, key := newPreparationPublicationTest(t)
-	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); !errors.Is(err, ErrNotReady) {
+	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("capture before exposure: %v", err)
 	}
 	root := p.capture(t, key)
-	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, 2<<20); !errors.Is(err, ErrInvalidInput) {
+	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, 2<<20); !errors.Is(err, agent.ErrInvalidInput) {
 		t.Fatalf("capacity changed: %v", err)
 	}
 	// Ordinary rotation does not turn a successful cut into an execution failure.
@@ -132,10 +134,10 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	if _, err := swapped.Digest(); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.publisher.Capture(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, ErrConflict) {
+	if err := p.publisher.Capture(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("capture changed page: %v", err)
 	}
-	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, ErrConflict) {
+	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("publication changed page: %v", err)
 	}
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "verified storage graph"); err != nil {
@@ -217,7 +219,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "late publish"); !errors.Is(err, ErrDenied) {
+			if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "late publish"); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("late publication: %v", err)
 			}
 			var count int
@@ -258,7 +260,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 		}
 		return p.remote.Stat(ctx, digest)
 	}))
-	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, ErrDenied) {
+	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("certified after revocation: %v", err)
 	}
 	object, _ := describeStoredObject(inspection)
@@ -281,7 +283,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = p.publisher.Register(t.Context(), *p.f.host(), p.ref, blockformat.ObjectInspection{Pack: &pack}); !errors.Is(err, ErrConflict) {
+	if err = p.publisher.Register(t.Context(), *p.f.host(), p.ref, blockformat.ObjectInspection{Pack: &pack}); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int

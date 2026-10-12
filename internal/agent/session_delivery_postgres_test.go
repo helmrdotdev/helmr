@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 
@@ -13,79 +15,79 @@ import (
 
 func TestSessionDeliveryRetainsIdentityAndRejectsOldAttachment(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	first, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || first.Kind != "resume" || first.Sequence != agenttest.SeededAttachment+1 {
 		t.Fatalf("first: %+v %v", first, err)
 	}
-	second, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	second, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || second.Sequence != first.Sequence {
 		t.Fatalf("retry: %+v %v", second, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); err != nil {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
-	acked, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	acked, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || !acked.Acknowledged {
 		t.Fatalf("ack: %+v %v", acked, err)
 	}
-	b, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	b, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, ErrDenied) {
+	if _, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("old attachment: %v", err)
 	}
-	latest, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), b.Sequence)
+	latest, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), b.Sequence)
 	if err != nil || latest.Sequence != first.Sequence+1 || latest.Acknowledged {
 		t.Fatalf("reattach: %+v %v", latest, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); !errors.Is(err, ErrConflict) {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("old ack: %v", err)
 	}
 }
 
 func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	old, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	hold, err := agent.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, "", 0); !errors.Is(err, ErrConflict) {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, "", 0); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
-	held, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	held, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || held.Kind != "suspend" || held.Generation != 2 {
 		t.Fatalf("held: %+v %v", held, err)
 	}
 	req := controlRequest(f, "resume", "release")
 	req.HoldID = hold.HoldID
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	resumed, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || resumed.Kind != "resume" || resumed.Generation != 3 {
 		t.Fatalf("resume: %+v %v", resumed, err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
-	stop, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	stop, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || stop.Kind != "shutdown" {
 		t.Fatalf("stop: %+v %v", stop, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, stop.Sequence, stop.Generation, stop.Kind, "", 0); err != nil {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, stop.Sequence, stop.Generation, stop.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	var fenced bool
@@ -93,7 +95,7 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 		t.Fatalf("command receipt fenced live process: %v %v", fenced, err)
 	}
 	for range 2 {
-		if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+		if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -104,12 +106,12 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 
 func TestSessionDeliveryRejectsExpiredOwnerWithoutAdvancing(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if _, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, ErrNotReady) {
+	if _, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("expired: %v", err)
 	}
 	var seq int64
@@ -120,33 +122,33 @@ func TestSessionDeliveryRejectsExpiredOwnerWithoutAdvancing(t *testing.T) {
 
 func TestSessionDeliveryFailureIsInspectableAndDoesNotAcknowledge(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	delivery, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "native work did not converge", 0); err != nil {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "native work did not converge", 0); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	failed, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || failed.Acknowledged || failed.Error != "native work did not converge" || failed.Sequence != delivery.Sequence {
 		t.Fatalf("failure receipt: %+v %v", failed, err)
 	}
-	if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatalf("physical stop after control failure: %v", err)
 	}
 }
 
 func TestSessionDeliveryUnchangedObservationDoesNotLockTree(t *testing.T) {
 	f := newFixture(t)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+	first, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestSessionDeliveryUnchangedObservationDoesNotLockTree(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	next, err := PrepareSessionDelivery(ctx, f.pool, *f.host(), f.execution(), a.Sequence)
+	next, err := agent.PrepareSessionDelivery(ctx, f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || next.Sequence != first.Sequence {
 		t.Fatalf("unchanged observation waited on tree lock: %+v %v", next, err)
 	}

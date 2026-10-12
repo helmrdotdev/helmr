@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"crypto/sha256"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -13,10 +15,10 @@ import (
 )
 
 // Fixture allocation isolates executor authority tests from supply selection.
-// Production allocation must go through Allocator and its capacity transaction.
+// Production allocation must go through dispatch.Allocator and its capacity transaction.
 func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref computer.ImageBuildExecutor) (time.Time, error) {
 	if !ref.Valid() || ref.Epoch != 1 {
-		return time.Time{}, ErrInvalidInput
+		return time.Time{}, agent.ErrInvalidInput
 	}
 	var expires time.Time
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
@@ -28,7 +30,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 			return err
 		}
 		if !available {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		p, err := computer.ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 		if err != nil {
@@ -50,7 +52,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 			return tx.QueryRow(ctx, `SELECT executor_expires_at FROM image_builds WHERE environment_id=$1 AND id=$2`, p.EnvironmentID, p.ID).Scan(&expires)
 		}
 		if state != "queued" || !current {
-			return ErrNotReady
+			return agent.ErrNotReady
 		}
 		digest := sha256.Sum256(ref.ChannelCredential)
 		return tx.QueryRow(ctx, `UPDATE image_builds SET status='running',executor_epoch=$3,worker_host_id=$4,worker_epoch=$5,allocation_id=$6,channel_credential_digest=$7,
@@ -61,7 +63,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
     executor_expires_at=LEAST(deadline_at,clock_timestamp()+interval '1 minute') WHERE environment_id=$1 AND id=$2 RETURNING executor_expires_at`, p.EnvironmentID, p.ID, ref.Epoch, host.HostID, host.Epoch, ref.InstanceID, digest[:]).Scan(&expires)
 	})
 	if err != nil {
-		return time.Time{}, hideMissing(err)
+		return time.Time{}, agent.HideMissing(err)
 	}
 	return expires, nil
 }

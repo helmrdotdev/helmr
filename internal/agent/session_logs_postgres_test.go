@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -15,44 +17,44 @@ import (
 func TestSessionLogAcceptanceBindsPhysicalAttachment(t *testing.T) {
 	f := newFixture(t)
 	e := f.execution()
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
 	bounds := diagnostic.Bounds{ChunkBytes: 4, SourceBytes: 16, SourceRecords: 4, EnvironmentBytes: 32, EnvironmentRecords: 8, QueueBytes: 64, QueueRecords: 16}
 	record := diagnostic.Record{Stream: "stdout", Kind: "data", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: time.Now().UnixNano(), Data: []byte{0, 255, 128}}
-	first, err := AppendSessionLog(t.Context(), f.pool, *f.host(), e, attachment.Sequence, record, bounds)
+	first, err := agent.AppendSessionLog(t.Context(), f.pool, *f.host(), e, attachment.Sequence, record, bounds)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	next, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = AppendSessionLog(t.Context(), f.pool, *f.host(), e, attachment.Sequence, record, bounds); !errors.Is(err, ErrDenied) {
+	if _, err = agent.AppendSessionLog(t.Context(), f.pool, *f.host(), e, attachment.Sequence, record, bounds); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("stale physical sender: %v", err)
 	}
-	retry, err := AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, record, bounds)
+	retry, err := agent.AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, record, bounds)
 	if err != nil || !retry.AcceptedAt.Equal(first.AcceptedAt) {
 		t.Fatalf("retained logical producer %+v %v", retry, err)
 	}
 	wrong := e
 	wrong.LeaseEpoch++
-	if _, err = AppendSessionLog(t.Context(), f.pool, *f.host(), wrong, next.Sequence, record, bounds); err == nil {
+	if _, err = agent.AppendSessionLog(t.Context(), f.pool, *f.host(), wrong, next.Sequence, record, bounds); err == nil {
 		t.Fatal("foreign lease replay accepted")
 	}
 	host := *f.host()
 	host.Epoch++
-	if _, err = AppendSessionLog(t.Context(), f.pool, host, e, next.Sequence, record, bounds); err == nil {
+	if _, err = agent.AppendSessionLog(t.Context(), f.pool, host, e, next.Sequence, record, bounds); err == nil {
 		t.Fatal("foreign host replay accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.env, f.session)
 	end := diagnostic.Record{Stream: "stdout", Kind: "end", Sequence: 2, ThroughSequence: 2, ObservedAtUnixNano: time.Now().UnixNano(), Complete: true}
-	if _, err = AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, end, bounds); err != nil {
+	if _, err = agent.AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, end, bounds); err != nil {
 		t.Fatalf("exact stopped tail rejected: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if _, err = AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, end, bounds); err == nil {
+	if _, err = agent.AppendSessionLog(t.Context(), f.pool, *f.host(), e, next.Sequence, end, bounds); err == nil {
 		t.Fatal("expired physical owner replay accepted")
 	}
 	var rows int
@@ -64,7 +66,7 @@ func TestSessionLogAcceptanceBindsPhysicalAttachment(t *testing.T) {
 func TestSessionLogQueueContentionReleasesLifecycleLocks(t *testing.T) {
 	f := newFixture(t)
 	e := f.execution()
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +84,10 @@ func TestSessionLogQueueContentionReleasesLifecycleLocks(t *testing.T) {
 	defer cancel()
 	bounds := diagnostic.Bounds{ChunkBytes: 4, SourceBytes: 16, SourceRecords: 4, EnvironmentBytes: 32, EnvironmentRecords: 8, QueueBytes: 64, QueueRecords: 16}
 	record := diagnostic.Record{Stream: "stdout", Kind: "data", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: 1, Data: []byte("log")}
-	if _, err = AppendSessionLog(ctx, f.pool, *f.host(), e, attachment.Sequence, record, bounds); !telemetry.IsDiagnosticBusy(err) {
+	if _, err = agent.AppendSessionLog(ctx, f.pool, *f.host(), e, attachment.Sequence, record, bounds); !telemetry.IsDiagnosticBusy(err) {
 		t.Fatalf("queue contention: %v", err)
 	}
-	if _, err = RenewRuntimeAuthority(ctx, f.pool, *f.host(), e); err != nil {
+	if _, err = agent.RenewRuntimeAuthority(ctx, f.pool, *f.host(), e); err != nil {
 		t.Fatalf("lifecycle blocked by unrelated queue: %v", err)
 	}
 	var records int
@@ -100,13 +102,13 @@ func TestSessionLogReceiptSurvivesPhysicalHostRestore(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	source := f.execution()
-	attachment, err := AcquireRuntimeAttachment(ctx, f.pool, *f.host(), source)
+	attachment, err := agent.AcquireRuntimeAttachment(ctx, f.pool, *f.host(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	bounds := diagnostic.Bounds{ChunkBytes: 4, SourceBytes: 16, SourceRecords: 4, EnvironmentBytes: 32, EnvironmentRecords: 8, QueueBytes: 64, QueueRecords: 16}
 	record := diagnostic.Record{Stream: "stdout", Kind: "data", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: 1, Data: []byte{0, 255, 128}}
-	first, err := AppendSessionLog(ctx, f.pool, *f.host(), source, attachment.Sequence, record, bounds)
+	first, err := agent.AppendSessionLog(ctx, f.pool, *f.host(), source, attachment.Sequence, record, bounds)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,33 +131,33 @@ func TestSessionLogReceiptSurvivesPhysicalHostRestore(t *testing.T) {
 	restored := &computerRestoreFixture{checkpointStorageFixture: checkpoint, host: host}
 	restored.newTarget(t)
 	installation := restored.prepare(t)
-	if err = ValidateComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, false, false)); err != nil {
+	if err = agent.ValidateComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err = CommitComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, true, false)); err != nil {
+	if err = agent.CommitComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, host, installation)
-	if err = CompleteComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
+	if err = agent.CompleteComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	target := restored.execution()
-	current, err := AcquireRuntimeAttachment(ctx, f.pool, host, target)
+	current, err := agent.AcquireRuntimeAttachment(ctx, f.pool, host, target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target.ProcessEpoch != source.ProcessEpoch || target.WorkerHostID == source.WorkerHostID || target.LeaseEpoch == source.LeaseEpoch {
 		t.Fatal("fixture did not preserve logical process across physical replacement")
 	}
-	retry, err := AppendSessionLog(ctx, f.pool, host, target, current.Sequence, record, bounds)
+	retry, err := agent.AppendSessionLog(ctx, f.pool, host, target, current.Sequence, record, bounds)
 	if err != nil || !retry.AcceptedAt.Equal(first.AcceptedAt) || !retry.ExpiresAt.Equal(first.ExpiresAt) {
 		t.Fatalf("restored retry %+v %v", retry, err)
 	}
-	if _, err = AppendSessionLog(ctx, f.pool, *f.host(), source, attachment.Sequence, record, bounds); err == nil {
+	if _, err = agent.AppendSessionLog(ctx, f.pool, *f.host(), source, attachment.Sequence, record, bounds); err == nil {
 		t.Fatal("fenced source accepted")
 	}
 	record.Sequence, record.ThroughSequence = 2, 2
-	if _, err = AppendSessionLog(ctx, f.pool, host, target, current.Sequence, record, bounds); err != nil {
+	if _, err = agent.AppendSessionLog(ctx, f.pool, host, target, current.Sequence, record, bounds); err != nil {
 		t.Fatalf("restored producer cannot continue sequence: %v", err)
 	}
 	var count int

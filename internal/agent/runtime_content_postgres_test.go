@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -27,7 +29,7 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 		if i == 0 {
 			id = operation
 		}
-		got, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, raw)
+		got, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, raw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,23 +37,23 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 			sequence = got
 		}
 	}
-	if got, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, operation, raw); err != nil || got != sequence {
+	if got, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, operation, raw); err != nil || got != sequence {
 		t.Fatalf("replay %d: %v", got, err)
 	}
-	if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"x"`)); !errors.Is(err, content.ErrLimit) {
+	if _, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"x"`)); !errors.Is(err, content.ErrLimit) {
 		t.Fatalf("budget exceeded: %v", err)
 	}
 	response := uuid.NewV7()
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, raw); err != nil {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, raw); err != nil {
 		t.Fatalf("separate response budget: %v", err)
 	}
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, raw); err != nil {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, raw); err != nil {
 		t.Fatalf("response replay: %v", err)
 	}
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, json.RawMessage(`[]`)); !errors.Is(err, ErrConflict) {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, response, json.RawMessage(`[]`)); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed replay: %v", err)
 	}
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), raw); !errors.Is(err, ErrResponseAlreadyStaged) {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), raw); !errors.Is(err, agent.ErrResponseAlreadyStaged) {
 		t.Fatalf("second response: %v", err)
 	}
 	var total int64
@@ -69,32 +71,32 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	}
 	response := json.RawMessage(`[{"type":"text","text":"a\u0000b"},{"type":"json","value":false}]`)
 	responseID := uuid.NewV7()
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, responseID, response); err != nil {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, responseID, response); err != nil {
 		t.Fatal(err)
 	}
-	view, err := GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err := agent.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Response != nil {
 		t.Fatalf("premature response %+v: %v", view, err)
 	}
-	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := agent.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	outputID := uuid.NewV7()
-	sequence, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, outputID, json.RawMessage(`"drained\u0000"`))
+	sequence, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, outputID, json.RawMessage(`"drained\u0000"`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome != nil {
+	if outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome != nil {
 		t.Fatalf("premature completion %s: %v", outcome, err)
 	}
-	if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"late"`)); !errors.Is(err, ErrNotReady) {
+	if _, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"late"`)); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("late output %v", err)
 	}
-	page, err := ListEvents(t.Context(), f.pool, f.caller(), TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: sequence - 1, Limit: 100})
+	page, err := agent.ListEvents(t.Context(), f.pool, f.caller(), agent.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: sequence - 1, Limit: 100})
 	if err != nil || len(page.Records) != 2 || page.Records[0].Kind != "turn.output" || page.Records[1].Kind != "turn.finalizing" || string(page.Records[0].Data) != `[{"text":"drained\u0000","type":"text"}]` {
 		t.Fatalf("progress while saving %+v: %v", page, err)
 	}
-	view, err = GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err = agent.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Status != "finalizing" || view.Response != nil || view.Result != nil {
 		t.Fatalf("unpublished while saving %+v: %v", view, err)
 	}
@@ -109,10 +111,10 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if err := storage.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined")
+	outcome, err := agent.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +130,10 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if string(parsed.Response) != string(want) {
 		t.Fatalf("response %s", parsed.Response)
 	}
-	if got, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, outputID, json.RawMessage(`"drained\u0000"`)); err != nil || got != sequence {
+	if got, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, outputID, json.RawMessage(`"drained\u0000"`)); err != nil || got != sequence {
 		t.Fatalf("terminal output receipt %d %v", got, err)
 	}
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, responseID, response); err != nil {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, responseID, response); err != nil {
 		t.Fatalf("terminal response receipt %v", err)
 	}
 }

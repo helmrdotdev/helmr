@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
@@ -103,7 +104,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 				return err
 			}
 		}
-		policy, err := lockAdmissionEnvironment(ctx, tx, env)
+		policy, err := org.LockAdmission(ctx, tx, env)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -183,7 +184,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 	})
 }
 
-func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
+func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time, policy org.AdmissionPolicy) (Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return Admission{}, ErrSlackChannelUnavailable
 	}
@@ -208,7 +209,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.TrustI
 	if err := tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never); err != nil {
 		return Admission{}, err
 	}
-	computerID, err := computer.CreateForAdmission(ctx, tx, trust, s.environment, s.deployment, key, policy.computerLimits())
+	computerID, err := computer.CreateForAdmission(ctx, tx, trust, s.environment, s.deployment, key, computerLimits(policy))
 	if err != nil {
 		return Admission{}, err
 	}

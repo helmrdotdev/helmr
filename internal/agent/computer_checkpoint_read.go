@@ -33,7 +33,7 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 		if err != nil {
 			return err
 		}
-		r, err := lockCapture(ctx, tx, identity.EnvironmentID, checkpoint)
+		r, err := LockCapture(ctx, tx, identity.EnvironmentID, checkpoint)
 		if err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
-		eligible, err := checkpointDiskEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID, r.Save)
+		eligible, err := computer.CheckpointDiskEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID, r.Save)
 		if err != nil {
 			return err
 		}

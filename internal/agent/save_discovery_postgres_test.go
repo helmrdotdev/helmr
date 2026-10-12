@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,10 @@ import (
 	"sync"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -92,7 +96,7 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT c.recovery_save_id=$2 AND s.status='published' AND s.turn_id IS NULL AND t.status='running' AND t.completion_save_id IS NULL FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$2 JOIN turns t ON t.environment_id=c.environment_id AND t.id=$3 WHERE c.environment_id=$1 AND c.id=$4`, f.env, save.ID, admitted.TurnID, f.computer).Scan(&valid); err != nil || !valid {
 		t.Fatalf("background head/completion: %v %v", valid, err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err == nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err == nil {
 		t.Fatalf("background completed Turn: %v", err)
 	}
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
@@ -109,7 +113,7 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if err := storage.publish(t, required.ID, ownRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND completion_save_id=$2 FROM turns WHERE id=$1`, admitted.TurnID, required.ID).Scan(&valid); err != nil || !valid {
@@ -166,7 +170,7 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 		})
 		wg.Go(func() {
 			<-start
-			_, captureErr = BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
+			_, captureErr = agent.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
 		})
 		close(start)
 		wg.Wait()
@@ -174,7 +178,7 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 			t.Fatal(saveErr)
 		}
 		if save != nil {
-			if !errors.Is(captureErr, ErrNotReady) {
+			if !errors.Is(captureErr, agent.ErrNotReady) {
 				t.Fatalf("checkpoint passed optional: %v", captureErr)
 			}
 		} else if captureErr != nil {
@@ -200,11 +204,11 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 			case "expiry":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
 			case "fenced":
-				if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+				if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, ErrDenied) || save != nil {
+			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, agent.ErrDenied) || save != nil {
 				t.Fatalf("invalid writer: %+v %v", save, err)
 			}
 		})
@@ -248,7 +252,7 @@ func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil || save != nil {
 		t.Fatalf("ordinary discovery blocked: %+v %v", save, err)
 	}
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, ErrNotReady) || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, agent.ErrNotReady) || save != nil {
 		t.Fatalf("optional admission bypassed lock: %+v %v", save, err)
 	}
 }
@@ -262,7 +266,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	if err != nil || save == nil {
 		t.Fatalf("admission: %+v %v", save, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), saveIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), saveIdentity(f), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool

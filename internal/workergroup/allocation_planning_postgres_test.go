@@ -1,6 +1,9 @@
 package workergroup_test
 
 import (
+	"testing"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
@@ -8,8 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"testing"
-	"uuid"
 )
 
 func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {

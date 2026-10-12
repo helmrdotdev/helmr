@@ -12,6 +12,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -247,7 +249,7 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 		if err != nil {
 			return err
 		}
-		if err := agent.ObserveProviderAbsentHostComputers(r.Context(), absence); err != nil {
+		if err := dispatch.ObserveProviderAbsentHostComputers(r.Context(), absence); err != nil {
 			return err
 		}
 		host, err = workergroup.GetHost(r.Context(), db.New(tx), id)

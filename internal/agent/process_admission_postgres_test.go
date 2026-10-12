@@ -1,14 +1,18 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 )
 
-func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
+func startingSessionFixture(t *testing.T) (fixture, *dispatch.Allocator, agent.Execution) {
 	t.Helper()
 	f, a, computerID := freshComputerAllocationFixture(t)
 	var session uuid.UUID
@@ -22,15 +26,15 @@ func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); err != nil {
 		t.Fatalf("initial assignment missing: %v", err)
 	}
-	beforeReady := Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	if _, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), beforeReady); !errors.Is(err, ErrNotReady) {
+	beforeReady := agent.Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	if _, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), beforeReady); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("attachment before VM readiness: %v", err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
 	p, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1)
@@ -40,33 +44,33 @@ func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	if p.Status != "starting" || p.ComputerID != computerID || p.InstanceID != r.InstanceID {
 		t.Fatalf("wrong process allocation: %+v", p)
 	}
-	e := Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	e := agent.Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	return f, a, e
 }
 
 func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 	f, a, e := startingSessionFixture(t)
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("dispatched before setup: %v", err)
 	}
-	if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, ErrNotReady) {
+	if err := agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("wrong attachment ready: %v", err)
 	}
-	if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, ErrNotReady) {
+	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("live process replaced: %v", err)
 	}
 	r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 1)
@@ -77,17 +81,17 @@ func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 
 func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T) {
 	f, a, e := startingSessionFixture(t)
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveSessionFailure(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := agent.ObserveSessionFailure(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, ErrNotReady) {
+	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("setup failure retried without resume: %v", err)
 	}
 	var hold uuid.UUID
@@ -98,7 +102,7 @@ func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND process_epoch IS NULL AND started_at IS NULL FROM turns WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&queued); err != nil || !queued {
 		t.Fatalf("failed setup consumed input: %v %v", queued, err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2)
@@ -111,7 +115,7 @@ func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cancel", true: "revocation"}[revoke], func(t *testing.T) {
 			f, _, e := startingSessionFixture(t)
-			attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+			attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,21 +124,21 @@ func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
+				if _, err = agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err = ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, ErrNotReady) {
+			if err = agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("superseded wrong attachment accepted: %v", err)
 			}
-			if err = ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, ErrConflict) {
+			if err = agent.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, agent.ErrConflict) {
 				t.Fatalf("late readiness did not retire safely: %v", err)
 			}
 			var status string
 			if err = f.pool.QueryRow(t.Context(), `SELECT status FROM session_processes WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&status); err != nil || status == "ready" {
 				t.Fatalf("late readiness changed execution: %s %v", status, err)
 			}
-			delivery, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+			delivery, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
 			if err != nil || delivery.Kind != "shutdown" {
 				t.Fatalf("late Ready prevented shutdown: %+v %v", delivery, err)
 			}
@@ -146,10 +150,10 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 	r := newComputerRestoreFixture(t)
 	ctx := t.Context()
 	p := r.prepare(t)
-	if err := ValidateComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, false, false)); err != nil {
+	if err := agent.ValidateComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CommitComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, false)); err != nil {
+	if err := agent.CommitComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	for _, grant := range p.Grants {
@@ -157,25 +161,25 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 		e.SessionID = uuid.MustParse(grant.Identity.SessionId)
 		e.ProcessEpoch = grant.Identity.ProcessEpoch
 		e.AuthorityGeneration = grant.AuthorityGeneration
-		attachment, err := AcquireRuntimeAttachment(ctx, r.f.pool, r.host, e)
+		attachment, err := agent.AcquireRuntimeAttachment(ctx, r.f.pool, r.host, e)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = ObserveSessionReady(ctx, r.f.pool, r.host, e, attachment.Sequence); err != nil {
+		if err = agent.ObserveSessionReady(ctx, r.f.pool, r.host, e, attachment.Sequence); err != nil {
 			t.Fatalf("retained Ready blocked acquiring member: %v", err)
 		}
-		if _, err = dispatchTurnForTest(ctx, r.f.pool, e); !errors.Is(err, ErrNotReady) {
+		if _, err = dispatchTurnForTest(ctx, r.f.pool, e); !errors.Is(err, agent.ErrNotReady) {
 			t.Fatalf("readiness admitted business work before restore completion: %v", err)
 		}
-		control, err := PrepareSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence)
+		control, err := agent.PrepareSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = AcknowledgeSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", 0); err != nil {
+		if err = agent.AcknowledgeSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := CompleteComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := agent.CompleteComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatalf("Ready control cannot complete restoration: %v", err)
 	}
 	var active bool
@@ -184,13 +188,13 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 	}
 }
 
-func acknowledgeAdmissionControl(t *testing.T, f fixture, e Execution, attachment int64) {
+func acknowledgeAdmissionControl(t *testing.T, f fixture, e agent.Execution, attachment int64) {
 	t.Helper()
-	c, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment)
+	c, err := agent.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment, c.Sequence, c.Generation, c.Kind, "", c.StopSequence); err != nil {
+	if err := agent.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment, c.Sequence, c.Generation, c.Kind, "", c.StopSequence); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -37,11 +39,11 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
  VALUES($1,$2,$2,$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
 	req := f.startRequest("computer-trust")
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrNotReady) {
+	if _, err = agent.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("missing issuer: %v", err)
 	}
 	failed := &countingComputerTrust{store: f.secrets, failure: errors.New("signing failed")}
-	if _, err = Start(t.Context(), f.pool, failed, f.caller(), req); !errors.Is(err, failed.failure) {
+	if _, err = agent.Start(t.Context(), f.pool, failed, f.caller(), req); !errors.Is(err, failed.failure) {
 		t.Fatalf("failed issuer: %v", err)
 	}
 	var count int
@@ -50,11 +52,15 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	}
 	issuer := &countingComputerTrust{store: f.secrets}
 	const n = 8
-	receipts := make(chan Admission, n)
+	receipts := make(chan agent.Admission, n)
 	failures := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
-		wg.Go(func() { r, e := Start(t.Context(), f.pool, issuer, f.caller(), req); receipts <- r; failures <- e })
+		wg.Go(func() {
+			r, e := agent.Start(t.Context(), f.pool, issuer, f.caller(), req)
+			receipts <- r
+			failures <- e
+		})
 	}
 	wg.Wait()
 	close(receipts)
@@ -86,7 +92,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 		t.Fatalf("Computer trust: %v", err)
 	}
 	clear(key)
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
+	if _, err = agent.Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("retry required new signer: %v", err)
 	}
 	var replay []byte

@@ -35,7 +35,7 @@ type ComputerCapture struct {
 	SaveID  uuid.UUID
 }
 
-type computerMember struct {
+type ComputerMember struct {
 	Session    uuid.UUID
 	Epoch      int64
 	Status     string
@@ -54,7 +54,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		members, err := lockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID)
+		members, err := LockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID)
 		if err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		var busy bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status IN ('running','finalizing'))
    OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
-     WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+noSessionHoldsSQL+`)
+     WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+NoSessionHoldsSQL+`)
    OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
    OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))
    OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)
@@ -161,24 +161,24 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 // Membership discovery precedes ownership-root locks. Re-read under the Computer
 // lock: an admission that added an unseen root makes this attempt ineligible.
 // Process admissions must take the same Computer lock and reject pending checkpoints.
-func lockComputerMembers(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) ([]computerMember, error) {
-	return lockComputerCheckpointMembers(ctx, tx, env, computerID, uuid.Nil())
+func LockComputerMembers(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) ([]ComputerMember, error) {
+	return LockCheckpointMembers(ctx, tx, env, computerID, uuid.Nil())
 }
 
 // A failed restore must lock immutable captured members, including already fenced
 // members, before taking the Computer lock. Late Session locking reverses the
 // shared ownership-tree lock order.
-func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, checkpoint uuid.UUID) ([]computerMember, error) {
-	read := func() ([]computerMember, error) {
+func LockCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, checkpoint uuid.UUID) ([]ComputerMember, error) {
+	read := func() ([]ComputerMember, error) {
 		rows, err := tx.Query(ctx, `SELECT p.session_id,p.epoch,p.status,p.computer_lease_epoch FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2
  AND (p.fenced_at IS NULL OR EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.computer_id=p.computer_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch)) ORDER BY p.session_id,p.epoch`, env, computerID, checkpoint)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
-		var result []computerMember
+		var result []ComputerMember
 		for rows.Next() {
-			var m computerMember
+			var m ComputerMember
 			if err := rows.Scan(&m.Session, &m.Epoch, &m.Status, &m.LeaseEpoch); err != nil {
 				return nil, err
 			}
@@ -208,7 +208,7 @@ func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computer
 	if err != nil {
 		return nil, err
 	}
-	if !slices.EqualFunc(before, after, func(a, b computerMember) bool {
+	if !slices.EqualFunc(before, after, func(a, b ComputerMember) bool {
 		return a.Session == b.Session && a.Epoch == b.Epoch && a.LeaseEpoch == b.LeaseEpoch
 	}) {
 		return nil, ErrNotReady

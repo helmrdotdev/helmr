@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -25,7 +27,7 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(context.Background())
-				if _, err = lockSession(t.Context(), tx, f.env, f.session); err != nil {
+				if _, err = agent.LockSession(t.Context(), tx, f.env, f.session); err != nil {
 					t.Fatal(err)
 				}
 				reader, err := f.pool.Acquire(t.Context())
@@ -40,9 +42,9 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 				go func() {
 					var err error
 					if operation == "get" {
-						_, err = RuntimeGetSession(t.Context(), reader, caller, target.session)
+						_, err = agent.RuntimeGetSession(t.Context(), reader, caller, target.session)
 					} else {
-						_, err = RuntimeListSessions(t.Context(), reader, caller, RuntimeSessionListRequest{Relation: "requested", Limit: 10})
+						_, err = agent.RuntimeListSessions(t.Context(), reader, caller, agent.RuntimeSessionListRequest{Relation: "requested", Limit: 10})
 					}
 					result <- err
 				}()
@@ -61,9 +63,9 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 				if change == "close" {
-					err = closeProcessing(t.Context(), tx, f.execution(), caller.TurnID)
+					err = agent.CloseProcessing(t.Context(), tx, f.execution(), caller.TurnID)
 				} else {
-					err = eventData(t.Context(), tx, f.env, f.session, caller.TurnID, "turn.output", json.RawMessage(`[{"type":"text","text":"still running"}]`))
+					err = agent.EventData(t.Context(), tx, f.env, f.session, caller.TurnID, "turn.output", json.RawMessage(`[{"type":"text","text":"still running"}]`))
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -72,7 +74,7 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 					t.Fatal(err)
 				}
 				err = <-result
-				if change == "close" && !errors.Is(err, ErrDenied) {
+				if change == "close" && !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("closed caller authorized after lock wait: %v", err)
 				}
 				if change == "output" && err != nil {
@@ -96,29 +98,29 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	unrelated.enqueue(t, "unrelated")
 	// Sending a new Turn to an unrelated target permits exact receipt observation,
 	// not discovery of its Session metadata or other work.
-	if _, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unrelated Session: %v", err)
 	}
-	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, uuid.NewV7()); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, uuid.NewV7()); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unknown Session: %v", err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := RuntimeGetSession(t.Context(), f.pool, caller, independent.session)
+	view, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, independent.session)
 	if err != nil || view.Status != "cancelled" || view.InitialTurnID == nil || *view.InitialTurnID != requestedTurn.TurnID || view.InitialTurnStatus == nil || *view.InitialTurnStatus != "cancelled" || view.RequesterSessionID == nil || *view.RequesterSessionID != f.session {
 		t.Fatalf("retained initial receipt: %+v %v", view, err)
 	}
-	page, err := RuntimeListSessions(t.Context(), f.pool, caller, RuntimeSessionListRequest{Relation: "owned", Limit: 100})
+	page, err := agent.RuntimeListSessions(t.Context(), f.pool, caller, agent.RuntimeSessionListRequest{Relation: "owned", Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != owned.session || *page.Sessions[0].InitialTurnID != ownedTurn.TurnID {
 		t.Fatalf("owned page: %+v %v", page, err)
 	}
 	seen := map[uuid.UUID]bool{}
 	for before := uuid.Nil(); ; {
-		page, err = RuntimeListSessions(t.Context(), f.pool, caller, RuntimeSessionListRequest{Relation: "requested", Before: before, Limit: 1})
+		page, err = agent.RuntimeListSessions(t.Context(), f.pool, caller, agent.RuntimeSessionListRequest{Relation: "requested", Before: before, Limit: 1})
 		if err != nil || len(page.Sessions) != 1 || seen[page.Sessions[0].ID] {
 			t.Fatalf("requested page: %+v %v", page, err)
 		}
@@ -131,28 +133,28 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	if len(seen) != 2 || !seen[owned.session] || !seen[independent.session] {
 		t.Fatalf("requester scope: %v", seen)
 	}
-	page, err = RuntimeListSessions(t.Context(), f.pool, caller, RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"cancelled"}, Limit: 100})
+	page, err = agent.RuntimeListSessions(t.Context(), f.pool, caller, agent.RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"cancelled"}, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != independent.session {
 		t.Fatalf("terminal filter: %+v %v", page, err)
 	}
-	for _, req := range []RuntimeSessionListRequest{{Relation: "all", Limit: 1}, {Relation: "owned", Limit: 0}, {Relation: "owned", Limit: 101}, {Relation: "requested", Limit: 1, Statuses: []string{"completed"}}} {
-		if _, err := RuntimeListSessions(t.Context(), f.pool, caller, req); !errors.Is(err, ErrInvalidInput) {
+	for _, req := range []agent.RuntimeSessionListRequest{{Relation: "all", Limit: 1}, {Relation: "owned", Limit: 0}, {Relation: "owned", Limit: 101}, {Relation: "requested", Limit: 1, Statuses: []string{"completed"}}} {
+		if _, err := agent.RuntimeListSessions(t.Context(), f.pool, caller, req); !errors.Is(err, agent.ErrInvalidInput) {
 			t.Fatalf("invalid query %+v: %v", req, err)
 		}
 	}
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, owned.session); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, owned.session); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("closed invoking Turn: %v", err)
 	}
 	// MCP carries Session authority without borrowing the current/latest Turn.
 	caller.TurnID = uuid.Nil()
-	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, owned.session); err != nil {
+	if _, err := agent.RuntimeGetSession(t.Context(), f.pool, caller, owned.session); err != nil {
 		t.Fatalf("Session-bound discovery: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=2 WHERE id=$1`, f.session)
-	if _, err := RuntimeListSessions(t.Context(), f.pool, caller, RuntimeSessionListRequest{Relation: "owned", Limit: 1}); !errors.Is(err, ErrDenied) {
+	if _, err := agent.RuntimeListSessions(t.Context(), f.pool, caller, agent.RuntimeSessionListRequest{Relation: "owned", Limit: 1}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("old authority: %v", err)
 	}
 }

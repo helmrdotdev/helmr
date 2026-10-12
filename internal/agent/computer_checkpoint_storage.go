@@ -129,13 +129,13 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 	}))
 }
 
-func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPublication, m computercheckpoint.Manifest) (captureRecord, []byte, bool, error) {
-	var r captureRecord
+func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPublication, m computercheckpoint.Manifest) (CaptureRecord, []byte, bool, error) {
+	var r CaptureRecord
 	var raw []byte
 	if err := computer.LockHost(ctx, tx, ref.Host); err != nil {
 		return r, nil, false, err
 	}
-	r, err := lockCapture(ctx, tx, ref.EnvironmentID, m.CheckpointID)
+	r, err := LockCapture(ctx, tx, ref.EnvironmentID, m.CheckpointID)
 	if err != nil {
 		return r, nil, false, err
 	}

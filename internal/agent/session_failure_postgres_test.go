@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -18,12 +20,12 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+		if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +43,7 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND scope='local' AND issuer_kind='system'`, f.session).Scan(&hold); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = agent.RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), f.execution()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("stopped authority: %v", err)
 	}
 	next := peer.enqueue(t, "healthy-peer")
@@ -50,10 +52,10 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "release-process-failure")
 	req.HoldID = hold
-	if _, err = ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err = agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&count); err != nil || count != 0 {
@@ -64,11 +66,11 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 	f := newFixture(t)
 	result, save := f.finalize(t, "result")
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -84,7 +86,7 @@ func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 	if err = storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err = Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
+	if err = agent.Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -104,57 +106,57 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 			var host workergroup.HostPrincipal
 			var p *agentv1.ComputerSessionInstallation
 			var commit, complete func() error
-			var e Execution
+			var e agent.Execution
 			if target {
 				r := newComputerRestoreFixture(t)
 				f, host = r.f, r.host
 				p = r.prepare(t)
 				e = r.execution()
-				if err := ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
+				if err := agent.ValidateComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false))
+					return agent.CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false))
 				}
 				complete = func() error {
-					return CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true))
+					return agent.CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true))
 				}
 			} else {
 				f = newFixture(t)
 				host = *f.host()
 				p, _ = sourceAbort(t, f)
 				e = f.execution()
-				if err := ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := agent.ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
+					return agent.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
 				}
 				complete = func() error {
-					return CompleteComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, true))
+					return agent.CompleteComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, true))
 				}
 			}
 			if err := commit(); err != nil {
 				t.Fatal(err)
 			}
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, host, e)
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, host, e)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = ObserveSessionStopped(t.Context(), f.pool, host, e, a.Sequence); err != nil {
+			if err = agent.ObserveSessionStopped(t.Context(), f.pool, host, e, a.Sequence); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = RenewRuntimeAuthority(t.Context(), f.pool, host, e); !errors.Is(err, ErrNotReady) {
+			if _, err = agent.RenewRuntimeAuthority(t.Context(), f.pool, host, e); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("stopped member renewed: %v", err)
 			}
-			if _, err = PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence); !errors.Is(err, ErrNotReady) {
+			if _, err = agent.PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence); !errors.Is(err, agent.ErrNotReady) {
 				t.Fatalf("stopped member delivery: %v", err)
 			}
 			observed := abortReceipt(p, true, false)
 			if target {
 				observed = restoreReceipt(p, true, false)
 			}
-			controls, err := ReadComputerContinuationControls(t.Context(), f.pool, host, f.env, p, observed)
+			controls, err := agent.ReadComputerContinuationControls(t.Context(), f.pool, host, f.env, p, observed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,14 +175,14 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 
 func TestUnexpectedSessionStopRejectsSupersededAttachment(t *testing.T) {
 	f := newFixture(t)
-	old, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	old, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution()); err != nil {
+	if _, err = agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), old.Sequence); !errors.Is(err, ErrDenied) {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), old.Sequence); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("old attachment stopped process: %v", err)
 	}
 	var unchanged bool
@@ -195,12 +197,12 @@ func TestRevokedSessionStopInterruptsRunningTurn(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -213,28 +215,28 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	p, _ := sourceAbort(t, f)
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), peer.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), peer.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), peer.execution(), a.Sequence); err != nil {
+	if err = agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), peer.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	initial := abortReceipt(p, false, false)
-	p, err = PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), 1, p.Envelope.ChannelCredential, initial)
+	p, err = agent.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), 1, p.Envelope.ChannelCredential, initial)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(p.StoppedSessions) != 1 || p.StoppedSessions[0].SessionId != peer.session.String() {
 		t.Fatalf("stop set: %v", p.StoppedSessions)
 	}
-	if err = ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
+	if err = agent.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
 		t.Fatal(err)
 	}
-	if err = CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err = agent.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	controls, err := ReadComputerContinuationControls(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false))
+	controls, err := agent.ReadComputerContinuationControls(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +246,7 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 		}
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
-	if err = CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	if err = agent.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "healthy")

@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -20,7 +22,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	if err := s.publish(t, old.ID, oldRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	b, head := f.finalize(t, "current-result")
@@ -29,7 +31,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	if err := s.publish(t, head.ID, headRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, b.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, b.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	_, pending := f.finalize(t, "uncertain-result")

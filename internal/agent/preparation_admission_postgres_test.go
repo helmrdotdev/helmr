@@ -1,10 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -87,7 +90,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	}
 	reconcile := func() {
 		t.Helper()
-		if _, _, err := reconcilePreparationLifecycle(t.Context(), f.pool, preparationLifecyclePosition{}); err != nil {
+		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,7 +124,7 @@ func TestPreparationUnattachedDemandExpiresWithoutAttempt(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reconcilePreparationLifecycle(t.Context(), f.pool, preparationLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var settled bool
@@ -155,11 +158,11 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("fresh demand preempted pending successor: %v", err)
 	}
 	for range 2 {
-		if _, _, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{}); err != nil {
+		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,10 +181,10 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if _, err := p.f.pool.Exec(t.Context(), `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, successor); err != nil {
 		t.Fatal(err)
 	}
-	if err := expirePreparation(t.Context(), p.f.pool, p.f.env, successor); err != nil {
+	if err := dispatch.ExpireImageBuild(t.Context(), p.f.pool, p.f.env, successor); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var unchanged bool
@@ -197,7 +200,7 @@ func TestPreparationUnattachedDemandInRetiredEnvironmentIsNotPolled(t *testing.T
 	if _, err := f.pool.Exec(t.Context(), `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reconcilePreparationLifecycle(t.Context(), f.pool, preparationLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var pending bool

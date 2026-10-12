@@ -1,10 +1,14 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -31,7 +35,7 @@ func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing
 	}
 	queued := f.enqueue(t, "queued")
 	h := recoveringComputerHost(t, f)
-	if err := expireComputerLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
 		t.Fatal(err)
 	}
 	assertFenced := func(want bool) {
@@ -42,18 +46,18 @@ func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing
 		}
 	}
 	assertFenced(false)
-	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{instance}); err != nil {
+	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{instance}); err != nil {
 		t.Fatal(err)
 	}
 	assertFenced(false)
-	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, *f.host(), []uuid.UUID{}); !errors.Is(err, ErrDenied) {
+	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, *f.host(), []uuid.UUID{}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("prior epoch reported recovery: %v", err)
 	}
-	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, nil); !errors.Is(err, ErrInvalidInput) {
+	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, nil); !errors.Is(err, agent.ErrInvalidInput) {
 		t.Fatalf("missing inventory accepted: %v", err)
 	}
 	for range 2 {
-		if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
+		if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -75,7 +79,7 @@ func TestComputerHostRecoveryPreservesEligibleLogicalProcess(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), r.f.pool, `DELETE FROM computer_leases WHERE epoch=2;
  UPDATE computer_leases SET status='active',fenced_at=NULL,fence_evidence=NULL WHERE epoch=1`, pgx.QueryExecModeSimpleProtocol)
 	h := recoveringComputerHost(t, r.f)
-	if err := ObserveRecoveredHostComputers(t.Context(), r.f.pool, h, []uuid.UUID{}); err != nil {
+	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), r.f.pool, h, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	var preserved bool
@@ -106,7 +110,7 @@ func TestComputerHostRecoveryResumesAfterPartialProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ObserveRecoveredHostComputers(ctx, f.pool, h, []uuid.UUID{}) }()
+	go func() { done <- dispatch.ObserveRecoveredHostComputers(ctx, f.pool, h, []uuid.UUID{}) }()
 	waitSessionLifecycleLock(t, f)
 	cancel()
 	if err = <-done; !errors.Is(err, context.Canceled) {
@@ -119,7 +123,7 @@ func TestComputerHostRecoveryResumesAfterPartialProgress(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
+	if err = dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE fenced_at IS NOT NULL`).Scan(&count); err != nil || count != 2 {
@@ -141,7 +145,7 @@ func TestComputerHostRecoveryExcludesCurrentAndForeignAllocations(t *testing.T) 
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,$3,$4,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computerID, owner.host, owner.epoch)
 	}
-	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
+	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
@@ -163,7 +167,7 @@ func TestComputerHostRecoverySettlesUnpublishedCaptureAfterFencing(t *testing.T)
 			}
 			h := recoveringComputerHost(t, f)
 			for range 2 {
-				if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
+				if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -194,7 +198,7 @@ func TestComputerHostRecoveryContinuesPastBlockedComputer(t *testing.T) {
 	if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); !errors.Is(err, ErrNotReady) {
+	if err = dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("blocked recovery: %v", err)
 	}
 	var progressed bool
@@ -204,7 +208,7 @@ func TestComputerHostRecoveryContinuesPastBlockedComputer(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
+	if err = dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -217,7 +221,7 @@ func TestComputerHostRecoveryPreservesStoppedMember(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
-			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+			a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +229,7 @@ func TestComputerHostRecoveryPreservesStoppedMember(t *testing.T) {
 			if graceful {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopping' WHERE session_id=$1`, f.session)
 			}
-			if err := ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err := agent.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if !graceful {
@@ -235,13 +239,13 @@ func TestComputerHostRecoveryPreservesStoppedMember(t *testing.T) {
 				}
 				req := controlRequest(f, "resume", "release-stop-hold")
 				req.HoldID = hold
-				if _, err := ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+				if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 					t.Fatal(err)
 				}
 			}
 			host := recoveringComputerHost(t, f)
 			for range 2 {
-				if err := ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+				if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 					t.Fatal(err)
 				}
 			}

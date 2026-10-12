@@ -47,7 +47,7 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 	}
 	var result SessionStartExposure
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := allocationLockTimeout(ctx, tx); err != nil {
+		if err := shortLockTimeout(ctx, tx); err != nil {
 			return err
 		}
 		if err := computer.LockHost(ctx, tx, host); err != nil {
@@ -123,7 +123,7 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		return checkSessionStart(ctx, tx, host, e, attachment, &result.Start)
 	})
 	if err != nil {
-		return SessionStartExposure{}, allocationError(err)
+		return SessionStartExposure{}, notReadyOnLock(err)
 	}
 	return result, nil
 }

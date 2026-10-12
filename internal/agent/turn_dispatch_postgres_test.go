@@ -1,9 +1,11 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -15,8 +17,8 @@ func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := f.peer(t)
-	caller := Caller{Kind: "session", ID: f.session, TurnID: origin.TurnID, Execution: f.execution(), Host: f.host()}
-	admission, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer-input", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"retained\"}"}]`)})
+	caller := agent.Caller{Kind: "session", ID: f.session, TurnID: origin.TurnID, Execution: f.execution(), Host: f.host()}
+	admission, err := agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer-input", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"retained\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

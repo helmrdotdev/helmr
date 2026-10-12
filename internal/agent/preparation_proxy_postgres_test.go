@@ -1,9 +1,13 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -14,15 +18,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, computer.ImageBuildExecutor, *Allocator, string) {
+func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, computer.ImageBuildExecutor, *dispatch.Allocator, string) {
 	t.Helper()
-	f, p, a := preparationAllocationFixture(t)
+	f, p, _ := preparationAllocationFixture(t)
 	marker, err := secretbinding.Placeholder("protected")
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
-	a.trust = f.secrets
+	a := testAllocator(t, f.pool, f.secrets)
 	allocation, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +55,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 		_, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
 		return err
 	}
-	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
+	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("value available before exposure commit: %v", err)
 	}
 	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
@@ -141,26 +145,26 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 				}
 			case "deadline":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID)
-				if err := expirePreparation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
+				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			case "host epoch":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.worker)
-				if err := expirePreparation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
+				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			case "revocation":
 				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
 					t.Fatal(err)
 				}
-				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
+				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("closed authority leaf: %v", err)
 			}
-			if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("closed authority value: %v", err)
 			}
 			var cleared, unfenced bool

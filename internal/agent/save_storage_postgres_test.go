@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -28,7 +30,7 @@ type saveStorageFixture struct {
 	writer        blockformat.Writer
 	base          blockformat.Locator
 	publisher     *computer.SavePublisher
-	checkpoints   *CheckpointPublisher
+	checkpoints   *agent.CheckpointPublisher
 }
 
 // The initial-image producer is outside this save protocol. Bootstrap its exact
@@ -83,7 +85,7 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoints, err := NewCheckpointPublisher(f.pool, remote)
+	checkpoints, err := agent.NewCheckpointPublisher(f.pool, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +208,7 @@ func TestSavePublicationRetainsAuthenticatedGraph(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
@@ -266,10 +268,10 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err := unavailable.Certify(t.Context(), ref, e); !errors.Is(err, computer.ErrSaveStorageUnavailable) {
 		t.Fatalf("transient storage: %v", err)
 	}
-	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, ErrNotReady) {
+	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unknown publication: %v", err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, ErrNotReady) {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unpublished success: %v", err)
 	}
 	queued := f.enqueue(t, "accepted-during-storage-retry")
@@ -292,10 +294,10 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
 		t.Fatal(err)
 	}
-	if err = Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err = agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err = Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err = agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	next, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
@@ -333,20 +335,20 @@ func TestSavePublicationExpiryDoesNotAuthorizeSalvage(t *testing.T) {
 				if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
 					t.Fatal(err)
 				}
-				if err = Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+				if err = agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				if !errors.Is(err, ErrDenied) {
+				if !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("new publication after expiry: %v", err)
 				}
-				if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, ErrNotReady) {
+				if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, agent.ErrNotReady) {
 					t.Fatalf("salvaged uncommitted objects: %v", err)
 				}
-				if err = s.publisher.Register(t.Context(), ref, inspections[0]); !errors.Is(err, ErrDenied) {
+				if err = s.publisher.Register(t.Context(), ref, inspections[0]); !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("new object admission after expiry: %v", err)
 				}
-				if err = s.publisher.Certify(t.Context(), ref, inspections[0]); !errors.Is(err, ErrDenied) {
+				if err = s.publisher.Certify(t.Context(), ref, inspections[0]); !errors.Is(err, agent.ErrDenied) {
 					t.Fatalf("new certification after expiry: %v", err)
 				}
 			}
@@ -390,7 +392,7 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 	if updateErr != nil {
 		t.Fatal(updateErr)
 	}
-	if !errors.Is(certifyErr, ErrDenied) {
+	if !errors.Is(certifyErr, agent.ErrDenied) {
 		t.Fatalf("expired certification: %v", certifyErr)
 	}
 	var certified bool
@@ -408,7 +410,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	ref := s.ref(save.ID)
 	inspections := s.inspect(t, root)
 	rootEvidence := inspections[len(inspections)-1]
-	if err := s.publisher.Register(t.Context(), ref, rootEvidence); !errors.Is(err, ErrNotReady) {
+	if err := s.publisher.Register(t.Context(), ref, rootEvidence); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("registered parent with uncertified children: %v", err)
 	}
 	var pins int
@@ -434,7 +436,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		t.Fatal("fixture needs child position")
 	}
 	changed.Pack.Pages[0].Children[0].Locator.Pack.Size++
-	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("child geometry mismatch misclassified: %v", err)
 	}
 	changed.Pack.Pages[0].Children[0].Locator.Pack.Size--
@@ -445,7 +447,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	if err := s.publisher.Register(t.Context(), ref, rootEvidence); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.publisher.Publish(t.Context(), ref, root, "root not uploaded"); !errors.Is(err, ErrNotReady) {
+	if err := s.publisher.Publish(t.Context(), ref, root, "root not uploaded"); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("published uncertified root: %v", err)
 	}
 	object, _ := describeStoredObject(rootEvidence)
@@ -455,7 +457,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		obj.SizeBytes++
 		return obj, err
 	}))
-	if err := wrongStore.Certify(t.Context(), ref, rootEvidence); !errors.Is(err, ErrConflict) {
+	if err := wrongStore.Certify(t.Context(), ref, rootEvidence); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("mismatched remote object: %v", err)
 	}
 	if err := s.publisher.Certify(t.Context(), ref, rootEvidence); err != nil {
@@ -463,13 +465,13 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	}
 	wrongRoot := root
 	wrongRoot.Offset--
-	if err := s.publisher.Publish(t.Context(), ref, wrongRoot, "different locator"); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Publish(t.Context(), ref, wrongRoot, "different locator"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed cut locator: %v", err)
 	}
 	if err := s.publisher.Publish(t.Context(), ref, root, "correct locator"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed registered inspection: %v", err)
 	}
 }
@@ -488,7 +490,7 @@ func TestSavePublicationCancellationKeepsTerminalOutcome(t *testing.T) {
 			if err := s.publish(t, save.ID, root); err != nil {
 				t.Fatal(err)
 			}
-			if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, ErrTerminal) {
+			if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, agent.ErrTerminal) {
 				t.Fatalf("terminal outcome replaced: %v", err)
 			}
 			var state string
@@ -510,16 +512,16 @@ func TestComputerLeaseDiskRejectsChangedMountAndKey(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN disk_encryption_keys k ON k.id=r.page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, seedKey); !errors.Is(err, ErrDenied) {
+	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, seedKey); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unowned write key: %v", err)
 	}
 	otherKey := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, otherKey, f.env, f.computer)
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, otherKey); !errors.Is(err, ErrConflict) {
+	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, otherKey); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("rebound key: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=(SELECT id FROM disk_roots WHERE environment_id=$1 AND id<>base_root_id LIMIT 1) WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, ErrConflict) {
+	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("rebound mount: %v", err)
 	}
 }
@@ -559,13 +561,13 @@ func TestPublishedSaveReceiptRequiresOriginalHostIdentity(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.worker)
 				ref.Host.Epoch = 2
 			}
-			if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, ErrDenied) {
+			if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign registration replay: %v", err)
 			}
-			if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, ErrDenied) {
+			if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign certification replay: %v", err)
 			}
-			if err := s.publisher.Publish(t.Context(), ref, root, "foreign replay"); !errors.Is(err, ErrDenied) {
+			if err := s.publisher.Publish(t.Context(), ref, root, "foreign replay"); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("foreign publication replay: %v", err)
 			}
 			// The internal reconciler does not borrow worker execution authority.
@@ -584,27 +586,27 @@ func TestSaveStorageClassifiesMissingAuthorityAndDependencies(t *testing.T) {
 	f.capture(t, save, identity)
 	ref := s.ref(save.ID)
 	e := s.inspect(t, root)[0]
-	if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, ErrNotReady) {
+	if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("missing registration: %v", err)
 	}
-	if err := s.publisher.Publish(t.Context(), ref, root, "unregistered root"); !errors.Is(err, ErrNotReady) {
+	if err := s.publisher.Publish(t.Context(), ref, root, "unregistered root"); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("missing root: %v", err)
 	}
 	unknown := ref
 	unknown.SaveID = uuid.NewV7()
-	if err := s.publisher.Register(t.Context(), unknown, e); !errors.Is(err, ErrDenied) {
+	if err := s.publisher.Register(t.Context(), unknown, e); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unknown save: %v", err)
 	}
-	if err := savePublicationForTest(t.Context(), f.pool, f.env, unknown.SaveID, identity); !errors.Is(err, ErrDenied) {
+	if err := savePublicationForTest(t.Context(), f.pool, f.env, unknown.SaveID, identity); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unknown receipt: %v", err)
 	}
 	wrongEpoch := ref
 	wrongEpoch.LeaseEpoch++
-	if err := s.publisher.Register(t.Context(), wrongEpoch, e); !errors.Is(err, ErrDenied) {
+	if err := s.publisher.Register(t.Context(), wrongEpoch, e); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("wrong epoch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=NULL,write_key_id=NULL WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, ErrDenied) {
+	if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("unbound source: %v", err)
 	}
 }
@@ -632,7 +634,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	}
 	ref := s.ref(nextSave)
 	ref.LeaseEpoch = 2
-	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, root)[0]); !errors.Is(err, ErrDenied) {
+	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, root)[0]); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("acquiring lease published: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='active',initialized_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND epoch=2`, f.env, f.computer)
@@ -650,7 +652,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, wrongRoot)[0]); !errors.Is(err, ErrConflict) {
+	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, wrongRoot)[0]); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("new object used old base key: %v", err)
 	}
 	s.writer.ActiveKey = key.String()
@@ -706,7 +708,7 @@ func TestSaveStorageCannotAdoptUnretainedCertifiedObjects(t *testing.T) {
 	}
 	ref = s.ref(nextSave)
 	ref.LeaseEpoch = 2
-	if err := s.publisher.Register(t.Context(), ref, inspections[len(inspections)-1]); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Register(t.Context(), ref, inspections[len(inspections)-1]); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("unretained object adopted: %v", err)
 	}
 	var pins int
@@ -724,7 +726,7 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var rootID uuid.UUID
@@ -751,10 +753,10 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, otherIdentity := s.cut(t, 13)
-	if err := s.publisher.Publish(t.Context(), s.ref(save.ID), other, "different cut"); !errors.Is(err, ErrConflict) {
+	if err := s.publisher.Publish(t.Context(), s.ref(save.ID), other, "different cut"); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("retired publication accepted different cut: %v", err)
 	}
-	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, otherIdentity); !errors.Is(err, ErrConflict) {
+	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, otherIdentity); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("retired receipt accepted different cut: %v", err)
 	}
 	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save.ID, LeaseEpoch: 1, DiskRoot: identity, Evidence: "capture retry"}); err != nil {
@@ -771,7 +773,7 @@ func TestLeaseDiskPinsRequirePhysicalStopAndSettledPublication(t *testing.T) {
 	s := newSaveStorageFixture(t, f)
 	_, save := f.finalize(t, "pending-save")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second',status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if err := releaseComputerLeaseDiskForTest(t.Context(), f.pool, f.env, f.computer, 1); !errors.Is(err, ErrNotReady) {
+	if err := releaseComputerLeaseDiskForTest(t.Context(), f.pool, f.env, f.computer, 1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("unfenced expired writer released its pins: %v", err)
 	}
 	retireKey := func() error {
@@ -782,7 +784,7 @@ func TestLeaseDiskPinsRequirePhysicalStopAndSettledPublication(t *testing.T) {
 		t.Fatal("expired unfenced writer lost its write key")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if err := releaseComputerLeaseDiskForTest(t.Context(), f.pool, f.env, f.computer, 1); !errors.Is(err, ErrNotReady) {
+	if err := releaseComputerLeaseDiskForTest(t.Context(), f.pool, f.env, f.computer, 1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("pending save lost its source pins: %v", err)
 	}
 	if err := retireKey(); err == nil {
@@ -807,7 +809,7 @@ func TestLeaseDiskPinsRequirePhysicalStopAndSettledPublication(t *testing.T) {
 func TestLeaseDiskPinsRetainPendingCheckpointAfterSavePublication(t *testing.T) {
 	f := readyCheckpointFixture(t)
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
-	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); !errors.Is(err, ErrNotReady) {
+	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("pending checkpoint lost its source despite published disk: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture settled continuation' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)

@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"encoding/json"
@@ -7,12 +7,14 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func reconcileHistory(t *testing.T, f fixture) {
 	t.Helper()
-	if err := retainSessionHistory(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := agent.RetainSessionHistory(t.Context(), f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -31,18 +33,18 @@ func fenceHistoryProcess(t *testing.T, f fixture) {
 func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	f, a, id, _ := askFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60 WHERE id=$1`, f.session)
-	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "answer", Answer: json.RawMessage(`""`)}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
+	req := agent.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "answer", Answer: json.RawMessage(`""`)}
+	if _, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[{"type":"text","text":"response"}]`)); err != nil {
+	if err := agent.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[{"type":"text","text":"response"}]`)); err != nil {
 		t.Fatal(err)
 	}
 	reconcileHistory(t, f)
 	if historyClock(t, f) != nil {
 		t.Fatal("open Session started clock")
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='lost' WHERE session_id=$1`, f.session)
@@ -60,34 +62,34 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if got := historyClock(t, f); got == nil || !got.Equal(*first) {
 		t.Fatal("clock moved")
 	}
-	view, err := GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err := agent.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Input == nil || view.PayloadExpiredAt != nil {
 		t.Fatalf("premature expiry: %+v %v", view, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM statement_timestamp()-interval '2 minutes')+history_retention_seconds WHERE id=$1`, f.session)
 	reconcileHistory(t, f)
 	reconcileHistory(t, f)
-	view, err = GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err = agent.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Input != nil || view.Result != nil || view.Response != nil || view.PayloadExpiredAt == nil || view.TerminalAt == nil || view.Status != "cancelled" {
 		t.Fatalf("expired Turn: %+v %v", view, err)
 	}
-	answer, err := GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
+	answer, err := agent.GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
 	if err != nil || answer.Question != nil || answer.Answer != nil || answer.PayloadExpiredAt == nil || answer.RespondedByUserID == nil {
 		t.Fatalf("expired answer: %+v %v", answer, err)
 	}
-	replay, err := RespondAsk(t.Context(), f.pool, f.caller(), req)
+	replay, err := agent.RespondAsk(t.Context(), f.pool, f.caller(), req)
 	if err != nil || replay.PayloadExpiredAt == nil {
 		t.Fatalf("answer replay: %+v %v", replay, err)
 	}
 	if retry := f.enqueue(t, "ask"); retry.TurnID != a.TurnID {
 		t.Fatal("admission retry changed")
 	}
-	_, err = ListEvents(t.Context(), f.pool, f.caller(), TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100})
-	var expired *CursorExpired
+	_, err = agent.ListEvents(t.Context(), f.pool, f.caller(), agent.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100})
+	var expired *agent.CursorExpired
 	if !errors.As(err, &expired) || expired.RetainedAfter == 0 {
 		t.Fatalf("cursor floor: %v", err)
 	}
-	page, err := ListEvents(t.Context(), f.pool, f.caller(), TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100, After: expired.RetainedAfter})
+	page, err := agent.ListEvents(t.Context(), f.pool, f.caller(), agent.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100, After: expired.RetainedAfter})
 	if err != nil || len(page.Records) != 0 {
 		t.Fatalf("expired event read: %+v %v", page, err)
 	}
@@ -99,7 +101,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 func TestHistoryRetentionPendingSaveAndUntilDeletion(t *testing.T) {
 	f := newFixture(t)
 	_, save := f.finalize(t, "save")
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -146,14 +148,14 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 	ready := f
 	ready.session = last
 	fenceHistoryProcess(t, ready)
-	next, more, err := reconcileSessionHistory(t.Context(), f.pool, sessionLifecyclePosition{})
+	next, more, err := agent.ReconcileSessionHistory(t.Context(), f.pool, agent.SessionLifecyclePosition{})
 	if err != nil || !more {
 		t.Fatalf("first page: %v %v", more, err)
 	}
 	if historyClock(t, ready) != nil {
 		t.Fatal("last owner should be on second page")
 	}
-	_, more, err = reconcileSessionHistory(t.Context(), f.pool, next)
+	_, more, err = agent.ReconcileSessionHistory(t.Context(), f.pool, next)
 	if err != nil || more || historyClock(t, ready) == nil {
 		t.Fatalf("blocked prefix starved later owner: %v %v", more, err)
 	}
@@ -162,7 +164,7 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 	f := newFixture(t)
 	f.enqueue(t, "max-duration")
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)

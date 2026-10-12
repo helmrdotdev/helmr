@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -7,13 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestRuntimeTurnRechecksLeaseAfterProcessLock(t *testing.T) {
 	f := newFixture(t)
 	admission := f.enqueue(t, "dispatch")
-	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	a, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +30,7 @@ func TestRuntimeTurnRechecksLeaseAfterProcessLock(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+		_, err := agent.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 		done <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -74,12 +76,12 @@ func TestRuntimeTurnReceiptMatchesPublishedResult(t *testing.T) {
 	f := newFixture(t)
 	s := newSaveStorageFixture(t, f)
 	a, save := f.finalize(t, "terminal-receipt")
-	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
 	outcome := json.RawMessage(`{"status":"completed","result":{"result":1}}`)
-	if _, err := ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome); err == nil {
+	if _, err := agent.ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome); err == nil {
 		t.Fatal("prepared result acknowledged as completed")
 	}
 	root, _ := s.cut(t, 8)
@@ -89,19 +91,19 @@ func TestRuntimeTurnReceiptMatchesPublishedResult(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := agent.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	// Current physical ownership may observe a prior outcome after a hold changes
 	// business authority; it cannot rewrite the retained result.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
 	for range 2 {
-		sequence, err := ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome)
+		sequence, err := agent.ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome)
 		if err != nil || sequence != a.Sequence {
 			t.Fatalf("terminal receipt: %d %v", sequence, err)
 		}
 	}
-	if _, err := ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, json.RawMessage(`{"status":"completed","result":{"result":2}}`)); !errors.Is(err, ErrConflict) {
+	if _, err := agent.ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, json.RawMessage(`{"status":"completed","result":{"result":2}}`)); !errors.Is(err, agent.ErrConflict) {
 		t.Fatalf("changed result: %v", err)
 	}
 }

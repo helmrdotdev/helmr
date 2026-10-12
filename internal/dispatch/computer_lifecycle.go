@@ -1,4 +1,4 @@
-package agent
+package dispatch
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type computerLifecyclePosition struct {
+type LeaseLifecyclePosition struct {
 	environment, computer uuid.UUID
 	epoch                 int64
 }
@@ -24,9 +24,9 @@ func RunComputerLifecycle(ctx context.Context, database db.TxDB, log *slog.Logge
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var position computerLifecyclePosition
+	var position LeaseLifecyclePosition
 	for {
-		next, more, err := reconcileComputerLifecycle(ctx, database, position)
+		next, more, err := ReconcileLeaseLifecycle(ctx, database, position)
 		position = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -45,7 +45,7 @@ func RunComputerLifecycle(ctx context.Context, database db.TxDB, log *slog.Logge
 	}
 }
 
-func reconcileComputerLifecycle(ctx context.Context, database db.TxDB, after computerLifecyclePosition) (computerLifecyclePosition, bool, error) {
+func ReconcileLeaseLifecycle(ctx context.Context, database db.TxDB, after LeaseLifecyclePosition) (LeaseLifecyclePosition, bool, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	// Separate time and host-loss ranges so healthy leases need no per-row host lookup.
@@ -67,8 +67,8 @@ func reconcileComputerLifecycle(ctx context.Context, database db.TxDB, after com
 	if err != nil {
 		return after, false, err
 	}
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (computerLifecyclePosition, error) {
-		var p computerLifecyclePosition
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LeaseLifecyclePosition, error) {
+		var p LeaseLifecyclePosition
 		err := row.Scan(&p.environment, &p.computer, &p.epoch)
 		return p, err
 	})
@@ -76,7 +76,7 @@ func reconcileComputerLifecycle(ctx context.Context, database db.TxDB, after com
 		return after, false, err
 	}
 	if len(candidates) == 0 {
-		return computerLifecyclePosition{}, false, nil
+		return LeaseLifecyclePosition{}, false, nil
 	}
 	var failures []error
 	for _, candidate := range candidates {
@@ -85,13 +85,13 @@ func reconcileComputerLifecycle(ctx context.Context, database db.TxDB, after com
 			break
 		}
 		after = candidate
-		if err := expireComputerLease(ctx, database, candidate.environment, candidate.computer, candidate.epoch); err != nil {
+		if err := ExpireLease(ctx, database, candidate.environment, candidate.computer, candidate.epoch); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	more := len(candidates) == 100 || after != candidates[len(candidates)-1]
 	if !more {
-		after = computerLifecyclePosition{}
+		after = LeaseLifecyclePosition{}
 	}
 	return after, more, errors.Join(failures...)
 }

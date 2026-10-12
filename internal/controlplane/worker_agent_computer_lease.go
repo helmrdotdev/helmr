@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -58,7 +60,7 @@ func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if err = agent.ObserveComputerStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint); err != nil {
+	if err = dispatch.ObserveComputerStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}

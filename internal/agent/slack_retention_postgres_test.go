@@ -1,10 +1,12 @@
-package agent
+package agent_test
 
 import (
 	"crypto/sha256"
 	"encoding/json"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -20,10 +22,10 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, uuid.NewV7(), json.RawMessage(`"retained source"`)); err != nil {
+			if _, err := agent.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, uuid.NewV7(), json.RawMessage(`"retained source"`)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+			if _, err := agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 				t.Fatal(err)
 			}
 			fenceHistoryProcess(t, f)
@@ -109,10 +111,10 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := agent.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
-	child, err := Spawn(t.Context(), f.pool, nil, caller, req)
+	child, err := agent.Spawn(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +124,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err = agent.ControlSession(t.Context(), f.pool, f.caller(), agent.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)

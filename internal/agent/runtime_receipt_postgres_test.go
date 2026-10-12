@@ -1,8 +1,10 @@
-package agent
+package agent_test
 
 import (
 	"errors"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -20,13 +22,13 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 				case "create", "spawn":
 					req := f.startRequest("original-key")
 					req.ComputerID = f.computer
-					receipt, err := admitSession(t.Context(), f.pool, nil, caller, req, operation)
+					receipt, err := agent.AdmitSession(t.Context(), f.pool, nil, caller, req, operation)
 					return receipt.TurnID.String(), err
 				case "enqueue":
-					receipt, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, IdempotencyKey: "original-key", Input: []byte(`[]`)})
+					receipt, err := agent.Enqueue(t.Context(), f.pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, IdempotencyKey: "original-key", Input: []byte(`[]`)})
 					return receipt.TurnID.String(), err
 				default:
-					receipt, err := ControlSession(t.Context(), f.pool, caller, SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", IdempotencyKey: "original-key"})
+					receipt, err := agent.ControlSession(t.Context(), f.pool, caller, agent.SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", IdempotencyKey: "original-key"})
 					return receipt.ID.String(), err
 				}
 			}
@@ -38,7 +40,7 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=2 WHERE id=$1`, f.session)
-			if _, err := invoke(); !errors.Is(err, ErrDenied) {
+			if _, err := invoke(); !errors.Is(err, agent.ErrDenied) {
 				t.Fatalf("stale authority read receipt: %v", err)
 			}
 			caller.Execution.AuthorityGeneration = 2
