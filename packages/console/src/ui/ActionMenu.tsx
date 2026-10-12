@@ -1,7 +1,7 @@
 import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js";
 import { actionMenuItemClass, ui } from "./styles";
 
-export type ActionMenuItem = {
+type ActionMenuItem = {
   label: string;
   busyLabel?: string | undefined;
   disabled?: boolean | undefined;

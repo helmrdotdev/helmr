@@ -1,5 +1,5 @@
 import { ApiError, postJson, request } from "./api";
-export type DeploymentEvent = {
+type DeploymentEvent = {
   id: string;
   deployment_id?: string;
   category: string;
@@ -20,17 +20,17 @@ export type Deployment = {
   created_at: string;
 };
 
-export type ListDeploymentsResponse = {
+type ListDeploymentsResponse = {
   deployments: Deployment[];
   next_cursor?: string;
 };
 
-export type DeploymentEventPage = {
+type DeploymentEventPage = {
   events: DeploymentEvent[];
   next_cursor?: string | null;
 };
 
-export type DeploymentScope = {
+type DeploymentScope = {
   projectID: string;
   environmentID: string;
 };

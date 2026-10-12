@@ -27,8 +27,8 @@ const TONES = {
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
-export type BadgeResource = keyof typeof TONES;
-export type BadgeStatus<R extends BadgeResource> = keyof (typeof TONES)[R] & string;
+type BadgeResource = keyof typeof TONES;
+type BadgeStatus<R extends BadgeResource> = keyof (typeof TONES)[R] & string;
 
 export function StatusBadge<R extends BadgeResource>(props: { resource: R; status: BadgeStatus<R> }) {
   const tone = () => (TONES[props.resource] as Record<string, Tone>)[props.status] ?? "expired";

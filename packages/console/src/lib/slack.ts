@@ -7,8 +7,8 @@ export type AgentSlackPublication = {
   credentials_configured: boolean; client_id: string | null; app_id: string | null;
   team_id: string | null; workspace_name: string | null; app_name: string | null; app_icon_url: string | null;
 };
-export type AgentSlackConnection = { publication: AgentSlackPublication | null; manifest?: unknown; create_app_url?: string };
-export type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret: string };
+type AgentSlackConnection = { publication: AgentSlackPublication | null; manifest?: unknown; create_app_url?: string };
+type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret: string };
 function publicationPath(address: AgentSlackAddress): string {
   return `/api/projects/${encodeURIComponent(address.projectID)}/environments/${encodeURIComponent(address.environmentID)}/agents/${encodeURIComponent(address.agentName)}/slack`;
 }
@@ -28,7 +28,7 @@ export function finishSlackAuthorization(input: { state: string; code: string; e
 }
 
 export type SlackUserLink = { team_id: string; slack_user_id: string; linked_at: string };
-export type SlackLinkWorkspace = { installation_id: string; team_id: string; workspace_name: string | null };
+type SlackLinkWorkspace = { installation_id: string; team_id: string; workspace_name: string | null };
 export type SlackIdentityProof = { identity: { team_id: string; slack_user_id: string; name: string }; confirmation: string; helmr_user_id: string; helmr_display_name: string; helmr_org_name: string; workspace_name: string | null; return_url: string };
 export type SlackFirstUseLink = { organization_id: string; installation_id: string; team_id: string; slack_user_id: string; workspace_name: string | null; organization_name: string; helmr_display_name: string; return_url: string; linked: boolean };
 export function getSlackFirstUseLink(link: string): Promise<SlackFirstUseLink> {

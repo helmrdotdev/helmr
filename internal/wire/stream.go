@@ -51,20 +51,3 @@ func ReadStreamFrameHeader(r io.Reader) (StreamHeader, uint64, error) {
 	}
 	return header, bodyLen, nil
 }
-
-func WriteFileFrame(w io.Writer, header StreamHeader, path string) error {
-	digest, size, err := frameio.HashFile(path)
-	if err != nil {
-		return err
-	}
-	return WriteFileFrameWithMetadata(w, header, path, digest, size)
-}
-
-func WriteFileFrameWithMetadata(w io.Writer, header StreamHeader, path string, digest string, size int64) error {
-	header.BodyDigest = &digest
-	headerBytes, err := json.Marshal(header)
-	if err != nil {
-		return fmt.Errorf("marshal file frame header: %w", err)
-	}
-	return frameio.WriteFileFrameWithMetadata(w, headerBytes, path, size)
-}

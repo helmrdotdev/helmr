@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -283,32 +282,9 @@ func programTreeEntries(
 	}
 }
 
-func (program *encodedProgram) Publish(
-	ctx context.Context,
-	store cas.Store,
-) (artifact.ProgramOutput, error) {
-	if program == nil || program.artifact == nil {
-		return artifact.ProgramOutput{}, errors.New("encoded program is closed")
-	}
-	if store == nil {
-		return artifact.ProgramOutput{}, errors.New("program store is required")
-	}
-	if err := publishProgramArtifact(
-		ctx,
-		store,
-		program.artifact,
-		program.Output.Artifact,
-	); err != nil {
-		return artifact.ProgramOutput{}, fmt.Errorf("publish program: %w", err)
-	}
-	output := program.Output
-	output.Metadata = output.Metadata.Clone()
-	return output, nil
-}
-
 // Materialize writes the exact verified Program object to a new local file.
-// It is the producer-side counterpart to Publish: local/CI builders retain the
-// object for bundle finalization instead of publishing it to a service CAS.
+// Local/CI builders retain the object for bundle finalization instead of
+// publishing it to a service CAS.
 func (program *encodedProgram) Materialize(
 	ctx context.Context,
 	path string,
@@ -366,28 +342,6 @@ func (program *encodedProgram) Materialize(
 	closeErr := verified.Close()
 	if err := errors.Join(verifyErr, closeErr); err != nil {
 		return fmt.Errorf("verify materialized Program object: %w", err)
-	}
-	return nil
-}
-
-func publishProgramArtifact(
-	ctx context.Context,
-	store cas.Store,
-	content *localcopy.Artifact,
-	expected artifact.ProgramDescriptor,
-) error {
-	reader, err := content.UploadReader(ctx)
-	if err != nil {
-		return err
-	}
-	object, err := store.Put(ctx, expected.MediaType, reader)
-	if err != nil {
-		return err
-	}
-	if object.Digest != expected.Digest ||
-		object.SizeBytes != expected.SizeBytes ||
-		object.MediaType != expected.MediaType {
-		return errors.New("published program object does not match its descriptor")
 	}
 	return nil
 }

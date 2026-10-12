@@ -34,12 +34,12 @@ export function onboardingRedirectPath(me: Me, requirement: AuthRequirement = "p
   return null;
 }
 
-export type MagicLinkStartResponse = {
+type MagicLinkStartResponse = {
   sent: true;
   debug_url?: string;
 };
 
-export type InviteMagicLinkStartResponse = MagicLinkStartResponse & {
+type InviteMagicLinkStartResponse = MagicLinkStartResponse & {
   email?: string;
 };
 
@@ -119,7 +119,7 @@ export async function getDeviceCodeStatus(userCode: string): Promise<DeviceCodeS
   );
 }
 
-export type DeviceConsent = { user_id: string; org_id: string };
+type DeviceConsent = { user_id: string; org_id: string };
 
 export async function approveDeviceCode(userCode: string, consent: DeviceConsent): Promise<DeviceCodeStatus> {
   return postJson<{ user_code: string } & DeviceConsent, DeviceCodeStatus>("/api/auth/device/approve", {

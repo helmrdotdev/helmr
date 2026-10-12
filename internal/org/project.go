@@ -239,22 +239,6 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 	return environment, nil
 }
 
-// GetEnvironment returns an active environment of a project.
-func GetEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID) (db.Environment, error) {
-	environment, err := q.GetEnvironment(ctx, db.GetEnvironmentParams{
-		OrgID:     pgvalue.UUID(orgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
-	})
-	if isNoRows(err) {
-		return db.Environment{}, ErrEnvironmentNotFound
-	}
-	if err != nil {
-		return db.Environment{}, fmt.Errorf("load environment: %w", err)
-	}
-	return environment, nil
-}
-
 // UpdateEnvironment changes display settings while preserving the public identifier.
 func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
 	if details.HistoryRetention.Mode != "" || details.HistoryRetention.Seconds != nil {

@@ -46,4 +46,3 @@ This table sets where IDs and actions live. Apply it to every page instead of ch
   - `full`: the full value once; the text itself copies on click with a brief "Copied" and an `aria-label` that switches between `Copy …` and `Copied …`. There is no sibling copy button and no `cursor: copy`.
   `fallback` renders for the empty case (default `—`).
 - `RelativeTime` — every timestamp: relative text with the absolute time in `title`; `fallback` renders when the value is missing.
-- `TagList` — tag chips, or `—` when empty.

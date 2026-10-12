@@ -6,7 +6,7 @@ export type AdminRegion = {
   location: string;
 };
 
-export type CreateAdminRegionInput = AdminRegion;
+type CreateAdminRegionInput = AdminRegion;
 
 export type AdminWorkerGroup = {
   id: string;

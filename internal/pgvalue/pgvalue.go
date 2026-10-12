@@ -69,27 +69,12 @@ func Int4Response(value pgtype.Int4) *int32 {
 	return &value.Int32
 }
 
-func Int8Value(value pgtype.Int8) int64 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Int64
-}
-
 func UUID(value uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: value, Valid: true}
 }
 
 func NewUUIDv7() pgtype.UUID {
 	return UUID(uuid.NewV7())
-}
-
-func NewUUIDv7Batch(count int32) []pgtype.UUID {
-	ids := make([]pgtype.UUID, count)
-	for index := range ids {
-		ids[index] = NewUUIDv7()
-	}
-	return ids
 }
 
 func UUIDValue(value pgtype.UUID) (uuid.UUID, error) {

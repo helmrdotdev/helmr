@@ -149,7 +149,7 @@ export function createClientSessions(
     },
   } satisfies ClientSessionsApi)
 }
-export function createSessionRef(
+function createSessionRef(
   id: string,
   transport: SessionTransport,
 ): ClientSessionRef {

@@ -3,7 +3,6 @@ import type { AnswerControl, AnswerFor, AskResponse, Question } from "./question
 import type { JsonValue } from "./contract"
 export type { TurnOutcome } from "./contract"
 import { normalizeInput } from "./content"
-export { MessageRejected } from "./message-error"
 import type { HumanContent, InputContent } from "./content"
 import type { ImageBuilder } from "./image"
 

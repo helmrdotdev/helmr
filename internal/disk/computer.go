@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
@@ -20,27 +19,6 @@ type ComputerArtifact struct {
 	Encoding   string
 	SizeBytes  int64
 	EntryCount int
-}
-
-func CreateEmptyComputerArtifact(tempDir string) (ComputerArtifact, func(), error) {
-	root, err := os.MkdirTemp(tempDir, "computer-empty-")
-	if err != nil {
-		return ComputerArtifact{}, func() {}, fmt.Errorf("create empty computer root: %w", err)
-	}
-	cleanupRoot := func() { _ = os.RemoveAll(root) }
-	trustedRoot := tempDir
-	if strings.TrimSpace(trustedRoot) == "" {
-		trustedRoot = os.TempDir()
-	}
-	artifact, cleanupArtifact, err := CreateComputerArtifactFromRoot(root, tempDir, trustedRoot)
-	if err != nil {
-		cleanupRoot()
-		return ComputerArtifact{}, func() {}, err
-	}
-	return artifact, func() {
-		cleanupArtifact()
-		cleanupRoot()
-	}, nil
 }
 
 func CreateComputerArtifactFromRoot(root string, tempDir string, trustedRoot string) (ComputerArtifact, func(), error) {

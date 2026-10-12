@@ -22,7 +22,7 @@ export type Project = {
   environments?: Environment[];
 };
 
-export type ListProjectsResponse = {
+type ListProjectsResponse = {
   projects: Project[];
   next_cursor?: string;
 };
@@ -33,27 +33,27 @@ export type Region = {
   location?: string;
 };
 
-export type ListRegionsResponse = {
+type ListRegionsResponse = {
   regions: Region[];
 };
 
-export type CreateProjectInput = HistoryRetentionPolicy & {
+type CreateProjectInput = HistoryRetentionPolicy & {
   project: string;
   name: string;
   default_region_id?: string;
 };
 
-export type UpdateProjectInput = {
+type UpdateProjectInput = {
   name: string;
 };
 
-export type CreateEnvironmentInput = HistoryRetentionPolicy & {
+type CreateEnvironmentInput = HistoryRetentionPolicy & {
   environment: string;
   name: string;
   color_hex: string;
 };
 
-export type UpdateEnvironmentInput = Partial<HistoryRetentionPolicy> & {
+type UpdateEnvironmentInput = Partial<HistoryRetentionPolicy> & {
   name: string;
   color_hex: string;
 };
