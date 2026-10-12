@@ -1,3 +1,4 @@
+import { validateSecretName } from "./secret"
 import { retentionFromMilliseconds } from "./duration"
 import type { SecretBinding } from "./agent"
 import type { Duration, CursorPage } from "./contract"
@@ -123,11 +124,11 @@ export function encodeComputerSecrets(
   let originCount = 0
   const result = inputs.map((input): SecretBinding => {
     const value = computerObject(input, "Computer Secret")
-    resourceID(value["secretId"], "Secret ID")
+    validateSecretName(value["secret"] as string)
     const hasEnv = value["env"] !== undefined
     const hasFile = value["file"] !== undefined
     if (hasEnv === hasFile) throw new Error("Computer Secret requires exactly one of env or file")
-    exactBindingKeys(value, ["secretId", "env", "file"])
+    exactBindingKeys(value, ["secret", "env", "file"])
     if (hasEnv) {
       const env = computerObject(value["env"], "Computer Secret env")
       const mode = env["mode"]
@@ -138,19 +139,19 @@ export function encodeComputerSecrets(
       if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.startsWith("HELMR_") || name.startsWith("LD_") || ["NODE_OPTIONS", "NODE_PATH", "NODE_ICU_DATA", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES", "GCONV_PATH", "LOCPATH"].includes(name) || ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "NODE_USE_SYSTEM_CA"].includes(name.toUpperCase())) throw new Error("Invalid or reserved Secret env name")
       if (envNames.has(name)) throw new Error(`Duplicate Secret env target ${name}`)
       envNames.add(name)
-      if (mode === "raw") return Object.freeze({ secretId: input.secretId, env: Object.freeze({ name, mode }) })
+      if (mode === "raw") return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode }) })
       const origins = env["allowedOrigins"]
       if (!Array.isArray(origins) || origins.length === 0 || origins.length > 16) throw new Error("Protected env requires 1 to 16 exact HTTPS origins")
       const allowedOrigins = Object.freeze([...new Set(origins.map(canonicalSecretOrigin))].sort())
       originCount += allowedOrigins.length
-      return Object.freeze({ secretId: input.secretId, env: Object.freeze({ name, mode, allowedOrigins }) })
+      return Object.freeze({ secret: input.secret, env: Object.freeze({ name, mode, allowedOrigins }) })
     }
     const file = computerObject(value["file"], "Computer Secret file")
     exactBindingKeys(file, ["path"])
     const path = file["path"]
     if (typeof path !== "string" || path.length > 4096 || new TextEncoder().encode(path).length > 4096 || !path.startsWith("/") || path === "/" || path.includes("\0") || path.split("/").slice(1).some(part => part === "" || part === "." || part === "..") || ["/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some(root => path === root || path.startsWith(root + "/"))) throw new Error("Invalid or reserved Secret file path")
     files.push(path)
-    return Object.freeze({ secretId: input.secretId, file: Object.freeze({ path }) })
+    return Object.freeze({ secret: input.secret, file: Object.freeze({ path }) })
   })
   files.sort()
   if (files.some((path, index) => index > 0 && (path === files[index-1] || path.startsWith(files[index-1] + "/")))) throw new Error("Conflicting Secret file paths")

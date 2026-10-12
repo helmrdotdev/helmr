@@ -7,8 +7,8 @@ export function agentContractFixture() {
     resources: { cpu: 2, memory: "4GiB", disk: "16GiB" },
     prepare: async build => { await build.exec(["true"]) },
     refresh: { every: "24h", maxAge: "48h" },
-    secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "API_TOKEN", mode: "raw" } }],
-    buildSecrets: [{ secretId: "01900000-0000-7000-8000-000000000002", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
+    secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }],
+    buildSecrets: [{ secret: "SOURCE_TOKEN", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
   })
   const coder = agent({
     id: "coder", template: workspace, init: () => null, turn: () => null,

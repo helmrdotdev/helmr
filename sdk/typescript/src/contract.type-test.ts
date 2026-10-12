@@ -18,9 +18,9 @@ export function assertGreenfieldTypes(): void {
   }
   void unbrandedImage
 
-  const placement: SecretBinding = { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: {name: "TOKEN", mode: "raw"} }
+  const placement: SecretBinding = { secret: "GITHUB_TOKEN", env: {name: "TOKEN", mode: "raw"} }
   const secretCreate: SecretCreateRequest = {
-    name: "TOKEN",
+    secret: "TOKEN",
     value: "secret",
   }
   const secretRotate: SecretRotateRequest = {

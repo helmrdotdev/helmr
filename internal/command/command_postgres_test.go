@@ -472,13 +472,17 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	creator := computer.NewCreator(store)
 	key := "repair-shell"
 	scope := computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment}
-	request := computer.Request{Scope: scope, DefinitionKey: "fixture-computer", Key: &key, Secrets: []secretbinding.Reference{{SecretID: secretID.String(), Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "raw"}}}, IdempotencyKey: "create"}
+	request := computer.Request{Scope: scope, DefinitionKey: "fixture-computer", Key: &key, Secrets: []secretbinding.Reference{{Secret: "COMMAND_TOKEN", Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "raw"}}}, IdempotencyKey: "create"}
 	first, err := creator.Create(t.Context(), f.Pool, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Snapshot.DefinitionKey != "fixture-computer" || first.Snapshot.DeploymentID != f.Deployment.String() || len(first.Snapshot.Secrets) != 1 || first.Snapshot.Secrets[0].SecretID != secretID.String() {
+	if first.Snapshot.DefinitionKey != "fixture-computer" || first.Snapshot.DeploymentID != f.Deployment.String() || len(first.Snapshot.Secrets) != 1 || first.Snapshot.Secrets[0].Secret != "COMMAND_TOKEN" {
 		t.Fatalf("creation projection %+v", first.Snapshot)
+	}
+	var bound uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT secret_id FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2`, f.Environment, first.ComputerID).Scan(&bound); err != nil || bound != secretID {
+		t.Fatalf("logical identifier did not pin internal Secret: %s %v", bound, err)
 	}
 	other := request
 	other.IdempotencyKey = "other-key"
@@ -530,6 +534,19 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	}
 	if _, err = Create(t.Context(), f.Pool, exec); err != nil {
 		t.Fatalf("retained command replay: %v", err)
+	}
+	if _, err = store.Revoke(t.Context(), f.Environment, secretID, "revoke-after-create"); err != nil {
+		t.Fatal(err)
+	}
+	replay, err = creator.Create(t.Context(), f.Pool, request)
+	if err != nil || !replay.Replayed || replay.ComputerID != first.ComputerID || replay.Snapshot.Secrets[0].Secret != "COMMAND_TOKEN" {
+		t.Fatalf("revocation broke creation replay: %+v %v", replay, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
+	newRequest := request
+	newRequest.IdempotencyKey, newRequest.Key = "after-revocation", nil
+	if _, err = creator.Create(t.Context(), f.Pool, newRequest); !errors.Is(err, computer.ErrSecretUnavailable) {
+		t.Fatalf("new creation accepted revoked name: %v", err)
 	}
 	request.Secrets = []secretbinding.Reference{}
 	var conflict idempotency.ConflictError

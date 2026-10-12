@@ -31,7 +31,7 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `GET` | `/v1/schedules` |
 | `GET` | `/v1/schedules/{scheduleID}` |
 | `GET` | `/v1/secrets` |
-| `GET` | `/v1/secrets/{secretID}` |
+| `GET` | `/v1/secrets/{secret}` |
 | `GET` | `/v1/sessions` |
 | `GET` | `/v1/sessions/{sessionID}` |
 | `GET` | `/v1/sessions/{sessionID}/events` |
@@ -49,8 +49,8 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `POST` | `/v1/deployment-bundles/upload-plan` |
 | `POST` | `/v1/deployments/{deploymentID}/promote` |
 | `POST` | `/v1/secrets` |
-| `POST` | `/v1/secrets/{secretID}/revoke` |
-| `POST` | `/v1/secrets/{secretID}/rotate` |
+| `POST` | `/v1/secrets/{secret}/revoke` |
+| `POST` | `/v1/secrets/{secret}/rotate` |
 | `POST` | `/v1/sessions` |
 | `POST` | `/v1/sessions/{sessionID}/cancel` |
 | `POST` | `/v1/sessions/{sessionID}/close` |
@@ -61,8 +61,10 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/interrupt` |
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/messages` |
 
-`{agent}` and `{template}` are identifiers declared in code. Other resource path
-IDs are server-assigned UUIDs. Agent/Template list and get resolve the current
+`{agent}` and `{template}` are identifiers declared in code. `{secret}` is the
+Environment-scoped ID chosen when creating the Secret, such as `GITHUB_TOKEN`.
+Project and Environment selectors use the readable `project` and `environment`
+IDs shown in the Console. Instance resource IDs are server-assigned UUIDs. Agent/Template list and get resolve the current
 Deployment unless `deployment_id` selects an exact Deployment. Responses include
 that resolved `deployment_id`; list envelopes are `agents` and `templates`.
 
@@ -102,7 +104,7 @@ It requires `computers:update`.
 ## Conventions
 
 - Request and response bodies are JSON. Most fields use snake case. Secret
-  bindings use `secretId`, `env`, `file` and `allowedOrigins`, the same names
+  bindings use `secret`, `env`, `file` and `allowedOrigins`, the same names
   as the SDK.
 - Input and messages are arrays of text parts. Output and responses are
   Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).

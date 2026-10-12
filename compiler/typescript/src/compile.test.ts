@@ -9,7 +9,7 @@ const compile = (...exports: ReturnType<typeof entry>[]) => analyze({ architectu
 describe("Agent declaration analysis", () => {
   test("bundles inline Computer and all execution functions without running them", () => {
     const prepare = () => { throw new Error("prepare executed during compilation") }
-    const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
+    const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
     expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", setup: true, maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
@@ -40,8 +40,8 @@ describe("Agent declaration analysis", () => {
     const worker = agent({ id: "worker", template: machine(), turn: () => null })
     expect(() => compile(entry(worker, "x", "../escape.mjs"))).toThrow()
     for (const maxTurnDuration of [0, -1, NaN, Infinity, 0.5, "0s", "1.5s", "01s"]) expect(() => compile(entry({ ...worker, maxTurnDuration }))).toThrow()
-    expect(() => compile(entry({ ...machine(), secrets: [{ secretId: "name", env: { name: "TOKEN", mode: "raw" } }] }))).toThrow("Secret ID")
-    expect(() => compile(entry({ ...machine(), buildSecrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" }, value: "secret" }] }))).toThrow("unknown member")
+    expect(() => compile(entry({ ...machine(), secrets: [{ secret: "bad name", env: { name: "TOKEN", mode: "raw" } }] }))).toThrow("Secret name")
+    expect(() => compile(entry({ ...machine(), buildSecrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" }, value: "secret" }] }))).toThrow("unknown member")
     expect(() => compile(entry({ ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: undefined }] }))).toThrow()
     expect(() => compile(entry({ kind: "task", id: "old" }))).toThrow("definitions")
   })
@@ -56,38 +56,38 @@ describe("Agent declaration analysis", () => {
     const sharedId = agent({ id: "machine", template: machine(), turn: () => null })
     expect(compile(entry(sharedId)).buildPlan.definitions.map(item => item.kind)).toEqual(["agent", "template"])
   })
-  test("rejects nil Secret identities for both runtime and preparation", () => {
+  test("rejects empty Secret identifiers for both runtime and preparation", () => {
     for (const field of ["secrets", "buildSecrets"] as const) {
-      expect(() => compile(entry(template({ ...machine(), [field]: [{ secretId: "00000000-0000-0000-0000-000000000000", env: { name: "TOKEN", mode: "raw" } }] })))).toThrow("Secret")
+      expect(() => compile(entry(template({ ...machine(), [field]: [{ secret: "", env: { name: "TOKEN", mode: "raw" } }] })))).toThrow("Secret")
     }
   })
   test("canonicalizes all Secret placements and rejects ambiguous delivery", () => {
-    const secretId = "01900000-0000-7000-8000-000000000003"
+    const secret = "01900000-0000-7000-8000-000000000003"
     const bindings = [
-      { secretId, file: { path: "/etc/service/token" } },
-      { secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://API.EXAMPLE.COM:443", "https://api.example.com"] } },
-      { secretId, env: { name: "RAW_TOKEN", mode: "raw" } },
+      { secret, file: { path: "/etc/service/token" } },
+      { secret, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://API.EXAMPLE.COM:443", "https://api.example.com"] } },
+      { secret, env: { name: "RAW_TOKEN", mode: "raw" } },
     ]
     const result = compile(entry({ ...machine(), secrets: bindings, buildSecrets: bindings.toReversed() }))
     const declaration = result.buildPlan.definitions[0]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.secrets).toEqual([
-      { secretId, env: { name: "RAW_TOKEN", mode: "raw" } },
-      { secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://api.example.com"] } },
-      { secretId, file: { path: "/etc/service/token" } },
+      { secret, env: { name: "RAW_TOKEN", mode: "raw" } },
+      { secret, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://api.example.com"] } },
+      { secret, file: { path: "/etc/service/token" } },
     ])
     expect(declaration.manifest.buildSecrets).toEqual(declaration.manifest.secrets)
     for (const invalid of [
       {},
-      [{ secretId }],
-      [{ secretId: "11111111-1111-4111-8111-111111111111", env: { name: "TOKEN", mode: "raw" } }],
-      [{ secretId: "01900000-0000-7AAA-8AAA-AAAAAAAAAAAA", env: { name: "TOKEN", mode: "raw" } }],
-      [{ secretId, env: { name: "TOKEN", mode: "raw" }, file: { path: "/etc/token" } }],
-      [{ secretId, env: { name: "NODE_OPTIONS", mode: "raw" } }],
-      [{ secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["http://api.example.com"] } }],
-      [{ secretId, env: { name: "TOKEN", mode: "raw", allowedOrigins: ["https://api.example.com"] } }],
-      [{ secretId, file: { path: "/workspace/token" } }],
-      [{ secretId, file: { path: "/etc/token" } }, { secretId, file: { path: "/etc/token/child" } }],
+      [{ secret }],
+      [{ secret: "bad/name", env: { name: "TOKEN", mode: "raw" } }],
+      [{ secret: "bad name", env: { name: "TOKEN", mode: "raw" } }],
+      [{ secret, env: { name: "TOKEN", mode: "raw" }, file: { path: "/etc/token" } }],
+      [{ secret, env: { name: "NODE_OPTIONS", mode: "raw" } }],
+      [{ secret, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["http://api.example.com"] } }],
+      [{ secret, env: { name: "TOKEN", mode: "raw", allowedOrigins: ["https://api.example.com"] } }],
+      [{ secret, file: { path: "/workspace/token" } }],
+      [{ secret, file: { path: "/etc/token" } }, { secret, file: { path: "/etc/token/child" } }],
       [bindings[1], bindings[1]],
     ]) {
       for (const field of ["secrets", "buildSecrets"]) expect(() => compile(entry({ ...machine(), [field]: invalid }))).toThrow()

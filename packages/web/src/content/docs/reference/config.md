@@ -278,8 +278,8 @@ the SDK and REST API:
 
 ```json
 [
-  { "secretId": "SECRET_UUID", "env": { "name": "TOKEN", "mode": "raw" } },
-  { "secretId": "CONFIG_SECRET_UUID", "file": { "path": "/run/secrets/config.json" } }
+  { "secret": "TOKEN", "env": { "name": "TOKEN", "mode": "raw" } },
+  { "secret": "CONFIG", "file": { "path": "/run/secrets/config.json" } }
 ]
 ```
 

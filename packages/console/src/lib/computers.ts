@@ -1,8 +1,8 @@
 import { request } from "./api";
 
 export type ComputerSecret =
-  | { secretId: string; env: { name: string; mode: "raw"; allowedOrigins?: never } | { name: string; mode: "protected"; allowedOrigins: string[] }; file?: never }
-  | { secretId: string; file: { path: string }; env?: never };
+  | { secret: string; env: { name: string; mode: "raw"; allowedOrigins?: never } | { name: string; mode: "protected"; allowedOrigins: string[] }; file?: never }
+  | { secret: string; file: { path: string }; env?: never };
 
 export type ComputerStatus = "available" | "deleted" | "deleting";
 

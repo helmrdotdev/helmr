@@ -23,7 +23,7 @@ HTTP(S). With the CLI configured (see [Quickstart](/docs/quickstart)), run
 The CLI uses `HELMR_API_KEY` when it is set, and otherwise the saved login for
 the selected origin. An API key is bound to one Environment, so `-p, --project`
 and `-e, --env` are rejected with it. With a saved login, commands that act in
-an Environment require both flags; each accepts a slug or ID. Details are in
+an Environment require both flags; each accepts the public ID shown in the Console. Details are in
 [Credential selection](/docs/reference/cli/login#credential-selection).
 
 ## Commands

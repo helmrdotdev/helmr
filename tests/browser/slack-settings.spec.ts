@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const now = "2026-10-09T00:00:00Z";
-const project = "00000000-0000-7000-8000-000000000301";
-const environment = "00000000-0000-7000-8000-000000000403";
+const project = "console-demo";
+const environment = "demo";
 const endpoint = `/api/projects/${project}/environments/${environment}/agents/demo-agent/slack`;
 async function openAgent(page: Page) {
   await page.goto("/dev/login");

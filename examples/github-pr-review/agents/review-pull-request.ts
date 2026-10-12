@@ -14,8 +14,8 @@ export const githubPRReviewComputer = template({
   id: "github-pr-review",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
-  // Replace this example UUID with the Environment Secret ID before deployment.
-  secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "GITHUB_TOKEN", mode: "raw" } }],
+  // Create this Secret ID in each target Environment before deployment.
+  secrets: [{ secret: "GITHUB_TOKEN", env: { name: "GITHUB_TOKEN", mode: "raw" } }],
 })
 
 const payload = z.object({

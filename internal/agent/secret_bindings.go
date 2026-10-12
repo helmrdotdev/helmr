@@ -3,11 +3,51 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 )
+
+// ErrSecretUnavailable means a declared Secret is missing or revoked in the Environment.
+var ErrSecretUnavailable = errors.New("secret is unavailable in the environment")
+
+// Resolve only at new admission, under the Environment lock. SHARE conflicts
+// with revocation's status update, so admission cannot race past a revoke.
+func resolveSecretReferences(ctx context.Context, tx pgx.Tx, env uuid.UUID, refs []secretbinding.Reference) (map[string]uuid.UUID, error) {
+	names := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		names = append(names, ref.Secret)
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	resolved := make(map[string]uuid.UUID, len(names))
+	if len(names) == 0 {
+		return resolved, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT name,id FROM secrets WHERE environment_id=$1 AND name=ANY($2::text[]) AND status='active' ORDER BY id FOR SHARE`, env, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var id uuid.UUID
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, err
+		}
+		resolved[name] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(resolved) != len(names) {
+		return nil, ErrSecretUnavailable
+	}
+	return resolved, nil
+}
 
 type registeredSecretBinding struct {
 	Computer    *uuid.UUID `json:"computer_id"`
@@ -22,13 +62,16 @@ type registeredSecretBinding struct {
 	Placeholder string     `json:"placeholder"`
 }
 
-func registrationSecretBindings(refs []secretbinding.Reference, preparation, deployment *uuid.UUID, template *uuid.UUID) ([]registeredSecretBinding, error) {
+func registrationSecretBindings(refs []secretbinding.Reference, resolved map[string]uuid.UUID, preparation, deployment *uuid.UUID, template *uuid.UUID) ([]registeredSecretBinding, error) {
 	placements, err := secretbinding.NormalizeReferences(refs)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]registeredSecretBinding, 0, len(placements))
 	for _, p := range placements {
+		if resolved[p.Name] == uuid.Nil() {
+			return nil, ErrSecretUnavailable
+		}
 		origins := p.AllowedOrigins
 		if origins == nil {
 			origins = []string{}
@@ -37,7 +80,7 @@ func registrationSecretBindings(refs []secretbinding.Reference, preparation, dep
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, registeredSecretBinding{Computer: nil, Preparation: preparation, Deployment: deployment, Template: template, Secret: p.Name, Kind: p.Kind, Target: p.Target, Mode: p.Mode, Origins: origins, Placeholder: placeholder})
+		result = append(result, registeredSecretBinding{Computer: nil, Preparation: preparation, Deployment: deployment, Template: template, Secret: resolved[p.Name].String(), Kind: p.Kind, Target: p.Target, Mode: p.Mode, Origins: origins, Placeholder: placeholder})
 	}
 	return result, nil
 }

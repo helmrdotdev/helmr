@@ -79,7 +79,7 @@ test("an environment can be renamed and recolored from Settings and the header d
 
   const dialog = page.getByRole("dialog", { name: "Edit Staging" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Slug (not editable)")).toBeDisabled();
+  await expect(dialog.getByLabel("Environment ID (not editable)")).toBeDisabled();
   await dialog.getByLabel("Name").fill("Staging Renamed");
   await dialog.getByRole("button", { name: "Use #22C55E" }).click();
   await dialog.getByRole("button", { name: "Save" }).click();
@@ -87,7 +87,7 @@ test("an environment can be renamed and recolored from Settings and the header d
 
   const renamedRow = page.getByRole("row", { name: /Staging Renamed/ });
   await expect(renamedRow).toBeVisible();
-  await expect(renamedRow.getByRole("cell", { name: "staging", exact: true })).toBeVisible();
+  await expect(renamedRow.getByRole("button", { name: "Copy staging", exact: true })).toBeVisible();
   await expect(renamedRow.locator("span[style]").first()).toHaveCSS("background-color", "rgb(34, 197, 94)");
 
   await renamedRow.getByRole("button", { name: "Use" }).click();

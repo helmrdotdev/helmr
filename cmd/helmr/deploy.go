@@ -117,8 +117,8 @@ func deployCommand() *cobra.Command {
 			return reporter.DeploymentResult(promoted, "promoted")
 		},
 	}
-	cmd.Flags().StringVarP(&projectRef, "project", "p", "", "Project slug or ID.")
-	cmd.Flags().StringVarP(&envRef, "env", "e", "", "Environment slug or ID for this deployment.")
+	cmd.Flags().StringVarP(&projectRef, "project", "p", "", "Project ID.")
+	cmd.Flags().StringVarP(&envRef, "env", "e", "", "Environment ID for this deployment.")
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "Existing verified deployment bundle directory.")
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Finalize the deployment without promoting it current.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seed runtime-phase records only in the disposable browser database. This does
 # not run a Worker or publish a Save. Reads, answers and controls use the real API.
-# The fourth ID identifies the Ask fixture, or the Secret for expose-secret.
+# The fourth ID identifies the Ask fixture, or the public Secret identifier for expose-secret.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 if [[ -n "${HELMR_E2E_BASE_URL:-}" || -n "${DATABASE_URL:-}" ]]; then
@@ -9,9 +9,14 @@ if [[ -n "${HELMR_E2E_BASE_URL:-}" || -n "${DATABASE_URL:-}" ]]; then
   exit 1
 fi
 [[ $# = 5 ]] || exit 1
-for id in "${@:1:4}"; do
+for id in "${@:1:3}"; do
   [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 1
 done
+if [[ "$5" = expose-secret ]]; then
+  [[ "$4" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || exit 1
+else
+  [[ "$4" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 1
+fi
 case "$5" in text|choice|finalizing|output|disable-member|restore-member|expose-secret) ;; *) exit 1;; esac
 export HELMR_DEV_DIR="${ROOT}/.helmr-dev-e2e"
 export HELMR_DEV_POSTGRES_PORT="$(( ${HELMR_E2E_PORT:-4173} + 1 ))"
@@ -28,7 +33,7 @@ CREATE TEMP TABLE fixture ON COMMIT DROP AS
 SELECT e.id AS environment_id,e.org_id,s.id AS session_id,s.computer_id,t.id AS turn_id,t.caller_id AS user_id
 FROM environments e JOIN sessions s ON s.environment_id=e.id JOIN turns t ON t.environment_id=e.id AND t.session_id=s.id
 WHERE e.id=:'environment_id' AND e.slug LIKE 'browser-agent-%' AND s.id=:'session_id' AND t.id=:'turn_id'
- AND t.caller_kind='user' AND t.admission_method='start';
+ AND t.caller_kind='user' AND t.admission_method='create';
 DO $$ BEGIN IF (SELECT count(*) FROM fixture) <> 1 THEN RAISE EXCEPTION 'not an owned browser Session'; END IF; END $$;
 SELECT :'mode' IN ('text','choice') AS seed, :'mode'='finalizing' AS finalizing,
  :'mode'='expose-secret' AS expose_secret, :'mode'='output' AS output, :'mode' IN ('disable-member','restore-member') AS membership \gset
@@ -78,7 +83,7 @@ SELECT :'environment_id',:'session_id',:'turn_id',seq,'turn.output',convert_to('
 INSERT INTO secret_exposures(environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
 SELECT f.environment_id,f.session_id,t.process_epoch,s.id,s.current_version_id,s.revocation_generation
 FROM fixture f JOIN turns t ON (t.environment_id,t.id)=(f.environment_id,f.turn_id)
-JOIN secrets s ON s.environment_id=f.environment_id AND s.id=:'reference_id' AND s.status='active'
+JOIN secrets s ON s.environment_id=f.environment_id AND s.name=:'reference_id' AND s.status='active'
 WHERE t.status='running' RETURNING secret_id AS exposed_secret_id \gset
 \endif
 \if :membership

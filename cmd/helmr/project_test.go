@@ -11,8 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
+func TestProjectCreateCommandUsesExplicitIdentifier(t *testing.T) {
+	const projectID = "prod"
 	state := installTestCLIConfig(t)
 	var request api.CreateProjectRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +25,7 @@ func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.ProjectSummary{ID: projectID, Slug: request.Slug, Name: request.Name})
+		_ = json.NewEncoder(w).Encode(api.ProjectSummary{Project: projectID, Name: request.Name})
 	}))
 	defer server.Close()
 	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
@@ -36,14 +36,14 @@ func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"project", "create", "Production App!", "--history-retention-mode", "until_environment_deletion"})
+	cmd.SetArgs([]string{"project", "create", "production-app", "--name", "Production App!", "--history-retention-mode", "until_environment_deletion"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Name != "Production App!" || request.Slug != "production-app" || request.HistoryRetentionMode != "until_environment_deletion" || request.HistoryRetentionSeconds != nil {
+	if request.Name != "Production App!" || request.Project != "production-app" || request.HistoryRetentionMode != "until_environment_deletion" || request.HistoryRetentionSeconds != nil {
 		t.Fatalf("request = %+v", request)
 	}
-	if !strings.Contains(out.String(), projectID+"\tproduction-app\tProduction App!") {
+	if !strings.Contains(out.String(), projectID+"\tProduction App!") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -56,12 +56,12 @@ func TestProjectListCommandTraversesAllPagesBeforeWriting(t *testing.T) {
 		switch r.URL.Query().Get("cursor") {
 		case "":
 			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{
-				Projects:   []api.ProjectSummary{{ID: "project-1", Slug: "one", Name: "One"}},
+				Projects:   []api.ProjectSummary{{Project: "one", Name: "One"}},
 				NextCursor: "cursor-2",
 			})
 		case "cursor-2":
 			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{
-				Projects: []api.ProjectSummary{{ID: "project-2", Slug: "two", Name: "Two"}},
+				Projects: []api.ProjectSummary{{Project: "two", Name: "Two"}},
 			})
 		default:
 			t.Fatalf("cursor = %q", r.URL.Query().Get("cursor"))
@@ -97,7 +97,7 @@ func TestProjectListCommandDoesNotWritePartialPages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{
-				Projects:   []api.ProjectSummary{{ID: "project-1", Slug: "one", Name: "One"}},
+				Projects:   []api.ProjectSummary{{Project: "one", Name: "One"}},
 				NextCursor: "cursor-2",
 			})
 			return
@@ -123,7 +123,7 @@ func TestProjectListCommandDoesNotWritePartialPages(t *testing.T) {
 }
 
 func TestProjectGetCommandResolvesSlug(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
+	const projectID = "prod"
 	state := installTestCLIConfig(t)
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,9 +134,8 @@ func TestProjectGetCommandResolvesSlug(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/prod":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID:   projectID,
-				Slug: "prod",
-				Name: "Production",
+				Project: projectID,
+				Name:    "Production",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -162,13 +161,13 @@ func TestProjectGetCommandResolvesSlug(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &project); err != nil {
 		t.Fatal(err)
 	}
-	if project.ID != projectID || project.Slug != "prod" {
+	if project.Project != projectID {
 		t.Fatalf("project = %+v", project)
 	}
 }
 
-func TestProjectUpdateCommandPreservesOmittedName(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
+func TestProjectUpdateCommandPreservesIdentifier(t *testing.T) {
+	const projectID = "prod"
 	state := installTestCLIConfig(t)
 	var request api.UpdateProjectRequest
 	methods := []string{}
@@ -180,15 +179,14 @@ func TestProjectUpdateCommandPreservesOmittedName(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/prod":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID:   projectID,
-				Slug: "prod",
-				Name: "Production",
+				Project: projectID,
+				Name:    "Production",
 			})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID:
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(api.ProjectSummary{ID: projectID, Slug: request.Slug, Name: request.Name})
+			_ = json.NewEncoder(w).Encode(api.ProjectSummary{Project: projectID, Name: request.Name})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -201,21 +199,21 @@ func TestProjectUpdateCommandPreservesOmittedName(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"project", "update", "prod", "--slug", "production"})
+	cmd.SetArgs([]string{"project", "update", "prod", "--name", "Renamed"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(methods, ","); got != "GET /api/projects/prod,PATCH /api/projects/"+projectID {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "Production" || request.Slug != "production" {
+	if request.Name != "Renamed" {
 		t.Fatalf("request = %+v", request)
 	}
 }
 
-func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
-	const environmentID = "00000000-0000-0000-0000-000000000202"
+func TestEnvCreateCommandUsesExplicitIdentifier(t *testing.T) {
+	const projectID = "prod"
+	const environmentID = "qa"
 	state := installTestCLIConfig(t)
 	var request api.CreateEnvironmentRequest
 	methods := []string{}
@@ -227,20 +225,18 @@ func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/prod":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID:   projectID,
-				Slug: "prod",
-				Name: "Production",
+				Project: projectID,
+				Name:    "Production",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/"+projectID+"/environments":
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
-				ID:        environmentID,
-				ProjectID: projectID,
-				Slug:      request.Slug,
-				Name:      request.Name,
-				ColorHex:  request.ColorHex,
+				Environment: environmentID,
+				Project:     projectID,
+				Name:        request.Name,
+				ColorHex:    request.ColorHex,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -254,14 +250,14 @@ func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"env", "create", "QA Environment", "--project", "prod", "--history-retention-mode", "duration", "--history-retention-seconds", "86400"})
+	cmd.SetArgs([]string{"env", "create", "qa-environment", "--name", "QA Environment", "--project", "prod", "--history-retention-mode", "duration", "--history-retention-seconds", "86400"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(methods, ","); got != "GET /api/projects/prod,POST /api/projects/"+projectID+"/environments" {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA Environment" || request.Slug != "qa-environment" || request.ColorHex != "#F59E0B" {
+	if request.Name != "QA Environment" || request.Environment != "qa-environment" || request.ColorHex != "#F59E0B" {
 		t.Fatalf("request = %+v", request)
 	}
 }
@@ -292,9 +288,9 @@ func TestProjectEnvNestedCommandIsNotRegistered(t *testing.T) {
 	}
 }
 
-func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
-	const environmentID = "00000000-0000-0000-0000-000000000202"
+func TestEnvUpdateCommandPreservesIdentifier(t *testing.T) {
+	const projectID = "prod"
+	const environmentID = "qa"
 	state := installTestCLIConfig(t)
 	var request api.UpdateEnvironmentRequest
 	methods := []string{}
@@ -306,35 +302,31 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/prod":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID:   projectID,
-				Slug: "prod",
-				Name: "Production",
+				Project: projectID,
+				Name:    "Production",
 				Environments: []api.EnvironmentSummary{{
-					ID:        environmentID,
-					ProjectID: projectID,
-					Slug:      "qa",
-					Name:      "QA",
-					ColorHex:  "#F59E0B",
+					Environment: environmentID,
+					Project:     projectID,
+					Name:        "QA",
+					ColorHex:    "#F59E0B",
 				}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
 			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
-				ID:        environmentID,
-				ProjectID: projectID,
-				Slug:      "qa",
-				Name:      "QA",
-				ColorHex:  "#F59E0B",
+				Environment: environmentID,
+				Project:     projectID,
+				Name:        "QA",
+				ColorHex:    "#F59E0B",
 			})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
-				ID:        environmentID,
-				ProjectID: projectID,
-				Slug:      request.Slug,
-				Name:      request.Name,
-				ColorHex:  request.ColorHex,
+				Environment: environmentID,
+				Project:     projectID,
+				Name:        request.Name,
+				ColorHex:    request.ColorHex,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -348,7 +340,7 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"env", "update", "qa", "--project", "prod", "--slug", "staging"})
+	cmd.SetArgs([]string{"env", "update", "qa", "--project", "prod", "--name", "Renamed"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -356,14 +348,14 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 	if got := strings.Join(methods, ","); got != wantMethods {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA" || request.Slug != "staging" || request.ColorHex != "#F59E0B" {
+	if request.Name != "Renamed" || request.ColorHex != "#F59E0B" {
 		t.Fatalf("request = %+v", request)
 	}
 }
 
 func TestEnvUpdateCommandAllowsColorOnlyUpdate(t *testing.T) {
-	const projectID = "00000000-0000-0000-0000-000000000101"
-	const environmentID = "00000000-0000-0000-0000-000000000202"
+	const projectID = "prod"
+	const environmentID = "qa"
 	state := installTestCLIConfig(t)
 	var request api.UpdateEnvironmentRequest
 	methods := []string{}
@@ -375,35 +367,31 @@ func TestEnvUpdateCommandAllowsColorOnlyUpdate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/prod":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID:   projectID,
-				Slug: "prod",
-				Name: "Production",
+				Project: projectID,
+				Name:    "Production",
 				Environments: []api.EnvironmentSummary{{
-					ID:        environmentID,
-					ProjectID: projectID,
-					Slug:      "qa",
-					Name:      "QA",
-					ColorHex:  "#F59E0B",
+					Environment: environmentID,
+					Project:     projectID,
+					Name:        "QA",
+					ColorHex:    "#F59E0B",
 				}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
 			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
-				ID:        environmentID,
-				ProjectID: projectID,
-				Slug:      "qa",
-				Name:      "QA",
-				ColorHex:  "#F59E0B",
+				Environment: environmentID,
+				Project:     projectID,
+				Name:        "QA",
+				ColorHex:    "#F59E0B",
 			})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/projects/"+projectID+"/environments/"+environmentID:
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.EnvironmentSummary{
-				ID:        environmentID,
-				ProjectID: projectID,
-				Slug:      request.Slug,
-				Name:      request.Name,
-				ColorHex:  request.ColorHex,
+				Environment: environmentID,
+				Project:     projectID,
+				Name:        request.Name,
+				ColorHex:    request.ColorHex,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -425,7 +413,7 @@ func TestEnvUpdateCommandAllowsColorOnlyUpdate(t *testing.T) {
 	if got := strings.Join(methods, ","); got != wantMethods {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA" || request.Slug != "qa" || request.ColorHex != "#06B6D4" {
+	if request.Name != "QA" || request.ColorHex != "#06B6D4" {
 		t.Fatalf("request = %+v", request)
 	}
 }

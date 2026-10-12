@@ -439,7 +439,11 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 			return uuid.Nil(), err
 		}
 	} else {
-		bindings, err := registrationSecretBindings(*explicit, nil, nil, nil)
+		resolved, err := resolveSecretReferences(ctx, tx, env, *explicit)
+		if err != nil {
+			return uuid.Nil(), err
+		}
+		bindings, err := registrationSecretBindings(*explicit, resolved, nil, nil, nil)
 		if err != nil {
 			return uuid.Nil(), err
 		}

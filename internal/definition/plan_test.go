@@ -23,7 +23,7 @@ func fixtureBuildPlan(t *testing.T) (BuildPlan, []byte) {
 }
 func TestAgentBuildPlanCompilerContract(t *testing.T) {
 	plan, raw := fixtureBuildPlan(t)
-	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.BuildSecrets[0].SecretID != "01900000-0000-7000-8000-000000000002" {
+	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.BuildSecrets[0].Secret != "SOURCE_TOKEN" {
 		t.Fatalf("unexpected compiler projection: %+v", plan)
 	}
 	got, err := CanonicalBuildPlan(plan)
@@ -69,10 +69,10 @@ func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Template.Secrets = nil },
 		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Template.BuildSecrets = nil },
 		"invalid build Secret": func(p *BuildPlan) {
-			p.Definitions[1].Template.BuildSecrets[0].SecretID = "name"
+			p.Definitions[1].Template.BuildSecrets[0].Secret = "bad name"
 		},
 		"invalid runtime Secret": func(p *BuildPlan) {
-			p.Definitions[1].Template.Secrets[0].SecretID = "00000000-0000-0000-0000-000000000000"
+			p.Definitions[1].Template.Secrets[0].Secret = ""
 		},
 		"invalid image": func(p *BuildPlan) { p.Definitions[1].Template.ImageBuild.Images[0].Steps = nil },
 	}
@@ -95,7 +95,7 @@ func TestAgentBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
 			return bytes.Replace(b, []byte(`"setup":true`), []byte(`"setup":true,"unrecognized":1`), 1)
 		},
 		"unknown secret member": func(b []byte) []byte {
-			return bytes.Replace(b, []byte(`"secretId":"01900000`), []byte(`"unrecognized":1,"secretId":"01900000`), 1)
+			return bytes.Replace(b, []byte(`"secret":"API_TOKEN`), []byte(`"unrecognized":1,"secret":"API_TOKEN`), 1)
 		},
 		"missing boolean": func(b []byte) []byte { return bytes.Replace(b, []byte(`"setup":true,`), nil, 1) },
 	} {

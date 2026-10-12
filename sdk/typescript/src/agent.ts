@@ -17,7 +17,7 @@ export interface BuildContext {
   readonly signal: AbortSignal
   exec(command: string | readonly string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<void>
 }
-export type SecretBinding = { readonly secretId: string } & (
+export type SecretBinding = { readonly secret: string } & (
   | { readonly env: { readonly name: string; readonly mode: "protected"; readonly allowedOrigins: readonly string[] }; readonly file?: never }
   | { readonly env: { readonly name: string; readonly mode: "raw" }; readonly file?: never }
   | { readonly file: { readonly path: string }; readonly env?: never }

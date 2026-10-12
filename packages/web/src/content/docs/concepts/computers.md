@@ -15,9 +15,9 @@ with `template()` and deploy with your Agents.
 ```ts
 import { agent, template, image } from "@helmr/sdk"
 
-// Secret IDs come from `helmr secret create` in the target Environment.
-const GITHUB_TOKEN = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-const REGISTRY_TOKEN_ID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+// Create these Secret IDs in each target Environment.
+const GITHUB_TOKEN = "GITHUB_TOKEN"
+const REGISTRY_TOKEN_ID = "REGISTRY_TOKEN"
 
 export const repo = template({
   id: "repo",
@@ -31,8 +31,8 @@ export const repo = template({
     await build.exec("npm ci", { cwd: "/workspace/app" })
   },
   refresh: { every: "1d", maxAge: "7d" },
-  buildSecrets: [{ secretId: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
-  secrets: [{ secretId: GITHUB_TOKEN, env: { name: "GITHUB_TOKEN", mode: "raw" } }],
+  buildSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
+  secrets: [{ secret: GITHUB_TOKEN, env: { name: "GITHUB_TOKEN", mode: "raw" } }],
   deleteAfterUnused: "30d",
 })
 

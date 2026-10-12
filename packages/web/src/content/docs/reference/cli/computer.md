@@ -39,15 +39,15 @@ used by other Computers remain protected.
 ## Secret bindings at creation
 
 Use one JSON binding array with `--secrets-file`; it contains stable Secret IDs and placements,
-never Secret values. JSON and SDK bindings use `secretId` and `allowedOrigins`.
+never Secret values. JSON and SDK bindings use `secret` and `allowedOrigins`.
 
 Replace these example IDs with Secret IDs from the selected Environment.
 
 ```json
 [
-  {"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38","env":{"name":"GH_TOKEN","mode":"protected","allowedOrigins":["https://api.github.com"]}},
-  {"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39","env":{"name":"PGPASSWORD","mode":"raw"}},
-  {"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40","file":{"path":"/run/secrets/client.key"}}
+  {"secret":"GITHUB_TOKEN","env":{"name":"GH_TOKEN","mode":"protected","allowedOrigins":["https://api.github.com"]}},
+  {"secret":"DATABASE_PASSWORD","env":{"name":"PGPASSWORD","mode":"raw"}},
+  {"secret":"CLIENT_KEY","file":{"path":"/run/secrets/client.key"}}
 ]
 ```
 

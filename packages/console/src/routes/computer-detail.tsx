@@ -121,7 +121,7 @@ export function ComputerDetail() {
                           <For each={current().secrets}>
                             {(secret) => (
                               <tr>
-                                <td><code>{secret.secretId}</code></td>
+                                <td><code>{secret.secret}</code></td>
                                 <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
                                 <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
                                 <td>{secret.env?.allowedOrigins?.join(", ") ?? "—"}</td>

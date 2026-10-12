@@ -56,7 +56,7 @@ test("loads the next Session event page with a bounded cursor", async () => {
 
 test("escapes a Session console route and preserves its scope", () => {
   expect(sessionConsolePath("session/id", "project/1", "env/1")).toBe(
-    "/sessions/session%2Fid?project_id=project%2F1&environment_id=env%2F1",
+    "/sessions/session%2Fid?project=project%2F1&environment=env%2F1",
   );
 });
 

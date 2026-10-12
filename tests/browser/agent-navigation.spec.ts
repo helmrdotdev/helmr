@@ -1,11 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const project = "00000000-0000-7000-8000-000000000301";
-const environment = "00000000-0000-7000-8000-000000000401";
+const project = "console-demo";
+const environment = "production";
 const deployment = "00000000-0000-7000-8000-000000000501";
 const historical = "00000000-0000-7000-8000-000000000502";
 const base = `/api/projects/${project}/environments/${environment}`;
-const scope = `project_id=${project}&environment_id=${environment}`;
+const scope = `project=${project}&environment=${environment}`;
 const now = "2026-10-12T00:00:00Z";
 
 async function catalog(page: Page, options: { current?: boolean; defined?: boolean; role?: string } = {}) {
@@ -18,8 +18,8 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     const path = url.pathname;
     paths.push(path + url.search);
     let json: unknown;
-    const env = { id: environment, project_id: project, slug: "dev", name: "Development", is_default: true, created_at: now, updated_at: now };
-    const proj = { id: project, slug: "test", name: "Test", is_default: true, environments: [env], created_at: now, updated_at: now };
+    const env = { environment: environment, project: project, name: "Development", is_default: true, created_at: now, updated_at: now };
+    const proj = { project: project, name: "Test", is_default: true, environments: [env], created_at: now, updated_at: now };
     if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", role: options.role ?? "owner", permissions: ["sessions.read", "deployments.write"], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [proj] };
     else if (path === `/api/projects/${project}`) json = proj;

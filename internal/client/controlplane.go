@@ -19,6 +19,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/secretname"
 )
 
 var (
@@ -554,7 +555,6 @@ type SecretOptions struct {
 	EnvironmentID string
 	Cursor        string
 	Limit         int32
-	Name          string
 }
 
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
@@ -564,18 +564,11 @@ func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.Li
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
-		if opts[0].Name != "" {
-			if opts[0].Cursor != "" || opts[0].Limit != 0 {
-				return api.ListSecretsResponse{}, errors.New("cursor and limit are not accepted with Secret name")
-			}
-			values.Set("name", opts[0].Name)
-		} else {
-			if opts[0].Cursor != "" {
-				values.Set("cursor", opts[0].Cursor)
-			}
-			if opts[0].Limit > 0 {
-				values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
-			}
+		if opts[0].Cursor != "" {
+			values.Set("cursor", opts[0].Cursor)
+		}
+		if opts[0].Limit > 0 {
+			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
 		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded
@@ -615,7 +608,7 @@ func (c *Client) CreateSecret(ctx context.Context, name string, value string, id
 		return api.SecretResponse{}, err
 	}
 	if err := c.postJSON(ctx, path, api.CreateSecretRequest{
-		Name: name, Value: value, IdempotencyKey: idempotencyKey,
+		Secret: name, Value: value, IdempotencyKey: idempotencyKey,
 	}, &response); err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -670,7 +663,7 @@ func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, erro
 }
 
 func (c *Client) secretItemPath(id string, opts ...SecretOptions) (string, error) {
-	if err := ids.Validate(id); err != nil {
+	if err := secretname.Validate(id); err != nil {
 		return "", err
 	}
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")

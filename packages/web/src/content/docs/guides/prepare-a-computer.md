@@ -91,14 +91,14 @@ Environment you deploy to and use its ID; see
 [Manage secrets](/docs/guides/manage-secrets).
 
 ```ts
-// ID from `helmr secret create REGISTRY_TOKEN --json` in this Environment.
-const REGISTRY_TOKEN_ID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+// Create REGISTRY_TOKEN in each target Environment before deployment.
+const REGISTRY_TOKEN_ID = "REGISTRY_TOKEN"
 
 export const repo = template({
   id: "repo",
   image: repoImage,
   resources: { cpu: 2, memory: "4GiB" },
-  buildSecrets: [{ secretId: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
+  buildSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
   async prepare(build) {
     await build.exec(["git", "clone", "--depth=1", "https://github.com/acme/app.git", "/workspace/app"])
     await build.exec("npm ci", { cwd: "/workspace/app" })
@@ -106,7 +106,7 @@ export const repo = template({
 })
 ```
 
-The deploy is rejected if a referenced Secret ID does not belong to the target
+The deploy is rejected if a referenced Secret ID is missing or revoked in the target
 Environment. Everything `prepare` writes is copied into every new Computer, so
 never write a build Secret's value to a file. Bindings that Computers need while
 they run go in `secrets`, not `buildSecrets`.

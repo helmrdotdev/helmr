@@ -61,9 +61,9 @@ export const repoComputer = template({
   id: "app",
   image: image("app").from("node:24-bookworm"),
   resources: { cpu: 2, memory: "4GiB" },
-  buildSecrets: [{ secretId: "SOURCE_TOKEN_SECRET_ID", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
+  buildSecrets: [{ secret: "SOURCE_TOKEN", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
   secrets: [{
-    secretId: "MODEL_API_KEY_SECRET_ID",
+    secret: "MODEL_API_KEY",
     env: { name: "MODEL_API_KEY", mode: "protected", allowedOrigins: ["https://api.example.com"] },
   }],
   async prepare(build) {
@@ -112,7 +112,7 @@ covered in [Configuration](/docs/reference/config#runtime-dependencies).
 ## Secret bindings
 
 ```ts
-type SecretBinding = { readonly secretId: string } & (
+type SecretBinding = { readonly secret: string } & (
   | { readonly env: { readonly name: string; readonly mode: "protected"; readonly allowedOrigins: readonly string[] } }
   | { readonly env: { readonly name: string; readonly mode: "raw" } }
   | { readonly file: { readonly path: string } }
@@ -129,7 +129,7 @@ type SecretBinding = { readonly secretId: string } & (
 | `file.path` | Absolute, normalized, at most 4096 bytes. Not under `/workspace`, `/var/lib/helmr`, `/dev`, `/opt/helmr`, `/proc`, `/sys`, `/run/helmr` or `/.helmr-old-root`. Paths must not repeat or nest. |
 
 Bindings reference Secrets by stable ID and never contain values. The same
-field names (`secretId`, `allowedOrigins`) are used in REST request bodies. See
+field names (`secret`, `allowedOrigins`) are used in REST request bodies. See
 [Secrets](/docs/concepts/secrets) for the protection modes.
 
 ## Client: Templates

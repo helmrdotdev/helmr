@@ -3,7 +3,7 @@ package api
 import "time"
 
 type CreateSecretRequest struct {
-	Name           string `json:"name"`
+	Secret         string `json:"secret"`
 	Value          string `json:"value"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
@@ -18,8 +18,7 @@ type RevokeSecretRequest struct {
 }
 
 type SecretResponse struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
+	Secret    string       `json:"secret"`
 	Status    SecretStatus `json:"status"`
 	CreatedAt time.Time    `json:"created_at"`
 	RotatedAt *time.Time   `json:"rotated_at,omitempty"`

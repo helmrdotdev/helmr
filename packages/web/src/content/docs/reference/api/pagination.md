@@ -34,8 +34,8 @@ Pass `next_cursor` unchanged as `cursor` in the next request. A response without
 Agent and Template pages also return `deployment_id`. A resource cursor keeps the
 Deployment its first page selected, even if a newer Deployment is promoted.
 
-Exact lookups are not paged: `key` on `/v1/computers`, `name` on
-`/v1/secrets`, and `agent` with `key` on `/v1/sessions`. Do not send
+Exact lookups are not paged: `key` on `/v1/computers` and `agent` with `key`
+on `/v1/sessions`. Do not send
 `cursor` or `limit` with them; the SDK rejects the combination.
 
 In the SDK, list methods return `{ items, nextCursor? }`; Agent/Template pages also

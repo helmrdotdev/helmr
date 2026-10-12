@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,7 +53,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := h.session(t, f.User, org)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/agents", project, f.Environment)
+	base := "/api/projects/project/environments/test/agents"
 	get := func(path, token string, status int) []byte {
 		t.Helper()
 		r := h.request(t, http.MethodGet, path, token, "")

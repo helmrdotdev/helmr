@@ -110,7 +110,7 @@ func TestComputerCreateSecretsFileUsesComputerAPI(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "synthetic-key")
 	path := filepath.Join(t.TempDir(), "bindings.json")
-	if err := os.WriteFile(path, []byte(`[{"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","env":{"name":"GH_TOKEN","mode":"protected","allowedOrigins":["https://api.github.com"]}},{"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34","file":{"path":"/run/secrets/key"}}]`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`[{"secret":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","env":{"name":"GH_TOKEN","mode":"protected","allowedOrigins":["https://api.github.com"]}},{"secret":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34","file":{"path":"/run/secrets/key"}}]`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	command := newRootCommand()
@@ -120,7 +120,7 @@ func TestComputerCreateSecretsFileUsesComputerAPI(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if len(received.Secrets) != 2 || received.Secrets[0].SecretID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" || received.Secrets[0].Env.Mode != "protected" || received.Secrets[0].Env.AllowedOrigins[0] != "https://api.github.com" || received.Secrets[1].File.Path != "/run/secrets/key" {
+	if len(received.Secrets) != 2 || received.Secrets[0].Secret != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" || received.Secrets[0].Env.Mode != "protected" || received.Secrets[0].Env.AllowedOrigins[0] != "https://api.github.com" || received.Secrets[1].File.Path != "/run/secrets/key" {
 		t.Fatal("CLI changed binding metadata")
 	}
 }
@@ -129,7 +129,7 @@ func TestComputerSecretsFileDecoderCause(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, "http://127.0.0.1:1")
 	t.Setenv(helmrAPIKeyEnv, "synthetic-key")
 	path := filepath.Join(t.TempDir(), "bindings.json")
-	if err := os.WriteFile(path, []byte(`[{"secretId":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","env":{"name":"TOKEN","mode":"protected","allowed_origins":["https://example.com"]}}]`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`[{"secret":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","env":{"name":"TOKEN","mode":"protected","allowed_origins":["https://example.com"]}}]`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	command := newRootCommand()

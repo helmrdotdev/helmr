@@ -84,7 +84,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	base := "/api/projects/" + project.String() + "/environments/" + f.Environment.String() + "/agents/agent/slack"
+	base := "/api/projects/project/environments/test/agents/agent/slack"
 	created := call("POST", base, owner, nil, nil)
 	var result struct {
 		Publication slack.PublicationView `json:"publication"`

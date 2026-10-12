@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const DEMO_SESSION_ID = "00000000-0000-7000-8000-000000000701";
-const PROJECT_ID = "00000000-0000-7000-8000-000000000301";
-const DEMO_ENVIRONMENT_ID = "00000000-0000-7000-8000-000000000403";
+const PROJECT_ID = "console-demo";
+const DEMO_ENVIRONMENT_ID = "demo";
 
 async function login(page: Page) {
   await page.goto("/dev/login");
@@ -36,7 +36,7 @@ test("console demo shows retained history in current navigation", async ({ page 
 
 test("console demo retains failed Turn input and terminal Session history", async ({ page }) => {
   await login(page);
-  await page.goto(`/sessions/${DEMO_SESSION_ID}?project_id=${PROJECT_ID}&environment_id=${DEMO_ENVIRONMENT_ID}`);
+  await page.goto(`/sessions/${DEMO_SESSION_ID}?project=${PROJECT_ID}&environment=${DEMO_ENVIRONMENT_ID}`);
   await expect(page.getByText("Demo input", { exact: true })).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Failed", { exact: true }).first()).toBeVisible();

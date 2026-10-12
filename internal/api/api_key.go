@@ -11,17 +11,17 @@ const (
 )
 
 type APIKeySummary struct {
-	ID            string                  `json:"id"`
-	Name          string                  `json:"name"`
-	KeyPrefix     string                  `json:"key_prefix"`
-	ProjectID     string                  `json:"project_id"`
-	EnvironmentID string                  `json:"environment_id"`
-	Permissions   []APIKeyPermissionGrant `json:"permissions,omitempty"`
-	Status        APIKeyStatus            `json:"status"`
-	CreatedAt     time.Time               `json:"created_at"`
-	LastUsedAt    *time.Time              `json:"last_used_at"`
-	ExpiresAt     *time.Time              `json:"expires_at"`
-	RevokedAt     *time.Time              `json:"revoked_at"`
+	ID          string                  `json:"id"`
+	Name        string                  `json:"name"`
+	KeyPrefix   string                  `json:"key_prefix"`
+	Project     string                  `json:"project"`
+	Environment string                  `json:"environment"`
+	Permissions []APIKeyPermissionGrant `json:"permissions,omitempty"`
+	Status      APIKeyStatus            `json:"status"`
+	CreatedAt   time.Time               `json:"created_at"`
+	LastUsedAt  *time.Time              `json:"last_used_at"`
+	ExpiresAt   *time.Time              `json:"expires_at"`
+	RevokedAt   *time.Time              `json:"revoked_at"`
 }
 
 type APIKeyIssued struct {

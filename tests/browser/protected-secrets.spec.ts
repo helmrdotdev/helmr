@@ -5,22 +5,22 @@ test("Console inspects a Computer and all secret placement modes without submitt
   await page.goto("/dev/login");
   const { base, environmentID } = await createAgentCatalog(page);
   const response = await page.request.post(`${base}/secrets`, {
-    data: { name: `browser-${crypto.randomUUID()}`, value: "synthetic-browser-only", idempotency_key: crypto.randomUUID() },
+    data: { secret: `browser-${crypto.randomUUID()}`, value: "synthetic-browser-only", idempotency_key: crypto.randomUUID() },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
   const secret = await response.json();
   const created = await page.request.post(`${base}/computers`, {
     data: { template: "browser-computer", secrets: [
-      { secretId: secret.id, env: { name: "GH_TOKEN", mode: "protected", allowedOrigins: ["https://api.github.com"] } },
-      { secretId: secret.id, env: { name: "PGPASSWORD", mode: "raw" } },
-      { secretId: secret.id, file: { path: "/run/secrets/client.key" } },
+      { secret: secret.secret, env: { name: "GH_TOKEN", mode: "protected", allowedOrigins: ["https://api.github.com"] } },
+      { secret: secret.secret, env: { name: "PGPASSWORD", mode: "raw" } },
+      { secret: secret.secret, file: { path: "/run/secrets/client.key" } },
     ], idempotency_key: crypto.randomUUID() },
   });
   expect(created.ok(), await created.text()).toBeTruthy();
   const computer = await created.json();
   const mutations: string[] = [];
   page.on("request", request => { if (new URL(request.url()).pathname.startsWith(base) && request.method() !== "GET") mutations.push(request.method()); });
-  await page.goto(`/computers?project_id=${projectID}&environment_id=${environmentID}`);
+  await page.goto(`/computers?project=${projectID}&environment=${environmentID}`);
   await expect(page.getByRole("link", { name: computer.id.slice(-12), exact: true })).toBeVisible();
   await page.getByRole("link", { name: computer.id.slice(-12), exact: true }).click();
   await expect(page.getByText("Protected env", { exact: true })).toBeVisible();

@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -152,7 +151,7 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	}
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: q, handler: handler, keys: keys}
 	token := httpFixture.session(t, f.User, org)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/schedules", project, f.Environment)
+	base := "/api/projects/project/environments/test/schedules"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
 	path := base + "?agent=agent&limit=1"
 	seen := map[string]bool{}

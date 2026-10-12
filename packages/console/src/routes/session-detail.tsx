@@ -56,8 +56,8 @@ export function SessionDetail() {
   const identity = () =>
     JSON.stringify([
       params["session_id"],
-      searchValue(search["project_id"]) || scope.selectedProjectID(),
-      searchValue(search["environment_id"]) || scope.selectedEnvironmentID(),
+      searchValue(search["project"]) || scope.selectedProjectID(),
+      searchValue(search["environment"]) || scope.selectedEnvironmentID(),
     ]);
   return (
     <Show when={identity()} keyed>
@@ -73,9 +73,9 @@ function SessionDetailContent() {
   const queryClient = useQueryClient();
   const sessionID = () => params["session_id"]?.trim() ?? "";
   const projectID = () =>
-    searchValue(search["project_id"]) || scope.selectedProjectID();
+    searchValue(search["project"]) || scope.selectedProjectID();
   const environmentID = () =>
-    searchValue(search["environment_id"]) || scope.selectedEnvironmentID();
+    searchValue(search["environment"]) || scope.selectedEnvironmentID();
   const address = (): SessionAddress => ({
     sessionID: sessionID(),
     projectID: projectID(),

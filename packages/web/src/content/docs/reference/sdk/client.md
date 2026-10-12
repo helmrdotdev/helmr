@@ -86,22 +86,22 @@ client.deployments.get(deploymentId: string, options?): Promise<Deployment>
 ## Secrets
 
 ```ts
-client.secrets.create(request: { name: string; value: string; idempotencyKey?: string }, options?): Promise<Secret>
+client.secrets.create(request: { secret: string; value: string; idempotencyKey?: string }, options?): Promise<Secret>
 client.secrets.get(id: string, options?): Promise<Secret>
 client.secrets.list(query?: SecretListQuery, options?): Promise<CursorPage<Secret>>
 client.secrets.ref(id: string): SecretRef
 
 interface SecretRef {
-  readonly id: string
+  readonly secret: string
   rotate(request: { value: string; idempotencyKey: string }, options?): Promise<Secret>
   revoke(request: { idempotencyKey: string }, options?): Promise<Secret>
 }
 ```
 
-`SecretListQuery` is either `{ cursor?, limit? }` (`limit` 1–100) or an exact
-lookup `{ name }`, which does not accept `cursor` or `limit`.
+`SecretListQuery` is `{ cursor?, limit? }` (`limit` 1–100). Use `get("GITHUB_TOKEN")`
+for a direct lookup by the same identifier used in your bindings.
 
-`Secret` is `{ id, name, status, createdAt, rotatedAt?, revokedAt? }`, where
+`Secret` is `{ secret, status, createdAt, rotatedAt?, revokedAt? }`, where
 `status` is `"active"` or `"revoked"`. Reads never return the value. Bind
-Secrets to Computers by `id`; see [Computer](/docs/reference/sdk/computer#secret-bindings)
+Secrets to Computers with `{ secret: "GITHUB_TOKEN", env: { ... } }`; see [Computer](/docs/reference/sdk/computer#secret-bindings)
 and [Secrets](/docs/concepts/secrets).

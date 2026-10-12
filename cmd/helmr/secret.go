@@ -56,7 +56,7 @@ func secretListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.Status, secret.CreatedAt.Format(apiTimeFormat))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Secret, secret.Status, secret.CreatedAt.Format(apiTimeFormat))
 			}
 			return nil
 		},
@@ -71,7 +71,7 @@ func secretGetCommand() *cobra.Command {
 	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "get SECRET_ID",
+		Use:   "get SECRET",
 		Short: "Show remote secret metadata.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -105,7 +105,7 @@ func secretCreateCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "create NAME [VALUE]",
+		Use:   "create SECRET [VALUE]",
 		Short: "Create a remote secret.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -134,7 +134,7 @@ func secretCreateCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), secret)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Secret)
 			return nil
 		},
 	}
@@ -152,7 +152,7 @@ func secretRotateCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "rotate SECRET_ID [VALUE]",
+		Use:   "rotate SECRET [VALUE]",
 		Short: "Rotate a remote secret.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -184,7 +184,7 @@ func secretRotateCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), record)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Secret)
 			return nil
 		},
 	}
@@ -218,7 +218,7 @@ func secretRevokeCommand() *cobra.Command {
 	var idempotencyKey string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "revoke SECRET_ID --yes",
+		Use:   "revoke SECRET --yes",
 		Short: "Revoke a remote secret.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -245,7 +245,7 @@ func secretRevokeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Secret)
 			return nil
 		},
 	}
@@ -258,8 +258,8 @@ func secretRevokeCommand() *cobra.Command {
 const apiTimeFormat = "2006-01-02T15:04:05Z07:00"
 
 func addSecretScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {
-	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project slug or ID for this secret.")
-	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment slug or ID for this secret.")
+	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project ID for this secret.")
+	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment ID for this secret.")
 }
 
 func secretScope(scope client.EnvironmentScopeOptions) client.SecretOptions {
@@ -267,7 +267,7 @@ func secretScope(scope client.EnvironmentScopeOptions) client.SecretOptions {
 }
 
 func writeSecret(w io.Writer, secret api.SecretResponse) error {
-	fmt.Fprintf(w, "Name: %s\n", secret.Name)
+	fmt.Fprintf(w, "Secret: %s\n", secret.Secret)
 	fmt.Fprintf(w, "Status: %s\n", secret.Status)
 	fmt.Fprintf(w, "Created: %s\n", secret.CreatedAt.Format(apiTimeFormat))
 	if secret.RotatedAt != nil {

@@ -64,7 +64,7 @@ func computerCreateCommand() *cobra.Command {
 				decoder := json.NewDecoder(io.LimitReader(file, 65537))
 				decoder.DisallowUnknownFields()
 				if e := decoder.Decode(&bindings); e != nil {
-					return fmt.Errorf("secrets-file must contain a JSON Secret reference array (secretId and allowedOrigins): %w", e)
+					return fmt.Errorf("secrets-file must contain a JSON Secret reference array (secret and allowedOrigins): %w", e)
 				}
 				var trailing any
 				if e := decoder.Decode(&trailing); e != io.EOF {
@@ -94,7 +94,7 @@ func computerCreateCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
-	command.Flags().StringVar(&secretsFile, "secrets-file", "", "JSON array of Secret references (secretId, env or file placement, and allowedOrigins; never values).")
+	command.Flags().StringVar(&secretsFile, "secrets-file", "", "JSON array of Secret references (secret, env or file placement, and allowedOrigins; never values).")
 	command.Flags().StringVar(&key, "key", "", "Immutable Computer key.")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")

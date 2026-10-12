@@ -3,9 +3,8 @@ import { postJson, request } from "./api";
 export type HistoryRetentionPolicy = { history_retention_mode: "duration"; history_retention_seconds: number } | { history_retention_mode: "until_environment_deletion"; history_retention_seconds?: never };
 
 export type Environment = HistoryRetentionPolicy & {
-  id: string;
-  project_id: string;
-  slug: string;
+  environment: string;
+  project: string;
   name: string;
   color_hex: string;
   is_default: boolean;
@@ -14,8 +13,7 @@ export type Environment = HistoryRetentionPolicy & {
 };
 
 export type Project = {
-  id: string;
-  slug: string;
+  project: string;
   name: string;
   default_region_id: string;
   is_default: boolean;
@@ -40,30 +38,28 @@ export type ListRegionsResponse = {
 };
 
 export type CreateProjectInput = HistoryRetentionPolicy & {
-  slug: string;
+  project: string;
   name: string;
   default_region_id?: string;
 };
 
 export type UpdateProjectInput = {
-  slug: string;
   name: string;
 };
 
 export type CreateEnvironmentInput = HistoryRetentionPolicy & {
-  slug: string;
+  environment: string;
   name: string;
   color_hex: string;
 };
 
 export type UpdateEnvironmentInput = Partial<HistoryRetentionPolicy> & {
-  slug: string;
   name: string;
   color_hex: string;
 };
 
 function resolveProject(projects: Project[], projectID: string): Project | undefined {
-  return projects.find((project) => project.id === projectID) ??
+  return projects.find((project) => project.project === projectID) ??
     projects.find((project) => project.is_default) ??
     projects[0];
 }
@@ -79,13 +75,13 @@ export function resolveProjectSelection(
   if (detailNotFound) {
     return {
       project: resolveProject(
-        projects.filter((project) => project.id !== projectID && !rejectedProjectIDs.has(project.id)),
+        projects.filter((project) => project.project !== projectID && !rejectedProjectIDs.has(project.project)),
         "",
       ),
       settled: true,
     };
   }
-  if (detail?.id === projectID) return { project: detail, settled: true };
+  if (detail?.project === projectID) return { project: detail, settled: true };
   return { project: undefined, settled: false };
 }
 

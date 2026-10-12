@@ -1,3 +1,4 @@
+import { IDText } from "../ui/IDText";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -6,18 +7,6 @@ import { useScope } from "../lib/scope";
 import { PageHeader } from "../ui/PageHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
 
 function formErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -28,8 +17,6 @@ export function Projects() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
-  const [slug, setSlug] = createSignal("");
-  const [slugTouched, setSlugTouched] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [saveError, setSaveError] = createSignal<string | null>(null);
 
@@ -38,14 +25,12 @@ export function Projects() {
   const dirty = createMemo(() => {
     const current = project();
     if (!current) return false;
-    return name().trim() !== current.name || slug().trim() !== current.slug;
+    return name().trim() !== current.name;
   });
 
   createEffect(() => {
     const current = project();
     setName(current?.name ?? "");
-    setSlug(current?.slug ?? "");
-    setSlugTouched(true);
     setSaveError(null);
   });
 
@@ -54,15 +39,14 @@ export function Projects() {
     const current = project();
     if (!current) return;
     const nextName = name().trim();
-    const nextSlug = slug().trim();
-    if (!nextName || !nextSlug) {
-      setSaveError("Name and slug are required.");
+    if (!nextName) {
+      setSaveError("Name is required.");
       return;
     }
     setSaving(true);
     setSaveError(null);
     try {
-      await updateProject(current.id, { name: nextName, slug: nextSlug });
+      await updateProject(current.project, { name: nextName });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
     } catch (error) {
       setSaveError(formErrorMessage(error));
@@ -73,7 +57,7 @@ export function Projects() {
 
   return (
     <>
-      <PageHeader title="Project" subtitle="Name and slug of the selected project." />
+      <PageHeader title="Project" subtitle="Display name and permanent ID of the selected project." />
 
       <Show when={hasProject()} fallback={<StatePanel empty="No project selected." />}>
         <form class="max-w-220 border border-console-border-strong bg-console-surface px-4 py-4" onSubmit={submitProject}>
@@ -86,24 +70,13 @@ export function Projects() {
               value={name()}
               onInput={(event) => {
                 setName(event.currentTarget.value);
-                if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
               }}
               autocomplete="off"
             />
           </label>
           <label class={ui.field}>
-            <span>Slug</span>
-            <input
-              type="text"
-              class={ui.input}
-              value={slug()}
-              onInput={(event) => {
-                setSlugTouched(true);
-                setSlug(event.currentTarget.value);
-              }}
-              autocomplete="off"
-              spellcheck={false}
-            />
+            <span>Project ID</span>
+            <IDText value={project()?.project ?? ""} mode="full" />
           </label>
           <Show when={saveError()}>
             <p class={ui.fieldError} role="alert">{saveError()}</p>
@@ -112,7 +85,7 @@ export function Projects() {
             <button
               class={ui.button}
               type="submit"
-              disabled={saving() || !dirty() || !name().trim() || !slug().trim()}
+              disabled={saving() || !dirty() || !name().trim()}
             >
               {saving() ? "Saving..." : "Save changes"}
             </button>

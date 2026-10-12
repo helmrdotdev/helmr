@@ -46,7 +46,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    if (!page.hasMore) return
   }
  }
- const secretIds: string[] = []
+ const secrets: string[] = []
  let secretChecks = 0
  let secretRevocation: Record<string, unknown> | undefined
  async function startPeer() {
@@ -55,18 +55,18 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const digests: string[] = []
    for (const kind of ["raw", "file", "protected"]) {
     const value = randomBytes(32).toString("hex")
-    const secret = await client.secrets.create({ name: `native-${kind}`, value, idempotencyKey: `native-${kind}` }, { signal })
-    secretIds.push(secret.id); digests.push(createHash("sha256").update(value).digest("hex"))
+    const secret = await client.secrets.create({ secret: `native-${kind}`, value, idempotencyKey: `native-${kind}` }, { signal })
+    secrets.push(secret.secret); digests.push(createHash("sha256").update(value).digest("hex"))
    }
    const computer = await client.computers.create({ template: "native-continuation", idempotencyKey: "native-secret-computer", secrets: [
-     { secretId: secretIds[0]!, env: { name: "NATIVE_RAW_SECRET", mode: "raw" } },
-     { secretId: secretIds[1]!, file: { path: "/run/native-proof/secret" } },
-     { secretId: secretIds[2]!, env: { name: "NATIVE_PROTECTED_SECRET", mode: "protected", allowedOrigins: ["https://native-proof.invalid"] } },
+     { secret: secrets[0]!, env: { name: "NATIVE_RAW_SECRET", mode: "raw" } },
+     { secret: secrets[1]!, file: { path: "/run/native-proof/secret" } },
+     { secret: secrets[2]!, env: { name: "NATIVE_PROTECTED_SECRET", mode: "protected", allowedOrigins: ["https://native-proof.invalid"] } },
     ], }, { signal })
    return await client.sessions.create({ agent: "peer", computer, input: fixtureInput({ kind: "hold-secrets", rawDigest: digests[0]!, fileDigest: digests[1]!, protectedDigest: digests[2]! } ) }, { signal })
   } catch (error) {
    const cleanup = AbortSignal.timeout(10_000)
-   const results = await Promise.allSettled(secretIds.map(id => client.secrets.ref(id).revoke({ idempotencyKey: `cleanup-${id}` }, { signal: cleanup })))
+   const results = await Promise.allSettled(secrets.map(id => client.secrets.ref(id).revoke({ idempotencyKey: `cleanup-${id}` }, { signal: cleanup })))
    throw new AggregateError([error, ...results.filter(result => result.status === "rejected").map(result => result.reason)], "Secret fixture admission failed")
   }
  }
@@ -255,7 +255,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    assert.deepEqual(checkpoint.runtimeObjects.map(object => object.role).sort(), ["memory", "scratch_disk", "vm_config", "vm_state"])
    priorCheckpoint = checkpoint.checkpointId
    if (options.secretBindings && cycle === 1) {
-    for (const id of secretIds) {
+    for (const id of secrets) {
      const rotated = await client.secrets.ref(id).rotate({ value: randomBytes(32).toString("hex"), idempotencyKey: `rotate-${id}` }, { signal })
      assert(rotated.rotatedAt)
     }
@@ -426,7 +426,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    assert.equal((await pending.get({ signal })).status, "queued")
    assert.equal((await holding.get({ signal })).status, "running")
    assert.deepEqual((await peer.session.get({ signal })).holds, [])
-   assert.equal((await client.secrets.ref(secretIds[0]!).revoke({ idempotencyKey: "revoke-exposed-raw" }, { signal })).status, "revoked")
+   assert.equal((await client.secrets.ref(secrets[0]!).revoke({ idempotencyKey: "revoke-exposed-raw" }, { signal })).status, "revoked")
    peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "interrupted")
    const held = await peer.session.get({ signal })
    assert.equal(held.holds.length, 1)
@@ -450,11 +450,11 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)
   }
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secretIds, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
+  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {
   const cleanupSignal = AbortSignal.timeout(10_000)
   const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(sessions.map(session => session.cancel(undefined, { signal: cleanupSignal })))
-  results.push(...await Promise.allSettled(secretIds.map(async id => { await client.secrets.ref(id).revoke({ idempotencyKey: `cleanup-${id}` }, { signal: cleanupSignal }) })))
+  results.push(...await Promise.allSettled(secrets.map(async id => { await client.secrets.ref(id).revoke({ idempotencyKey: `cleanup-${id}` }, { signal: cleanupSignal }) })))
   const failures = results.filter(result => result.status === "rejected")
   if (failures.length) throw new AggregateError(failures.map(result => result.reason), "healthy fixture cleanup failed")
  }

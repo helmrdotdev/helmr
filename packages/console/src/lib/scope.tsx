@@ -11,9 +11,9 @@ import {
   type Project,
 } from "./projects";
 
-const PROJECT_STORAGE_KEY = "helmr.project_id";
-const ENVIRONMENT_STORAGE_KEY = "helmr.environment_id";
-const ENVIRONMENT_BY_PROJECT_STORAGE_KEY = "helmr.environment_id_by_project";
+const PROJECT_STORAGE_KEY = "helmr.project";
+const ENVIRONMENT_STORAGE_KEY = "helmr.environment";
+const ENVIRONMENT_BY_PROJECT_STORAGE_KEY = "helmr.environment_by_project";
 
 type ScopeContextValue = {
   projects: () => Project[];
@@ -54,11 +54,11 @@ function writeEnvironmentSelection(projectID: string, environmentID: string) {
 }
 
 export function rememberProjectScope(project: Project) {
-  localStorage.setItem(PROJECT_STORAGE_KEY, project.id);
+  localStorage.setItem(PROJECT_STORAGE_KEY, project.project);
   const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
   if (environment) {
-    localStorage.setItem(ENVIRONMENT_STORAGE_KEY, environment.id);
-    writeEnvironmentSelection(project.id, environment.id);
+    localStorage.setItem(ENVIRONMENT_STORAGE_KEY, environment.environment);
+    writeEnvironmentSelection(project.project, environment.environment);
   } else {
     localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
   }
@@ -71,8 +71,8 @@ function resolveEnvironment(
 ): Environment | undefined {
   const environments = project?.environments ?? [];
   if (environments.length === 0) return undefined;
-  return environments.find((environment) => environment.id === environmentID) ??
-    environments.find((environment) => environment.id === environmentSelections[project!.id]) ??
+  return environments.find((environment) => environment.environment === environmentID) ??
+    environments.find((environment) => environment.environment === environmentSelections[project!.project]) ??
     environments.find((environment) => environment.is_default) ??
     environments[0];
 }
@@ -80,8 +80,8 @@ function resolveEnvironment(
 export function ScopeProvider(props: { children: JSX.Element }) {
   const [search] = useSearchParams();
   const routeValue = (key: string) => typeof search[key] === "string" ? search[key] as string : "";
-  const [selectedProjectID, setSelectedProjectIDState] = createSignal(routeValue("project_id") || localStorage.getItem(PROJECT_STORAGE_KEY) || "");
-  const [selectedEnvironmentID, setSelectedEnvironmentIDState] = createSignal(routeValue("environment_id") || localStorage.getItem(ENVIRONMENT_STORAGE_KEY) || "");
+  const [selectedProjectID, setSelectedProjectIDState] = createSignal(routeValue("project") || localStorage.getItem(PROJECT_STORAGE_KEY) || "");
+  const [selectedEnvironmentID, setSelectedEnvironmentIDState] = createSignal(routeValue("environment") || localStorage.getItem(ENVIRONMENT_STORAGE_KEY) || "");
   const [environmentSelections, setEnvironmentSelections] = createSignal(readEnvironmentSelections());
   const [rejectedProjectIDs, setRejectedProjectIDs] = createSignal<ReadonlySet<string>>(new Set());
   const projectsQuery = createInfiniteQuery(() => ({
@@ -122,7 +122,7 @@ export function ScopeProvider(props: { children: JSX.Element }) {
 
   // Deep links establish the same scope shown by the global selector. Explicit
   // selector changes navigate away from old resource/query identities.
-  createEffect(on(() => [routeValue("project_id"), routeValue("environment_id")] as const, ([project, environment]) => {
+  createEffect(on(() => [routeValue("project"), routeValue("environment")] as const, ([project, environment]) => {
     batch(() => {
       if (project) selectProjectID(project);
       if (environment) setSelectedEnvironmentIDState(environment);
@@ -138,17 +138,17 @@ export function ScopeProvider(props: { children: JSX.Element }) {
           if (current.has(projectID)) return current;
           return new Set([...current, projectID]);
         });
-        if (project) selectProjectID(project.id);
+        if (project) selectProjectID(project.project);
       });
-    } else if (project && projectID !== project.id) {
-      selectProjectID(project.id);
+    } else if (project && projectID !== project.project) {
+      selectProjectID(project.project);
     }
   });
 
   createEffect(() => {
     const environment = selectedEnvironment();
-    if (environment && selectedEnvironmentID() !== environment.id) {
-      setSelectedEnvironmentIDState(environment.id);
+    if (environment && selectedEnvironmentID() !== environment.environment) {
+      setSelectedEnvironmentIDState(environment.environment);
     } else if (!environment && projectDetailQuery.isSuccess && selectedEnvironmentID()) {
       setSelectedEnvironmentIDState("");
     }
@@ -157,7 +157,7 @@ export function ScopeProvider(props: { children: JSX.Element }) {
   createEffect(() => {
     const projectID = selectedProjectID();
     if (projectDetailNotFound() && projectResolutionSettled()) {
-      const fallbackID = selectedProject()?.id;
+      const fallbackID = selectedProject()?.project;
       if (fallbackID) {
         localStorage.setItem(PROJECT_STORAGE_KEY, fallbackID);
       } else {
@@ -183,17 +183,17 @@ export function ScopeProvider(props: { children: JSX.Element }) {
     if (!environment) {
       localStorage.removeItem(ENVIRONMENT_STORAGE_KEY);
       setEnvironmentSelections((current) => {
-        if (!(project.id in current)) return current;
-        const { [project.id]: _removed, ...next } = current;
+        if (!(project.project in current)) return current;
+        const { [project.project]: _removed, ...next } = current;
         localStorage.setItem(ENVIRONMENT_BY_PROJECT_STORAGE_KEY, JSON.stringify(next));
         return next;
       });
       return;
     }
-    localStorage.setItem(ENVIRONMENT_STORAGE_KEY, environment.id);
+    localStorage.setItem(ENVIRONMENT_STORAGE_KEY, environment.environment);
     setEnvironmentSelections((current) => {
-      if (current[project.id] === environment.id) return current;
-      const next = { ...current, [project.id]: environment.id };
+      if (current[project.project] === environment.environment) return current;
+      const next = { ...current, [project.project]: environment.environment };
       localStorage.setItem(ENVIRONMENT_BY_PROJECT_STORAGE_KEY, JSON.stringify(next));
       return next;
     });
@@ -204,8 +204,8 @@ export function ScopeProvider(props: { children: JSX.Element }) {
       projects,
       selectedProject,
       selectedEnvironment,
-      selectedProjectID: () => resolveScopeID(selectedProject()?.id, selectedProjectID(), projectResolutionSettled()),
-      selectedEnvironmentID: () => resolveScopeID(selectedEnvironment()?.id, selectedEnvironmentID(), projectResolutionSettled()),
+      selectedProjectID: () => resolveScopeID(selectedProject()?.project, selectedProjectID(), projectResolutionSettled()),
+      selectedEnvironmentID: () => resolveScopeID(selectedEnvironment()?.environment, selectedEnvironmentID(), projectResolutionSettled()),
       setSelectedProjectID: selectProjectID,
       setSelectedEnvironmentID: setSelectedEnvironmentIDState,
       hasMoreProjects: () => projectsQuery.hasNextPage,
@@ -230,7 +230,7 @@ export function useRouteScope() {
   const [search] = useSearchParams();
   const value = (key: string) => typeof search[key] === "string" ? search[key] as string : "";
   return () => ({
-    projectID: value("project_id") || scope.selectedProjectID(),
-    environmentID: value("environment_id") || scope.selectedEnvironmentID(),
+    projectID: value("project") || scope.selectedProjectID(),
+    environmentID: value("environment") || scope.selectedEnvironmentID(),
   });
 }

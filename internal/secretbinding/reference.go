@@ -2,15 +2,14 @@ package secretbinding
 
 import (
 	"errors"
-	"uuid"
 )
 
 // Reference binds a stable Secret identity to an explicit placement. Resolving
-// names belongs to authoring; registration and delivery never rebind a name.
+// names happens once at admission; delivery uses the persisted internal identity.
 type Reference struct {
-	SecretID string        `json:"secretId"`
-	Env      *ReferenceEnv `json:"env,omitempty"`
-	File     *File         `json:"file,omitempty"`
+	Secret string        `json:"secret"`
+	Env    *ReferenceEnv `json:"env,omitempty"`
+	File   *File         `json:"file,omitempty"`
 }
 
 type ReferenceEnv struct {
@@ -20,7 +19,7 @@ type ReferenceEnv struct {
 }
 
 // NormalizeReferences reuses the placement/origin constraints of ordinary
-// Computer bindings. Placement.Name holds the already resolved stable identity.
+// Computer bindings. Placement.Name holds the public Secret identifier.
 func NormalizeReferences(refs []Reference) ([]Placement, error) {
 	if refs == nil {
 		return nil, errors.New("secret bindings must be an array")
@@ -30,7 +29,7 @@ func NormalizeReferences(refs []Reference) ([]Placement, error) {
 		if (ref.Env == nil) == (ref.File == nil) {
 			return nil, errors.New("secret binding requires exactly one env or file placement")
 		}
-		p := Placement{Name: ref.SecretID}
+		p := Placement{Name: ref.Secret}
 		if ref.Env != nil {
 			p.Kind, p.Target, p.Mode, p.AllowedOrigins = "env", ref.Env.Name, ref.Env.Mode, ref.Env.AllowedOrigins
 		} else {
@@ -38,13 +37,7 @@ func NormalizeReferences(refs []Reference) ([]Placement, error) {
 		}
 		placements = append(placements, p)
 	}
-	return normalize(placements, func(value string) error {
-		id, err := uuid.Parse(value)
-		if err != nil || id == uuid.Nil() || id.String() != value {
-			return errors.New("secret binding requires a canonical stable Secret id")
-		}
-		return nil
-	})
+	return Normalize(placements)
 }
 
 // CanonicalReferences returns the normalized target and origin ordering used in
@@ -56,7 +49,7 @@ func CanonicalReferences(refs []Reference) ([]Reference, error) {
 	}
 	result := make([]Reference, 0, len(placements))
 	for _, p := range placements {
-		r := Reference{SecretID: p.Name}
+		r := Reference{Secret: p.Name}
 		if p.Kind == "env" {
 			r.Env = &ReferenceEnv{Name: p.Target, Mode: p.Mode, AllowedOrigins: p.AllowedOrigins}
 		} else {

@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5"
@@ -64,20 +63,13 @@ func ListProjects(ctx context.Context, q db.Querier, orgID uuid.UUID, limit int3
 	return projects, false, nil
 }
 
-// GetProject resolves a project by ID or by slug within the organization.
+// GetProject resolves a public project identifier within the organization.
 func GetProject(ctx context.Context, q db.Querier, orgID uuid.UUID, ref string) (db.Project, error) {
 	ref = strings.TrimSpace(ref)
-	var project db.Project
-	var err error
-	if projectID, idErr := ids.Parse(ref); idErr == nil {
-		project, err = q.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(projectID)})
-	} else {
-		slug := strings.ToLower(ref)
-		if !slugPattern.MatchString(slug) {
-			return db.Project{}, invalidInput("invalid project reference")
-		}
-		project, err = q.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: pgvalue.UUID(orgID), Slug: slug})
+	if !slugPattern.MatchString(ref) {
+		return db.Project{}, invalidInput("invalid project identifier")
 	}
+	project, err := q.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: pgvalue.UUID(orgID), Slug: ref})
 	if isNoRows(err) {
 		return db.Project{}, ErrProjectNotFound
 	}
@@ -180,16 +172,15 @@ func defaultRegionID(ctx context.Context, q db.Querier, requested string) (strin
 	return found.ID, nil
 }
 
-// UpdateProject replaces a project's slug and name.
+// UpdateProject changes the display name while preserving the public identifier.
 func UpdateProject(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, details ProjectDetails) (db.Project, error) {
-	slug, name, err := normalizeProjectSlugName(details.Slug, details.Name)
+	name, err := normalizeDisplayName(details.Name)
 	if err != nil {
 		return db.Project{}, err
 	}
 	project, err := q.UpdateProjectDetails(ctx, db.UpdateProjectDetailsParams{
 		OrgID: pgvalue.UUID(orgID),
 		ID:    pgvalue.UUID(projectID),
-		Slug:  slug,
 		Name:  name,
 	})
 	if isNoRows(err) {
@@ -264,31 +255,21 @@ func GetEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectI
 	return environment, nil
 }
 
-// UpdateEnvironment replaces an environment's slug, name and color. The
-// production and staging slugs are fixed: they can neither be renamed nor
-// taken by a rename.
+// UpdateEnvironment changes display settings while preserving the public identifier.
 func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
 	if details.HistoryRetention.Mode != "" || details.HistoryRetention.Seconds != nil {
 		if err := details.HistoryRetention.Validate(); err != nil {
 			return db.Environment{}, err
 		}
 	}
-	slug, name, err := normalizeSlugName(details.Slug, details.Name)
+	name, err := normalizeDisplayName(details.Name)
 	if err != nil {
 		return db.Environment{}, err
-	}
-	current, err := GetEnvironment(ctx, q, orgID, projectID, environmentID)
-	if err != nil {
-		return db.Environment{}, err
-	}
-	if current.Slug != slug && (protectedEnvironmentSlug(current.Slug) || protectedEnvironmentSlug(slug)) {
-		return db.Environment{}, invalidInput("production and staging environment slugs cannot be renamed")
 	}
 	environment, err := q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{
 		OrgID:                   pgvalue.UUID(orgID),
 		ProjectID:               pgvalue.UUID(projectID),
 		ID:                      pgvalue.UUID(environmentID),
-		Slug:                    slug,
 		Name:                    name,
 		ColorHex:                details.ColorHex,
 		HistoryRetentionMode:    details.HistoryRetention.Mode,
@@ -306,6 +287,17 @@ func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, proje
 	return environment, nil
 }
 
-func protectedEnvironmentSlug(slug string) bool {
-	return slug == "production" || slug == "staging"
+// GetEnvironmentByReference resolves a public Environment identifier in its Project.
+func GetEnvironmentByReference(ctx context.Context, q db.Querier, orgID, projectID uuid.UUID, ref string) (db.Environment, error) {
+	if !slugPattern.MatchString(ref) {
+		return db.Environment{}, invalidInput("invalid environment identifier")
+	}
+	environment, err := q.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), Slug: ref})
+	if isNoRows(err) {
+		return db.Environment{}, ErrEnvironmentNotFound
+	}
+	if err != nil {
+		return db.Environment{}, fmt.Errorf("load environment: %w", err)
+	}
+	return environment, nil
 }

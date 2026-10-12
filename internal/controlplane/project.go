@@ -70,7 +70,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "projectRef"))
+	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "project"))
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -145,7 +145,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	project, environments, err := org.CreateProject(r.Context(), s.tx, principal.OrgID, org.ProjectInput{
 		ExecutionLimits:  s.environmentExecutionLimits,
 		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
-		ProjectDetails:   org.ProjectDetails{Slug: request.Slug, Name: request.Name},
+		ProjectDetails:   org.ProjectDetails{Slug: request.Project, Name: request.Name},
 		DefaultRegionID:  request.DefaultRegionID,
 	})
 	if err != nil {
@@ -156,11 +156,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseUUIDParam(r, "projectID")
+	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, orgError(err))
 		return
 	}
+	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	var request api.UpdateProjectRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
@@ -168,7 +169,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	project, err := org.UpdateProject(r.Context(), s.db, principal.OrgID, projectID, org.ProjectDetails{
-		Slug: request.Slug, Name: request.Name,
+		Name: request.Name,
 	})
 	if err != nil {
 		writeError(w, orgError(err))
@@ -178,11 +179,12 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseUUIDParam(r, "projectID")
+	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, orgError(err))
 		return
 	}
+	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	var request api.CreateEnvironmentRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
@@ -195,47 +197,44 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	environment, err := org.CreateEnvironment(r.Context(), s.tx, principal.OrgID, projectID, org.EnvironmentDetails{
-		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
+		Slug: request.Environment, Name: request.Name, ColorHex: colorHex,
 		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	}, s.environmentExecutionLimits)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, environmentResponse(environment))
+	writeJSON(w, http.StatusCreated, environmentResponse(environment, projectRecord.Slug))
 }
 
 func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseUUIDParam(r, "projectID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	environmentID, err := parseUUIDParam(r, "environmentID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	principal := principalFromContext(r.Context())
-	environment, err := org.GetEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID)
+	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, environmentResponse(environment))
+	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
+	environmentRecord, err := org.GetEnvironmentByReference(r.Context(), s.db, principalFromContext(r.Context()).OrgID, projectID, chi.URLParam(r, "environment"))
+	if err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, environmentResponse(environmentRecord, projectRecord.Slug))
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseUUIDParam(r, "projectID")
+	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, orgError(err))
 		return
 	}
-	environmentID, err := parseUUIDParam(r, "environmentID")
+	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
+	environmentRecord, err := org.GetEnvironmentByReference(r.Context(), s.db, principalFromContext(r.Context()).OrgID, projectID, chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, orgError(err))
 		return
 	}
+	environmentID := pgvalue.MustUUIDValue(environmentRecord.ID)
 	var request api.UpdateEnvironmentRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
@@ -248,14 +247,14 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
-		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
+		Name: request.Name, ColorHex: colorHex,
 		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	})
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, environmentResponse(environment))
+	writeJSON(w, http.StatusOK, environmentResponse(environment, projectRecord.Slug))
 }
 
 // normalizeEnvironmentColorHex applies the public #RRGGBB color grammar that
@@ -270,8 +269,7 @@ func normalizeEnvironmentColorHex(colorHex string) (string, error) {
 
 func projectResponse(project db.Project) api.ProjectSummary {
 	return api.ProjectSummary{
-		ID:              pgvalue.MustUUIDValue(project.ID).String(),
-		Slug:            project.Slug,
+		Project:         project.Slug,
 		Name:            project.Name,
 		DefaultRegionID: project.DefaultRegionID,
 		IsDefault:       project.IsDefault,
@@ -284,12 +282,12 @@ func projectResponseWithEnvironments(project db.Project, environments []db.Envir
 	response := projectResponse(project)
 	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
 	for _, environment := range environments {
-		response.Environments = append(response.Environments, environmentResponse(environment))
+		response.Environments = append(response.Environments, environmentResponse(environment, project.Slug))
 	}
 	return response
 }
 
-func environmentResponse(environment db.Environment) api.EnvironmentSummary {
+func environmentResponse(environment db.Environment, project string) api.EnvironmentSummary {
 	var seconds *int64
 	if environment.HistoryRetentionSeconds.Valid {
 		value := environment.HistoryRetentionSeconds.Int64
@@ -297,9 +295,8 @@ func environmentResponse(environment db.Environment) api.EnvironmentSummary {
 	}
 	return api.EnvironmentSummary{
 		HistoryRetentionPolicy: api.HistoryRetentionPolicy{HistoryRetentionMode: environment.HistoryRetentionMode, HistoryRetentionSeconds: seconds},
-		ID:                     pgvalue.MustUUIDValue(environment.ID).String(),
-		ProjectID:              pgvalue.MustUUIDValue(environment.ProjectID).String(),
-		Slug:                   environment.Slug,
+		Environment:            environment.Slug,
+		Project:                project,
 		Name:                   environment.Name,
 		ColorHex:               environment.ColorHex,
 		IsDefault:              environment.IsDefault,

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -28,49 +27,21 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	var locked uuid.UUID
 	manifests := make(map[string]*definition.TemplateManifest, len(specs))
-	secretIDs := make(map[uuid.UUID]struct{})
+	var refs []secretbinding.Reference
 	for _, d := range output.Metadata.Definitions {
 		if d.Template == nil {
 			continue
 		}
 		manifests[d.DeclaredID] = d.Template
-		for _, refs := range [][]definition.SecretBinding{d.Template.Secrets, d.Template.BuildSecrets} {
-			for _, ref := range refs {
-				secretIDs[uuid.MustParse(ref.SecretID)] = struct{}{}
-			}
-		}
+		refs = append(refs, d.Template.Secrets...)
+		refs = append(refs, d.Template.BuildSecrets...)
 	}
-	ids := make([]uuid.UUID, 0, len(secretIDs))
-	for id := range secretIDs {
-		ids = append(ids, id)
+	resolved, err := resolveSecretReferences(ctx, tx, env, refs)
+	if err != nil {
+		return err
 	}
-	slices.SortFunc(ids, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
-	if len(ids) > 0 {
-		// Lock the complete stable-reference set in one ordered query. Revoked
-		// references remain registrable; execution delivery owns their activity check.
-		rows, err := tx.Query(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR KEY SHARE`, env, ids)
-		if err != nil {
-			return err
-		}
-		found := 0
-		for rows.Next() {
-			if err := rows.Scan(&locked); err != nil {
-				rows.Close()
-				return err
-			}
-			found++
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if found != len(ids) {
-			return fmt.Errorf("%w: Secret reference is outside the Environment", ErrDenied)
-		}
-	}
+
 	type input struct {
 		ID           uuid.UUID       `json:"id"`
 		TemplateID   uuid.UUID       `json:"template_id"`
@@ -224,7 +195,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			rows.Close()
 			return err
 		}
-		bindings, err := registrationSecretBindings(refs, &specID, nil, nil)
+		bindings, err := registrationSecretBindings(refs, resolved, &specID, nil, nil)
 		if err != nil {
 			rows.Close()
 			return err
@@ -235,7 +206,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			rows.Close()
 			return err
 		}
-		bindings, err = registrationSecretBindings(refs, nil, &deployment, &want.TemplateID)
+		bindings, err = registrationSecretBindings(refs, resolved, nil, &deployment, &want.TemplateID)
 		if err != nil {
 			rows.Close()
 			return err

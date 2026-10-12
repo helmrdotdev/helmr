@@ -3,13 +3,13 @@ import { expect, test } from "@playwright/test";
 // This exercises the real Console confirmation with a synthetic API fixture.
 // Revocation state and queued-input preservation are covered by the DB tests.
 test("Secret revocation explains running Turn interruption and retained pending inputs", async ({ page }) => {
-  const projectID = "00000000-0000-7000-8000-000000000301";
-  const environmentID = "00000000-0000-7000-8000-000000000401";
-  const secretID = "00000000-0000-7000-8000-000000000701";
+  const projectID = "console-demo";
+  const environmentID = "production";
+  const secretID = "SYNTHETIC_TOKEN";
   const now = new Date().toISOString();
-  const environment = { id: environmentID, project_id: projectID, slug: "dev", name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
-  const project = { id: projectID, slug: "test", name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
-  const secret = { id: secretID, name: "SYNTHETIC_TOKEN", status: "active", created_at: now };
+  const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
+  const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
+  const secret = { secret: secretID, status: "active", created_at: now };
   const base = `/api/projects/${projectID}/environments/${environmentID}`;
   let revocations = 0;
   await page.route("**/api/**", async route => {
@@ -27,7 +27,7 @@ test("Secret revocation explains running Turn interruption and retained pending 
     } else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
   });
-  await page.goto(`/settings/secrets?project_id=${projectID}&environment_id=${environmentID}`);
+  await page.goto(`/settings/secrets?project=${projectID}&environment=${environmentID}`);
   for (const accept of [false, true]) {
     await page.getByRole("button", { name: "Actions for SYNTHETIC_TOKEN" }).click();
     const pending = page.waitForEvent("dialog");

@@ -66,7 +66,7 @@ export function ProjectNew() {
     const nextSlug = slug().trim();
     const nextRegionID = selectedRegionID().trim();
     if (!nextName || !nextSlug || !nextRegionID) {
-      setError("Name, slug, and region are required.");
+      setError("Name, Project ID, and region are required.");
       return;
     }
     setSubmitting(true);
@@ -76,7 +76,7 @@ export function ProjectNew() {
       const project = await createProject({
         ...historyRetentionPolicy(retention()),
         name: nextName,
-        slug: nextSlug,
+        project: nextSlug,
         default_region_id: nextRegionID,
       });
       rememberProjectScope(project);
@@ -115,7 +115,7 @@ export function ProjectNew() {
         </div>
       </Show>
       <label class={ui.field}>
-        <span>Slug</span>
+        <span>Project ID</span>
         <input
           type="text"
           class={ui.input}

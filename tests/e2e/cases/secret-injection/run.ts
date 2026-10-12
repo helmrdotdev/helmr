@@ -4,18 +4,18 @@ await verify("secret-injection", async ({ client, marker, cleanup, objects, star
   const value = randomBytes(32).toString("hex"),
     name = `verification-${marker}`
   const secret = await client.secrets.create(
-    { name, value, idempotencyKey: `secret:${marker}` },
+    { secret: name, value, idempotencyKey: `secret:${marker}` },
     { signal: deadline(30_000) },
   )
-  objects.secret_ids.push(secret.id)
+  objects.secret_ids.push(secret.secret)
   cleanup(() =>
     client.secrets
-      .ref(secret.id)
+      .ref(secret.secret)
       .revoke({ idempotencyKey: `revoke:${marker}` }, { signal: deadline(30_000) }),
   )
   const computer = await client.computers.create({ template: "helmr-secret-smoke", key: marker,
       idempotencyKey: `computer:${marker}`,
-      secrets: [{ secretId: secret.id, env: { name: "VERIFICATION_SECRET", mode: "raw" } }], }, { signal: deadline(30_000) })
+      secrets: [{ secret: secret.secret, env: { name: "VERIFICATION_SECRET", mode: "raw" } }], }, { signal: deadline(30_000) })
   objects.computer_ids.push(computer.id)
   cleanup(() =>
     deleteComputer(computer, `delete:${marker}`),

@@ -159,7 +159,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		t.Fatal(err)
 	}
 	login := hf.session(t, f.User, org)
-	humanPath := fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/turns/%s/asks/%s", project, f.Environment, f.Session, admission.TurnID, ids[1])
+	humanPath := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/turns/%s/asks/%s", f.Session, admission.TurnID, ids[1])
 	call(http.MethodGet, humanPath, login, "", http.StatusOK)
 	human := call(http.MethodPost, humanPath+"/respond", login, `{"answer":"Allow","response_id":"human"}`, http.StatusOK)
 	if string(human["responded_by_user_id"]) != `"`+f.User.String()+`"` {

@@ -6,7 +6,8 @@ description: Store credentials and choose how Computers use them.
 # Secrets
 
 A Secret is a named, encrypted value scoped to one Project Environment. Create it
-once and reference its stable ID when creating a Computer. Secrets persist
+once and use its name as the public `secret` identifier in code, the Console,
+CLI, SDK and API. Secrets persist
 independently of Computers, so you can reuse them in new Computers and rotate
 values without changing their names. Read APIs return metadata, not the value.
 
@@ -30,20 +31,26 @@ const computer = await client.computers.create({
   template: "reviewer",
   secrets: [
     {
-      secretId: process.env.HELMR_GITHUB_SECRET_ID!,
+      secret: "GITHUB_TOKEN",
       env: {
         name: "GH_TOKEN",
         mode: "protected",
         allowedOrigins: ["https://api.github.com"],
       },
     },
-    { secretId: databaseSecret.id, env: { name: "PGPASSWORD", mode: "raw" } },
-    { secretId: clientKeySecret.id, file: { path: "/run/secrets/client.key" } },
+    { secret: "DATABASE_PASSWORD", env: { name: "PGPASSWORD", mode: "raw" } },
+    { secret: "CLIENT_KEY", file: { path: "/run/secrets/client.key" } },
   ],
 })
 ```
 
-Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. Each binding has
+Secret identifiers are immutable and unique within an Environment, including
+after revocation. Reuse the same identifier in different Environments for
+Environment-specific values. New Deployments and Computers require every declared
+Secret to be active in their target Environment. Successful retries keep their
+original binding, and rotation changes the value without changing the identifier.
+
+Secret identifiers must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. Each binding has
 exactly one `env` or `file` target. Environment bindings require an explicit
 `mode`, and targets must be unique within the Computer.
 

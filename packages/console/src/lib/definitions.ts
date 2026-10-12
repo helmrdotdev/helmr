@@ -68,7 +68,7 @@ export function definitionHref(kind: DefinitionKind, id: string, options: Defini
   return scopedConsoleHref(`/deployments/${encodeURIComponent(options.deploymentID)}/${kind}/${encodeURIComponent(id)}`, options);
 }
 export function scopedConsoleHref(path: string, options: DefinitionScope): string {
-  return `${path}?${new URLSearchParams({ project_id: options.projectID, environment_id: options.environmentID })}`;
+  return `${path}?${new URLSearchParams({ project: options.projectID, environment: options.environmentID })}`;
 }
 
 export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };

@@ -25,12 +25,13 @@ printf '%s' "$GITHUB_TOKEN" | helmr secret create GITHUB_TOKEN \
   --idempotency-key secret:github-token:create --json
 ```
 
-The response contains the Secret's metadata, including its `id`; it never
-contains the value. Bindings, rotation and revocation all use this ID. List the
-Environment's Secrets with `helmr secret list --json`.
+The response contains `secret: "GITHUB_TOKEN"` and metadata; it never contains
+the value. Use `GITHUB_TOKEN` unchanged in bindings, retrieval, rotation and
+revocation. The Console displays the same ID. List the Environment's Secrets
+with `helmr secret list --project demo --env staging --json`.
 
 A Secret belongs to one Environment. Create it separately in each Environment
-that needs it; each copy has its own ID.
+that needs it, using the same ID and the value appropriate to that Environment.
 
 ## Bind it to a Computer
 
@@ -51,9 +52,6 @@ Use this for Computers that Agents create for their Sessions:
 ```ts
 import { agent, template, image } from "@helmr/sdk"
 
-// ID from `helmr secret create GITHUB_TOKEN --json` in this Environment.
-const GITHUB_TOKEN = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-
 export const reviewerComputer = template({
   id: "reviewer",
   image: image("reviewer")
@@ -62,7 +60,7 @@ export const reviewerComputer = template({
   resources: { cpu: 1, memory: "2GiB" },
   secrets: [
     {
-      secretId: GITHUB_TOKEN,
+      secret: "GITHUB_TOKEN",
       env: { name: "GH_TOKEN", mode: "protected", allowedOrigins: ["https://api.github.com"] },
     },
   ],
@@ -78,9 +76,10 @@ export const reviewer = agent({
 })
 ```
 
-Deploy the project. The deploy is rejected if a Secret ID does not belong to the
-target Environment, so a definition that names a Secret ID deploys only to that
-Secret's Environment. Computers created by Agent starts after the Deployment is
+Deploy the project. Registration resolves every `secrets` and `buildSecrets`
+identifier in the target Environment and rejects missing or revoked Secrets.
+The same compiled bundle can deploy to multiple Environments, each with its own
+active `GITHUB_TOKEN` value. Computers created by Agent starts after the Deployment is
 promoted get the binding. Existing Computers keep the bindings they were
 created with.
 
@@ -91,7 +90,7 @@ Write the bindings to a file and pass it to `helmr computer create`:
 ```json
 [
   {
-    "secretId": "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+    "secret": "GITHUB_TOKEN",
     "env": { "name": "GH_TOKEN", "mode": "protected", "allowedOrigins": ["https://api.github.com"] }
   }
 ]
@@ -112,7 +111,7 @@ const computer = await client.computers.create({
   idempotencyKey: "computer:github-review",
   secrets: [
     {
-      secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+      secret: "GITHUB_TOKEN",
       env: { name: "GH_TOKEN", mode: "protected", allowedOrigins: ["https://api.github.com"] },
     },
   ],
@@ -145,7 +144,7 @@ only by `prepare` go in `buildSecrets`; see
 ## Rotate the value
 
 ```sh
-printf '%s' "$NEW_GITHUB_TOKEN" | helmr secret rotate SECRET_ID \
+printf '%s' "$NEW_GITHUB_TOKEN" | helmr secret rotate GITHUB_TOKEN \
   --project demo --env staging \
   --idempotency-key secret:github-token:rotate:2
 ```
@@ -158,12 +157,14 @@ with this Secret in `buildSecrets` gets a fresh baseline.
 ## Revoke the Secret
 
 ```sh
-helmr secret revoke SECRET_ID --yes \
+helmr secret revoke GITHUB_TOKEN --yes \
   --project demo --env staging \
   --idempotency-key secret:github-token:revoke
 ```
 
-Revocation stops further use of the Secret. It cannot erase raw or file copies
+Revocation is permanent and reserves this identifier in the Environment. Create
+a new Secret with a different ID if you need a replacement. It stops further use
+of the Secret. It cannot erase raw or file copies
 already delivered to a Computer; revoke the credential at its provider as well if
 it may have been exposed.
 

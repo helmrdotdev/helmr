@@ -12,8 +12,8 @@ export function QuestionDetail() {
   const params = useParams(), [search] = useSearchParams(), scope = useScope();
   const address = (): AskAddress => ({
     sessionID: params["session_id"] ?? "", turnID: params["turn_id"] ?? "", askID: params["ask_id"] ?? "",
-    projectID: typeof search["project_id"] === "string" ? search["project_id"] : scope.selectedProjectID(),
-    environmentID: typeof search["environment_id"] === "string" ? search["environment_id"] : scope.selectedEnvironmentID(),
+    projectID: typeof search["project"] === "string" ? search["project"] : scope.selectedProjectID(),
+    environmentID: typeof search["environment"] === "string" ? search["environment"] : scope.selectedEnvironmentID(),
   });
   return <Show when={JSON.stringify(address())} keyed>{(_identity) => <QuestionDetailContent address={address()} />}</Show>;
 }

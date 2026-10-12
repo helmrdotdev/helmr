@@ -10,8 +10,7 @@ import (
 var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 type ProjectSummary struct {
-	ID              string               `json:"id"`
-	Slug            string               `json:"slug"`
+	Project         string               `json:"project"`
 	Name            string               `json:"name"`
 	DefaultRegionID string               `json:"default_region_id"`
 	IsDefault       bool                 `json:"is_default"`
@@ -27,14 +26,13 @@ type HistoryRetentionPolicy struct {
 
 type EnvironmentSummary struct {
 	HistoryRetentionPolicy
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	ColorHex  string    `json:"color_hex"`
-	IsDefault bool      `json:"is_default"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Environment string    `json:"environment"`
+	Project     string    `json:"project"`
+	Name        string    `json:"name"`
+	ColorHex    string    `json:"color_hex"`
+	IsDefault   bool      `json:"is_default"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type ListProjectsResponse struct {
@@ -44,26 +42,24 @@ type ListProjectsResponse struct {
 
 type CreateProjectRequest struct {
 	HistoryRetentionPolicy
-	Slug            string `json:"slug"`
+	Project         string `json:"project"`
 	Name            string `json:"name"`
 	DefaultRegionID string `json:"default_region_id"`
 }
 
 type UpdateProjectRequest struct {
-	Slug string `json:"slug"`
 	Name string `json:"name"`
 }
 
 type CreateEnvironmentRequest struct {
 	HistoryRetentionPolicy
-	Slug     string `json:"slug"`
-	Name     string `json:"name"`
-	ColorHex string `json:"color_hex"`
+	Environment string `json:"environment"`
+	Name        string `json:"name"`
+	ColorHex    string `json:"color_hex"`
 }
 
 type UpdateEnvironmentRequest struct {
 	HistoryRetentionPolicy
-	Slug     string `json:"slug"`
 	Name     string `json:"name"`
 	ColorHex string `json:"color_hex"`
 }

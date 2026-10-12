@@ -256,6 +256,52 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 	return i, err
 }
 
+const getEnvironmentBySlug = `-- name: GetEnvironmentBySlug :one
+SELECT history_retention_mode, history_retention_seconds, id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at FROM environments
+ WHERE org_id = $1
+   AND project_id = $2
+   AND slug = $3
+   AND retired_at IS NULL
+`
+
+type GetEnvironmentBySlugParams struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	Slug      string      `json:"slug"`
+}
+
+func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBySlugParams) (Environment, error) {
+	row := q.db.QueryRow(ctx, getEnvironmentBySlug, arg.OrgID, arg.ProjectID, arg.Slug)
+	var i Environment
+	err := row.Scan(
+		&i.HistoryRetentionMode,
+		&i.HistoryRetentionSeconds,
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.Slug,
+		&i.Name,
+		&i.ColorHex,
+		&i.IsDefault,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
+		&i.RetiredAt,
+		&i.MaxOutstandingAdmissions,
+		&i.MaxCausalDepth,
+		&i.MaxResidentComputers,
+		&i.MaxCpuMillis,
+		&i.MaxMemoryBytes,
+		&i.MaxReservedStorageBytes,
+		&i.PreparationTimeoutMs,
+		&i.AdmissionRatePerSecond,
+		&i.AdmissionBurst,
+		&i.AdmissionTokens,
+		&i.AdmissionRefilledAt,
+	)
+	return i, err
+}
+
 const getProject = `-- name: GetProject :one
 SELECT id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
   FROM projects
@@ -430,20 +476,18 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 
 const updateEnvironmentDetails = `-- name: UpdateEnvironmentDetails :one
 UPDATE environments
-   SET slug = $1,
-       name = $2,
-       color_hex = $3,
-       history_retention_mode = CASE WHEN $4::text='' THEN history_retention_mode ELSE $4 END,
-       history_retention_seconds = CASE WHEN $4::text='' THEN history_retention_seconds ELSE $5::bigint END,
+   SET name = $1,
+       color_hex = $2,
+       history_retention_mode = CASE WHEN $3::text='' THEN history_retention_mode ELSE $3 END,
+       history_retention_seconds = CASE WHEN $3::text='' THEN history_retention_seconds ELSE $4::bigint END,
        updated_at = now()
- WHERE org_id = $6
-   AND project_id = $7
-   AND id = $8
+ WHERE org_id = $5
+   AND project_id = $6
+   AND id = $7
 RETURNING history_retention_mode, history_retention_seconds, id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
 `
 
 type UpdateEnvironmentDetailsParams struct {
-	Slug                    string      `json:"slug"`
 	Name                    string      `json:"name"`
 	ColorHex                string      `json:"color_hex"`
 	HistoryRetentionMode    string      `json:"history_retention_mode"`
@@ -455,7 +499,6 @@ type UpdateEnvironmentDetailsParams struct {
 
 func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error) {
 	row := q.db.QueryRow(ctx, updateEnvironmentDetails,
-		arg.Slug,
 		arg.Name,
 		arg.ColorHex,
 		arg.HistoryRetentionMode,
@@ -496,28 +539,21 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 
 const updateProjectDetails = `-- name: UpdateProjectDetails :one
 UPDATE projects
-   SET slug = $1,
-       name = $2,
+   SET name = $1,
        updated_at = now()
- WHERE org_id = $3
-   AND id = $4
+ WHERE org_id = $2
+   AND id = $3
 RETURNING id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
 `
 
 type UpdateProjectDetailsParams struct {
-	Slug  string      `json:"slug"`
 	Name  string      `json:"name"`
 	OrgID pgtype.UUID `json:"org_id"`
 	ID    pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error) {
-	row := q.db.QueryRow(ctx, updateProjectDetails,
-		arg.Slug,
-		arg.Name,
-		arg.OrgID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, updateProjectDetails, arg.Name, arg.OrgID, arg.ID)
 	var i Project
 	err := row.Scan(
 		&i.ID,

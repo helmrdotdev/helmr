@@ -129,12 +129,12 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{
-				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Slug: "project-1",
+				Project: "project-1",
 				Environments: []api.EnvironmentSummary{{
-					ID: "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32", Slug: "env-1",
+					Environment: "env-1",
 				}},
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			_ = json.NewEncoder(w).Encode(api.AgentSession{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "open"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)

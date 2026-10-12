@@ -66,7 +66,7 @@ export function ScopeSwitcher() {
     const q = projectQuery().trim().toLowerCase();
     if (!q) return scope.projects();
     return scope.projects().filter((project) =>
-      project.name.toLowerCase().includes(q) || project.slug.toLowerCase().includes(q),
+      project.name.toLowerCase().includes(q) || project.project.toLowerCase().includes(q),
     );
   });
 
@@ -75,7 +75,7 @@ export function ScopeSwitcher() {
     const q = envQuery().trim().toLowerCase();
     if (!q) return envs;
     return envs.filter((env) =>
-      env.name.toLowerCase().includes(q) || env.slug.toLowerCase().includes(q),
+      env.name.toLowerCase().includes(q) || env.environment.toLowerCase().includes(q),
     );
   });
 
@@ -220,19 +220,19 @@ export function ScopeSwitcher() {
     const slug = formSlug().trim();
     const regionID = selectedRegionID().trim();
     if (!name || !slug || !regionID) {
-      setFormError("Name, slug, and region are required.");
+      setFormError("Name, Project ID, and region are required.");
       return;
     }
     setFormError(null);
     setSubmitting(true);
     try {
       const project = await createProject({
-          ...historyRetentionPolicy(retention()), name, slug, default_region_id: regionID });
+          ...historyRetentionPolicy(retention()), name, project: slug, default_region_id: regionID });
       const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      scope.setSelectedProjectID(project.id);
-      scope.setSelectedEnvironmentID(environment?.id ?? "");
+      scope.setSelectedProjectID(project.project);
+      scope.setSelectedEnvironmentID(environment?.environment ?? "");
       navigate(scopeSwitchPath(location.pathname));
       setCreating(null);
       resetForm();
@@ -253,15 +253,15 @@ export function ScopeSwitcher() {
     const name = formName().trim();
     const slug = formSlug().trim();
     if (!name || !slug) {
-      setFormError("Name and slug are required.");
+      setFormError("Name and Environment ID are required.");
       return;
     }
     setFormError(null);
     setSubmitting(true);
     try {
-      const env = await createEnvironment(projectID, { name, slug, color_hex: formColorHex(), ...historyRetentionPolicy(retention()) });
+      const env = await createEnvironment(projectID, { name, environment: slug, color_hex: formColorHex(), ...historyRetentionPolicy(retention()) });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      scope.setSelectedEnvironmentID(env.id);
+      scope.setSelectedEnvironmentID(env.environment);
       navigate(scopeSwitchPath(location.pathname));
       setCreating(null);
       resetForm();
@@ -355,14 +355,14 @@ export function ScopeSwitcher() {
                         type="button"
                         class={cx(
                           ui.scopeItem,
-                          project.id === scope.selectedProjectID() && ui.scopeItemSelected,
+                          project.project === scope.selectedProjectID() && ui.scopeItemSelected,
                         )}
-                        onClick={() => pickProject(project.id)}
+                        onClick={() => pickProject(project.project)}
                       >
                         <span class={cx(envDotClass("neutral"), "invisible")} />
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{project.name}</span>
                         <Show
-                          when={project.id === scope.selectedProjectID()}
+                          when={project.project === scope.selectedProjectID()}
                           fallback={<span />}
                         >
                           <span class={"text-[12px] font-medium leading-none text-console-accent"} aria-label="current">✓</span>
@@ -428,15 +428,15 @@ export function ScopeSwitcher() {
                         type="button"
                         class={cx(
                           ui.scopeItem,
-                          env.id === scope.selectedEnvironmentID() && ui.scopeItemSelected,
+                          env.environment === scope.selectedEnvironmentID() && ui.scopeItemSelected,
                         )}
-                        onClick={() => pickEnv(env.id)}
+                        onClick={() => pickEnv(env.environment)}
                       >
                         <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
                         <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{env.name}</span>
                         <Show
                           when={
-                            env.id === scope.selectedEnvironmentID()
+                            env.environment === scope.selectedEnvironmentID()
                           }
                           fallback={<span />}
                         >
@@ -490,7 +490,7 @@ export function ScopeSwitcher() {
               />
             </label>
             <label class={ui.field}>
-              <span>Slug</span>
+              <span>{creating() === "project" ? "Project ID" : "Environment ID"}</span>
               <input
                 type="text"
                 class={ui.input}
@@ -558,7 +558,7 @@ export function ScopeSwitcher() {
               />
             </label>
             <label class={ui.field}>
-              <span>Slug</span>
+              <span>{creating() === "project" ? "Project ID" : "Environment ID"}</span>
               <input
                 type="text"
                 class={ui.input}

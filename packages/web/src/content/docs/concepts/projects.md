@@ -9,6 +9,13 @@ A Project groups one product or service inside an Organization. It contains one
 or more Environments, and each Environment receives Deployments of the
 Project's code.
 
+A Project has a permanent, readable ID such as `agents`, returned as `project`
+by the API. Each Environment has its own permanent ID within the Project,
+returned as `environment`. The Console, CLI and API use these same values.
+Display names can change without changing IDs or breaking references.
+Creation trims and lowercases Project and Environment IDs. Use the resulting ID
+returned by the API or copied from the Console verbatim; lookups are case-sensitive.
+
 ## Environments
 
 An Environment is an independent scope within a Project. Each Environment has
@@ -30,8 +37,8 @@ selects the Project and Environment on each command with `--project` and
 `--env`. See [Authentication](/docs/reference/api/authentication).
 
 ```sh
-helmr project create agents
-helmr env create production --project agents
+helmr project create agents --name "Agents" --history-retention-mode until_environment_deletion
+helmr env create development --project agents --history-retention-mode until_environment_deletion
 ```
 
 ## Deployments

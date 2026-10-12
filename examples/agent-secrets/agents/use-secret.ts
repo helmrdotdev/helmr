@@ -13,8 +13,8 @@ export const taskSecretsComputer = template({
   id: "agent-secrets",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
-  // Replace this example UUID with the Environment Secret ID before deployment.
-  secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "API_TOKEN", mode: "raw" } }],
+  // Create this Secret ID in each target Environment before deployment.
+  secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }],
 })
 
 export const useSecret = agent({

@@ -35,9 +35,9 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	want := strings.Split(strings.TrimSpace(`
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
-DELETE /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}
-DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
-DELETE /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}
+DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
+DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/regions
@@ -50,37 +50,37 @@ GET /api/invitations
 GET /api/me
 GET /api/members
 GET /api/projects
-GET /api/projects/{projectID}/environments/{environmentID}
-GET /api/projects/{projectID}/environments/{environmentID}/agents
-GET /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack
-GET /api/projects/{projectID}/environments/{environmentID}/agents/{agent}
-GET /api/projects/{projectID}/environments/{environmentID}/agents/{agent}/status
-GET /api/projects/{projectID}/environments/{environmentID}/api-keys
-GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}
-GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/logs
-GET /api/projects/{projectID}/environments/{environmentID}/computers
-GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
-GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/commands
-GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/sessions
-GET /api/projects/{projectID}/environments/{environmentID}/deployments
-GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
-GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
-GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
-GET /api/projects/{projectID}/environments/{environmentID}/schedules
-GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
-GET /api/projects/{projectID}/environments/{environmentID}/secrets
-GET /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}
-GET /api/projects/{projectID}/environments/{environmentID}/sessions
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks
-GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}
-GET /api/projects/{projectID}/environments/{environmentID}/templates
-GET /api/projects/{projectID}/environments/{environmentID}/templates/{template}
-GET /api/projects/{projectRef}
+GET /api/projects/{project}
+GET /api/projects/{project}/environments/{environment}
+GET /api/projects/{project}/environments/{environment}/agents
+GET /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
+GET /api/projects/{project}/environments/{environment}/agents/{agent}
+GET /api/projects/{project}/environments/{environment}/agents/{agent}/status
+GET /api/projects/{project}/environments/{environment}/api-keys
+GET /api/projects/{project}/environments/{environment}/commands/{commandID}
+GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
+GET /api/projects/{project}/environments/{environment}/computers
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}/commands
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}/sessions
+GET /api/projects/{project}/environments/{environment}/deployments
+GET /api/projects/{project}/environments/{environment}/deployments/current
+GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
+GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
+GET /api/projects/{project}/environments/{environment}/schedules
+GET /api/projects/{project}/environments/{environment}/schedules/{scheduleID}
+GET /api/projects/{project}/environments/{environment}/secrets
+GET /api/projects/{project}/environments/{environment}/secrets/{secret}
+GET /api/projects/{project}/environments/{environment}/sessions
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/events
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}
+GET /api/projects/{project}/environments/{environment}/templates
+GET /api/projects/{project}/environments/{environment}/templates/{template}
 GET /api/regions
 GET /api/slack/link-workspaces
 GET /api/slack/user-links
@@ -108,7 +108,7 @@ GET /v1/deployments/{deploymentID}/events
 GET /v1/schedules
 GET /v1/schedules/{scheduleID}
 GET /v1/secrets
-GET /v1/secrets/{secretID}
+GET /v1/secrets/{secret}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
 GET /v1/sessions/{sessionID}/events
@@ -122,9 +122,9 @@ GET /worker/v1/instance
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/members/{userID}
-PATCH /api/projects/{projectID}
-PATCH /api/projects/{projectID}/environments/{environmentID}
-PATCH /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+PATCH /api/projects/{project}
+PATCH /api/projects/{project}/environments/{environment}
+PATCH /api/projects/{project}/environments/{environment}/computers/{computerID}
 PATCH /v1/computers/{computerID}
 POST /admin/api/v1/regions
 POST /admin/api/v1/worker-groups
@@ -151,29 +151,29 @@ POST /api/auth/magic-link/start
 POST /api/invitations
 POST /api/organizations
 POST /api/projects
-POST /api/projects/{projectID}/environments
-POST /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack
-POST /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/authorize
-POST /api/projects/{projectID}/environments/{environmentID}/api-keys
-POST /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/computers
-POST /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/exec
-POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize
-POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan
-POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
-POST /api/projects/{projectID}/environments/{environmentID}/secrets
-POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke
-POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate
-POST /api/projects/{projectID}/environments/{environmentID}/sessions
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/interrupt
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages
+POST /api/projects/{project}/environments
+POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
+POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/authorize
+POST /api/projects/{project}/environments/{environment}/api-keys
+POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
+POST /api/projects/{project}/environments/{environment}/computers
+POST /api/projects/{project}/environments/{environment}/computers/{computerID}/exec
+POST /api/projects/{project}/environments/{environment}/deployment-bundles/finalize
+POST /api/projects/{project}/environments/{environment}/deployment-bundles/upload-plan
+POST /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/promote
+POST /api/projects/{project}/environments/{environment}/secrets
+POST /api/projects/{project}/environments/{environment}/secrets/{secret}/revoke
+POST /api/projects/{project}/environments/{environment}/secrets/{secret}/rotate
+POST /api/projects/{project}/environments/{environment}/sessions
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/cancel
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/close
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/enqueue
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/resume
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages
 POST /api/slack/installations/finish
 POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
@@ -191,8 +191,8 @@ POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote
 POST /v1/secrets
-POST /v1/secrets/{secretID}/revoke
-POST /v1/secrets/{secretID}/rotate
+POST /v1/secrets/{secret}/revoke
+POST /v1/secrets/{secret}/rotate
 POST /v1/sessions
 POST /v1/sessions/{sessionID}/cancel
 POST /v1/sessions/{sessionID}/close
@@ -272,7 +272,7 @@ POST /worker/v1/sessions/start/release
 POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
-PUT /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/credentials
+PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/credentials
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {
@@ -415,7 +415,7 @@ func TestProcessDiagnosticsRemainInternal(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, prefix := range []string{"/v1", "/api/projects/{projectID}/environments/{environmentID}"} {
+	for _, prefix := range []string{"/v1", "/api/projects/{project}/environments/{environment}"} {
 		for _, owner := range []string{"/sessions/{sessionID}", "/computer-preparations/{preparationID}"} {
 			for _, suffix := range []string{"/logs", "/log-streams"} {
 				path := prefix + owner + suffix

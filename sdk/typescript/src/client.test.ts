@@ -50,9 +50,9 @@ describe("HelmrClient Computers", () => {
     const signal = new AbortController().signal
 
     await expect(client.computers.create({ template: "repository-agent", secrets: [{
-        secretId: { name: "GITHUB_TOKEN" } as never,
+        secret: { name: "GITHUB_TOKEN" } as never,
         env: { name: "GITHUB_TOKEN", mode: "raw" },
-      }], })).rejects.toThrow("Secret ID")
+      }], })).rejects.toThrow("Secret name")
     expect(requests).toHaveLength(0)
 
     const inertRef = client.computers.ref(
@@ -63,8 +63,8 @@ describe("HelmrClient Computers", () => {
 
     const created = await client.computers.create({ template: "repository-agent", key: "repository",
         secrets: [
-          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
+          { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+          { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
         ],
         idempotencyKey: "create-repository", }, { signal })
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
@@ -75,8 +75,8 @@ describe("HelmrClient Computers", () => {
       template: "repository-agent",
       key: "repository",
       secrets: [
-        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
+        { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+        { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
       ],
       idempotency_key: "create-repository",
     })
@@ -210,12 +210,11 @@ describe("HelmrClient transport errors", () => {
 })
 
 describe("HelmrClient Secrets", () => {
-  test("uses stable ID refs and exact name collection lookup", async () => {
+  test("uses one public identifier for creation, refs and retrieval", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
-    const secretID = "019c8f1e-9b42-7b2c-8a4c-4b3a7f9f6d21"
+    const secretID = "github-token"
     const active = {
-      id: secretID,
-      name: "github-token",
+      secret: secretID,
       status: "active",
       created_at: "2026-07-25T01:00:00Z",
     }
@@ -247,13 +246,13 @@ describe("HelmrClient Secrets", () => {
     const signal = new AbortController().signal
 
     const created = await client.secrets.create({
-      name: "github-token",
+      secret: "github-token",
       value: "first",
       idempotencyKey: "create-1",
     }, { signal })
-    expect(created.id).toBe(secretID)
+    expect(created.secret).toBe(secretID)
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
-      name: "github-token",
+      secret: "github-token",
       value: "first",
       idempotency_key: "create-1",
     })
@@ -265,7 +264,7 @@ describe("HelmrClient Secrets", () => {
     )
 
     const secretRef = client.secrets.ref(secretID)
-    expect(secretRef.id).toBe(secretID)
+    expect(secretRef.secret).toBe(secretID)
     const rotated = await secretRef.rotate({
       value: "second",
       idempotencyKey: "rotate-1",
@@ -298,7 +297,7 @@ describe("HelmrClient Secrets", () => {
     })
   })
 
-  test("rejects a non-v7 Secret ID before transport", () => {
+  test("rejects a malformed Secret ID before transport", () => {
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
@@ -308,8 +307,8 @@ describe("HelmrClient Secrets", () => {
     })
 
     expect(() =>
-      client.secrets.ref("019c8f1e-9b42-4b2c-8a4c-4b3a7f9f6d21")
-    ).toThrow("Secret ID must be a canonical UUIDv7")
+      client.secrets.ref("bad/name")
+    ).toThrow("Secret name is invalid")
   })
 })
 

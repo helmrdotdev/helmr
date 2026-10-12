@@ -50,7 +50,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := httpFixture.session(t, f.User, orgID)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s", projectID, f.Environment)
+	base := "/api/projects/project/environments/test"
 	start := base + "/sessions"
 	input := `{"input":[{"type":"text","text":"{\"work\":1}"}],"key":"conversation","idempotency_key":"first"}`
 	call := func(path, token, body string, status int) []byte {
@@ -147,7 +147,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	call("/v1/sessions/"+first.SessionID+"/enqueue", otherKey.Raw, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
-	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/enqueue", projectID, otherEnvironment, first.SessionID), owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
+	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/enqueue", first.SessionID), owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	starter, sender := issue(auth.PermissionSessionsCreate), issue(auth.PermissionSessionsSend)
 	call("/v1/sessions", sender, input, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", starter, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
@@ -214,7 +214,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(resumePath, viewer, resumeBody, http.StatusForbidden)
 	call(keyResumePath, sender, resumeBody, http.StatusForbidden)
 	call(keyResumePath, resumer, userResumeBody, http.StatusForbidden)
-	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/resume", projectID, otherEnvironment, first.SessionID), owner, resumeBody, http.StatusForbidden)
+	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/resume", first.SessionID), owner, resumeBody, http.StatusForbidden)
 	call("/v1/sessions/"+f.Session.String()+"/resume", resumer, resumeBody, http.StatusForbidden)
 	for _, body := range []string{`{}`, `{"hold_id":"bad","idempotency_key":"r"}`, `{"hold_id":"00000000-0000-0000-0000-000000000000","idempotency_key":"r"}`, fmt.Sprintf(`{"hold_id":%q}`, systemHold.String()), fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"r","caller_id":"fake"}`, systemHold.String())} {
 		call(resumePath, owner, body, http.StatusBadRequest)
@@ -267,7 +267,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(interruptPath, viewer, interruptBody, http.StatusForbidden)
 	call(keyInterruptPath, sender, interruptBody, http.StatusForbidden)
 	call(keyInterruptPath, otherInterrupter.Raw, interruptBody, http.StatusForbidden)
-	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/interrupt", projectID, otherEnvironment, toInterrupt.SessionID), owner, interruptBody, http.StatusForbidden)
+	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/interrupt", toInterrupt.SessionID), owner, interruptBody, http.StatusForbidden)
 	for _, body := range []string{`{}`, `{"idempotency_key":"interrupt","caller_id":"fake"}`, `{"idempotency_key":"interrupt","turn_id":"fake"}`, `{"idempotency_key":"interrupt","scope":"self"}`} {
 		call(interruptPath, owner, body, http.StatusBadRequest)
 	}
@@ -312,7 +312,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(closePath, viewer, closeBody, http.StatusForbidden)
 	call(keyClosePath, sender, closeBody, http.StatusForbidden)
 	call(keyClosePath, otherCloser.Raw, closeBody, http.StatusForbidden)
-	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/close", projectID, otherEnvironment, toClose.SessionID), owner, closeBody, http.StatusForbidden)
+	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/close", toClose.SessionID), owner, closeBody, http.StatusForbidden)
 	for _, body := range []string{`{}`, `{"idempotency_key":"close","caller_id":"fake"}`} {
 		call(closePath, owner, body, http.StatusBadRequest)
 	}
@@ -339,7 +339,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	sdkServer := httptest.NewServer(handler)
 	defer sdkServer.Close()
-	assertAgentCLIHTTP(t, sdkServer.URL, sdkKey.Raw, owner, projectID.String(), f.Environment.String())
+	assertAgentCLIHTTP(t, sdkServer.URL, sdkKey.Raw, owner, "project", "test")
 	script, err := filepath.Abs("../../sdk/typescript/testdata/retained-work-http.ts")
 	if err != nil {
 		t.Fatal(err)
@@ -448,7 +448,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(cancelPath, owner, `{}`, http.StatusBadRequest)
 	call(cancelPath, owner, `{"idempotency_key":"cancel-retained","caller_id":"fake"}`, http.StatusBadRequest)
 	call("/v1/sessions/"+first.SessionID+"/cancel", sender, cancelBody, http.StatusForbidden)
-	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/cancel", projectID, otherEnvironment, first.SessionID), owner, cancelBody, http.StatusForbidden)
+	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/cancel", first.SessionID), owner, cancelBody, http.StatusForbidden)
 	var cancellation api.SessionCancelReceipt
 	if err := json.Unmarshal(call(cancelPath, owner, cancelBody, http.StatusOK), &cancellation); err != nil || cancellation.ID == "" || cancellation.SessionID != first.SessionID || cancellation.Status != "accepted" {
 		t.Fatalf("cancel receipt: %+v %v", cancellation, err)

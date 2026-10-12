@@ -24,7 +24,7 @@ func (c ProjectionConfig) valid() bool {
 
 func (o projectionOwner) consoleLink() string {
 	target := o.config.PublicURL.JoinPath("sessions", o.session.String())
-	target.RawQuery = url.Values{"project_id": {o.project.String()}, "environment_id": {o.environment.String()}}.Encode()
+	target.RawQuery = url.Values{"project": {o.project}, "environment": {o.environmentRef}}.Encode()
 	return target.String()
 }
 
@@ -75,7 +75,7 @@ func presentationBlocks(o projectionOwner, e projectionEvent, role string, ask *
 	// Keep the command separate from the question's untrusted prompt and values.
 	origin := (&url.URL{Scheme: o.config.PublicURL.Scheme, Host: o.config.PublicURL.Host}).String()
 	quotedOrigin := "'" + strings.ReplaceAll(origin, "'", "'\"'\"'") + "'"
-	target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", *ask, o.session, *e.turn, o.project, o.environment)
+	target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", *ask, o.session, *e.turn, o.project, o.environmentRef)
 	guide := "Answer with the Helmr CLI if this question or your answer does not fit Slack. These commands use your Helmr login; unset HELMR_API_KEY first.\n" +
 		"helmr login " + quotedOrigin + "\n" +
 		"helmr --api-url " + quotedOrigin + " session turn ask get " + target + " --json\n" +

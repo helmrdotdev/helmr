@@ -148,8 +148,8 @@ export function sessionConsolePath(
   environmentID: string,
 ): string {
   const params = new URLSearchParams({
-    project_id: projectID,
-    environment_id: environmentID,
+    project: projectID,
+    environment: environmentID,
   });
   return `/sessions/${encodeURIComponent(sessionID)}?${params.toString()}`;
 }
@@ -202,7 +202,7 @@ export function questionCLICommands(address: AskAddress, origin: string) {
 
 export type { AskState, AskPage } from "../../../../sdk/typescript/src/contract";
 export function askConsolePath(address: AskAddress): string {
-  const query = new URLSearchParams({ project_id: address.projectID, environment_id: address.environmentID });
+  const query = new URLSearchParams({ project: address.projectID, environment: address.environmentID });
   return `/sessions/${encodeURIComponent(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}?${query}`;
 }
 

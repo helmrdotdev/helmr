@@ -86,6 +86,7 @@ type Querier interface {
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)
+	GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBySlugParams) (Environment, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingInvitationByEmail(ctx context.Context, arg GetPendingInvitationByEmailParams) (GetPendingInvitationByEmailRow, error)
 	GetPlatformRetryKey(ctx context.Context, arg GetPlatformRetryKeyParams) (PlatformRetryKey, error)

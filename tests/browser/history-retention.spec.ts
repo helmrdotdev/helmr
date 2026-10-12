@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-const projectID = "00000000-0000-7000-8000-000000000301";
-const environmentID = "00000000-0000-7000-8000-000000000403";
+const projectID = "console-demo";
+const environmentID = "demo";
 const now = "2026-10-07T00:00:00Z";
 async function scope(page: Page) {
-  let environment = { id: environmentID, project_id: projectID, slug: "production", name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now, history_retention_mode: "until_environment_deletion" };
-  const project = () => ({ id: projectID, slug: "test", name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now });
+  let environment = { environment: environmentID, project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now, history_retention_mode: "until_environment_deletion" };
+  const project = () => ({ project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now });
   const writes: Record<string, unknown>[] = [];
   await page.route("**/api/**", async route => {
     const endpoint = new URL(route.request().url()).pathname;

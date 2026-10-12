@@ -59,8 +59,8 @@ func TestListProjectsPostgresPaginationAndDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("slug and uuid detail", func(t *testing.T) {
-		for _, ref := range []string{"PROJECT-0001", fixture.projectIDs[0].String()} {
+	t.Run("public identifier detail", func(t *testing.T) {
+		for _, ref := range []string{"project-0001"} {
 			fixture.store.statements.Store(0)
 			project, environments := fixture.detail(t, ref, fixture.orgID)
 			if pgvalue.MustUUIDValue(project.ID) != fixture.projectIDs[0] || len(environments) != 2 {
@@ -187,42 +187,33 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 	}
 }
 
-func TestUpdateEnvironmentKeepsProtectedSlugs(t *testing.T) {
-	fixture := newProjectFixture(t, 0, 0)
-	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
-		ExecutionLimits: testExecutionLimits(),
-		ProjectDetails:  ProjectDetails{Slug: "project"},
-	})
+func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
+	f := newProjectFixture(t, 0, 0)
+	project, environments, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	projectID := pgvalue.MustUUIDValue(project.ID)
-	for _, environment := range environments {
-		_, err := UpdateEnvironment(t.Context(), fixture.queries, fixture.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
-			Slug: "renamed", ColorHex: environment.ColorHex,
-		})
-		var input InputError
-		if !errors.As(err, &input) {
-			t.Fatalf("rename %s error = %v, want input error", environment.Slug, err)
-		}
+	updated, err := UpdateProject(t.Context(), f.queries, f.orgID, projectID, ProjectDetails{Slug: "attempted-rename", Name: "New display name"})
+	if err != nil || updated.Slug != "project" || updated.Name != "New display name" {
+		t.Fatalf("project identity changed: %+v %v", updated, err)
 	}
-	preview, err := CreateEnvironment(t.Context(), fixture.pool, fixture.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
+	preview, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateEnvironment(t.Context(), fixture.pool, fixture.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
-		t.Fatalf("duplicate environment error = %v, want %v", err, ErrEnvironmentSlugInUse)
+	environments = append(environments, preview)
+	for _, environment := range environments {
+		updated, err := UpdateEnvironment(t.Context(), f.queries, f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
+		if err != nil || updated.Slug != environment.Slug || updated.Name != "New display name" {
+			t.Fatalf("environment identity changed: %+v %v", updated, err)
+		}
 	}
-	if _, err := UpdateEnvironment(t.Context(), fixture.queries, fixture.orgID, projectID, pgvalue.MustUUIDValue(preview.ID), EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
-		Slug: "production", ColorHex: preview.ColorHex,
-	}); err == nil {
-		t.Fatal("renaming an environment to production succeeded")
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
+		t.Fatalf("duplicate ID: %v", err)
 	}
-	renamed, err := UpdateEnvironment(t.Context(), fixture.queries, fixture.orgID, projectID, pgvalue.MustUUIDValue(preview.ID), EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
-		Slug: "Review", Name: "Review apps", ColorHex: preview.ColorHex,
-	})
-	if err != nil || renamed.Slug != "review" || renamed.Name != "Review apps" {
-		t.Fatalf("rename = %+v, %v", renamed, err)
+	if _, err := GetProject(t.Context(), f.queries, f.orgID, projectID.String()); !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("internal UUID accepted as public ID: %v", err)
 	}
 }
 

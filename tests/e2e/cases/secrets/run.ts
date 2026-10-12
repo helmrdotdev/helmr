@@ -3,35 +3,29 @@ await verify("secrets", async ({ client, marker, objects, cleanup }) => {
   const secretName = `verification-${marker}`.replace(/[^A-Za-z0-9_.-]/g, "-")
   const secret = await client.secrets.create(
     {
-      name: secretName,
+      secret: secretName,
       value: `initial:${marker}`,
       idempotencyKey: `secret:create:${marker}`,
     },
     { signal: AbortSignal.timeout(30_000) },
   )
-  objects.secret_ids.push(secret.id)
+  objects.secret_ids.push(secret.secret)
   cleanup(() =>
     client.secrets
-      .ref(secret.id)
+      .ref(secret.secret)
       .revoke({ idempotencyKey: `secret:revoke:${marker}` }, { signal: deadline(30_000) }),
   )
-  const exactSecretPage = await client.secrets.list(
-    { name: secretName },
-    { signal: AbortSignal.timeout(30_000) },
-  )
-  assertEqual(exactSecretPage.items.length, 1, "Secret name lookup was not exact")
-  assertEqual(exactSecretPage.items[0]!.id, secret.id, "Secret name lookup changed the ID")
-  const retrievedSecret = await client.secrets.get(secret.id, {
+  const retrievedSecret = await client.secrets.get(secret.secret, {
     signal: AbortSignal.timeout(30_000),
   })
-  assertEqual(retrievedSecret.id, secret.id, "Secret retrieval changed the ID")
-  const secretRef = client.secrets.ref(secret.id)
+  assertEqual(retrievedSecret.secret, secret.secret, "Secret retrieval changed the ID")
+  const secretRef = client.secrets.ref(secret.secret)
   const secretPage = await client.secrets.list(
     { limit: 100 },
     { signal: AbortSignal.timeout(30_000) },
   )
   assert(
-    secretPage.items.some((item) => item.id === secret.id),
+    secretPage.items.some((item) => item.secret === secret.secret),
     "Secret list omitted the created Secret",
   )
   const rotated = await secretRef.rotate(
@@ -48,5 +42,5 @@ await verify("secrets", async ({ client, marker, objects, cleanup }) => {
   )
   assertEqual(revoked.status, "revoked", "Secret was not revoked")
 
-  return { secretId: secret.id, rotated: true, revoked: true }
+  return { secret: secret.secret, rotated: true, revoked: true }
 })

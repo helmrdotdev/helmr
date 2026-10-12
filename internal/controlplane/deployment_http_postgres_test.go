@@ -24,7 +24,7 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 	viewer := fixture.session(t, viewerID, orgID)
 	projectID, environmentID := deploymentHTTPEnvironment(t, fixture, orgID)
 	deploymentID := deploymentHTTPDeployment(t, fixture, orgID, projectID, environmentID)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s", projectID, environmentID)
+	base := "/api/projects/deployments/environments/staging"
 
 	expectError := func(t *testing.T, method, path, token string, status int, code string) {
 		t.Helper()

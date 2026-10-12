@@ -3,7 +3,6 @@ package controlplane
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,7 +16,7 @@ import (
 
 func assertRetainedAgentCatalog(t *testing.T, h httpPostgresFixture, org, project, environment, deployment uuid.UUID, owner string) {
 	t.Helper()
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/agents", project, environment)
+	base := "/api/projects/project/environments/test/agents"
 	viewer := h.user(t, "agent-viewer")
 	h.member(t, org, viewer, db.OrgMemberRoleViewer)
 	token := h.session(t, viewer, org)

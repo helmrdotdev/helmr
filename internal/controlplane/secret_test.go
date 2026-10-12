@@ -1,13 +1,11 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-	"uuid"
 )
 
 func TestSecretListCursorRoundTripAndScope(t *testing.T) {
@@ -25,7 +23,7 @@ func TestSecretListCursorRoundTripAndScope(t *testing.T) {
 		"/v1/secrets?limit=25&cursor="+raw,
 		nil,
 	)
-	limit, cursor, name, err := parseSecretListQuery(
+	limit, cursor, err := parseSecretListQuery(
 		request,
 		"project-1",
 		"environment-1",
@@ -33,12 +31,12 @@ func TestSecretListCursorRoundTripAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if limit != 25 || cursor == nil || name != "" ||
+	if limit != 25 || cursor == nil ||
 		cursor.Name != "API_TOKEN" ||
 		cursor.ID != "019c8f1e-9b42-7b2c-8a4c-4b3a7f9f6d21" {
 		t.Fatalf("limit=%d cursor=%+v", limit, cursor)
 	}
-	if _, _, _, err := parseSecretListQuery(
+	if _, _, err := parseSecretListQuery(
 		request,
 		"project-1",
 		"environment-2",
@@ -56,7 +54,7 @@ func TestSecretListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 		"/v1/secrets?cursor=invalid",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
-		if _, _, _, err := parseSecretListQuery(
+		if _, _, err := parseSecretListQuery(
 			request,
 			"project-1",
 			"environment-1",
@@ -66,21 +64,17 @@ func TestSecretListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	}
 }
 
-func TestSecretListQueryAcceptsExactName(t *testing.T) {
+func TestSecretListQueryRejectsNameFilter(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/secrets?name=API_TOKEN", nil)
-	limit, cursor, name, err := parseSecretListQuery(request, "project-1", "environment-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if limit != 0 || cursor != nil || name != "API_TOKEN" {
-		t.Fatalf("limit=%d cursor=%+v name=%q", limit, cursor, name)
+	if _, _, err := parseSecretListQuery(request, "project-1", "environment-1"); err == nil {
+		t.Fatal("name filter accepted")
 	}
 }
 
 func TestSecretResponseUsesUTCTimestamps(t *testing.T) {
 	instant := time.Date(2026, 10, 9, 8, 0, 0, 0, time.FixedZone("fixture", 9*60*60))
 	timestamp := pgtype.Timestamptz{Time: instant, Valid: true}
-	response, err := secretResponse(pgvalue.UUID(uuid.NewV7()), "fixture", "revoked", timestamp, timestamp, timestamp)
+	response, err := secretResponse("fixture", "revoked", timestamp, timestamp, timestamp)
 	if err != nil {
 		t.Fatal(err)
 	}
