@@ -84,7 +84,7 @@ func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, 
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := server.allocator.DeliverPreparation(r.Context(), workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
+	result, err := server.allocator.DeliverImageBuild(r.Context(), workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -100,7 +100,7 @@ func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := server.allocator.DeliverComputer(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	result, err := server.allocator.DeliverLease(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -127,7 +127,7 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		return
 	}
 	shape := computer.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
-	if err := dispatch.ObserveFreshComputerReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshLeaseReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -166,7 +166,7 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 		}
 		after = &dispatch.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
 	}
-	processes, err := dispatch.ListComputerProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
+	processes, err := dispatch.ListHostProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

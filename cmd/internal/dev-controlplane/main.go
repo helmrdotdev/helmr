@@ -221,8 +221,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
-		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunComputerLifecycle(ctx, pool, log) }},
-		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunPreparationLifecycle(ctx, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 	}
 	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"

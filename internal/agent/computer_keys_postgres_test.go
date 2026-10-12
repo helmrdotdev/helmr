@@ -26,12 +26,12 @@ import (
 func computerSourceFixture(t *testing.T) (fixture, computer.LeaseIdentity) {
 	t.Helper()
 	f, a, computerID := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
+	r, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), id); err != nil {
+	if _, err := a.DeliverLease(t.Context(), *f.host(), id); err != nil {
 		t.Fatal(err)
 	}
 	return f, id
@@ -116,7 +116,7 @@ func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 						case "delete":
 							dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, id.ComputerID)
 						case "stop":
-							if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil()); err != nil {
+							if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil()); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -149,7 +149,7 @@ func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 
 func TestComputerDiskSourceRejectsUndeliveredAllocation(t *testing.T) {
 	f, a, computerID := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
+	r, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}

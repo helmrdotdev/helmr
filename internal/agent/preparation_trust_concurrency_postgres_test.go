@@ -20,13 +20,13 @@ import (
 )
 
 type countingPreparationTrustIssuer struct {
-	dispatch.PreparationTrustIssuer
+	dispatch.ImageBuildTrustIssuer
 	calls atomic.Int32
 }
 
 func (i *countingPreparationTrustIssuer) GeneratePreparationProxyTrust(env, attempt uuid.UUID, now, deadline time.Time) (secret.ProxyTrust, error) {
 	i.calls.Add(1)
-	return i.PreparationTrustIssuer.GeneratePreparationProxyTrust(env, attempt, now, deadline)
+	return i.ImageBuildTrustIssuer.GeneratePreparationProxyTrust(env, attempt, now, deadline)
 }
 
 func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
@@ -36,7 +36,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
-	issuer := &countingPreparationTrustIssuer{PreparationTrustIssuer: f.secrets}
+	issuer := &countingPreparationTrustIssuer{ImageBuildTrustIssuer: f.secrets}
 	a = testAllocator(t, f.pool, issuer)
 	const callers = 8
 	start := make(chan struct{})
@@ -46,7 +46,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	for range callers {
 		group.Go(func() {
 			<-start
-			result, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
+			result, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 			results <- result
 			failures <- err
 		})
@@ -60,7 +60,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	committed, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
+	committed, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.AllocatePreparation(t.Context(), f.env, p.ID, f.worker); err != nil {
+	if _, err := restarted.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	var after []byte

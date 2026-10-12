@@ -18,7 +18,7 @@ import (
 
 func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
-	allocation, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
+	allocation, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != allocation.Epoch || found.EnvironmentID != f.env {
 		t.Fatalf("closed allocation disappeared: %+v", records)
 	}
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, dispatch.ErrAllocationClosed) {
+	if _, err := a.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("closed preparation delivered: %v", err)
 	}
 	var untouched bool
@@ -78,7 +78,7 @@ func TestHostAllocationListingRejectsForeignAndStaleAuthority(t *testing.T) {
 
 func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T) {
 	f, a, computerID := freshComputerAllocationFixture(t)
-	allocation, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
+	allocation, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,14 +96,14 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != 1 {
 		t.Fatalf("lost undelivered Computer disappeared: %+v", records)
 	}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, dispatch.ErrAllocationClosed) {
+	if _, err := a.DeliverLease(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("lost allocation delivered: %v", err)
 	}
 	next, err := dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), &records[len(records)-1])
 	if err != nil || len(next) != 0 {
 		t.Fatalf("cursor did not advance: %+v %v", next, err)
 	}
-	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	records, err = dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
@@ -160,7 +160,7 @@ func TestHostAllocationListingPagesBeyondOneHundred(t *testing.T) {
 
 func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
-	r, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
+	r, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	for _, change := range []func(*computer.ImageBuildIdentity){func(i *computer.ImageBuildIdentity) { i.Epoch++ }, func(i *computer.ImageBuildIdentity) { i.InstanceID = uuid.NewV7() }} {
 		wrong := correct
 		change(&wrong)
-		if _, err := a.DeliverPreparation(t.Context(), *f.host(), wrong); !errors.Is(err, agent.ErrDenied) {
+		if _, err := a.DeliverImageBuild(t.Context(), *f.host(), wrong); !errors.Is(err, agent.ErrDenied) {
 			t.Fatalf("wrong identity delivered: %v", err)
 		}
 	}

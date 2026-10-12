@@ -249,7 +249,7 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 		if err != nil {
 			return err
 		}
-		if err := dispatch.ObserveProviderAbsentHostComputers(r.Context(), absence); err != nil {
+		if err := dispatch.ObserveProviderAbsentHost(r.Context(), absence); err != nil {
 			return err
 		}
 		host, err = workergroup.GetHost(r.Context(), db.New(tx), id)

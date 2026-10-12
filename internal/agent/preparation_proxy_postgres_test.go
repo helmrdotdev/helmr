@@ -27,11 +27,11 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, co
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	a := testAllocator(t, f.pool, f.secrets)
-	allocation, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
+	allocation, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
+	delivery, err := a.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	if err != nil || capture.Env["TOKEN"] != marker || len(capture.Env) != 1 || len(capture.Trust.Certificate) == 0 {
 		t.Fatalf("public trust capture: %+v %v", capture.Env, err)
 	}
-	if _, err := a.AllocatePreparation(t.Context(), f.env, ref.ImageBuildID, f.worker); err != nil {
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, ref.ImageBuildID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	replay, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
@@ -180,7 +180,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 
 func TestPreparationProxyRawAllocationAndRollbackHaveNoTrust(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
-	if _, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker); err != nil {
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	var empty bool
@@ -190,7 +190,7 @@ func TestPreparationProxyRawAllocationAndRollbackHaveNoTrust(t *testing.T) {
 	other, attempt, allocator := preparationAllocationFixture(t)
 	marker, _ := secretbinding.Placeholder("protected")
 	dbtest.MustExec(t, t.Context(), other.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, other.env, attempt.SpecID, marker)
-	if _, err := allocator.AllocatePreparation(t.Context(), other.env, attempt.ID, other.worker); err == nil {
+	if _, err := allocator.AllocateImageBuild(t.Context(), other.env, attempt.ID, other.worker); err == nil {
 		t.Fatal("missing issuer accepted")
 	}
 	if err := other.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND proxy_ca_certificate IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, other.env, attempt.ID).Scan(&empty); err != nil || !empty {

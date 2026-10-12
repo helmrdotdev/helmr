@@ -140,7 +140,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 	for i, value := range request.Quarantined {
 		quarantined[i] = uuid.MustParse(value)
 	}
-	if err := dispatch.ObserveRecoveredHostComputers(r.Context(), s.tx, worker, quarantined); err != nil {
+	if err := dispatch.ObserveRecoveredHost(r.Context(), s.tx, worker, quarantined); err != nil {
 		s.writeAgentComputerError(w, err)
 		return
 	}

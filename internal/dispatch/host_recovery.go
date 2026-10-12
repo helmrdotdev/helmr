@@ -13,11 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// ObserveRecoveredHostComputers consumes the current worker epoch's completed
+// ObserveRecoveredHost consumes the current worker epoch's completed
 // local VM inventory and physical cleanup. Quarantined instances remain unknown.
 // Epoch advancement alone does not authorize this operation. Each Computer is
 // settled in its own ownership transaction, so a retry can finish partial progress.
-func ObserveRecoveredHostComputers(ctx context.Context, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
+func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
 	if quarantined == nil {
 		return ErrInvalidInput
 	}
@@ -70,7 +70,7 @@ func ObserveRecoveredHostComputers(ctx context.Context, database db.TxDB, host w
 			return hideMissing(err)
 		}
 	}
-	if err := observeRecoveredHostPreparations(ctx, database, host, quarantined); err != nil {
+	if err := observeRecoveredHostImageBuilds(ctx, database, host, quarantined); err != nil {
 		if errors.Is(err, ErrNotReady) {
 			pending = true
 		} else {

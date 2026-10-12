@@ -39,7 +39,7 @@ func setGroupPrimary(t *testing.T, f fixture) {
 func TestGroupDrainRetainsPhysicalCustodyAcrossEpochs(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
 	stopGroupFixtureComputer(t, f.fixture)
-	if _, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker); err != nil {
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	// An expired allocation owned by an earlier service epoch remains physical custody.
@@ -64,7 +64,7 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			f := cp.f
 			setGroupPrimary(t, f)
 			source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-			if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			if state == "restoring" {
@@ -121,7 +121,7 @@ func TestGroupDrainRechecksDependenciesAfterAllocationLock(t *testing.T) {
 	}
 	// Use the allocator inside the transaction holding the admission lock.
 	owned := testAllocator(t, hold, nil)
-	if _, err = owned.AllocatePreparation(ctx, f.env, p.ID, f.worker); err != nil {
+	if _, err = owned.AllocateImageBuild(ctx, f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	if err = hold.Commit(ctx); err != nil {
@@ -142,7 +142,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-	if err = dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
+	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	group, pool, host, token := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -153,7 +153,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
  INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$3::text,'worker_group_id',$2::text))).* FROM worker_pools p WHERE p.id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$6);
  INSERT INTO worker_pool_cpu_shapes SELECT $3,vcpu_count,cpu_config_digest FROM worker_pool_cpu_shapes WHERE worker_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$6);
  INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$4::text,'worker_group_id',$2::text,'worker_pool_id',$3::text,'resource_id','successor','observed_at',clock_timestamp(),'epoch_cpu_millis',8000,'epoch_memory_bytes',8589934592,'epoch_guest_ephemeral_disk_bytes',8589934592,'max_vm_slots',8,'max_vm_starts',8))).* FROM worker_hosts h WHERE id=$6`, pgx.QueryExecModeSimpleProtocol, f.group, group, pool, host, token, f.worker)
-	if _, err = a.AllocateRestoredComputer(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, agent.ErrNotReady) {
+	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
 	if _, err = agent.Enqueue(t.Context(), f.pool, nil, f.caller(), agent.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
@@ -177,7 +177,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=2 AND worker_host_id=$3)`, f.env, f.computer, host).Scan(&placed); err != nil || !placed {
 		t.Fatalf("same Group target not allocated by the pass: %v %v", placed, err)
 	}
-	allocation, err := a.AllocateRestoredComputer(t.Context(), f.env, cp.manifest.CheckpointID, 2, host)
+	allocation, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host)
 	if err != nil || allocation.HostID != host {
 		t.Fatalf("same Group target not allocated: %+v %v", allocation, err)
 	}
@@ -196,7 +196,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1); err != nil {
@@ -210,7 +210,7 @@ func stopGroupFixtureComputer(t *testing.T, f fixture) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }

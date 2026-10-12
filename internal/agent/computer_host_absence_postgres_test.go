@@ -25,7 +25,7 @@ func confirmComputerHostAbsent(ctx context.Context, f fixture, host uuid.UUID) e
 		if err != nil {
 			return err
 		}
-		return dispatch.ObserveProviderAbsentHostComputers(ctx, absence)
+		return dispatch.ObserveProviderAbsentHost(ctx, absence)
 	})
 }
 
@@ -273,7 +273,7 @@ func TestComputerHostAbsenceOrdersRootsAcrossWorkerGroups(t *testing.T) {
 }
 
 func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
-	if err := dispatch.ObserveProviderAbsentHostComputers(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, agent.ErrInvalidInput) {
+	if err := dispatch.ObserveProviderAbsentHost(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, agent.ErrInvalidInput) {
 		t.Fatalf("missing confirmation: %v", err)
 	}
 	f := newFixture(t)
@@ -288,7 +288,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = dispatch.ObserveProviderAbsentHostComputers(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
+	if err = dispatch.ObserveProviderAbsentHost(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
 		t.Fatalf("confirmation escaped its transaction: %v", err)
 	}
 }

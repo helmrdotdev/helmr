@@ -19,7 +19,7 @@ func startingSessionFixture(t *testing.T) (fixture, *dispatch.Allocator, agent.E
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, computerID).Scan(&session); err != nil {
 		t.Fatal(err)
 	}
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
+	r, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,10 +31,10 @@ func startingSessionFixture(t *testing.T) (fixture, *dispatch.Allocator, agent.E
 		t.Fatalf("attachment before VM readiness: %v", err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
+	if _, err := a.DeliverLease(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
+	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
 	p, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1)

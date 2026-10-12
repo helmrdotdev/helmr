@@ -324,14 +324,14 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 		if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
+		if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
 			t.Fatal(err)
 		}
 		var stopped bool
 		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
 			t.Fatalf("quarantine inferred stop=%v: %v", stopped, err)
 		}
-		if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+		if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
@@ -459,7 +459,7 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	ref := f.claim(t, p)
 	host := recoveringComputerHost(t, f.fixture)
 	// Remove the fixture Computer's blocker so the preparation is the only custody.
-	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
 		t.Fatal(err)
 	}
 	q := db.New(f.pool)
@@ -501,7 +501,7 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	if _, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, enrollment); !errors.Is(err, workergroup.ErrHostCustody) {
 		t.Fatalf("custody credential replacement: %v", err)
 	}
-	if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	assertCustody(0)
@@ -563,7 +563,7 @@ func TestPreparationAllocationCommitPrecedesEnrollmentCustodyCheck(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker); err != nil {
+	if _, err = a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE worker_hosts SET status='registering' WHERE id=$1`, f.worker)
@@ -627,7 +627,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
-				if err := dispatch.ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+				if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 					t.Fatal(err)
 				}
 			} else {

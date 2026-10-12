@@ -204,7 +204,7 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 			case "expiry":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
 			case "fenced":
-				if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+				if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -266,7 +266,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	if err != nil || save == nil {
 		t.Fatalf("admission: %+v %v", save, err)
 	}
-	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), saveIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), saveIdentity(f), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool

@@ -29,17 +29,17 @@ import (
 // Allocator is a trusted control-plane owner. Workers cannot choose its targets,
 // instance identities, resource amounts or epochs. Restart recovery requires the
 // same configured channel key; a mismatching key never replaces a stored digest.
-type PreparationTrustIssuer interface {
-	GeneratePreparationProxyTrust(environmentID, preparationID uuid.UUID, createdAt, deadline time.Time) (secret.ProxyTrust, error)
+type ImageBuildTrustIssuer interface {
+	GeneratePreparationProxyTrust(environmentID, buildID uuid.UUID, createdAt, deadline time.Time) (secret.ProxyTrust, error)
 }
 
 type Allocator struct {
 	database db.TxDB
 	key      [32]byte
-	trust    PreparationTrustIssuer
+	trust    ImageBuildTrustIssuer
 }
 
-func NewAllocator(database db.TxDB, channelKey []byte, trust PreparationTrustIssuer) (*Allocator, error) {
+func NewAllocator(database db.TxDB, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
 	if database == nil || len(channelKey) != 32 {
 		return nil, ErrInvalidInput
 	}
@@ -61,11 +61,11 @@ func (a *Allocator) credential(domain string, receipt computer.Allocation) []byt
 	return mac.Sum(nil)
 }
 
-func (a *Allocator) preparationCredential(receipt computer.Allocation) []byte {
+func (a *Allocator) imageBuildCredential(receipt computer.Allocation) []byte {
 	return a.credential("helmr.preparation-channel.v1\x00", receipt)
 }
 
-func (a *Allocator) computerCredential(receipt computer.Allocation) string {
+func (a *Allocator) leaseCredential(receipt computer.Allocation) string {
 	return base64.RawURLEncoding.EncodeToString(a.credential("helmr.computer-channel.v1\x00", receipt))
 }
 
@@ -188,10 +188,10 @@ func ReadLeaseAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UU
 	return r, err
 }
 
-// AllocatePreparation reserves one private executor atomically. Its admitted
+// AllocateImageBuild reserves one private executor atomically. Its admitted
 // deadline is unchanged. A historical allocation is returned before considering
 // a new candidate, even if that allocation has since expired or been fenced.
-func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, host uuid.UUID) (computer.Allocation, error) {
+func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, host uuid.UUID) (computer.Allocation, error) {
 	if env == uuid.Nil() || preparation == uuid.Nil() || host == uuid.Nil() {
 		return computer.Allocation{}, ErrInvalidInput
 	}
@@ -245,7 +245,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			return err
 		}
 		result = computer.Allocation{EnvironmentID: env, OwnerID: preparation, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
-		digest := sha256.Sum256(a.preparationCredential(result))
+		digest := sha256.Sum256(a.imageBuildCredential(result))
 		assigned, err := computer.AssignImageBuild(ctx, tx, result, digest[:], p.SpecID)
 		if err != nil {
 			return err
@@ -288,10 +288,10 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 	return result, nil
 }
 
-// AllocateFreshComputer is only for a first physical execution. The CP retains
+// AllocateFreshLease is only for a first physical execution. The CP retains
 // the requested epoch across retries; requesting the next epoch is a new attempt,
 // permissible only after all previous VMs stopped without ever becoming ready.
-func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID uuid.UUID, epoch int64, host uuid.UUID) (computer.ComputerAllocation, error) {
+func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid.UUID, epoch int64, host uuid.UUID) (computer.ComputerAllocation, error) {
 	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return computer.ComputerAllocation{}, ErrInvalidInput
 	}
@@ -363,13 +363,13 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID u
 }
 
 func (a *Allocator) insertComputerAllocation(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation) error {
-	digest := sha256.Sum256([]byte(a.computerCredential(r.Allocation)))
+	digest := sha256.Sum256([]byte(a.leaseCredential(r.Allocation)))
 	return computer.InsertLease(ctx, tx, r, digest[:])
 }
 
-// AllocateRestoredComputer reserves the full physical shape before a Host may
+// AllocateRestoredLease reserves the full physical shape before a Host may
 // materialize a retained checkpoint. It never falls back to fresh boot or setup.
-func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoint uuid.UUID, epoch int64, host uuid.UUID) (computer.ComputerAllocation, error) {
+func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint uuid.UUID, epoch int64, host uuid.UUID) (computer.ComputerAllocation, error) {
 	if env == uuid.Nil() || checkpoint == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return computer.ComputerAllocation{}, ErrInvalidInput
 	}

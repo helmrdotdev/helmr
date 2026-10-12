@@ -135,9 +135,9 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 		reclaimer.Run,
 		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return allocator.Run(ctx, log) },
-		func(ctx context.Context) error { return dispatch.RunPreparationLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return dispatch.RunComputerLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
 		func(context.Context) error { return server.Serve(listener) },
 	} {

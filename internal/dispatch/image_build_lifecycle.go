@@ -100,20 +100,20 @@ func ReconcileImageBuildRevocation(ctx context.Context, pool db.TxBeginner, env,
 	}))
 }
 
-type stoppedPreparation struct {
+type stoppedImageBuild struct {
 	env, spec, id, instance uuid.UUID
 	hostEpoch               int64
 }
 
-func hostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedPreparation, error) {
+func hostImageBuilds(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedImageBuild, error) {
 	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch FROM image_builds
   WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND NOT(allocation_id=ANY($3::uuid[]))
   ORDER BY environment_id,image_spec_id,id`, host, beforeEpoch, quarantined)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (stoppedPreparation, error) {
-		var p stoppedPreparation
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (stoppedImageBuild, error) {
+		var p stoppedImageBuild
 		err := row.Scan(&p.env, &p.spec, &p.id, &p.instance, &p.hostEpoch)
 		return p, err
 	})
@@ -121,8 +121,8 @@ func hostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoc
 
 // Called with provider-confirmation supply locks before any Session/Computer
 // lock, so all specs precede the full Computer set in the shared transaction.
-func lockAbsentHostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID) ([]stoppedPreparation, error) {
-	attempts, err := hostPreparations(ctx, tx, host, nil, []uuid.UUID{})
+func lockAbsentHostImageBuilds(ctx context.Context, tx pgx.Tx, host uuid.UUID) ([]stoppedImageBuild, error) {
+	attempts, err := hostImageBuilds(ctx, tx, host, nil, []uuid.UUID{})
 	if err != nil {
 		return nil, err
 	}
@@ -133,14 +133,14 @@ func lockAbsentHostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID) 
 	}
 	return attempts, nil
 }
-func observeRecoveredHostPreparations(ctx context.Context, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
-	var attempts []stoppedPreparation
+func observeRecoveredHostImageBuilds(ctx context.Context, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
+	var attempts []stoppedImageBuild
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := lockRecoveringComputerHost(ctx, tx, host); err != nil {
 			return err
 		}
 		var err error
-		attempts, err = hostPreparations(ctx, tx, host.HostID, &host.Epoch, quarantined)
+		attempts, err = hostImageBuilds(ctx, tx, host.HostID, &host.Epoch, quarantined)
 		return err
 	})
 	if err != nil {
@@ -180,9 +180,9 @@ type ImageBuildLifecyclePosition struct {
 	kind            string
 }
 
-// RunPreparationLifecycle owns due waiter settlement, attempt expiry and revoked
+// RunImageBuildLifecycle owns due waiter settlement, attempt expiry and revoked
 // exposure reconciliation independently of guest connectivity.
-func RunPreparationLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunImageBuildLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("preparation lifecycle database and logger are required")
 	}

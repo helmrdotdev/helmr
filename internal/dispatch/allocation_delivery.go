@@ -46,11 +46,11 @@ func (s materializationSupply) firstExecution() error {
 
 // Delivery starts the execution lease exactly once. A retry returns the same
 // credential and remaining lifetime; it cannot renew or resurrect authority.
-type PreparationDelivery struct {
+type ImageBuildDelivery struct {
 	computer.Allocation
 	Executor computer.ImageBuildExecutor
 }
-type ComputerDelivery struct {
+type LeaseDelivery struct {
 	computer.ComputerAllocation
 	ChannelCredential string
 }
@@ -80,12 +80,12 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	return materializationSupply{admitting: admitting, draining: draining, healthy: healthy, hostDrainContinuation: hostDrainContinuation}, nil
 }
 
-func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.HostPrincipal, identity computer.ImageBuildIdentity) (PreparationDelivery, error) {
+func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.HostPrincipal, identity computer.ImageBuildIdentity) (ImageBuildDelivery, error) {
 	if identity.EnvironmentID == uuid.Nil() || identity.ImageBuildID == uuid.Nil() || identity.InstanceID == uuid.Nil() || identity.Epoch <= 0 {
-		return PreparationDelivery{}, ErrInvalidInput
+		return ImageBuildDelivery{}, ErrInvalidInput
 	}
 	env, preparation := identity.EnvironmentID, identity.ImageBuildID
-	var result PreparationDelivery
+	var result ImageBuildDelivery
 	err := db.RunTx(ctx, a.database, func(tx pgx.Tx) error {
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
@@ -113,7 +113,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 			return err
 		}
 		firstDelivery := r.DeliveredAt == nil
-		credential := a.preparationCredential(r)
+		credential := a.imageBuildCredential(r)
 		expected := sha256.Sum256(credential)
 		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
@@ -129,20 +129,20 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 				return err
 			}
 		}
-		result = PreparationDelivery{Allocation: r, Executor: computer.ImageBuildExecutor{EnvironmentID: env, ImageBuildID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
+		result = ImageBuildDelivery{Allocation: r, Executor: computer.ImageBuildExecutor{EnvironmentID: env, ImageBuildID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
 		return nil
 	})
 	if err != nil {
-		return PreparationDelivery{}, allocationError(err)
+		return ImageBuildDelivery{}, allocationError(err)
 	}
 	return result, nil
 }
 
-func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPrincipal, identity computer.LeaseIdentity) (ComputerDelivery, error) {
+func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrincipal, identity computer.LeaseIdentity) (LeaseDelivery, error) {
 	if !identity.Valid() {
-		return ComputerDelivery{}, ErrInvalidInput
+		return LeaseDelivery{}, ErrInvalidInput
 	}
-	var result ComputerDelivery
+	var result LeaseDelivery
 	err := db.RunTx(ctx, a.database, func(tx pgx.Tx) error {
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
@@ -163,7 +163,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 			return err
 		}
 		firstDelivery := r.DeliveredAt == nil
-		credential := a.computerCredential(r.Allocation)
+		credential := a.leaseCredential(r.Allocation)
 		expected := sha256.Sum256([]byte(credential))
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
@@ -185,19 +185,19 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 				return err
 			}
 		}
-		result = ComputerDelivery{ComputerAllocation: r, ChannelCredential: credential}
+		result = LeaseDelivery{ComputerAllocation: r, ChannelCredential: credential}
 		return nil
 	})
 	if err != nil {
-		return ComputerDelivery{}, allocationError(err)
+		return LeaseDelivery{}, allocationError(err)
 	}
 	return result, nil
 }
 
-// ObserveFreshComputerReady accepts the owning Host's exact materialization
+// ObserveFreshLeaseReady accepts the owning Host's exact materialization
 // receipt before any Session process can be admitted. Restores have their own
 // checkpoint-member validation and may not use this fresh-boot transition.
-func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, shape computer.AllocationShape, base string) error {
+func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, shape computer.AllocationShape, base string) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}

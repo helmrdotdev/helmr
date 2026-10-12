@@ -194,7 +194,7 @@ func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return dispatch.ObserveProviderAbsentHostComputers(t.Context(), absence)
+		return dispatch.ObserveProviderAbsentHost(t.Context(), absence)
 	})
 	if err != nil {
 		t.Fatal(err)

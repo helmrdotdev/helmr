@@ -125,13 +125,13 @@ func (a *Allocator) Reconcile(ctx context.Context, after AllocationPosition) (Al
 		}
 		attemptCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 		if c.kind == "preparation" {
-			_, err = a.AllocatePreparation(attemptCtx, c.environment, c.owner, c.host)
+			_, err = a.AllocateImageBuild(attemptCtx, c.environment, c.owner, c.host)
 		} else if c.kind == "restore" {
-			_, err = a.AllocateRestoredComputer(attemptCtx, c.environment, c.owner, c.epoch, c.host)
+			_, err = a.AllocateRestoredLease(attemptCtx, c.environment, c.owner, c.epoch, c.host)
 		} else if c.kind == "process" {
 			_, err = a.AllocateSessionProcess(attemptCtx, c.environment, c.owner, c.epoch)
 		} else {
-			_, err = a.AllocateFreshComputer(attemptCtx, c.environment, c.owner, c.epoch, c.host)
+			_, err = a.AllocateFreshLease(attemptCtx, c.environment, c.owner, c.epoch, c.host)
 		}
 		stop()
 		after = c.AllocationPosition

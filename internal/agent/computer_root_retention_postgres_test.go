@@ -39,7 +39,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT initial_root_id IS NOT NULL AND recovery_save_id=$3 AND storage_reservation_bytes IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, save.ID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("accepted deletion lost physical source: %v %v", retained, err)
 	}
-	if err := dispatch.ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.pool.Begin(t.Context())

@@ -18,13 +18,13 @@ type ProcessIdentity struct {
 	Epoch     int64
 }
 
-// ListComputerProcesses includes every unfenced process bound to this exact
+// ListHostProcesses includes every unfenced process bound to this exact
 // physical allocation, including held or failed processes requiring control.
 // Expiry or revocation must not hide retained work from its physical owner.
 // A deleted Computer requests physical closure through the same stop response;
 // it remains charged until the worker acknowledges actual absence.
 // An empty page ends the scan; the next poll starts without a cursor.
-func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
+func ListHostProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
 	if !identity.Valid() || after != nil && (after.SessionID == uuid.Nil() || after.Epoch <= 0) {
 		return nil, ErrInvalidInput
 	}

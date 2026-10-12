@@ -12,10 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ObserveComputerStopped is called only after the owning worker has joined the
+// ObserveLeaseStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint uuid.UUID) error {
+func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint uuid.UUID) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}

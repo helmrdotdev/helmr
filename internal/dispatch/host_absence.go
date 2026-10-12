@@ -12,10 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ObserveProviderAbsentHostComputers consumes confirmed physical absence in the
+// ObserveProviderAbsentHost consumes confirmed physical absence in the
 // transaction recording it. Failure rolls back the complete confirmation; retry
 // cannot leave only part of the host physically reconciled.
-func ObserveProviderAbsentHostComputers(ctx context.Context, absence workergroup.ConfirmedProviderAbsence) error {
+func ObserveProviderAbsentHost(ctx context.Context, absence workergroup.ConfirmedProviderAbsence) error {
 	tx, host := absence.Transaction(), absence.HostID()
 	if tx == nil || host == uuid.Nil() {
 		return ErrInvalidInput
@@ -23,7 +23,7 @@ func ObserveProviderAbsentHostComputers(ctx context.Context, absence workergroup
 	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 		return err
 	}
-	preparations, err := lockAbsentHostPreparations(ctx, tx, host)
+	preparations, err := lockAbsentHostImageBuilds(ctx, tx, host)
 	if err != nil {
 		return err
 	}

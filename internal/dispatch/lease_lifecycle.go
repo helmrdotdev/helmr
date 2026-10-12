@@ -16,9 +16,9 @@ type LeaseLifecyclePosition struct {
 	epoch                 int64
 }
 
-// RunComputerLifecycle settles expired execution authority independently of
+// RunLeaseLifecycle settles expired execution authority independently of
 // worker connectivity. Its process owner cancels and joins the scan.
-func RunComputerLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunLeaseLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("computer lifecycle database and logger are required")
 	}
