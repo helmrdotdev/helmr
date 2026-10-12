@@ -32,7 +32,7 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				f := newSnapshotFixture(t, 1, true)
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE computer_leases SET status='acquiring',initialized_at=NULL WHERE computer_instance_id=$1`, f.instance)
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE computer_leases SET status='acquiring',initialized_at=NULL WHERE allocation_id=$1`, f.instance)
 				if test.sql != "" {
 					dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.worker.GroupID)
 				}

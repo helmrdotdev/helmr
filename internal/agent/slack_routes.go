@@ -94,7 +94,7 @@ func lockSlackPublications(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 	rows, err = tx.Query(ctx, `SELECT p.id,p.slack_app_registration_id,p.slack_installation_id,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL AND i.id IS NOT NULL
  AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL
- AND r.organization_id=e.org_id AND i.organization_id=e.org_id AND r.app_id=i.app_id AND i.granted_scopes @> $3::text[]
+ AND r.org_id=e.org_id AND i.org_id=e.org_id AND r.app_id=i.app_id AND i.granted_scopes @> $3::text[]
  FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id
  LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.id=ANY($2::uuid[]) ORDER BY p.id FOR SHARE OF p`, env, ids, RequiredSlackScopes())

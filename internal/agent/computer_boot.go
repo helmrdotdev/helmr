@@ -35,7 +35,7 @@ func ReadComputerBoot(ctx context.Context, database db.TxBeginner, host workergr
 		var raw []byte
 		if err := tx.QueryRow(ctx, `SELECT spec.seed,platform.rootfs_digest
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.preparation_spec_id)
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.image_spec_id)
  JOIN vm_platforms platform ON platform.id=l.vm_platform_id
  WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
  FOR NO KEY UPDATE OF c`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&raw, &result.RootfsDigest); err != nil {

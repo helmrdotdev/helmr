@@ -313,7 +313,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	}
 	var attached, producer uuid.UUID
 	var retained time.Time
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id,i.preparation_id,c.preparation_deadline_at FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, computer).Scan(&attached, &producer, &retained); err != nil || attached != original.ID || producer != next.ID || !retained.Equal(deadline) {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,i.image_build_id,c.preparation_deadline_at FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, computer).Scan(&attached, &producer, &retained); err != nil || attached != original.ID || producer != next.ID || !retained.Equal(deadline) {
 		t.Fatalf("lineage/deadline: %v %v %v %v", attached, producer, retained, err)
 	}
 	if _, err = p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
@@ -328,7 +328,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	p := preparationResidentImage(t)
 	var blocked uuid.UUID
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND preparation_id=$2 AND initial_root_id IS NULL`, p.f.env, p.ref.PreparationID).Scan(&blocked); err != nil {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2 AND initial_root_id IS NULL`, p.f.env, p.ref.PreparationID).Scan(&blocked); err != nil {
 		t.Fatal(err)
 	}
 	// Give this pending candidate the first key without changing any other owner.
@@ -340,7 +340,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	independent.deployment = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), p.f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$3,'sha256:'||repeat('9',64) FROM deployments WHERE environment_id=$1 AND id=$2;
  INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'independent-image');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,$3,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2`, pgx.QueryExecModeSimpleProtocol, p.f.env, p.f.deployment, independent.deployment)
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,$3,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2`, pgx.QueryExecModeSimpleProtocol, p.f.env, p.f.deployment, independent.deployment)
 
 	dbtest.MustExec(t, t.Context(), p.f.pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT environment_id,$3,$4,spec,seed FROM image_specs WHERE environment_id=$1 AND id=$2`, p.f.env, p.f.deployment, independent.deployment, "sha256:"+strings.Repeat("9", 64))
 	other, key := preparationPublicationTestFor(t, preparationFixtureFor(t, independent))
@@ -349,7 +349,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var otherComputer uuid.UUID
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, other.ref.PreparationID).Scan(&otherComputer); err != nil {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, other.ref.PreparationID).Scan(&otherComputer); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {

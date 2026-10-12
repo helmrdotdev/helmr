@@ -43,7 +43,7 @@ func (f *allocationContinuationFixture) prepareInstallation() (workerapi.AgentCo
 	if f.installed {
 		f.t.Fatal("installed request was regenerated")
 	}
-	p := &agentv1.ComputerSessionInstallation{Capture: f.capture, DesiredVersion: 2, SourceAbort: f.source, BaseComputerDiskVersionId: "base", Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: f.target.OwnerID, ComputerInstanceId: f.target.InstanceID, WriterGeneration: uint64(f.target.Epoch), ChannelCredential: "current", OperationId: f.capture.CheckpointId, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}, Grants: []*agentv1.SessionGrant{{Identity: f.capture.Sessions[0], AuthorityGeneration: int64(f.prepare)}}}
+	p := &agentv1.ComputerSessionInstallation{Capture: f.capture, DesiredVersion: 2, SourceAbort: f.source, BaseComputerDiskVersionId: "base", Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: f.target.OwnerID, ComputerInstanceId: f.target.AllocationID, WriterGeneration: uint64(f.target.Epoch), ChannelCredential: "current", OperationId: f.capture.CheckpointId, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}, Grants: []*agentv1.SessionGrant{{Identity: f.capture.Sessions[0], AuthorityGeneration: int64(f.prepare)}}}
 	p.StoppedSessions = []*agentv1.SessionIdentity{p.Grants[0].Identity}
 	f.p = p
 	raw, err := proto.Marshal(p)
@@ -194,7 +194,7 @@ func TestComputerContinuationRefreshesOnlyUninstalledAuthority(t *testing.T) {
 				name = "source/" + scenario
 			}
 			t.Run(name, func(t *testing.T) {
-				id := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 2}
+				id := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 2}
 				checkpoint := uuid.NewV7()
 				capture := &agentv1.ComputerSessionCapture{CheckpointId: checkpoint.String(), DesiredVersion: 1, Envelope: &computerv0.ComputerOperationEnvelope{OperationExpiresAtUnixNano: time.Now().Add(-time.Second).UnixNano()}, Sessions: []*agentv1.SessionIdentity{{SessionId: uuid.NewV7().String(), ProcessEpoch: 1}}}
 				f := &allocationContinuationFixture{t: t, target: id, capture: capture, source: source, scenario: scenario}

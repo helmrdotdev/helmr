@@ -26,7 +26,7 @@ func (s *CredentialStore) publicationAuthorization(ctx context.Context, org, use
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.organization_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, publication, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
+		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, publication, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}
@@ -85,7 +85,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		}
 		var revision int64
 		var app *string
-		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND organization_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, observed.registration, org).Scan(&revision, &app)
+		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, observed.registration, org).Scan(&revision, &app)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}
@@ -100,7 +100,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		var tokenRevision int64 = 1
 		if observed.installation != nil {
 			installation = *observed.installation
-			err = tx.QueryRow(ctx, `SELECT app_id,team_id,bot_user_id,credential_revision FROM slack_installations WHERE id=$1 AND app_registration_id=$2 AND organization_id=$3 AND disconnected_at IS NULL FOR NO KEY UPDATE`, installation, observed.registration, org).Scan(&installedApp, &team, &bot, &tokenRevision)
+			err = tx.QueryRow(ctx, `SELECT app_id,team_id,bot_user_id,credential_revision FROM slack_installations WHERE id=$1 AND app_registration_id=$2 AND org_id=$3 AND disconnected_at IS NULL FOR NO KEY UPDATE`, installation, observed.registration, org).Scan(&installedApp, &team, &bot, &tokenRevision)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrPublicationUnavailable
 			}
@@ -133,7 +133,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 			return err
 		}
 		if current == nil {
-			_, err = tx.Exec(ctx, `INSERT INTO slack_installations(id,organization_id,app_registration_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,credential_expires_at,granted_scopes,connected_by_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, installation, org, observed.registration, grant.app, grant.team, grant.bot, grant.workspace, tokenRevision, ciphertext, nonce, grant.bundle.ExpiresAt, grant.scopes, user)
+			_, err = tx.Exec(ctx, `INSERT INTO slack_installations(id,org_id,app_registration_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,credential_expires_at,granted_scopes,connected_by_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, installation, org, observed.registration, grant.app, grant.team, grant.bot, grant.workspace, tokenRevision, ciphertext, nonce, grant.bundle.ExpiresAt, grant.scopes, user)
 		} else {
 			if err = suppressInstallationPosts(ctx, tx, installation); err != nil {
 				return err

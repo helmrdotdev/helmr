@@ -145,7 +145,7 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	go func() { done <- reconcileTerminalSessionStop(ctx, f.pool, f.env, f.session) }()
 	waitSessionLifecycleLock(t, f)
 	if _, err = tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,
- computer_instance_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,
+ allocation_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,
  reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,$2,channel_credential_digest,$3,'acquiring',
  reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest

@@ -91,7 +91,7 @@ func TestDiagnosticOneTransactionCannotReuseStaleOccupancy(t *testing.T) {
 }
 
 func TestDiagnosticTypedOwnerRetentionAndExportNeverLockLifecycle(t *testing.T) {
-	for _, kind := range []string{"session", "computer_preparation", "computer_command"} {
+	for _, kind := range []string{"session", "image_build", "computer_command"} {
 		t.Run(kind, func(t *testing.T) {
 			pool := diagnosticDatabase(t)
 			source := diagnosticTestSource(t, pool, kind, uuid.Nil())

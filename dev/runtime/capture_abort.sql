@@ -3,7 +3,7 @@ SELECT json_build_object(
  'checkpoint_id',c.id,'checkpoint_status',c.status,
  'acknowledged',c.controls_reconciled_at IS NOT NULL,
  'source_abort',c.abort_identity IS NOT NULL AND c.target_lease_epoch IS NULL,
- 'source_instance_id',source.computer_instance_id,'source_fenced',source.fenced_at IS NOT NULL,
+ 'source_instance_id',source.allocation_id,'source_fenced',source.fenced_at IS NOT NULL,
  'source_state',source.status,'source_lease_epoch',c.source_lease_epoch,
  'captured_session_ids',(SELECT json_agg(member.session_id ORDER BY member.session_id)
    FROM checkpoint_processes member WHERE (member.environment_id,member.checkpoint_id)=(c.environment_id,c.id)),

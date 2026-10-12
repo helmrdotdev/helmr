@@ -64,7 +64,7 @@ func (c *checkpointPipelineClient) BeginAgentComputerCapture(_ context.Context, 
 		return workerapi.AgentComputerCaptureResponse{}, &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerNotReady}
 	}
 	if c.capture == nil {
-		c.capture, _ = proto.Marshal(&agentv1.ComputerSessionCapture{CheckpointId: r.CheckpointID, DesiredVersion: 1, MembershipRevision: 1, Envelope: &computerv0.ComputerOperationEnvelope{OperationId: r.CheckpointID, ComputerId: r.ComputerID, ComputerInstanceId: c.identity.InstanceID, WriterGeneration: uint64(r.LeaseEpoch), ChannelCredential: r.ChannelCredential, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}, Sessions: []*agentv1.SessionIdentity{{SessionId: uuid.NewV7().String(), ProcessEpoch: 1}}})
+		c.capture, _ = proto.Marshal(&agentv1.ComputerSessionCapture{CheckpointId: r.CheckpointID, DesiredVersion: 1, MembershipRevision: 1, Envelope: &computerv0.ComputerOperationEnvelope{OperationId: r.CheckpointID, ComputerId: r.ComputerID, ComputerInstanceId: c.identity.AllocationID, WriterGeneration: uint64(r.LeaseEpoch), ChannelCredential: r.ChannelCredential, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}, Sessions: []*agentv1.SessionIdentity{{SessionId: uuid.NewV7().String(), ProcessEpoch: 1}}})
 	}
 	var capture agentv1.ComputerSessionCapture
 	_ = proto.Unmarshal(c.capture, &capture)
@@ -151,7 +151,7 @@ func (m *checkpointPipelineMachine) SnapshotLimits() (vm.SnapshotLimits, error) 
 
 func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAllocationOwner, *checkpointPipelineClient, *checkpointPipelineMachine, *saveHostFixture) {
 	t.Helper()
-	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}
+	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ type checkpointRestoreBackend struct {
 
 func (b *checkpointRestoreBackend) Restore(_ context.Context, r vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	b.calls++
-	if r.ComputerInstanceID != b.identity.InstanceID || r.Binding.ComputerInstanceID != b.identity.InstanceID || r.Topology.Computer.ComputerID != b.identity.OwnerID || len(r.Memory) != 1 {
+	if r.ComputerInstanceID != b.identity.AllocationID || r.Binding.ComputerInstanceID != b.identity.AllocationID || r.Topology.Computer.ComputerID != b.identity.OwnerID || len(r.Memory) != 1 {
 		b.t.Fatal("restore lost target ownership")
 	}
 	data, err := os.ReadFile(r.Memory[0])
@@ -304,7 +304,7 @@ func (c *checkpointPipelineClient) ObserveAgentComputerStopped(_ context.Context
 	return nil
 }
 func (b *checkpointRestoreBackend) Cleanup(_ context.Context, owner vm.Owner) error {
-	if owner.ID != b.identity.InstanceID {
+	if owner.ID != b.identity.AllocationID {
 		b.t.Fatal("cleanup changed owner")
 	}
 	return nil
@@ -334,7 +334,7 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 			}
 			defer source.checkpointCut.Release()
 			id := source.identity
-			id.InstanceID = uuid.NewV7().String()
+			id.AllocationID = uuid.NewV7().String()
 			id.Epoch++
 			m := c.manifests[0]
 			b := &checkpointRestoreBackend{t: t, identity: id, machine: &checkpointPipelineMachine{}}
@@ -503,7 +503,7 @@ func TestComputerCheckpointPreservesSourceThroughDurabilityFailures(t *testing.T
 			if !errors.Is(err, errComputerHibernated) || m.snapshots != 1 || m.aborts != 0 || c.cancelled != nil || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
 				t.Fatalf("healthy source lost or recut: %v steps=%v", err, cut.steps)
 			}
-			dirs, err := os.ReadDir(filepath.Join(o.machines.computerPreparationDirectory(o.identity.InstanceID, o.identity.Epoch), "checkpoint"))
+			dirs, err := os.ReadDir(filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "checkpoint"))
 			if err != nil || len(dirs) != 1 {
 				t.Fatalf("encryption retry leaked staging: dirs=%d error=%v", len(dirs), err)
 			}

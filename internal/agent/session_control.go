@@ -22,13 +22,13 @@ const processStopTimeout = 40 * time.Second
 // SessionControlRequest identifies one intentional control operation. Acceptance
 // is durable; it does not assert that native processes have stopped.
 type SessionControlRequest struct {
-	EnvironmentID uuid.UUID
-	SessionID     uuid.UUID
-	TurnID        uuid.UUID
-	Kind          string
-	RetryKey      string
-	HoldID        uuid.UUID
-	Reason        string
+	EnvironmentID  uuid.UUID
+	SessionID      uuid.UUID
+	TurnID         uuid.UUID
+	Kind           string
+	IdempotencyKey string
+	HoldID         uuid.UUID
+	Reason         string
 }
 
 type SessionControlReceipt struct {
@@ -41,7 +41,7 @@ type SessionControlReceipt struct {
 // ownership root. Retried acceptance never repeats its lifecycle transition.
 func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
-	if req.RetryKey == "" || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || strings.ContainsRune(req.RetryKey, 0) ||
+	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		len(req.Reason) > 4096 || !utf8.ValidString(req.Reason) || strings.ContainsRune(req.Reason, 0) || caller.ID == uuid.Nil() ||
 		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
 		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
@@ -101,8 +101,8 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		var prior []byte
 		var hold *uuid.UUID
 		err = tx.QueryRow(ctx, `SELECT id,hold_id,request_digest FROM session_controls
- WHERE environment_id=$1 AND session_id=$2 AND caller_kind=$3 AND caller_id=$4 AND kind=$5 AND retry_key=$6 AND turn_id IS NOT DISTINCT FROM $7`,
-			req.EnvironmentID, req.SessionID, caller.Kind, caller.ID, req.Kind, req.RetryKey, nullableID(req.TurnID)).Scan(&result.ID, &hold, &prior)
+ WHERE environment_id=$1 AND session_id=$2 AND caller_kind=$3 AND caller_id=$4 AND kind=$5 AND idempotency_key=$6 AND turn_id IS NOT DISTINCT FROM $7`,
+			req.EnvironmentID, req.SessionID, caller.Kind, caller.ID, req.Kind, req.IdempotencyKey, nullableID(req.TurnID)).Scan(&result.ID, &hold, &prior)
 		if err == nil {
 			if !bytes.Equal(prior, digest[:]) {
 				return ErrConflict
@@ -213,8 +213,8 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,retry_key,request_digest,hold_id,turn_id)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.RetryKey, digest[:], nullableID(result.HoldID), nullableID(req.TurnID)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,idempotency_key,request_digest,hold_id,turn_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], nullableID(result.HoldID), nullableID(req.TurnID)); err != nil {
 			return err
 		}
 		data, err := json.Marshal(struct {

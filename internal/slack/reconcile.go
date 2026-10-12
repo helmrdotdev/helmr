@@ -114,7 +114,7 @@ func confirmMessage(ctx context.Context, pool db.TxBeginner, installation uuid.U
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE slack_threads t SET thread_ts=$2 FROM slack_posts p WHERE p.id=$1 AND t.id=$3
- AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_publication_key=p.publication_key AND p.continuation_ordinal=0 AND t.thread_ts IS NULL`, metadata.Payload.PostID, message.Timestamp, thread); err != nil {
+ AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0 AND t.thread_ts IS NULL`, metadata.Payload.PostID, message.Timestamp, thread); err != nil {
 			return err
 		}
 		confirmed = true

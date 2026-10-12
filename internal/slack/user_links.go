@@ -41,7 +41,7 @@ func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, inst
 		}
 		// Linking alone grants no org or publication authority. Read the connection
 		// without acquiring admission's installation gate while holding user locks.
-		err := tx.QueryRow(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE id=$1 AND organization_id=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL`, installation, org).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
+		err := tx.QueryRow(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE id=$1 AND org_id=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL`, installation, org).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUserLinkDenied
 		}
@@ -58,7 +58,7 @@ func ListLinkWorkspaces(ctx context.Context, pool db.TxBeginner, org, user, befo
 		if err := lockLinkUser(ctx, tx, org, user); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE organization_id=$1 AND disconnected_at IS NULL AND authorization_lost_at IS NULL AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR id<$2) ORDER BY id DESC LIMIT $3`, org, before, limit)
+		rows, err := tx.Query(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE org_id=$1 AND disconnected_at IS NULL AND authorization_lost_at IS NULL AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR id<$2) ORDER BY id DESC LIMIT $3`, org, before, limit)
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, org, user, installation u
 			return err
 		}
 		var active bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE id=$1 AND organization_id=$2 AND team_id=$3 AND disconnected_at IS NULL AND authorization_lost_at IS NULL)`, installation, org, identity.TeamID).Scan(&active); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE id=$1 AND org_id=$2 AND team_id=$3 AND disconnected_at IS NULL AND authorization_lost_at IS NULL)`, installation, org, identity.TeamID).Scan(&active); err != nil {
 			return err
 		}
 		if !active {

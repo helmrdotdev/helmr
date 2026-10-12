@@ -30,7 +30,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		writeError(w, fmt.Errorf("invalid Secret transport request: %w", err))
 		return
 	}
-	instanceID, err := ids.Parse(request.ComputerInstanceID)
+	instanceID, err := ids.Parse(request.AllocationID)
 	if err != nil || s.secretProxy == nil {
 		writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		return

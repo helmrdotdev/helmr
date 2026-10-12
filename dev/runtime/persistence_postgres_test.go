@@ -65,7 +65,7 @@ func TestPersistenceObservationQuery(t *testing.T) {
 		t.Fatalf("parked: %v", got)
 	}
 	instance := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,now()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,now(),now() FROM computer_leases WHERE epoch=1`, instance)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,now()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,now(),now() FROM computer_leases WHERE epoch=1`, instance)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='consumed',target_lease_epoch=2,restore_control_version=2,controls_reconciled_at=now(),capture_request=NULL`)
 	got = persistenceObservation(t, f, "persistence.sql", f.Session)
 	if got["target_current"] != false {

@@ -17,10 +17,10 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 				t.Fatal(err)
 			}
 			var computer, image uuid.UUID
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&computer); err != nil {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&computer); err != nil {
 				t.Fatal(err)
 			}
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&image); err != nil {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&image); err != nil {
 				t.Fatal(err)
 			}
 			if attached {
@@ -51,7 +51,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 			var retired, evidence, keyAvailable bool
 			if err := p.f.pool.QueryRow(t.Context(), `SELECT i.root_id IS NULL AND i.payload_retired_at IS NOT NULL,
  p.capture_root IS NOT NULL AND i.publication_evidence IS NOT NULL AND p.write_key_id=$3,k.available
- FROM images i JOIN image_builds p ON p.environment_id=i.environment_id AND p.id=i.preparation_id
+ FROM images i JOIN image_builds p ON p.environment_id=i.environment_id AND p.id=i.image_build_id
  JOIN disk_encryption_keys k ON k.id=p.write_key_id WHERE i.environment_id=$1 AND i.id=$2`, p.f.env, image, key.ID).Scan(&retired, &evidence, &keyAvailable); err != nil || !retired || !evidence || keyAvailable != attached {
 				t.Fatalf("retired=%v evidence=%v key=%v attached=%v error=%v", retired, evidence, keyAvailable, attached, err)
 			}

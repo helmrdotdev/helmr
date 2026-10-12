@@ -16,8 +16,8 @@ func diagnosticTable(kind string) (string, string, error) {
 	switch kind {
 	case "session":
 		return "session_logs", "session_id", nil
-	case "computer_preparation":
-		return "computer_preparation_logs", "preparation_id", nil
+	case "image_build":
+		return "image_build_logs", "image_build_id", nil
 	case "computer_command":
 		return "computer_command_logs", "command_id", nil
 	default:

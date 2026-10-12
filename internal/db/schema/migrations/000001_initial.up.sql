@@ -601,7 +601,7 @@ CREATE TABLE template_definitions (
     environment_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     template_id uuid NOT NULL,
-    preparation_spec_id uuid NOT NULL,
+    image_spec_id uuid NOT NULL,
     cpu_millis bigint NOT NULL CHECK (cpu_millis > 0),
     memory_bytes bigint NOT NULL CHECK (memory_bytes > 0 AND memory_bytes % 1048576 = 0),
     disk_bytes bigint CHECK (disk_bytes > 0 AND disk_bytes % 1048576 = 0),
@@ -613,12 +613,12 @@ CREATE TABLE template_definitions (
     PRIMARY KEY (environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,template_id) REFERENCES templates(environment_id,id),
     FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id)
+    FOREIGN KEY (environment_id,image_spec_id) REFERENCES image_specs(environment_id,id)
 );
 
 CREATE INDEX template_definitions_deployment ON template_definitions(environment_id,deployment_id,template_id);
 
-CREATE INDEX template_definitions_preparation_spec ON template_definitions(environment_id,preparation_spec_id);
+CREATE INDEX template_definitions_preparation_spec ON template_definitions(environment_id,image_spec_id);
 
 CREATE TABLE agents (
     environment_id uuid NOT NULL REFERENCES environments(id),
@@ -633,7 +633,7 @@ CREATE TABLE agent_definitions (
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     template_id uuid NOT NULL,
-    setup boolean NOT NULL,
+    has_init boolean NOT NULL,
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
@@ -650,7 +650,7 @@ CREATE TABLE disk_encryption_keys (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     writer_computer_id UUID,
-    writer_preparation_id UUID,
+    writer_image_build_id UUID,
     wrapping_key_id TEXT NOT NULL CHECK (octet_length(wrapping_key_id) BETWEEN 1 AND 2048),
     wrapped_key BYTEA,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -662,11 +662,11 @@ CREATE TABLE disk_encryption_keys (
     ),
     UNIQUE (environment_id, id, available),
     UNIQUE (environment_id, writer_computer_id, id, available),
-    UNIQUE (environment_id, writer_preparation_id, id, available),
-    CHECK (writer_computer_id IS NULL OR writer_preparation_id IS NULL),
+    UNIQUE (environment_id, writer_image_build_id, id, available),
+    CHECK (writer_computer_id IS NULL OR writer_image_build_id IS NULL),
     -- Preparation capture history retains key identity after physical closure,
     -- while the published graph independently retains every usable dependency.
-    UNIQUE(environment_id,writer_preparation_id,id),
+    UNIQUE(environment_id,writer_image_build_id,id),
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT,
     -- Historical lease identity is retained after the physical writer and its
     -- pending publication obligations have released their usable dependencies.
@@ -677,16 +677,16 @@ CREATE TABLE disk_encryption_keys (
 CREATE TABLE image_builds (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
-    preparation_spec_id uuid NOT NULL,
+    image_spec_id uuid NOT NULL,
     successor_of uuid,
-    retry_key text NOT NULL CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','succeeded','failed')),
     deadline_at timestamptz NOT NULL,
     error_code text,
     executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch>=0),
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
-    instance_id uuid UNIQUE,
+    allocation_id uuid UNIQUE,
     channel_credential_digest bytea CHECK (octet_length(channel_credential_digest)=32),
     executor_expires_at timestamptz,
     delivered_at timestamptz,
@@ -738,16 +738,16 @@ CREATE TABLE image_builds (
             AND (stderr_last_digest IS NOT NULL OR stderr_expired_through=stderr_accepted_through))),
     UNIQUE(environment_id,id,executor_epoch),
     PRIMARY KEY(environment_id,id),
-    UNIQUE(environment_id,preparation_spec_id,id),
-    UNIQUE(environment_id,preparation_spec_id,retry_key),
+    UNIQUE(environment_id,image_spec_id,id),
+    UNIQUE(environment_id,image_spec_id,idempotency_key),
     UNIQUE(environment_id,successor_of),
-    FOREIGN KEY(environment_id,preparation_spec_id,successor_of) REFERENCES image_builds(environment_id,preparation_spec_id,id),
+    FOREIGN KEY(environment_id,image_spec_id,successor_of) REFERENCES image_builds(environment_id,image_spec_id,id),
     CHECK (successor_of IS NULL OR successor_of<>id),
-    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
+    FOREIGN KEY(environment_id,image_spec_id) REFERENCES image_specs(environment_id,id),
     CHECK ((status='failed')=(error_code IS NOT NULL)),
     CHECK ((fenced_at IS NULL)=(fence_evidence IS NULL)),
-    CHECK ((worker_host_id IS NULL AND executor_epoch=0 AND worker_epoch IS NULL AND instance_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL)
-        OR (worker_host_id IS NOT NULL AND executor_epoch>0 AND worker_epoch IS NOT NULL AND instance_id IS NOT NULL AND channel_credential_digest IS NOT NULL)),
+    CHECK ((worker_host_id IS NULL AND executor_epoch=0 AND worker_epoch IS NULL AND allocation_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL)
+        OR (worker_host_id IS NOT NULL AND executor_epoch>0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)),
     CHECK ((delivered_at IS NULL)=(executor_expires_at IS NULL)),
     CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
         OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000)),
@@ -756,15 +756,15 @@ CREATE TABLE image_builds (
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
     CHECK (disk_released_at IS NULL OR (fenced_at IS NOT NULL AND write_key_id IS NOT NULL)),
     FOREIGN KEY (environment_id,id,write_key_id)
-        REFERENCES disk_encryption_keys(environment_id,writer_preparation_id,id),
+        REFERENCES disk_encryption_keys(environment_id,writer_image_build_id,id),
     FOREIGN KEY (environment_id,id,write_key_id,write_key_required)
-        REFERENCES disk_encryption_keys(environment_id,writer_preparation_id,id,available),
+        REFERENCES disk_encryption_keys(environment_id,writer_image_build_id,id,available),
     CHECK ((capture_root IS NULL)=(capture_evidence IS NULL)),
     CHECK (status<>'succeeded' OR capture_root IS NOT NULL),
     CHECK (capture_root IS NULL OR (logical_bytes IS NOT NULL AND write_key_id IS NOT NULL))
 );
 
-CREATE UNIQUE INDEX image_builds_exclusive ON image_builds(environment_id,preparation_spec_id)
+CREATE UNIQUE INDEX image_builds_exclusive ON image_builds(environment_id,image_spec_id)
     WHERE status IN ('queued','running') OR (worker_host_id IS NOT NULL AND fenced_at IS NULL);
 
 CREATE INDEX image_builds_deadline ON image_builds(deadline_at) WHERE status IN ('queued','running');
@@ -866,8 +866,8 @@ CREATE TABLE disk_roots (
 CREATE TABLE images (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
-    preparation_spec_id uuid NOT NULL,
-    preparation_id uuid NOT NULL,
+    image_spec_id uuid NOT NULL,
+    image_build_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq>0),
     root_id uuid,
     payload_retired_at timestamptz,
@@ -875,10 +875,10 @@ CREATE TABLE images (
     published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK ((root_id IS NOT NULL) <> (payload_retired_at IS NOT NULL)),
     PRIMARY KEY (environment_id,id),
-    UNIQUE (environment_id,preparation_id),
-    UNIQUE (environment_id,preparation_spec_id,id),
-    UNIQUE (environment_id,preparation_spec_id,seq),
-    FOREIGN KEY (environment_id,preparation_spec_id,preparation_id) REFERENCES image_builds(environment_id,preparation_spec_id,id),
+    UNIQUE (environment_id,image_build_id),
+    UNIQUE (environment_id,image_spec_id,id),
+    UNIQUE (environment_id,image_spec_id,seq),
+    FOREIGN KEY (environment_id,image_spec_id,image_build_id) REFERENCES image_builds(environment_id,image_spec_id,id),
     FOREIGN KEY (environment_id,root_id) REFERENCES disk_roots(environment_id,id)
 );
 
@@ -894,14 +894,14 @@ CREATE TABLE computers (
     initial_root_id uuid,
     initial_root_digest bytea CHECK (octet_length(initial_root_digest)=32),
     initial_payload_retired_at timestamptz,
-    preparation_spec_id uuid,
+    image_spec_id uuid,
     origin_deployment_id uuid NOT NULL,
     origin_template_id uuid NOT NULL,
     cpu_millis bigint NOT NULL CHECK (cpu_millis>0),
     memory_bytes bigint NOT NULL CHECK (memory_bytes>0 AND memory_bytes%1048576=0),
     disk_bytes bigint CHECK (disk_bytes>0 AND disk_bytes%1048576=0),
     storage_reservation_bytes bigint CHECK (storage_reservation_bytes>0),
-    preparation_id uuid,
+    image_build_id uuid,
     preparation_deadline_at timestamptz,
     preparation_max_age_ms bigint CHECK (preparation_max_age_ms>0),
     image_id uuid,
@@ -922,18 +922,18 @@ CREATE TABLE computers (
     PRIMARY KEY (environment_id,id),
     FOREIGN KEY(environment_id,origin_template_id,origin_deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     CHECK (storage_reservation_bytes IS NOT NULL OR deleted_at IS NOT NULL),
-    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
-    FOREIGN KEY(environment_id,preparation_spec_id,preparation_id) REFERENCES image_builds(environment_id,preparation_spec_id,id),
-    CHECK (initial_root_digest IS NOT NULL OR (preparation_spec_id IS NOT NULL AND preparation_deadline_at IS NOT NULL)),
-    CHECK (preparation_id IS NULL OR preparation_spec_id IS NOT NULL),
+    FOREIGN KEY(environment_id,image_spec_id) REFERENCES image_specs(environment_id,id),
+    FOREIGN KEY(environment_id,image_spec_id,image_build_id) REFERENCES image_builds(environment_id,image_spec_id,id),
+    CHECK (initial_root_digest IS NOT NULL OR (image_spec_id IS NOT NULL AND preparation_deadline_at IS NOT NULL)),
+    CHECK (image_build_id IS NULL OR image_spec_id IS NOT NULL),
     CHECK (preparation_failed_at IS NULL OR (initial_root_digest IS NULL AND preparation_deadline_at IS NOT NULL)),
     CHECK ((integrity_fault_at IS NULL) = (integrity_fault_reason IS NULL)),
     CHECK ((initial_root_digest IS NOT NULL) = (initial_root_id IS NOT NULL OR initial_payload_retired_at IS NOT NULL)),
     CHECK (initial_payload_retired_at IS NULL OR (initial_root_id IS NULL AND deleted_at IS NOT NULL)),
     FOREIGN KEY (environment_id,initial_root_id)
     REFERENCES disk_roots(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_spec_id,image_id) REFERENCES images(environment_id,preparation_spec_id,id),
-    CHECK (image_id IS NULL OR (preparation_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
+    FOREIGN KEY (environment_id,image_spec_id,image_id) REFERENCES images(environment_id,image_spec_id,id),
+    CHECK (image_id IS NULL OR (image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
 );
 
 CREATE INDEX computers_unused_policy ON computers(environment_id,id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
@@ -942,7 +942,7 @@ CREATE UNIQUE INDEX computers_key ON computers(environment_id,key) WHERE key IS 
 
 CREATE INDEX computers_storage_reservations ON computers(environment_id) INCLUDE (storage_reservation_bytes) WHERE storage_reservation_bytes IS NOT NULL;
 
-CREATE INDEX computers_preparation ON computers(environment_id,preparation_spec_id,preparation_id) WHERE preparation_id IS NOT NULL;
+CREATE INDEX computers_preparation ON computers(environment_id,image_spec_id,image_build_id) WHERE image_build_id IS NOT NULL;
 
 CREATE INDEX computers_preparation_deadline ON computers(preparation_deadline_at) WHERE initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL;
 
@@ -950,7 +950,7 @@ CREATE INDEX computers_image ON computers(environment_id,image_id) WHERE image_i
 
 CREATE TABLE secret_bindings (
     environment_id uuid NOT NULL,
-    preparation_spec_id uuid,
+    image_spec_id uuid,
     deployment_id uuid,
     template_id uuid,
     computer_id uuid,
@@ -961,12 +961,12 @@ CREATE TABLE secret_bindings (
     placeholder text,
     allowed_origins text[] NOT NULL DEFAULT '{}',
     CHECK ((mode='protected' AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$') OR (mode='raw' AND placeholder IS NULL)),
-    CHECK (num_nonnulls(preparation_spec_id,deployment_id,computer_id)=1),
+    CHECK (num_nonnulls(image_spec_id,deployment_id,computer_id)=1),
     CHECK ((deployment_id IS NULL)=(template_id IS NULL)),
     CHECK ((mode='protected' AND placement_kind='env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)
         OR (mode='raw' AND cardinality(allowed_origins)=0)),
-    UNIQUE NULLS NOT DISTINCT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target),
-    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
+    UNIQUE NULLS NOT DISTINCT (environment_id,image_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target),
+    FOREIGN KEY (environment_id,image_spec_id) REFERENCES image_specs(environment_id,id),
     FOREIGN KEY (environment_id,template_id,deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
     FOREIGN KEY (environment_id,secret_id) REFERENCES secrets(environment_id,id)
@@ -981,7 +981,7 @@ CREATE TABLE computer_leases (
     worker_host_id uuid NOT NULL REFERENCES worker_hosts(id),
     worker_epoch bigint NOT NULL CHECK (worker_epoch > 0),
     expires_at timestamptz,
-    computer_instance_id uuid NOT NULL UNIQUE,
+    allocation_id uuid NOT NULL UNIQUE,
     channel_credential_digest bytea NOT NULL CHECK (octet_length(channel_credential_digest)=32),
     restored_from_save_id uuid,
     delivered_at timestamptz,
@@ -1174,7 +1174,7 @@ CREATE INDEX idempotency_receipts_receipt_expiry ON idempotency_receipts(accepte
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
     id uuid PRIMARY KEY,
-    organization_id uuid NOT NULL REFERENCES organizations(id),
+    org_id uuid NOT NULL REFERENCES organizations(id),
     app_id text CHECK (app_id<>''),
     client_id text CHECK (client_id<>''),
     credential_revision bigint NOT NULL DEFAULT 0 CHECK (credential_revision>=0),
@@ -1185,7 +1185,7 @@ CREATE TABLE slack_app_registrations (
     created_by_user_id uuid NOT NULL REFERENCES users(id),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     retired_at timestamptz,
-    UNIQUE(id,organization_id),
+    UNIQUE(id,org_id),
     CHECK ((credential_revision=0)=(client_id IS NULL)),
     CHECK ((credential_ciphertext IS NULL)=(credential_nonce IS NULL)),
     CHECK ((retired_at IS NULL AND credential_revision>0)=(credential_ciphertext IS NOT NULL)),
@@ -1198,7 +1198,7 @@ CREATE UNIQUE INDEX slack_app_registrations_active_app ON slack_app_registration
 CREATE TABLE slack_installations (
     id uuid PRIMARY KEY,
     app_registration_id uuid NOT NULL,
-    organization_id uuid NOT NULL REFERENCES organizations(id),
+    org_id uuid NOT NULL REFERENCES organizations(id),
     app_id text NOT NULL CHECK (app_id<>''),
     team_id text NOT NULL CHECK (team_id<>''),
     bot_user_id text NOT NULL CHECK (bot_user_id<>''),
@@ -1220,9 +1220,9 @@ CREATE TABLE slack_installations (
     history_next_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     authorization_lost_at timestamptz,
     disconnected_at timestamptz,
-    FOREIGN KEY(app_registration_id,organization_id) REFERENCES slack_app_registrations(id,organization_id),
+    FOREIGN KEY(app_registration_id,org_id) REFERENCES slack_app_registrations(id,org_id),
     UNIQUE(id,app_registration_id),
-    UNIQUE(id,organization_id,team_id),
+    UNIQUE(id,org_id,team_id),
     CHECK ((credential_ciphertext IS NULL)=(credential_nonce IS NULL)),
     CHECK (credential_nonce IS NULL OR octet_length(credential_nonce)=12),
     CHECK ((refresh_attempt_id IS NULL)=(refresh_deadline IS NULL)),
@@ -1265,15 +1265,15 @@ CREATE TABLE slack_channel_bindings (
     environment_id uuid NOT NULL,
     publication_id uuid NOT NULL,
     installation_id uuid NOT NULL,
-    organization_id uuid NOT NULL,
+    org_id uuid NOT NULL,
     team_id text NOT NULL,
     slack_channel_id text NOT NULL CHECK (slack_channel_id<>''),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE(publication_id,slack_channel_id),
     UNIQUE(id,environment_id),
-    UNIQUE(id,environment_id,organization_id,team_id,slack_channel_id),
+    UNIQUE(id,environment_id,org_id,team_id,slack_channel_id),
     FOREIGN KEY(publication_id,environment_id,installation_id) REFERENCES slack_connections(id,environment_id,slack_installation_id),
-    FOREIGN KEY(installation_id,organization_id,team_id) REFERENCES slack_installations(id,organization_id,team_id)
+    FOREIGN KEY(installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id)
 );
 
 CREATE INDEX slack_channel_bindings_environment ON slack_channel_bindings(environment_id,id);
@@ -1337,7 +1337,7 @@ CREATE TABLE sessions (
     requester_session_id uuid,
     origin_turn_id uuid,
     causal_depth integer NOT NULL CHECK (causal_depth >= 0),
-    session_key text CHECK (octet_length(session_key) BETWEEN 1 AND 512),
+    key text CHECK (octet_length(key) BETWEEN 1 AND 512),
     status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','closing','closed','cancelled')),
     authority_generation bigint NOT NULL DEFAULT 1 CHECK (authority_generation > 0),
     next_turn_seq bigint NOT NULL DEFAULT 1 CHECK (next_turn_seq > 0),
@@ -1346,13 +1346,13 @@ CREATE TABLE sessions (
     creation_caller_kind text CHECK (creation_caller_kind IN ('user','api_key','session')),
     creation_caller_id uuid,
     creation_method text CHECK (creation_method IN ('create','spawn')),
-    creation_retry_key text CHECK (octet_length(creation_retry_key) BETWEEN 1 AND 512),
+    creation_idempotency_key text CHECK (octet_length(creation_idempotency_key) BETWEEN 1 AND 512),
     creation_digest bytea CHECK (octet_length(creation_digest)=32),
     creation_turn_id uuid,
     CHECK (num_nonnulls(creation_caller_kind,creation_caller_id,creation_method,creation_digest) IN (0,4)),
-    CHECK (creation_retry_key IS NULL OR creation_digest IS NOT NULL),
+    CHECK (creation_idempotency_key IS NULL OR creation_digest IS NOT NULL),
     CHECK (creation_turn_id IS NULL OR (creation_digest IS NOT NULL AND computer_id IS NOT NULL)),
-    UNIQUE(environment_id,creation_caller_kind,creation_caller_id,creation_method,agent_id,creation_retry_key),
+    UNIQUE(environment_id,creation_caller_kind,creation_caller_id,creation_method,agent_id,creation_idempotency_key),
     CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
         OR (history_retention_mode='until_environment_deletion' AND history_retention_seconds IS NULL)),
     CHECK (history_eligible_at IS NULL OR status IN ('closed','cancelled')),
@@ -1363,7 +1363,7 @@ CREATE TABLE sessions (
     PRIMARY KEY (environment_id,id),
     UNIQUE (environment_id,id,computer_id),
     UNIQUE (environment_id,id,root_session_id),
-    UNIQUE (environment_id,agent_id,session_key),
+    UNIQUE (environment_id,agent_id,key),
     FOREIGN KEY (environment_id,agent_id,deployment_id) REFERENCES agent_definitions(environment_id,agent_id,deployment_id),
     FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
     FOREIGN KEY (environment_id,root_session_id) REFERENCES sessions(environment_id,id),
@@ -1441,7 +1441,7 @@ CREATE INDEX session_processes_computer_custody
 CREATE TABLE secret_exposures (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
-    preparation_id uuid,
+    image_build_id uuid,
     session_id uuid,
     process_epoch bigint CHECK (process_epoch>0),
     command_id uuid,
@@ -1449,16 +1449,16 @@ CREATE TABLE secret_exposures (
     version_id uuid NOT NULL,
     revocation_generation bigint NOT NULL CHECK (revocation_generation>=0),
     exposed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CHECK (num_nonnulls(preparation_id,session_id,command_id)=1),
+    CHECK (num_nonnulls(image_build_id,session_id,command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
-    FOREIGN KEY(environment_id,preparation_id) REFERENCES image_builds(environment_id,id),
+    FOREIGN KEY(environment_id,image_build_id) REFERENCES image_builds(environment_id,id),
     FOREIGN KEY(environment_id,session_id,process_epoch) REFERENCES session_processes(environment_id,session_id,epoch),
     FOREIGN KEY(environment_id,command_id) REFERENCES commands(environment_id,id),
     FOREIGN KEY(environment_id,secret_id) REFERENCES secrets(environment_id,id),
     FOREIGN KEY(secret_id,version_id) REFERENCES secret_versions(secret_id,id)
 );
 
-CREATE UNIQUE INDEX secret_exposures_preparation ON secret_exposures(environment_id,preparation_id,secret_id) WHERE preparation_id IS NOT NULL;
+CREATE UNIQUE INDEX secret_exposures_preparation ON secret_exposures(environment_id,image_build_id,secret_id) WHERE image_build_id IS NOT NULL;
 
 CREATE UNIQUE INDEX secret_exposures_process ON secret_exposures(environment_id,session_id,process_epoch,secret_id) WHERE session_id IS NOT NULL;
 
@@ -1477,9 +1477,9 @@ CREATE TABLE turns (
     caller_id uuid NOT NULL,
     origin_turn_id uuid,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    admission_method text NOT NULL CHECK (admission_method IN ('create','spawn','enqueue','send','schedule')),
+    admission_method text NOT NULL CHECK (admission_method IN ('create','spawn','enqueue','slack_route','schedule')),
     target_id uuid NOT NULL,
-    retry_key text CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
+    idempotency_key text CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     input bytea,
     result jsonb,
@@ -1518,7 +1518,7 @@ CREATE TABLE turns (
     UNIQUE (environment_id,id,computer_id),
     UNIQUE (environment_id,id,computer_id,has_recorded_result),
     UNIQUE (environment_id,session_id,seq),
-    UNIQUE (environment_id,caller_kind,caller_id,admission_method,target_id,retry_key),
+    UNIQUE (environment_id,caller_kind,caller_id,admission_method,target_id,idempotency_key),
     FOREIGN KEY (environment_id,caller_id,origin_turn_id) REFERENCES turns(environment_id,session_id,id),
     CHECK (origin_turn_id IS NULL OR caller_kind='session'),
     FOREIGN KEY (environment_id,session_id,computer_id) REFERENCES sessions(environment_id,id,computer_id),
@@ -1589,13 +1589,13 @@ CREATE TABLE session_controls (
     kind text NOT NULL CHECK (kind IN ('interrupt','turn_interrupt','resume','close','cancel')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key','session')),
     caller_id uuid NOT NULL,
-    retry_key text NOT NULL CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     hold_id uuid,
     turn_id uuid,
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (environment_id,id),
-    UNIQUE NULLS NOT DISTINCT (environment_id,session_id,turn_id,caller_kind,caller_id,kind,retry_key),
+    UNIQUE NULLS NOT DISTINCT (environment_id,session_id,turn_id,caller_kind,caller_id,kind,idempotency_key),
     FOREIGN KEY (environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id),
     CHECK ((kind='turn_interrupt') = (turn_id IS NOT NULL)),
     FOREIGN KEY (environment_id,session_id) REFERENCES sessions(environment_id,id),
@@ -1651,12 +1651,12 @@ CREATE TABLE disk_object_pins (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     save_id uuid,
-    preparation_id uuid,
+    image_build_id uuid,
     digest text NOT NULL,
-    CHECK (num_nonnulls(save_id,preparation_id)=1),
-    UNIQUE NULLS NOT DISTINCT (environment_id,save_id,preparation_id,digest),
+    CHECK (num_nonnulls(save_id,image_build_id)=1),
+    UNIQUE NULLS NOT DISTINCT (environment_id,save_id,image_build_id,digest),
     FOREIGN KEY (environment_id,save_id) REFERENCES computer_saves(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_id) REFERENCES image_builds(environment_id,id),
+    FOREIGN KEY (environment_id,image_build_id) REFERENCES image_builds(environment_id,id),
     FOREIGN KEY (environment_id,digest) REFERENCES disk_objects(environment_id,digest)
 );
 
@@ -1797,9 +1797,9 @@ CREATE TABLE turn_messages (
     caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key','session')),
     caller_id uuid NOT NULL,
     origin_turn_id uuid,
-    admission_method text NOT NULL CHECK (admission_method IN ('send','turn_send')),
+    admission_method text NOT NULL CHECK (admission_method IN ('slack_route','turn_send')),
     target_id uuid NOT NULL,
-    retry_key text CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
+    idempotency_key text CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     status text NOT NULL DEFAULT 'admitted' CHECK (status IN ('admitted','started','delivered','rejected')),
     rejection_reason text,
@@ -1809,11 +1809,11 @@ CREATE TABLE turn_messages (
     PRIMARY KEY(environment_id,id),
     UNIQUE(environment_id,session_id,turn_id,id),
     UNIQUE(environment_id,turn_id,seq),
-    UNIQUE(environment_id,caller_kind,caller_id,admission_method,target_id,retry_key),
+    UNIQUE(environment_id,caller_kind,caller_id,admission_method,target_id,idempotency_key),
     FOREIGN KEY(environment_id,session_id,turn_id,process_epoch) REFERENCES turns(environment_id,session_id,id,process_epoch),
     FOREIGN KEY(environment_id,caller_id,origin_turn_id) REFERENCES turns(environment_id,session_id,id),
     CHECK (origin_turn_id IS NULL OR caller_kind='session'),
-    CHECK ((admission_method='send' AND target_id=session_id) OR (admission_method='turn_send' AND target_id=turn_id)),
+    CHECK ((admission_method='slack_route' AND target_id=session_id) OR (admission_method='turn_send' AND target_id=turn_id)),
     CHECK ((message IS NULL)=(payload_expired_at IS NOT NULL)),
     CHECK (payload_expired_at IS NULL OR terminal_at IS NOT NULL),
     CHECK ((status IN ('delivered','rejected'))=(terminal_at IS NOT NULL)),
@@ -1833,11 +1833,11 @@ CREATE TABLE diagnostic_chunks (
     environment_id uuid NOT NULL REFERENCES environments(id),
     session_id uuid,
     process_epoch bigint,
-    preparation_id uuid,
+    image_build_id uuid,
     preparation_epoch bigint,
     command_id uuid,
-    source_kind text GENERATED ALWAYS AS (CASE WHEN session_id IS NOT NULL THEN 'session' WHEN preparation_id IS NOT NULL THEN 'computer_preparation' ELSE 'computer_command' END) STORED NOT NULL,
-    source_id uuid GENERATED ALWAYS AS (COALESCE(session_id,preparation_id,command_id)) STORED NOT NULL,
+    source_kind text GENERATED ALWAYS AS (CASE WHEN session_id IS NOT NULL THEN 'session' WHEN image_build_id IS NOT NULL THEN 'image_build' ELSE 'computer_command' END) STORED NOT NULL,
+    source_id uuid GENERATED ALWAYS AS (COALESCE(session_id,image_build_id,command_id)) STORED NOT NULL,
     producer_epoch bigint GENERATED ALWAYS AS (COALESCE(process_epoch,preparation_epoch,1)) STORED NOT NULL,
     stream text NOT NULL CHECK (stream IN ('stdout','stderr')),
     sequence bigint NOT NULL,
@@ -1853,11 +1853,11 @@ CREATE TABLE diagnostic_chunks (
     export_claim uuid,
     export_after timestamptz NOT NULL DEFAULT '-infinity',
     ingest_size_bytes bigint GENERATED ALWAYS AS (octet_length(data)::bigint) STORED NOT NULL,
-    CHECK (num_nonnulls(session_id,preparation_id,command_id)=1),
+    CHECK (num_nonnulls(session_id,image_build_id,command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
-    CHECK ((preparation_id IS NULL)=(preparation_epoch IS NULL)),
+    CHECK ((image_build_id IS NULL)=(preparation_epoch IS NULL)),
     FOREIGN KEY(environment_id,session_id,process_epoch) REFERENCES session_processes(environment_id,session_id,epoch),
-    FOREIGN KEY(environment_id,preparation_id,preparation_epoch) REFERENCES image_builds(environment_id,id,executor_epoch),
+    FOREIGN KEY(environment_id,image_build_id,preparation_epoch) REFERENCES image_builds(environment_id,id,executor_epoch),
     FOREIGN KEY(environment_id,command_id) REFERENCES commands(environment_id,id),
     CHECK (sequence>0 AND through_sequence>=sequence AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
         AND dropped_bytes>=0
@@ -1902,11 +1902,11 @@ CREATE TABLE slack_threads (
     -- Only a root Session owns a Slack route: the carrier equals the front
     -- Session and the key it references holds only rows whose root is itself.
     front_root_session_id uuid GENERATED ALWAYS AS (front_session_id) STORED NOT NULL,
-    organization_id uuid NOT NULL,
+    org_id uuid NOT NULL,
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
-    opening_publication_key text CHECK (opening_publication_key<>''),
+    opening_post_key text CHECK (opening_post_key<>''),
     recipient_team_id text,
     recipient_user_id text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1925,13 +1925,13 @@ CREATE TABLE slack_threads (
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     refresh_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     delivery_error text,
-    CHECK (thread_ts IS NOT NULL OR opening_publication_key IS NOT NULL),
+    CHECK (thread_ts IS NOT NULL OR opening_post_key IS NOT NULL),
     UNIQUE(id,environment_id),
     UNIQUE(environment_id,front_session_id),
-    FOREIGN KEY(channel_id,environment_id,organization_id,team_id,slack_channel_id) REFERENCES slack_channel_bindings(id,environment_id,organization_id,team_id,slack_channel_id),
+    FOREIGN KEY(channel_id,environment_id,org_id,team_id,slack_channel_id) REFERENCES slack_channel_bindings(id,environment_id,org_id,team_id,slack_channel_id),
     FOREIGN KEY(environment_id,front_session_id,front_root_session_id) REFERENCES sessions(environment_id,id,root_session_id),
-    UNIQUE(organization_id,team_id,slack_channel_id,thread_ts),
-    UNIQUE(channel_id,opening_publication_key),
+    UNIQUE(org_id,team_id,slack_channel_id,thread_ts),
+    UNIQUE(channel_id,opening_post_key),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),
     CHECK (num_nonnulls(inflight_method,inflight_payload,inflight_digest,inflight_revision,inflight_attempt_id,claimed_until) IN (0,6))
 );
@@ -1968,7 +1968,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start','enqueue','send','answer','stop')),
+    operation text CHECK (operation IN ('start','enqueue','slack_route','answer','stop')),
     message_id uuid,
     payload bytea,
     payload_expired_at timestamptz,
@@ -1994,13 +1994,13 @@ CREATE TABLE slack_requests (
     CHECK (payload_expired_at IS NULL OR status<>'received'),
     CHECK (status<>'accepted' OR (user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)),
     CHECK ((status='accepted' AND ((operation IN ('start','enqueue') AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
-        OR (operation='send' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
+        OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
         OR (operation='stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
-CREATE INDEX slack_requests_input_source ON slack_requests(environment_id,turn_id,message_id) WHERE status='accepted' AND operation IN ('start','enqueue','send');
+CREATE INDEX slack_requests_input_source ON slack_requests(environment_id,turn_id,message_id) WHERE status='accepted' AND operation IN ('start','enqueue','slack_route');
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at,id) WHERE status='received';
 
@@ -2016,7 +2016,7 @@ CREATE TABLE slack_posts (
     thread_id uuid NOT NULL,
     source_thread_id uuid,
     seq bigint NOT NULL CHECK (seq>0),
-    publication_key text NOT NULL CHECK (publication_key<>''),
+    post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
     role text NOT NULL CHECK (role IN ('intermediate','question','response','lifecycle','request_feedback','activity','opening')),
     turn_id uuid,
@@ -2063,7 +2063,7 @@ CREATE TABLE slack_posts (
     FOREIGN KEY(source_thread_id,environment_id) REFERENCES slack_threads(id,environment_id),
     CHECK ((delivery_disposed_at IS NULL)=(delivery_disposed_by IS NULL)),
     CHECK (delivery_disposed_at IS NULL OR closed_at IS NOT NULL),
-    UNIQUE(thread_source_id,publication_key,continuation_ordinal),
+    UNIQUE(thread_source_id,post_key,continuation_ordinal),
     UNIQUE(thread_source_id,seq),
     FOREIGN KEY(environment_id,session_id,thread_source_id) REFERENCES slack_thread_sources(environment_id,session_id,id),
     FOREIGN KEY(environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id),
@@ -2132,5 +2132,5 @@ ALTER TABLE turns
     REFERENCES computer_saves(environment_id,computer_id,turn_id,id,published);
 
 ALTER TABLE disk_encryption_keys
-    ADD FOREIGN KEY (environment_id, writer_preparation_id) REFERENCES image_builds(environment_id,id),
+    ADD FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id,id),
     ADD FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id,id) ON DELETE RESTRICT;

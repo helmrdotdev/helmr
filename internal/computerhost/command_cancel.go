@@ -12,10 +12,10 @@ import (
 
 func (m commandService) cancelComputerCommand(ctx context.Context, machine vm.Machine, mount commandAuthority, request workerapi.ComputerCommandCancellation) error {
 	r := request
-	if request.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || request.RequestFingerprint == "" {
+	if request.ComputerID != mount.ComputerID || r.AllocationID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || request.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("command cancellation does not match the Instance"))
 	}
-	return guestControl{machine: machine}.cancelCommand(ctx, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: mount.GuestChannelCredential, OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}})
+	return guestControl{machine: machine}.cancelCommand(ctx, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.AllocationID, WriterGeneration: r.WriterGeneration, ChannelCredential: mount.GuestChannelCredential, OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}})
 }
 
 // cancelCommand asks the guest to cancel one Command. Cancellation closes the

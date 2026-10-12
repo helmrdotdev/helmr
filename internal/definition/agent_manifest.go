@@ -13,7 +13,7 @@ import (
 
 type AgentManifest struct {
 	TemplateDefinitionID string                 `json:"templateDefinitionId"`
-	Setup                bool                   `json:"setup"`
+	HasInit              bool                   `json:"hasInit"`
 	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
 	MaxTurnDurationMs    *int64                 `json:"maxTurnDurationMs,omitempty"`

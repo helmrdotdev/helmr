@@ -233,13 +233,13 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		return err
 	}
 	var count int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=ANY($2::uuid[])`, env, specIDs).Scan(&count); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=ANY($2::uuid[])`, env, specIDs).Scan(&count); err != nil {
 		return err
 	}
 	if count != len(buildBindings) {
 		return ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
+	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
  SELECT $1,$2,v.template_id,s.id,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
  FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
  JOIN image_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
@@ -265,7 +265,7 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	type agentInput struct {
 		Name       string    `json:"name"`
 		Computer   string    `json:"computer"`
-		Setup      bool      `json:"setup"`
+		HasInit    bool      `json:"has_init"`
 		MaxTurn    *int64    `json:"max_turn_ms"`
 		CloseIdle  *int64    `json:"close_idle_ms"`
 		CloseNever bool      `json:"close_never"`
@@ -290,7 +290,7 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 				}
 				triggers = append(triggers, triggerInput{Agent: d.DeclaredID, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Destination: destination})
 			}
-			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, Setup: d.Agent.Setup, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
+			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, HasInit: d.Agent.HasInit, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
 		}
 	}
 	if len(inputs) == 0 {
@@ -305,9 +305,9 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
  ON CONFLICT(environment_id,key) DO NOTHING`, env, raw); err != nil {
 		return err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
- SELECT $1,a.id,$2,t.id,v.setup,v.max_turn_ms,v.close_idle_ms,v.close_never
- FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,setup boolean,max_turn_ms bigint,close_idle_ms bigint,close_never boolean)
+	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
+ SELECT $1,a.id,$2,t.id,v.has_init,v.max_turn_ms,v.close_idle_ms,v.close_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,has_init boolean,max_turn_ms bigint,close_idle_ms bigint,close_never boolean)
  JOIN agents a ON a.environment_id=$1 AND a.key=v.name
  JOIN templates t ON t.environment_id=$1 AND t.key=v.computer`, env, deployment, raw)
 	if err != nil {

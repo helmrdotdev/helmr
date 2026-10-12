@@ -38,7 +38,7 @@ func (c *parallelCommandClient) ClaimComputerCommand(ctx context.Context, reques
 				}
 			}
 			if c.releaseFirst && command.CommandID == "first" {
-				return workerapi.ComputerCommandClaimResponse{Release: &workerapi.ComputerCommandRelease{ComputerID: command.ComputerID, RequestFingerprint: command.RequestFingerprint, Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: command.CommandID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, Outcome: "exited"}}}, nil
+				return workerapi.ComputerCommandClaimResponse{Release: &workerapi.ComputerCommandRelease{ComputerID: command.ComputerID, RequestFingerprint: command.RequestFingerprint, Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: command.CommandID, AllocationID: command.AllocationID, WriterGeneration: command.WriterGeneration, Outcome: "exited"}}}, nil
 			}
 			return workerapi.ComputerCommandClaimResponse{Command: &command}, nil
 		}
@@ -85,7 +85,7 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			commands := []workerapi.ComputerCommand{}
 			for _, id := range []string{"first", "second"} {
-				commands = append(commands, workerapi.ComputerCommand{CommandID: id, ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, ExpiresAt: time.Now().Add(time.Minute), RequestFingerprint: id, Request: json.RawMessage(`{"command":["true"]}`)})
+				commands = append(commands, workerapi.ComputerCommand{CommandID: id, ComputerID: mount.ComputerID, AllocationID: mount.ComputerInstanceID, WriterGeneration: 2, ExpiresAt: time.Now().Add(time.Minute), RequestFingerprint: id, Request: json.RawMessage(`{"command":["true"]}`)})
 			}
 			firstDone := make(chan error, 1)
 			firstRequestRead := make(chan struct{})

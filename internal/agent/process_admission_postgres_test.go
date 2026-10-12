@@ -96,7 +96,7 @@ func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND process_epoch IS NULL AND started_at IS NULL FROM turns WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&queued); err != nil || !queued {
 		t.Fatalf("failed setup consumed input: %v %v", queued, err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", RetryKey: "resume-setup", HoldID: hold}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2)
@@ -118,7 +118,7 @@ func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", RetryKey: "stop-before-ready"}); err != nil {
+				if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
 					t.Fatal(err)
 				}
 			}

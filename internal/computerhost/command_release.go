@@ -16,7 +16,7 @@ import (
 // cancellation closes the stream at any point and is awaited before returning.
 func (m commandService) releaseComputerCommand(ctx context.Context, machine vm.Machine, mount commandAuthority, release workerapi.ComputerCommandRelease, client workerapi.ComputerCommandClient) error {
 	r := release.Completion
-	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.EnvironmentID != mount.EnvironmentID || release.RequestFingerprint == "" {
+	if release.ComputerID != mount.ComputerID || r.AllocationID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.EnvironmentID != mount.EnvironmentID || release.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("command release does not match the Instance"))
 	}
 	conn, err := machine.OpenStream(ctx)
@@ -31,7 +31,7 @@ func (m commandService) releaseComputerCommand(ctx context.Context, machine vm.M
 			<-closed
 		}
 	}()
-	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{OutputFenced: r.OutputFenced, Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: mount.GuestChannelCredential, RequestFingerprint: release.RequestFingerprint}}); err != nil {
+	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{OutputFenced: r.OutputFenced, Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.AllocationID, WriterGeneration: r.WriterGeneration, ChannelCredential: mount.GuestChannelCredential, RequestFingerprint: release.RequestFingerprint}}); err != nil {
 		return err
 	}
 	var response computerv0.ComputerCommandReleaseResponse

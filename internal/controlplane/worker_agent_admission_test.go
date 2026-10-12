@@ -24,8 +24,8 @@ func runtimeAdmissionOrigin(t *testing.T) (agenttest.Fixture, agent.Admission, a
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
- UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
-	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+ UPDATE computers SET image_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
+	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 				err = f.Pool.QueryRow(t.Context(), `SELECT s.deployment_id=$3 AND s.requester_session_id=$4 AND s.origin_turn_id IS NULL
  AND s.causal_depth=1
  AND CASE WHEN $5 THEN s.parent_session_id=$4 AND s.root_session_id=$4 ELSE s.parent_session_id IS NULL AND s.root_session_id=s.id END
- AND CASE WHEN $6 THEN s.computer_id=$7 ELSE s.computer_id<>$7 AND c.preparation_id IS NOT NULL END
+ AND CASE WHEN $6 THEN s.computer_id=$7 ELSE s.computer_id<>$7 AND c.image_build_id IS NOT NULL END
  AND (SELECT count(*) FROM turns WHERE environment_id=$1)=2
  FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.Environment, receipt.SessionID, f.Deployment, f.Session, method == agentv1.Operation_METHOD_SPAWN, placed, f.Computer).Scan(&valid)
 				if err != nil || !valid {

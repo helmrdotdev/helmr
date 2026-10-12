@@ -69,7 +69,7 @@ type Querier interface {
 	GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error)
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCommand(ctx context.Context, arg GetCommandParams) (Command, error)
-	GetCommandByRetryKey(ctx context.Context, arg GetCommandByRetryKeyParams) (Command, error)
+	GetCommandByIdempotencyReceipt(ctx context.Context, arg GetCommandByIdempotencyReceiptParams) (Command, error)
 	GetCommandLogState(ctx context.Context, arg GetCommandLogStateParams) (Command, error)
 	GetCommandTarget(ctx context.Context, arg GetCommandTargetParams) (GetCommandTargetRow, error)
 	GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error)

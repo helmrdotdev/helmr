@@ -43,7 +43,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	}
 	var gotEvery, gotAge int64
 	var scheduled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,d.max_image_age_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.preparation_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &gotAge, &scheduled); err != nil || gotEvery != every || gotAge != age || scheduled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,d.max_image_age_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.image_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &gotAge, &scheduled); err != nil || gotEvery != every || gotAge != age || scheduled {
 		t.Fatalf("policy %d %d scheduled=%v: %v", gotEvery, gotAge, scheduled, err)
 	}
 	// A failed registration never leaves a new input row behind.
@@ -215,8 +215,8 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND secret_id=$2`, f.env, active).Scan(&physical); err != nil || physical != 3 {
 		t.Fatalf("public name did not pin the scoped internal identity: %d %v", physical, err)
 	}
-	rows, err := f.pool.Query(t.Context(), `SELECT preparation_spec_id IS NOT NULL,placement_kind,placement_target,mode,allowed_origins
-        FROM secret_bindings WHERE environment_id=$1 ORDER BY preparation_spec_id IS NOT NULL,placement_kind,placement_target`, f.env)
+	rows, err := f.pool.Query(t.Context(), `SELECT image_spec_id IS NOT NULL,placement_kind,placement_target,mode,allowed_origins
+        FROM secret_bindings WHERE environment_id=$1 ORDER BY image_spec_id IS NOT NULL,placement_kind,placement_target`, f.env)
 	if err != nil {
 		t.Fatal(err)
 	}

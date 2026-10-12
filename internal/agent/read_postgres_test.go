@@ -13,7 +13,7 @@ func TestRetainedWorkReads(t *testing.T) {
 	p := preparationResidentImage(t)
 	f := p.f.fixture
 	first := f.enqueue(t, "first")
-	second, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
+	second, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestRetainedWorkReads(t *testing.T) {
 			t.Fatalf("hold identity or timestamp lost: %+v", hold)
 		}
 	}
-	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	retained, err = GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, second.TurnID)

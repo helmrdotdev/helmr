@@ -12,7 +12,7 @@ import (
 func queuedTurn(t *testing.T, f agenttest.Fixture) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
- VALUES($1,$2,$3,$4,1,'user',$5,'send',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
+ VALUES($1,$2,$3,$4,1,'user',$5,'slack_route',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
 }
 
 func TestQueuedDemandRespectsRegionHoldsAndRevocation(t *testing.T) {
@@ -53,7 +53,7 @@ func TestQueuedDemandIncludesUnassignedPreparationsUntilDeadline(t *testing.T) {
 		t.Fatalf("idle fixture: %v %v", got, err)
 	}
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at) VALUES($1,$2,$3,'pending',clock_timestamp()+interval '1 hour')`, f.Environment, id, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at) VALUES($1,$2,$3,'pending',clock_timestamp()+interval '1 hour')`, f.Environment, id, f.Deployment)
 	got, err = HasQueuedDemand(t.Context(), f.Pool, f.Group)
 	if err != nil || !got {
 		t.Fatalf("queued preparation: %v %v", got, err)

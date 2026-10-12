@@ -32,7 +32,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE org_members SET role='owner' WHERE user_id=$1;
  INSERT INTO agents(environment_id,id,key) VALUES($2,$3,'zebra');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup) VALUES($2,$3,$4,$4,false);
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($2,$3,$4,$4,false);
  `, pgx.QueryExecModeSimpleProtocol, f.User, f.Environment, uuid.NewV7(), f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)

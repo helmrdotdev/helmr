@@ -32,7 +32,7 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 	if p == nil || machine == nil || client == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || allocation.ChannelCredential == "" {
 		return errors.New("session discovery requires an owned Computer and authenticated client")
 	}
-	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.InstanceID, hostID} {
+	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID, hostID} {
 		if ids.Validate(id) != nil {
 			return errors.New("invalid Computer allocation identity")
 		}
@@ -71,7 +71,7 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 				owned[process] = done
 				jobs.Go(func() {
 					defer close(done)
-					grant := &agentv1.SessionGrant{Identity: &agentv1.SessionIdentity{SessionId: process.SessionID, ProcessEpoch: process.Epoch}, ComputerId: identity.OwnerID, ComputerInstanceId: identity.InstanceID, WriterGeneration: identity.Epoch, WorkerHostId: hostID, ComputerLeaseEpoch: identity.Epoch, ChannelCredential: allocation.ChannelCredential}
+					grant := &agentv1.SessionGrant{Identity: &agentv1.SessionIdentity{SessionId: process.SessionID, ProcessEpoch: process.Epoch}, ComputerId: identity.OwnerID, ComputerInstanceId: identity.AllocationID, WriterGeneration: identity.Epoch, WorkerHostId: hostID, ComputerLeaseEpoch: identity.Epoch, ChannelCredential: allocation.ChannelCredential}
 					retryDelay := 250 * time.Millisecond
 					for ctx.Err() == nil {
 						connection, attached, err := p.StartAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client)

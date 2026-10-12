@@ -19,7 +19,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, Pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	a.trust = f.secrets
 	allocation, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestPreparationProxyRawAllocationAndRollbackHaveNoTrust(t *testing.T) {
 	}
 	other, attempt, allocator := preparationAllocationFixture(t)
 	marker, _ := secretbinding.Placeholder("protected")
-	dbtest.MustExec(t, t.Context(), other.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, other.env, attempt.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), other.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, other.env, attempt.SpecID, marker)
 	if _, err := allocator.AllocatePreparation(t.Context(), other.env, attempt.ID, other.worker); err == nil {
 		t.Fatal("missing issuer accepted")
 	}

@@ -30,7 +30,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	issuer := &countingPreparationTrustIssuer{PreparationTrustIssuer: f.secrets}
 	a.trust = issuer
 	const callers = 8

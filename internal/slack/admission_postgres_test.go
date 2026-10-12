@@ -73,7 +73,7 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
 			case "closed":
-				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -254,7 +254,7 @@ func newSlackAdmissionFixture(t *testing.T) statusFixture {
 	f := newStatusFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+ UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	return f
 }
 

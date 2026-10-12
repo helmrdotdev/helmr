@@ -232,7 +232,7 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 func checkComputerDiskAuthority(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) error {
 	var live bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3
- AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 AND status IN ('acquiring','active','releasing')
+ AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 AND status IN ('acquiring','active','releasing')
  AND delivered_at IS NOT NULL AND expires_at>clock_timestamp() AND fenced_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&live)
 	if err != nil {

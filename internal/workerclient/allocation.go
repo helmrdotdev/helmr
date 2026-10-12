@@ -13,7 +13,7 @@ func (client *Client) ListAllocations(ctx context.Context, after *workerapi.Allo
 }
 func (client *Client) DeliverPreparationAllocation(ctx context.Context, identity workerapi.AllocationIdentity) (workerapi.PreparationAllocationDelivery, error) {
 	var response workerapi.PreparationAllocationDelivery
-	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/preparation/deliver", identity, &response)
+	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/deliver", identity, &response)
 	return response, err
 }
 func (client *Client) DeliverComputerAllocation(ctx context.Context, identity workerapi.AllocationIdentity) (workerapi.ComputerAllocationDelivery, error) {
@@ -25,7 +25,7 @@ func (client *Client) ObserveFreshComputerReady(ctx context.Context, receipt wor
 	return client.postWorkerJSON(ctx, "/worker/v1/allocations/computer/ready", receipt, nil)
 }
 func (client *Client) ObservePreparationStopped(ctx context.Context, identity workerapi.AllocationIdentity) error {
-	return client.postWorkerJSON(ctx, "/worker/v1/allocations/preparation/stopped", identity, nil)
+	return client.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/stopped", identity, nil)
 }
 
 func (client *Client) ListComputerProcesses(ctx context.Context, identity workerapi.AllocationIdentity, after *workerapi.ProcessIdentity) (workerapi.ComputerProcessesResponse, error) {

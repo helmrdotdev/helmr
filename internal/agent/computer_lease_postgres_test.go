@@ -54,7 +54,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 		t.Fatalf("process loss %v %v", blocked, err)
 	}
 	// The actual uniqueness constraint still excludes a second physical writer.
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour',$1,channel_credential_digest,'acquiring',reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,NULL FROM computer_leases`, uuid.NewV7())
 	var unique *pgconn.PgError
 	if !errors.As(err, &unique) || unique.Code != "23505" || unique.ConstraintName != "computer_leases_one_writer" {
@@ -246,7 +246,7 @@ func TestComputerLifecycleScanProgressesPastBlockedAllocation(t *testing.T) {
 	for range 100 {
 		computer := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computer)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computer)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
 	tx, err := f.pool.Begin(t.Context())
@@ -285,7 +285,7 @@ func TestComputerLeaseExpiryKeepsSeparatelyPlacedHelperRunning(t *testing.T) {
 	child := ownedFixture(t, f)
 	child.computer = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
  DELETE FROM session_processes WHERE session_id=$3;
  UPDATE sessions SET computer_id=$2 WHERE id=$3;
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($4,$3,1,$2,1,'ready',1,1,1,'resume',1,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.computer, child.computer, child.session, f.env)
@@ -433,7 +433,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 			}
 			identity := func() ComputerLeaseIdentity {
 				id := ComputerLeaseIdentity{EnvironmentID: r.f.env, ComputerID: r.f.computer, Epoch: r.epoch}
-				if err := r.f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&id.InstanceID); err != nil {
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&id.InstanceID); err != nil {
 					t.Fatal(err)
 				}
 				return id
@@ -524,7 +524,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	}
 	r := restoreCheckpointFixture(t, checkpoint)
 	old := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: r.epoch}
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&old.InstanceID); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&old.InstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, old, uuid.Nil()); err != nil {
@@ -533,7 +533,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	r.newTarget(t)
 	current := old
 	current.Epoch = r.epoch
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&current.InstanceID); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE computer_id=$1 AND epoch=$2`, f.computer, r.epoch).Scan(&current.InstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, old, r.manifest.CheckpointID); err != nil {

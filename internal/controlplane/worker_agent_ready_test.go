@@ -45,7 +45,7 @@ func TestWorkerAgentReadyUsesCurrentAttachment(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status='ready' FROM session_processes WHERE session_id=$1`, f.Session).Scan(&ready); err != nil || !ready {
 		t.Fatalf("setup receipt: %v %v", ready, err)
 	}
-	if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = client.ObserveAgentReady(t.Context(), request); err != nil {

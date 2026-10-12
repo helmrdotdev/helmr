@@ -41,7 +41,7 @@ func RenewComputerLease(ctx context.Context, pool db.TxBeginner, host workergrou
 		}
 		// The time predicate runs after the ownership lock, including any lock wait.
 		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=GREATEST(expires_at,clock_timestamp()+interval '1 minute')
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
+ WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
 	})
@@ -187,7 +187,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		return err
 	}
 	var fenced bool
-	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
 		return err
 	}
 	if fenced {

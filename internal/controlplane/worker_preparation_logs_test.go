@@ -18,7 +18,7 @@ func TestWorkerPreparationLogDurableReceiptAndFences(t *testing.T) {
 	handler := newPostgresServer(t, f.Pool)
 	var lose atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/worker/v1/allocations/preparation/logs" && lose.CompareAndSwap(true, false) {
+		if r.URL.Path == "/worker/v1/allocations/image-build/logs" && lose.CompareAndSwap(true, false) {
 			committed := httptest.NewRecorder()
 			handler.ServeHTTP(committed, r)
 			if committed.Code != http.StatusOK {

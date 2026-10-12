@@ -122,7 +122,7 @@ func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPri
 			if candidate.id == uuid.Nil() || len(candidate.envelope.WrappingKeyID) == 0 || len(candidate.envelope.WrappingKeyID) > 2048 || len(candidate.envelope.Ciphertext) == 0 || len(candidate.envelope.Ciphertext) > computerkey.MaxWrappedSize {
 				return ErrInvalidInput
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO disk_encryption_keys(id,environment_id,writer_preparation_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, candidate.id, ref.EnvironmentID, ref.PreparationID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO disk_encryption_keys(id,environment_id,writer_image_build_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, candidate.id, ref.EnvironmentID, ref.PreparationID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE image_builds SET write_key_id=$3 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, candidate.id); err != nil {
@@ -132,7 +132,7 @@ func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPri
 		}
 		if id != nil {
 			result.id = *id
-			if err = tx.QueryRow(ctx, `SELECT wrapping_key_id,wrapped_key FROM disk_encryption_keys WHERE environment_id=$1 AND writer_preparation_id=$2 AND id=$3 AND available FOR KEY SHARE`, ref.EnvironmentID, ref.PreparationID, *id).Scan(&result.envelope.WrappingKeyID, &result.envelope.Ciphertext); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT wrapping_key_id,wrapped_key FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2 AND id=$3 AND available FOR KEY SHARE`, ref.EnvironmentID, ref.PreparationID, *id).Scan(&result.envelope.WrappingKeyID, &result.envelope.Ciphertext); err != nil {
 				return err
 			}
 		}
@@ -149,7 +149,7 @@ func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPri
 func lockPreparationSecretOwners(ctx context.Context, tx pgx.Tx, ref PreparationExecutor) error {
 	rows, err := tx.Query(ctx, `SELECT s.status FROM secrets s WHERE s.environment_id=$1 AND s.id IN (
  SELECT binding.secret_id FROM image_builds p
- JOIN secret_bindings binding ON (binding.environment_id,binding.preparation_spec_id)=(p.environment_id,p.preparation_spec_id)
+ JOIN secret_bindings binding ON (binding.environment_id,binding.image_spec_id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.id=$2
  ) ORDER BY s.id FOR SHARE`, ref.EnvironmentID, ref.PreparationID)
 	if err != nil {

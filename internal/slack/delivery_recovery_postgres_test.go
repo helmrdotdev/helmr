@@ -92,7 +92,7 @@ func TestSlackDeliveryAbandonmentClosesPublicationWithoutReplacingRootOrReplayin
 				f.noPostClaim(t, response)
 				write("new source only")
 				f.projectAll(t)
-				if err := f.Pool.QueryRow(t.Context(), `SELECT opening_publication_key=p.publication_key AND thread_ts IS NULL FROM slack_threads t JOIN slack_posts p ON p.id=$2 WHERE t.id=$1`, f.thread, first).Scan(&exact); err != nil || !exact {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT opening_post_key=p.post_key AND thread_ts IS NULL FROM slack_threads t JOIN slack_posts p ON p.id=$2 WHERE t.id=$1`, f.thread, first).Scan(&exact); err != nil || !exact {
 					t.Fatal("abandoned opener replaced", exact, err)
 				}
 			} else {

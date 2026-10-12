@@ -259,8 +259,8 @@ func TestAllocationPreparationConcurrentQuotaIsAtomic(t *testing.T) {
 	otherComputer := f.waiter(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO image_specs SELECT (jsonb_populate_record(NULL::image_specs,to_jsonb(s)||jsonb_build_object('id',$3::text,'spec_digest','sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'))).* FROM image_specs s WHERE environment_id=$1 AND id=$2;
  INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'other');
- INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('template_id',$3::text,'preparation_spec_id',$3::text))).* FROM template_definitions d WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET preparation_spec_id=$3 WHERE environment_id=$1 AND id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, otherSpec, otherComputer)
+ INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('template_id',$3::text,'image_spec_id',$3::text))).* FROM template_definitions d WHERE environment_id=$1 AND deployment_id=$2;
+ UPDATE computers SET image_spec_id=$3 WHERE environment_id=$1 AND id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, otherSpec, otherComputer)
 	second := f.attach(t, otherComputer)
 	otherHost := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::text,'resource_id',$2::text))).* FROM worker_hosts h WHERE h.id=$1`, f.worker, otherHost)
@@ -406,7 +406,7 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
  INSERT INTO image_specs SELECT (jsonb_populate_record(NULL::image_specs,to_jsonb(s)||jsonb_build_object('environment_id',$2::text))).* FROM image_specs s WHERE s.environment_id=$1;
  INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
  INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM template_definitions d WHERE d.environment_id=$1;
- INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at) SELECT $2,id,preparation_spec_id,retry_key,deadline_at FROM image_builds WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, f.worker)
+ INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at) SELECT $2,id,image_spec_id,idempotency_key,deadline_at FROM image_builds WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, f.worker)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, env := range []uuid.UUID{f.env, otherEnv} {
@@ -443,7 +443,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			}
 			var secretID uuid.UUID
 			if err := f.pool.QueryRow(t.Context(), `SELECT x.secret_id FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
- JOIN secret_exposures x ON (x.environment_id,x.preparation_id)=(i.environment_id,i.preparation_id) WHERE c.environment_id=$1 AND c.id=$2 LIMIT 1`, f.env, computer).Scan(&secretID); err != nil {
+ JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id) WHERE c.environment_id=$1 AND c.id=$2 LIMIT 1`, f.env, computer).Scan(&secretID); err != nil {
 				t.Fatal(err)
 			}
 			store, err := secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32))

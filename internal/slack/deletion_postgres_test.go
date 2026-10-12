@@ -53,7 +53,7 @@ func TestSlackDeletedRootSuppressesFutureDeliveryButPreservesCoreAndUncertainty(
  AND (SELECT bool_and(status='suppressed' AND error='root_deleted') FROM slack_posts WHERE id IN ($3,$4))`, f.thread, unknown, pending, later).Scan(&correct); err != nil || !correct {
 		t.Fatalf("deletion lost evidence or revived root: %v %v", correct, err)
 	}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatalf("projection deletion cancelled core: %v", err)
 	}
 }

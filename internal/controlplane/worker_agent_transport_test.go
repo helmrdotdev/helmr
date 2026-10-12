@@ -107,7 +107,7 @@ func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.
 		t.Fatalf("valid follow-up turns=%d err=%v", count, err)
 	}
 	var stored []byte
-	if err = f.Pool.QueryRow(t.Context(), "SELECT input FROM turns WHERE retry_key='nul'").Scan(&stored); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), "SELECT input FROM turns WHERE idempotency_key='nul'").Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	var value []struct {

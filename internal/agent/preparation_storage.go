@@ -50,9 +50,9 @@ func (p *PreparationPublisher) BeginCapture(ctx context.Context, host workergrou
 		}
 		var complete bool
 		if err := tx.QueryRow(ctx, `SELECT p.write_key_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=s.environment_id AND binding.preparation_spec_id=s.id AND NOT EXISTS (
-      SELECT 1 FROM secret_exposures x WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND x.secret_id=binding.secret_id))
-   FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.preparation_spec_id)
+    SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=s.environment_id AND binding.image_spec_id=s.id AND NOT EXISTS (
+      SELECT 1 FROM secret_exposures x WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id))
+   FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
    WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&complete); err != nil {
 			return err
 		}
@@ -218,8 +218,8 @@ func (p *PreparationPublisher) Publish(ctx context.Context, host workergroup.Hos
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence)
- SELECT p.environment_id,$5,p.preparation_spec_id,p.id,COALESCE((SELECT max(i.seq) FROM images i WHERE i.environment_id=p.environment_id AND i.preparation_spec_id=p.preparation_spec_id),0)+1,$3,$4
+		if _, err = tx.Exec(ctx, `INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence)
+ SELECT p.environment_id,$5,p.image_spec_id,p.id,COALESCE((SELECT max(i.seq) FROM images i WHERE i.environment_id=p.environment_id AND i.image_spec_id=p.image_spec_id),0)+1,$3,$4
  FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID, rootID, evidence, uuid.NewV7()); err != nil {
 			return err
 		}

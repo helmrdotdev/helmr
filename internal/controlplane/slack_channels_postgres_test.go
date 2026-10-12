@@ -39,9 +39,9 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$5;
  UPDATE org_members SET role='owner' WHERE user_id=$4;
- INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
+ INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $2,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$4 FROM environments WHERE id=$5;
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $1,$2,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$4 FROM environments WHERE id=$5;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($3,$5,$6,$2,$1,$4);`, pgx.QueryExecModeSimpleProtocol, installation, registration, publication, f.User, f.Environment, f.Agent, definition.ComputerSeedProfile)
 	var orgID, projectID uuid.UUID

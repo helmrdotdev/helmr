@@ -24,7 +24,7 @@ const computerProxyAuthority = `WITH authority AS (
  JOIN environments e ON e.id=c.environment_id AND e.retired_at IS NULL
  JOIN worker_hosts h ON h.id=l.worker_host_id AND h.current_epoch=l.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
- WHERE l.computer_instance_id=$1 AND l.worker_host_id=$2 AND l.worker_epoch=$3 AND h.worker_group_id=$4
+ WHERE l.allocation_id=$1 AND l.worker_host_id=$2 AND l.worker_epoch=$3 AND h.worker_group_id=$4
  AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND l.status IN ('acquiring','active') AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
@@ -32,7 +32,7 @@ const computerProxyAuthority = `WITH authority AS (
    AND h.admission_paused_reason IS NULL
    AND EXISTS(SELECT 1 FROM worker_pools p WHERE p.id=h.worker_pool_id AND p.status='active')))
  AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.instance_id=l.computer_instance_id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.allocation_id=l.allocation_id)
  AND NOT EXISTS(SELECT 1 FROM (` + db.RevokedComputerSecretsSQL + `) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
    WHERE b.environment_id=c.environment_id AND b.computer_id=c.id AND s.status<>'active')

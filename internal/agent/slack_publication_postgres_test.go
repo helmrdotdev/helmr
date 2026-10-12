@@ -30,7 +30,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrSourceConversationUnavailable) {
 				t.Fatal(err)
 			}
-			req.RetryKey = "child"
+			req.IdempotencyKey = "child"
 			child, err := Spawn(t.Context(), f.pool, nil, caller, req)
 			if err != nil {
 				t.Fatal(err)

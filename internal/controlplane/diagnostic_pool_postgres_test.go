@@ -51,7 +51,7 @@ func TestDiagnosticPoolExhaustionPreservesCommandLifecycle(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		response := worker.send(t, "/worker/v1/computer-commands/logs/append", workerapi.CommandLogAppendRequest{
-			EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration,
+			EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration,
 			Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC(), Content: []byte("output"),
 		})
 		done <- response.Code
@@ -64,7 +64,7 @@ func TestDiagnosticPoolExhaustionPreservesCommandLifecycle(t *testing.T) {
 	// An authenticated lifecycle mutation on the same Computer still commits.
 	var claimed workerapi.ComputerCommandClaimResponse
 	worker.post(t, "/worker/v1/computer-commands/claim", workerapi.ComputerCommandClaimRequest{
-		EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration,
+		EnvironmentID: f.EnvironmentID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration,
 	}, http.StatusOK, &claimed)
 	if claimed.Command == nil || claimed.Command.CommandID != target.ID.String() {
 		t.Fatal("command lifecycle did not progress")
@@ -119,7 +119,7 @@ func TestDiagnosticAuthenticationLockPreservesAdmission(t *testing.T) {
 	// More diagnostic requests than either pool's capacity wait on the same
 	// credential row. None may consume the ordinary pool while authenticating.
 	done := make(chan int, 3)
-	body := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC(), Content: []byte("output")}
+	body := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: target.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC(), Content: []byte("output")}
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestDiagnosticAuthenticationLockPreservesAdmission(t *testing.T) {
 			t.Fatal("diagnostic authentication did not reach held credential")
 		}
 	}
-	admission, err := agent.Enqueue(ctx, lifecycle, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+	admission, err := agent.Enqueue(ctx, lifecycle, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 	if err != nil || admission.TurnID == uuid.Nil() {
 		t.Fatalf("ordinary admission blocked by diagnostic authentication: %+v %v", admission, err)
 	}

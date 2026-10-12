@@ -19,7 +19,7 @@ func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *
 	// A retained checkpoint has already allowed source physical cleanup without
 	// terminating its logical process. The Agent tests cover that publication path.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE computer_id=$1`, f.Computer)
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	scope := computer.Scope{EnvironmentID: f.Environment}

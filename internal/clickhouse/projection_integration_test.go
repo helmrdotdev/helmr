@@ -48,7 +48,7 @@ func disposableClient(t *testing.T) *Client {
 		if err := c.Select(t.Context(), &tables, "SELECT name FROM system.tables WHERE database = 'helmr_telemetry' ORDER BY name LIMIT 10"); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"computer_command_logs", "computer_preparation_logs", "session_logs"}
+		want := []string{"computer_command_logs", "image_build_logs", "session_logs"}
 		if len(tables) != len(want) {
 			t.Fatalf("unexpected bootstrap histories: %+v", tables)
 		}

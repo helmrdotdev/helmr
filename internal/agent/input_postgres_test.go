@@ -32,7 +32,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, other)
 	bad := json.RawMessage(`[{"type":"json","value":null}]`)
 	req.Input = bad
-	req.RetryKey = "json"
+	req.IdempotencyKey = "json"
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, conversation.ErrUnsupported) {
 		t.Fatalf("existing start ignored pin: %v", err)
 	}

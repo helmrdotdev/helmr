@@ -100,14 +100,14 @@ func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, en
 		err := pool.QueryRow(ctx, `SELECT p.status='consumed' AND p.controls_reconciled_at IS NOT NULL
    AND source.fenced_at>=p.ready_at AND target.delivered_at>=source.fenced_at
    AND source.fence_evidence='owning worker joined physical VM closure'
-   AND source.computer_instance_id<>target.computer_instance_id AND target.epoch>source.epoch
+   AND source.allocation_id<>target.allocation_id AND target.epoch>source.epoch
    AND source.channel_credential_digest<>target.channel_credential_digest
    AND p.source_lease_epoch=$4 AND s.status='published'
    AND (NOT $5 OR (target.epoch=source.epoch+1
     AND target.delivered_at-source.fenced_at>=interval '2 hours'
     AND $6::timestamptz>=source.fenced_at AND target.delivered_at>=$7::timestamptz))
    AND (SELECT count(*)=4 AND bool_and(m.process_epoch=1) FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
-   jsonb_build_object('checkpointId',p.id,'sourceInstance',source.computer_instance_id,'targetInstance',target.computer_instance_id,
+   jsonb_build_object('checkpointId',p.id,'sourceInstance',source.allocation_id,'targetInstance',target.allocation_id,
     'sourceHost',source.worker_host_id,'targetHost',target.worker_host_id,'sourceEpoch',source.epoch,'targetEpoch',target.epoch,
     'readyAt',p.ready_at,'sourceFencedAt',source.fenced_at,'sourceFenceEvidence',source.fence_evidence,'targetDeliveredAt',target.delivered_at,'controlsReconciledAt',p.controls_reconciled_at,
     'status',p.status,'diskSaveStatus',s.status,'credentialsRotated',source.channel_credential_digest<>target.channel_credential_digest,

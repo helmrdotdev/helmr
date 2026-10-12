@@ -141,7 +141,7 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 
 func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
 	// Lock in stable order. Refresh workers use the same Environment -> spec order.
-	rows, err := tx.Query(ctx, `WITH affected AS (SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL UNION SELECT preparation_spec_id FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL) SELECT s.id FROM image_specs s JOIN affected a ON a.id=s.id WHERE s.environment_id=$1 ORDER BY s.id FOR NO KEY UPDATE OF s`, env, deployment)
+	rows, err := tx.Query(ctx, `WITH affected AS (SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL UNION SELECT image_spec_id FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL) SELECT s.id FROM image_specs s JOIN affected a ON a.id=s.id WHERE s.environment_id=$1 ORDER BY s.id FOR NO KEY UPDATE OF s`, env, deployment)
 	if err != nil {
 		return err
 	}
@@ -158,13 +158,13 @@ func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment
 		return err
 	}
 	_, err = tx.Exec(ctx, `WITH requested AS (
- SELECT preparation_spec_id,min(refresh_every_ms) AS every_ms FROM template_definitions
- WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL GROUP BY preparation_spec_id
+ SELECT image_spec_id,min(refresh_every_ms) AS every_ms FROM template_definitions
+ WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL GROUP BY image_spec_id
  ) , affected AS (
  SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL
- UNION SELECT preparation_spec_id FROM requested
+ UNION SELECT image_spec_id FROM requested
  ), policy AS (
- SELECT a.id,r.every_ms FROM affected a LEFT JOIN requested r ON r.preparation_spec_id=a.id
+ SELECT a.id,r.every_ms FROM affected a LEFT JOIN requested r ON r.image_spec_id=a.id
  ) UPDATE image_specs s SET refresh_every_ms=p.every_ms,
  next_refresh_at=CASE WHEN p.every_ms IS NULL THEN NULL
  WHEN s.refresh_every_ms=p.every_ms THEN s.next_refresh_at

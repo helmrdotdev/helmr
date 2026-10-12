@@ -71,7 +71,7 @@ func NewPreparationAllocationOwner(machines *PreparedMachines, client AllocatedP
 	if err := wire.ValidatePreparationLogLimits(machines.PreparationLogLimits); err != nil {
 		return nil, err
 	}
-	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.InstanceID} {
+	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID} {
 		if ids.Validate(id) != nil {
 			return nil, errors.New("invalid preparation allocation identity")
 		}
@@ -149,7 +149,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		}
 		capacity.HostDiskBytes += bytes
 	}
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.InstanceID, o.identity.Epoch), capacity); err != nil {
+	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}
@@ -164,7 +164,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if err := o.stageImage(ctx, o.stage, o.identity, start); err != nil {
 		return err
 	}
-	o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.InstanceID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.InstanceID, Generation: 1, ComputerInstanceID: o.identity.InstanceID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
+	o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (o *PreparationAllocationOwner) stopMachine(ctx context.Context) error {
 	if o.machine != nil {
 		closeErr = o.machine.Close(ctx)
 	}
-	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: o.identity.InstanceID}); err != nil {
+	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: o.identity.AllocationID}); err != nil {
 		return fmt.Errorf("prove preparation VM absent: %w", errors.Join(closeErr, err))
 	}
 	o.absent = true
@@ -320,7 +320,7 @@ func (o *PreparationAllocationOwner) cleanup() error {
 		return err
 	}
 	if o.reserved {
-		if err := o.machines.Reservations.Release(instanceReservationKey(o.identity.InstanceID, o.identity.Epoch)); err != nil {
+		if err := o.machines.Reservations.Release(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)); err != nil {
 			return err
 		}
 		o.reserved = false

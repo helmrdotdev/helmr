@@ -19,7 +19,7 @@ func loadSlackInputSource(ctx context.Context, tx pgx.Tx, env, turn, message uui
  JOIN slack_installations i ON i.id=r.installation_id
  WHERE r.environment_id=$1 AND r.turn_id=$2 AND r.status='accepted'
  AND r.message_id IS NOT DISTINCT FROM $3::uuid
- AND r.operation IN ('start','enqueue','send') ORDER BY r.id LIMIT 1`, env, turn, nullableID(message)).Scan(&slack.TeamID, &slack.UserID, &payload)
+ AND r.operation IN ('start','enqueue','slack_route') ORDER BY r.id LIMIT 1`, env, turn, nullableID(message)).Scan(&slack.TeamID, &slack.UserID, &payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

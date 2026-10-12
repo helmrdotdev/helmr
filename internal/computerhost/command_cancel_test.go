@@ -129,8 +129,8 @@ func TestCommandCancellationDrainsOutputBeforeCompletion(t *testing.T) {
 			defer cancel()
 			machine := &cancellationMachine{canceled: make(chan struct{}), launchRead: make(chan struct{}), dropFirstAck: mode == "lost_ack"}
 			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-			command := workerapi.ComputerCommand{CommandID: "target", ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, RequestFingerprint: "fingerprint", ExpiresAt: time.Now().Add(time.Minute), Request: json.RawMessage(`{"command":["sleep","30"]}`)}
-			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: machine.launchRead, finish: cancel}
+			command := workerapi.ComputerCommand{CommandID: "target", ComputerID: mount.ComputerID, AllocationID: mount.ComputerInstanceID, WriterGeneration: 2, RequestFingerprint: "fingerprint", ExpiresAt: time.Now().Add(time.Minute), Request: json.RawMessage(`{"command":["sleep","30"]}`)}
+			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, AllocationID: command.AllocationID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: machine.launchRead, finish: cancel}
 			m := commandService{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}
 			err := m.Serve(ctx, machine, mount, client)
 			machine.handlers.Wait()

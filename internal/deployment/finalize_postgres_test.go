@@ -42,7 +42,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), retryKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
+	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
 }
 
 func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
@@ -56,7 +56,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			defer wg.Done()
 			req := f.request
 			if i == 2 {
-				req.retryKey = "different-key"
+				req.idempotencyKey = "different-key"
 			}
 			records[i], errs[i] = register(t.Context(), f.pool, req)
 		}()
@@ -219,15 +219,15 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 			t.Fatalf("Environment did not pin its own Secret: %d %v", bindings, err)
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret)
-		for _, key := range []string{request.retryKey, "same-bundle-new-key"} {
+		for _, key := range []string{request.idempotencyKey, "same-bundle-new-key"} {
 			replay := request
-			replay.retryKey = key
+			replay.idempotencyKey = key
 			got, err := register(t.Context(), f.pool, replay)
 			if err != nil || got.ID != record.ID {
 				t.Fatalf("revocation changed registered bundle replay: %+v %v", got, err)
 			}
 		}
-		request.retryKey = "new-bundle"
+		request.idempotencyKey = "new-bundle"
 		request.bundle.root.Digest = artifacttest.Digest("new bundle")
 		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, agent.ErrSecretUnavailable) {
 			t.Fatalf("new Deployment accepted revoked Secret: %v", err)

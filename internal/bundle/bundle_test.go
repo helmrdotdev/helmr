@@ -95,7 +95,7 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					definitions[0].(map[string]any)["manifest"].(map[string]any)["setup"] = false
+					definitions[0].(map[string]any)["manifest"].(map[string]any)["hasInit"] = false
 				})
 			},
 			errMsg: "program metadata does not match deployment plan",

@@ -28,7 +28,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("empty queue: %+v %v", next, err)
 	}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
+	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if _, err := client.ObserveAgentTurn(t.Context(), receipt); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("nonterminal Turn acknowledged: %v", err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

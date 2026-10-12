@@ -76,7 +76,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);
  `+agenttest.DiskRootInsert("$1", "$9", "$10")+`;
- UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),preparation_spec_id=$12 WHERE environment_id=$1 AND id=$2;
+ UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),image_spec_id=$12 WHERE environment_id=$1 AND id=$2;
  UPDATE image_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
  UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1;
 	`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, keyID, envelope.WrappingKeyID, envelope.Ciphertext, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, uuid.NewV7(), string(raw), digest, f.Deployment, string(seed))
@@ -84,7 +84,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 	defer server.Close()
 	auth := seedHostSecret(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
-	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), InstanceID: f.Computer.String(), Epoch: 1}
+	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	source, err := client.ComputerAllocationSource(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 		t.Fatal("key response permits caching or failed")
 	}
 	wrong := identity
-	wrong.InstanceID = uuid.NewV7().String()
+	wrong.AllocationID = uuid.NewV7().String()
 	if source, err := client.ComputerAllocationSource(t.Context(), wrong); err == nil || len(source.Disk.Keys) != 0 {
 		source.Disk.Clear()
 		t.Fatal("foreign instance received source")

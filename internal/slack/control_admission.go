@@ -122,7 +122,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				askID = &answer.ID
 				gesture.Receipt, _ = json.Marshal(map[string]any{"ask_id": answer.ID, "status": answer.Status})
 			} else {
-				receipt, err := agent.ControlSession(ctx, coreTx, caller, agent.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", RetryKey: "slack:" + id.String()})
+				receipt, err := agent.ControlSession(ctx, coreTx, caller, agent.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", IdempotencyKey: "slack:" + id.String()})
 				if err != nil {
 					return err
 				}

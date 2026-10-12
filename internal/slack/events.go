@@ -281,7 +281,7 @@ func (h EventHandler) observeEvent(ctx context.Context, team string, message obs
 	}
 	var org uuid.UUID
 	if err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT organization_id FROM slack_installations WHERE id=$1`, installation).Scan(&org)
+		return tx.QueryRow(ctx, `SELECT org_id FROM slack_installations WHERE id=$1`, installation).Scan(&org)
 	}); err != nil {
 		return err
 	}

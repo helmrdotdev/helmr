@@ -21,7 +21,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 	t.Helper()
 	f := newStatusFixture(t)
 	var org uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT organization_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
 	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32))

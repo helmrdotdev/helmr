@@ -51,7 +51,7 @@ func resolveSecretReferences(ctx context.Context, tx pgx.Tx, env uuid.UUID, refs
 
 type registeredSecretBinding struct {
 	Computer    *uuid.UUID `json:"computer_id"`
-	Preparation *uuid.UUID `json:"preparation_spec_id"`
+	Preparation *uuid.UUID `json:"image_spec_id"`
 	Deployment  *uuid.UUID `json:"deployment_id"`
 	Template    *uuid.UUID `json:"template_id"`
 	Secret      string     `json:"secret_id"`
@@ -95,10 +95,10 @@ func registerSecretBindings(ctx context.Context, tx pgx.Tx, env uuid.UUID, bindi
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO secret_bindings AS existing(environment_id,computer_id,preparation_spec_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
- SELECT $1,v.computer_id,v.preparation_spec_id,v.deployment_id,v.template_id,v.secret_id,v.placement_kind,v.placement_target,v.mode,v.allowed_origins,NULLIF(v.placeholder,'')
- FROM jsonb_to_recordset($2::jsonb) AS v(computer_id uuid,preparation_spec_id uuid,deployment_id uuid,template_id uuid,secret_id uuid,placement_kind text,placement_target text,mode text,allowed_origins text[],placeholder text)
- ON CONFLICT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target)
+	tag, err := tx.Exec(ctx, `INSERT INTO secret_bindings AS existing(environment_id,computer_id,image_spec_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+ SELECT $1,v.computer_id,v.image_spec_id,v.deployment_id,v.template_id,v.secret_id,v.placement_kind,v.placement_target,v.mode,v.allowed_origins,NULLIF(v.placeholder,'')
+ FROM jsonb_to_recordset($2::jsonb) AS v(computer_id uuid,image_spec_id uuid,deployment_id uuid,template_id uuid,secret_id uuid,placement_kind text,placement_target text,mode text,allowed_origins text[],placeholder text)
+ ON CONFLICT (environment_id,image_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target)
  DO UPDATE SET secret_id=EXCLUDED.secret_id WHERE existing.secret_id=EXCLUDED.secret_id AND existing.mode=EXCLUDED.mode AND existing.allowed_origins=EXCLUDED.allowed_origins`, env, raw)
 	if err != nil {
 		return err
@@ -116,7 +116,7 @@ type preparationBinding struct {
 }
 
 func readPreparationBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) ([]preparationBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY placement_kind,placement_target`, env, spec)
+	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=$2 ORDER BY placement_kind,placement_target`, env, spec)
 	if err != nil {
 		return nil, err
 	}

@@ -56,11 +56,11 @@ func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle
 // Finalization is an authorized request to finalize one admitted bundle into a
 // Deployment of an environment. Only Prepare creates it.
 type Finalization struct {
-	orgID         uuid.UUID
-	projectID     pgtype.UUID
-	environmentID pgtype.UUID
-	bundle        preparedBundle
-	retryKey      string
+	orgID          uuid.UUID
+	projectID      pgtype.UUID
+	environmentID  pgtype.UUID
+	bundle         preparedBundle
+	idempotencyKey string
 }
 
 // BundleDigest is the digest of the bundle root being finalized.
@@ -96,7 +96,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 		return Finalization{}, err
 	}
 	if strings.TrimSpace(idempotencyKey) == "" || len(idempotencyKey) > 512 || !utf8.ValidString(idempotencyKey) || strings.ContainsFunc(idempotencyKey, unicode.IsControl) {
-		return Finalization{}, invalidInput(errors.New("finalization retry key must contain 1 to 512 bytes without control characters"))
+		return Finalization{}, invalidInput(errors.New("finalization idempotency key must contain 1 to 512 bytes without control characters"))
 	}
 	prepared, err := f.prepareBundle(ctx, bundleDigest)
 	if err != nil {
@@ -105,7 +105,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 
 	return Finalization{
 		orgID: principal.OrgID, projectID: projectID, environmentID: environmentID,
-		bundle: prepared, retryKey: idempotencyKey,
+		bundle: prepared, idempotencyKey: idempotencyKey,
 	}, nil
 }
 
@@ -154,7 +154,7 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 		} else if err != nil {
 			return err
 		}
-		request, err := idempotency.NewDeploymentFinalizeRequest(env, project, f.retryKey, idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.bundle.root.Digest})
+		request, err := idempotency.NewDeploymentFinalizeRequest(env, project, f.idempotencyKey, idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.bundle.root.Digest})
 		if err != nil {
 			return err
 		}

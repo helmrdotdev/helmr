@@ -12,7 +12,7 @@ describe("Agent declaration analysis", () => {
     const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
-    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", setup: true, maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
+    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", hasInit: true, maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
     const declaration = result.buildPlan.definitions[1]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })

@@ -178,7 +178,7 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 			t.Fatal(err)
 		}
 		var seq, count int64
-		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM images WHERE environment_id=$1) FROM images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&seq, &count); err != nil || seq != want || count != want {
+		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM images WHERE environment_id=$1) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&seq, &count); err != nil || seq != want || count != want {
 			t.Fatalf("image sequence %d count %d: %v", seq, count, err)
 		}
 		if want == 2 {
@@ -219,7 +219,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 				t.Fatalf("late publication: %v", err)
 			}
 			var count int
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("image leaked %d: %v", count, err)
 			}
 		})
@@ -283,7 +283,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("retained unauthorized graph: %d %v", count, err)
 	}
 }

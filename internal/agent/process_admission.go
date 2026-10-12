@@ -22,7 +22,7 @@ type ProcessAllocation struct {
 
 func readProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUID, epoch int64) (ProcessAllocation, error) {
 	r := ProcessAllocation{EnvironmentID: env, SessionID: session, Epoch: epoch}
-	err := q.QueryRow(ctx, `SELECT p.computer_id,p.computer_lease_epoch,p.status,l.computer_instance_id,l.worker_host_id,l.worker_epoch
+	err := q.QueryRow(ctx, `SELECT p.computer_id,p.computer_lease_epoch,p.status,l.allocation_id,l.worker_host_id,l.worker_epoch
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3`, env, session, epoch).Scan(&r.ComputerID, &r.LeaseEpoch, &r.Status, &r.InstanceID, &r.HostID, &r.HostEpoch)
 	return r, err

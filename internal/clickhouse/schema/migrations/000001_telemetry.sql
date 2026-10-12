@@ -33,9 +33,9 @@ SETTINGS ttl_only_drop_parts = 1;
 
 -- Subject queries constrain the full Environment/owner/producer/stream prefix.
 -- Daily partitions serve the 90-day acceptance lifecycle, not tenant routing.
-CREATE TABLE IF NOT EXISTS helmr_telemetry.computer_preparation_logs (
+CREATE TABLE IF NOT EXISTS helmr_telemetry.image_build_logs (
     environment_id UUID,
-    preparation_id UUID,
+    image_build_id UUID,
     producer_epoch Int64,
     stream Enum8('stdout'=1,'stderr'=2),
     sequence Int64,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.computer_preparation_logs (
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toDate(accepted_at)
-ORDER BY (environment_id, preparation_id, producer_epoch, stream, sequence)
+ORDER BY (environment_id, image_build_id, producer_epoch, stream, sequence)
 TTL expires_at DELETE
 SETTINGS ttl_only_drop_parts = 1;
 

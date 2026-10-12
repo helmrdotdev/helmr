@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	ErrFinalizationConflict = errors.New("finalization retry key belongs to another bundle")
+	ErrFinalizationConflict = errors.New("finalization idempotency key belongs to another bundle")
 	ErrPermissionRequired   = errors.New("permission is required")
 	// ErrNotFound reports a Deployment that is absent from the environment.
 	ErrNotFound = errors.New("deployment not found")

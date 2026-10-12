@@ -10,7 +10,7 @@ type ComputerCommandClaimRequest struct {
 	ActiveCancellationIDs []string `json:"active_cancellation_ids,omitempty"`
 	ActiveCommandIDs      []string `json:"active_command_ids,omitempty"`
 	EnvironmentID         string   `json:"environment_id"`
-	ComputerInstanceID    string   `json:"computer_instance_id"`
+	AllocationID          string   `json:"allocation_id"`
 	WriterGeneration      int64    `json:"writer_generation"`
 }
 
@@ -31,7 +31,7 @@ type ComputerCommand struct {
 	ProtectedEnv       *ProtectedEnv    `json:"protected_env,omitempty"`
 	CommandID          string           `json:"command_id"`
 	ComputerID         string           `json:"computer_id"`
-	ComputerInstanceID string           `json:"computer_instance_id"`
+	AllocationID       string           `json:"allocation_id"`
 	RequestFingerprint string           `json:"request_fingerprint"`
 	Request            json.RawMessage  `json:"request"`
 	Stdin              []byte           `json:"stdin,omitempty"`
@@ -46,22 +46,22 @@ type CommandOutputBoundary struct {
 	Gapped          bool  `json:"gapped"`
 }
 type ComputerCommandCompleteRequest struct {
-	Stdout             CommandOutputBoundary `json:"stdout"`
-	Stderr             CommandOutputBoundary `json:"stderr"`
-	OutputFenced       bool                  `json:"output_fenced"`
-	EnvironmentID      string                `json:"environment_id"`
-	CommandID          string                `json:"command_id"`
-	ComputerInstanceID string                `json:"computer_instance_id"`
-	WriterGeneration   int64                 `json:"writer_generation"`
-	Outcome            string                `json:"outcome"`
-	ExitCode           *int32                `json:"exit_code,omitempty"`
-	Error              json.RawMessage       `json:"error,omitempty"`
+	Stdout           CommandOutputBoundary `json:"stdout"`
+	Stderr           CommandOutputBoundary `json:"stderr"`
+	OutputFenced     bool                  `json:"output_fenced"`
+	EnvironmentID    string                `json:"environment_id"`
+	CommandID        string                `json:"command_id"`
+	AllocationID     string                `json:"allocation_id"`
+	WriterGeneration int64                 `json:"writer_generation"`
+	Outcome          string                `json:"outcome"`
+	ExitCode         *int32                `json:"exit_code,omitempty"`
+	Error            json.RawMessage       `json:"error,omitempty"`
 }
 
 type ComputerCommandCancellation struct {
 	CommandID          string    `json:"command_id"`
 	ComputerID         string    `json:"computer_id"`
-	ComputerInstanceID string    `json:"computer_instance_id"`
+	AllocationID       string    `json:"allocation_id"`
 	WriterGeneration   int64     `json:"writer_generation"`
 	RequestFingerprint string    `json:"request_fingerprint"`
 	ExpiresAt          time.Time `json:"expires_at"`

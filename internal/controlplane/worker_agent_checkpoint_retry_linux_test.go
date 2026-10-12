@@ -99,7 +99,7 @@ func (g *nativePublicationGate) serveCheckpointReadRetry(w http.ResponseWriter, 
   FROM computer_leases bad WHERE bad.environment_id=p.environment_id AND bad.computer_id=p.computer_id AND bad.epoch=ANY($5::bigint[]))
  FROM checkpoints p
  JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
- JOIN computer_leases current ON current.environment_id=p.environment_id AND current.computer_id=p.computer_id AND current.epoch=$3 AND current.computer_instance_id=$4
+ JOIN computer_leases current ON current.environment_id=p.environment_id AND current.computer_id=p.computer_id AND current.epoch=$3 AND current.allocation_id=$4
  WHERE p.environment_id=$1 AND p.id=$2`, g.environment, proof.CheckpointID, identity.Epoch, identity.InstanceID, proof.FailedEpochs).Scan(&valid)
 	if err != nil {
 		return err

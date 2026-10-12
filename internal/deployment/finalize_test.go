@@ -145,7 +145,7 @@ func (r cancellingObjectReader) Read(p []byte) (int, error) {
 }
 func (r cancellingObjectReader) Close() error { return nil }
 
-func TestPrepareRejectsInvalidRetryKeysBeforeReadingObjects(t *testing.T) {
+func TestPrepareRejectsInvalidIdempotencyKeysBeforeReadingObjects(t *testing.T) {
 	principal := auth.Principal{OrgID: uuid.NewV7(), Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), Permissions: []auth.Permission{auth.PermissionDeploymentsWrite}}
 	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
 	finalizer := NewFinalizer(nil, nil, bundle.Admission{}, discardLogger())

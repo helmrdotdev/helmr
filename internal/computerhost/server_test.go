@@ -32,7 +32,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 	exec := workerapi.ComputerCommand{
 		CommandID:          "process-1",
 		ComputerID:         "computer-1",
-		ComputerInstanceID: "instance-1",
+		AllocationID:       "instance-1",
 		RequestFingerprint: strings.Repeat("a", 64),
 		Request:            json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
 		Stdin:              []byte("input"),
@@ -57,7 +57,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 			guestDone <- err
 			return
 		}
-		if request.GetEnvelope().GetComputerInstanceId() != exec.ComputerInstanceID || request.GetEnvelope().GetWriterGeneration() != exec.WriterGeneration ||
+		if request.GetEnvelope().GetComputerInstanceId() != exec.AllocationID || request.GetEnvelope().GetWriterGeneration() != exec.WriterGeneration ||
 			request.GetEnvelope().GetChannelCredential() != "channel-credential" ||
 			string(request.GetStdin()) != "input" ||
 			len(request.GetSecrets()) != 1 ||
@@ -114,7 +114,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	if completion.CommandID != exec.CommandID ||
-		completion.ComputerInstanceID != "instance-1" || completion.WriterGeneration != exec.WriterGeneration ||
+		completion.AllocationID != "instance-1" || completion.WriterGeneration != exec.WriterGeneration ||
 		completion.ExitCode == nil ||
 		*completion.ExitCode != 7 ||
 		len(client.commandLogs) != 4 ||
@@ -139,7 +139,7 @@ func TestServerRejectsMismatchedBasicExecClaim(t *testing.T) {
 			GuestChannelCredential: "channel-credential",
 		},
 		workerapi.ComputerCommand{
-			CommandID: "process-1", ComputerInstanceID: "instance-2",
+			CommandID: "process-1", AllocationID: "instance-2",
 			ComputerID: "computer-1", RequestFingerprint: strings.Repeat("a", 64),
 			WriterGeneration: 1,
 			ExpiresAt:        time.Now().Add(time.Minute),

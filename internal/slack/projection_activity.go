@@ -100,7 +100,7 @@ func projectActivity(ctx context.Context, tx pgx.Tx, o projectionOwner, authoriz
 func projectActivityPage(ctx context.Context, tx pgx.Tx, o projectionOwner, key string, ordinal int, tasks []activityTask) error {
 	var prior uuid.UUID
 	var previous []byte
-	err := tx.QueryRow(ctx, `SELECT id,payload FROM slack_posts WHERE thread_source_id=$1 AND publication_key=$2 AND continuation_ordinal=$3 AND role='activity' FOR NO KEY UPDATE`, o.participant, key, ordinal).Scan(&prior, &previous)
+	err := tx.QueryRow(ctx, `SELECT id,payload FROM slack_posts WHERE thread_source_id=$1 AND post_key=$2 AND continuation_ordinal=$3 AND role='activity' FOR NO KEY UPDATE`, o.participant, key, ordinal).Scan(&prior, &previous)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -161,7 +161,7 @@ func projectActivityPage(ctx context.Context, tx pgx.Tx, o projectionOwner, key 
 		_, err = tx.Exec(ctx, `UPDATE slack_posts SET payload=$2,payload_digest=$3,desired_revision=desired_revision+1,status=CASE WHEN status='posted' THEN 'pending' ELSE status END,closed_at=CASE WHEN $4 THEN COALESCE(closed_at,clock_timestamp()) ELSE NULL END
  WHERE id=$1 AND payload_digest<>$3 AND payload IS NOT NULL AND suppressed_revision=0 AND status NOT IN ('failed','suppressed')`, prior, body, digest[:], closed)
 	} else {
-		_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,publication_key,continuation_ordinal,role,payload,payload_digest,presentation_path,closed_at)
+		_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,continuation_ordinal,role,payload,payload_digest,presentation_path,closed_at)
  SELECT $1,$2,$3,$4,$5,COALESCE(max(seq),0)+1,$6,$7,'activity',$8,$9,'post',CASE WHEN $10 THEN clock_timestamp() END FROM slack_posts WHERE thread_source_id=$4`, uuid.NewV7(), o.environment, o.session, o.participant, o.thread, key, ordinal, body, digest[:], closed)
 	}
 	return err

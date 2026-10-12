@@ -213,7 +213,7 @@ func requireAllocationFreshSupply(ctx context.Context, tx pgx.Tx, supply allocat
 
 func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation uuid.UUID) (Allocation, error) {
 	r := Allocation{EnvironmentID: env, OwnerID: preparation}
-	err := q.QueryRow(ctx, `SELECT instance_id,executor_epoch,worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+	err := q.QueryRow(ctx, `SELECT allocation_id,executor_epoch,worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at FROM image_builds
  WHERE environment_id=$1 AND id=$2 AND worker_host_id IS NOT NULL`, env, preparation).Scan(&r.InstanceID, &r.Epoch, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
@@ -223,7 +223,7 @@ func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation 
 
 func readComputerAllocation(ctx context.Context, q db.DBTX, env, computer uuid.UUID, epoch int64) (ComputerAllocation, error) {
 	r := ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computer, Epoch: epoch}}
-	err := q.QueryRow(ctx, `SELECT l.computer_instance_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
+	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
  l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computer, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
@@ -277,7 +277,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			return err
 		}
 		var cpuMillis, memoryBytes int64
-		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes FROM template_definitions WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, p.SpecID).Scan(&cpuMillis, &memoryBytes); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes FROM template_definitions WHERE environment_id=$1 AND image_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, p.SpecID).Scan(&cpuMillis, &memoryBytes); err != nil {
 			return err
 		}
 		shape, err := qualifyAllocationShape(ctx, tx, supply, cpuMillis, memoryBytes)
@@ -289,11 +289,11 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		}
 		result = Allocation{EnvironmentID: env, OwnerID: preparation, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
 		digest := sha256.Sum256(a.preparationCredential(result))
-		changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,instance_id=$5,channel_credential_digest=$6,
+		changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_cpu_millis=$7,reserved_memory_bytes=$8,reserved_scratch_bytes=$9,vm_platform_id=$10,vm_vcpu_count=$11,cpu_config_digest=$12
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
  SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.preparation_spec_id=$13 AND s.status='revoked')`, env, preparation, host, supply.epoch, result.InstanceID, digest[:], shape.CPUMillis, shape.MemoryBytes, shape.ScratchBytes, shape.VMPlatformID, shape.VCPUCount, shape.CPUConfigDigest, p.SpecID)
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$13 AND s.status='revoked')`, env, preparation, host, supply.epoch, result.InstanceID, digest[:], shape.CPUMillis, shape.MemoryBytes, shape.ScratchBytes, shape.VMPlatformID, shape.VCPUCount, shape.CPUConfigDigest, p.SpecID)
 		if err != nil {
 			return err
 		}
@@ -302,7 +302,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		}
 		var protected bool
 		var now, deadline time.Time
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings b WHERE b.environment_id=p.environment_id AND b.preparation_spec_id=p.preparation_spec_id AND b.mode='protected'),clock_timestamp(),p.deadline_at FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, env, preparation).Scan(&protected, &now, &deadline); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings b WHERE b.environment_id=p.environment_id AND b.image_spec_id=p.image_spec_id AND b.mode='protected'),clock_timestamp(),p.deadline_at FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, env, preparation).Scan(&protected, &now, &deadline); err != nil {
 			return err
 		}
 		if protected {
@@ -411,7 +411,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 
 func (a *Allocator) insertComputerAllocation(ctx context.Context, tx pgx.Tx, r ComputerAllocation) error {
 	digest := sha256.Sum256([]byte(a.computerCredential(r.Allocation)))
-	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,computer_instance_id,channel_credential_digest,status,
+	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,status,
  reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,restored_from_save_id)
  VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, digest[:], r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom)
 	return err

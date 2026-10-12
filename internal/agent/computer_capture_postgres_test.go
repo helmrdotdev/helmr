@@ -57,7 +57,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		}
 	}
 	caller := Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	if _, err = Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
+	if _, err = Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}
 	other := req
@@ -231,7 +231,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 func TestComputerCaptureRejectsStaleProcessLease(t *testing.T) {
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source closed'`)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
   SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE epoch=1`, uuid.NewV7())
 	req := f.captureRequest()
 	req.LeaseEpoch = 2
@@ -311,7 +311,7 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 	save := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$3,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
  INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT 'until_environment_deletion',environment_id,$4,agent_id,deployment_id,$2,$4,0 FROM sessions WHERE id=$5;

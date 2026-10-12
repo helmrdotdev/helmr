@@ -86,7 +86,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 				cancellationIDs = append(cancellationIDs, id)
 			}
 			claimed, err := client.ClaimComputerCommand(commandCtx, workerapi.ComputerCommandClaimRequest{
-				EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ActiveCommandIDs: activeIDs, ActiveCancellationIDs: cancellationIDs,
+				EnvironmentID: mount.EnvironmentID, AllocationID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ActiveCommandIDs: activeIDs, ActiveCancellationIDs: cancellationIDs,
 			})
 			if err != nil {
 				if commandCtx.Err() == nil {
@@ -114,7 +114,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 							results = commandResults
 							if result.err == nil {
 								// Cancellation installed or found a replay record; this request cannot launch a process.
-								replay := workerapi.ComputerCommand{TailOnly: true, CommandID: id, ComputerID: request.ComputerID, ComputerInstanceID: request.ComputerInstanceID, WriterGeneration: request.WriterGeneration, RequestFingerprint: request.RequestFingerprint, ExpiresAt: request.ExpiresAt, Request: json.RawMessage(`{}`)}
+								replay := workerapi.ComputerCommand{TailOnly: true, CommandID: id, ComputerID: request.ComputerID, AllocationID: request.AllocationID, WriterGeneration: request.WriterGeneration, RequestFingerprint: request.RequestFingerprint, ExpiresAt: request.ExpiresAt, Request: json.RawMessage(`{}`)}
 								completion, err := m.dispatchComputerBasicExec(commandCtx, instance, mount, replay, client)
 								result.err = err
 								var protocolError *computerBasicExecProtocolError
@@ -216,13 +216,13 @@ func (m commandService) dispatchComputerBasicExec(
 	if strings.TrimSpace(exec.CommandID) == "" || strings.TrimSpace(exec.RequestFingerprint) == "" {
 		return workerapi.ComputerCommandCompleteRequest{}, computerBasicExecProtocol(errors.New("command claim is incomplete"))
 	}
-	if exec.ComputerInstanceID != mount.ComputerInstanceID || exec.ComputerID != mount.ComputerID || exec.WriterGeneration <= 0 || exec.WriterGeneration != mount.WriterGeneration || !exec.ExpiresAt.After(time.Now()) {
+	if exec.AllocationID != mount.ComputerInstanceID || exec.ComputerID != mount.ComputerID || exec.WriterGeneration <= 0 || exec.WriterGeneration != mount.WriterGeneration || !exec.ExpiresAt.After(time.Now()) {
 		return workerapi.ComputerCommandCompleteRequest{}, computerBasicExecProtocol(errors.New("command claim does not match the live Instance"))
 	}
 	request := &computerv0.ComputerBasicExecRequest{
 		LogLimits:   m.LogLimits,
 		TailOnly:    exec.TailOnly,
-		Envelope:    &computerv0.ComputerCommandAuthority{OperationId: exec.CommandID, ComputerInstanceId: exec.ComputerInstanceID, ComputerId: exec.ComputerID, ChannelCredential: channelCredential, WriterGeneration: exec.WriterGeneration, OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(), RequestFingerprint: exec.RequestFingerprint},
+		Envelope:    &computerv0.ComputerCommandAuthority{OperationId: exec.CommandID, ComputerInstanceId: exec.AllocationID, ComputerId: exec.ComputerID, ChannelCredential: channelCredential, WriterGeneration: exec.WriterGeneration, OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(), RequestFingerprint: exec.RequestFingerprint},
 		RequestJson: string(exec.Request), ProtectedEnv: exec.ProtectedEnv.Values(), ProxyCa: exec.ProtectedEnv.PublicCA(), Stdin: exec.Stdin,
 	}
 	for _, delivery := range exec.Secrets {
@@ -293,13 +293,13 @@ func commandCompletion(mount commandAuthority, exec workerapi.ComputerCommand, r
 		return workerapi.ComputerCommandCompleteRequest{}, err
 	}
 	completion := workerapi.ComputerCommandCompleteRequest{
-		Stdout:             workerapi.CommandOutputBoundary{ThroughSequence: int64(result.GetStdout().GetThroughSequence()), Complete: result.GetStdout().GetComplete(), Gapped: result.GetStdout().GetGapped()},
-		Stderr:             workerapi.CommandOutputBoundary{ThroughSequence: int64(result.GetStderr().GetThroughSequence()), Complete: result.GetStderr().GetComplete(), Gapped: result.GetStderr().GetGapped()},
-		EnvironmentID:      mount.EnvironmentID,
-		CommandID:          exec.CommandID,
-		ComputerInstanceID: mount.ComputerInstanceID,
-		WriterGeneration:   exec.WriterGeneration,
-		Outcome:            outcome,
+		Stdout:           workerapi.CommandOutputBoundary{ThroughSequence: int64(result.GetStdout().GetThroughSequence()), Complete: result.GetStdout().GetComplete(), Gapped: result.GetStdout().GetGapped()},
+		Stderr:           workerapi.CommandOutputBoundary{ThroughSequence: int64(result.GetStderr().GetThroughSequence()), Complete: result.GetStderr().GetComplete(), Gapped: result.GetStderr().GetGapped()},
+		EnvironmentID:    mount.EnvironmentID,
+		CommandID:        exec.CommandID,
+		AllocationID:     mount.ComputerInstanceID,
+		WriterGeneration: exec.WriterGeneration,
+		Outcome:          outcome,
 	}
 	if outcome == "exited" {
 		exitCode := result.GetExitCode()

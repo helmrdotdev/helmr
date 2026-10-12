@@ -29,7 +29,7 @@ func (s *CredentialStore) claimRefresh(ctx context.Context, installation uuid.UU
 		var ciphertext, nonce []byte
 		var attempt *uuid.UUID
 		var expired, ready bool
-		err := tx.QueryRow(ctx, `SELECT organization_id,credential_revision,authorized_at,app_id,team_id,bot_user_id,credential_ciphertext,credential_nonce,
+		err := tx.QueryRow(ctx, `SELECT org_id,credential_revision,authorized_at,app_id,team_id,bot_user_id,credential_ciphertext,credential_nonce,
  refresh_attempt_id,COALESCE(refresh_deadline<=clock_timestamp(),false),
  disconnected_at IS NULL AND authorization_lost_at IS NULL AND COALESCE(credential_expires_at<=clock_timestamp()+interval '5 minutes',false) AND refresh_next_at<=clock_timestamp()
  FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, installation).Scan(&c.org, &c.revision, &c.authorized, &c.app, &c.team, &c.bot, &ciphertext, &nonce, &attempt, &expired, &ready)

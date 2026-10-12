@@ -92,12 +92,12 @@ func TestAgentBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
 		"whitespace": func(b []byte) []byte { return append([]byte(" "), b...) },
 		"old kind":   func(b []byte) []byte { return bytes.Replace(b, []byte(`"kind":"agent"`), []byte(`"kind":"task"`), 1) },
 		"unknown policy": func(b []byte) []byte {
-			return bytes.Replace(b, []byte(`"setup":true`), []byte(`"setup":true,"unrecognized":1`), 1)
+			return bytes.Replace(b, []byte(`"hasInit":true`), []byte(`"hasInit":true,"unrecognized":1`), 1)
 		},
 		"unknown secret member": func(b []byte) []byte {
 			return bytes.Replace(b, []byte(`"secret":"API_TOKEN`), []byte(`"unrecognized":1,"secret":"API_TOKEN`), 1)
 		},
-		"missing boolean": func(b []byte) []byte { return bytes.Replace(b, []byte(`"setup":true,`), nil, 1) },
+		"missing boolean": func(b []byte) []byte { return bytes.Replace(b, []byte(`"hasInit":true,`), nil, 1) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := change(raw)
