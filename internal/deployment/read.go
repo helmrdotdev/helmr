@@ -109,15 +109,21 @@ type DefinitionPage struct {
 	HasMore      bool
 }
 
-func definitionQuery(kind definition.Kind) (string, error) {
+// Definition reads select one statement per kind so every statement the
+// package sends is a constant.
+const (
+	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,d.resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	definitionListClause         = " WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4"
+	definitionGetClause          = " WHERE environment_id=$1 AND deployment_id=$2 AND key=$3"
+)
+
+func validDefinitionKind(kind definition.Kind) error {
 	switch kind {
-	case definition.KindAgent:
-		return "SELECT key, agent_id, template_key, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions", nil
-	case definition.KindTemplate:
-		return "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,d.resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions", nil
-	default:
-		return "", invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
+	case definition.KindAgent, definition.KindTemplate:
+		return nil
 	}
+	return invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 }
 func definitionDeployment(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (Record, error) {
 	if selected != nil {
@@ -137,15 +143,19 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	if limit < 1 || limit > 100 {
 		return DefinitionPage{}, invalidInput(errors.New("definition page limit must be between 1 and 100"))
 	}
-	query, err := definitionQuery(kind)
-	if err != nil {
+	if err := validDefinitionKind(kind); err != nil {
 		return DefinitionPage{}, err
 	}
 	r, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
-	rows, err := q.Query(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
+	var rows pgx.Rows
+	if kind == definition.KindAgent {
+		rows, err = q.Query(ctx, agentDefinitionProjection+definitionListClause, r.EnvironmentID, r.ID, after, limit+1)
+	} else {
+		rows, err = q.Query(ctx, templateDefinitionProjection+definitionListClause, r.EnvironmentID, r.ID, after, limit+1)
+	}
 	if err != nil {
 		return DefinitionPage{}, err
 	}
@@ -168,8 +178,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	return page, nil
 }
 func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, id string) (uuid.UUID, DefinitionRecord, error) {
-	query, err := definitionQuery(kind)
-	if err != nil {
+	if err := validDefinitionKind(kind); err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	r, err := definitionDeployment(ctx, q, principal, scope, selected)
@@ -177,7 +186,13 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	var found DefinitionRecord
-	err = q.QueryRow(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND key=$3`, r.EnvironmentID, r.ID, id).Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources)
+	var row pgx.Row
+	if kind == definition.KindAgent {
+		row = q.QueryRow(ctx, agentDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
+	} else {
+		row = q.QueryRow(ctx, templateDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
+	}
+	err = row.Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r.ID, DefinitionRecord{}, ErrDefinitionNotFound
 	}

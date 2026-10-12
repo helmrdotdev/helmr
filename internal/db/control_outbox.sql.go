@@ -117,53 +117,6 @@ func (q *Queries) ControlOutboxLifecycle(ctx context.Context, deadLetterLimit in
 	return i, err
 }
 
-const createControlOutbox = `-- name: CreateControlOutbox :one
-INSERT INTO control_outbox (
-    id,
-    topic,
-    payload,
-    available_at
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4
-)
-RETURNING id, topic, payload, status, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
-`
-
-type CreateControlOutboxParams struct {
-	ID          pgtype.UUID        `json:"id"`
-	Topic       string             `json:"topic"`
-	Payload     []byte             `json:"payload"`
-	AvailableAt pgtype.Timestamptz `json:"available_at"`
-}
-
-func (q *Queries) CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error) {
-	row := q.db.QueryRow(ctx, createControlOutbox,
-		arg.ID,
-		arg.Topic,
-		arg.Payload,
-		arg.AvailableAt,
-	)
-	var i ControlOutbox
-	err := row.Scan(
-		&i.ID,
-		&i.Topic,
-		&i.Payload,
-		&i.Status,
-		&i.Attempts,
-		&i.AvailableAt,
-		&i.ClaimedBy,
-		&i.ClaimExpiresAt,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.DeliveredAt,
-	)
-	return i, err
-}
-
 const deadLetterControlOutbox = `-- name: DeadLetterControlOutbox :one
 UPDATE control_outbox
 SET status = 'dead_lettered',

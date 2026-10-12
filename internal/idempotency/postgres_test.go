@@ -41,12 +41,15 @@ func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target re
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := db.New(f.Pool).GetPlatformRetryKey(t.Context(), db.GetPlatformRetryKeyParams{EnvironmentID: claim.EnvironmentID, ID: claim.ID})
+	rows, err := f.Pool.Query(t.Context(), `SELECT * FROM platform_retry_keys WHERE environment_id=$1 AND id=$2`, claim.EnvironmentID, claim.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim = stored
-	return claim
+	stored, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByPos[db.PlatformRetryKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stored
 }
 func acquireError(t *testing.T, f agenttest.Fixture, request *retry.Request) error {
 	t.Helper()

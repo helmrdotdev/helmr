@@ -120,30 +120,6 @@ func (q *Queries) ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]
 	return items, nil
 }
 
-const listRetiredCasUploads = `-- name: ListRetiredCasUploads :many
-SELECT upload_id FROM cas_upload_reclaims WHERE digest=$1 ORDER BY upload_id
-`
-
-func (q *Queries) ListRetiredCasUploads(ctx context.Context, digest string) ([]string, error) {
-	rows, err := q.db.Query(ctx, listRetiredCasUploads, digest)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var upload_id string
-		if err := rows.Scan(&upload_id); err != nil {
-			return nil, err
-		}
-		items = append(items, upload_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const recordCasBlobReclamation = `-- name: RecordCasBlobReclamation :exec
 UPDATE cas_blobs
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes',
