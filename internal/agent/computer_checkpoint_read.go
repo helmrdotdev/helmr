@@ -15,7 +15,7 @@ import (
 
 // ReadComputerCheckpoint supplies only the coherent image bound to an admitted,
 // delivered restore allocation. It grants neither installation nor activation.
-func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity) (computercheckpoint.Manifest, error) {
+func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity) (computercheckpoint.Manifest, error) {
 	if !identity.Valid() {
 		return computercheckpoint.Manifest{}, ErrInvalidInput
 	}

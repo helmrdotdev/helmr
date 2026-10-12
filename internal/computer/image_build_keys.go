@@ -20,26 +20,26 @@ type DataKeyWrapper interface {
 	Unwrap(context.Context, string, string, computerkey.Envelope) ([]byte, error)
 }
 
-type PreparationKeyBroker struct {
+type ImageBuildKeyBroker struct {
 	pool    db.TxBeginner
 	wrapper DataKeyWrapper
 }
 
-func NewPreparationKeyBroker(pool db.TxBeginner, wrapper DataKeyWrapper) (*PreparationKeyBroker, error) {
+func NewImageBuildKeyBroker(pool db.TxBeginner, wrapper DataKeyWrapper) (*ImageBuildKeyBroker, error) {
 	if pool == nil || wrapper == nil {
 		return nil, errors.New("preparation database and key wrapper are required")
 	}
-	return &PreparationKeyBroker{pool: pool, wrapper: wrapper}, nil
+	return &ImageBuildKeyBroker{pool: pool, wrapper: wrapper}, nil
 }
 
-// PreparationKey is host-only material. Its receiver clears Key after use.
-type PreparationKey struct {
+// ImageBuildKey is host-only material. Its receiver clears Key after use.
+type ImageBuildKey struct {
 	Scope string
 	ID    uuid.UUID
 	Key   []byte
 }
 
-type preparationKeyPin struct {
+type imageBuildKeyPin struct {
 	scope    string
 	id       uuid.UUID
 	envelope computerkey.Envelope
@@ -48,50 +48,50 @@ type preparationKeyPin struct {
 // WriteKey creates or recovers this preparation's sole write key. Provider I/O
 // runs without SQL locks. Every result is reauthorized after I/O, including
 // revocation and expiry that occur while wrapping or unwrapping is in flight.
-func (b *PreparationKeyBroker) WriteKey(ctx context.Context, host workergroup.HostPrincipal, ref PreparationExecutor) (PreparationKey, error) {
+func (b *ImageBuildKeyBroker) WriteKey(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildKey, error) {
 	pin, err := b.pin(ctx, host, ref, nil)
 	if err != nil {
-		return PreparationKey{}, err
+		return ImageBuildKey{}, err
 	}
 	if pin.id == uuid.Nil() {
 		plain := make([]byte, computerkey.Size)
 		if _, err = rand.Read(plain); err != nil {
-			return PreparationKey{}, err
+			return ImageBuildKey{}, err
 		}
-		candidate := preparationKeyPin{scope: pin.scope, id: uuid.NewV7()}
+		candidate := imageBuildKeyPin{scope: pin.scope, id: uuid.NewV7()}
 		candidate.envelope, err = b.wrapper.Wrap(ctx, candidate.scope, candidate.id.String(), plain)
 		clear(plain)
 		if err != nil {
-			return PreparationKey{}, err
+			return ImageBuildKey{}, err
 		}
 		pin, err = b.pin(ctx, host, ref, &candidate)
 		if err != nil {
-			return PreparationKey{}, err
+			return ImageBuildKey{}, err
 		}
 	}
 	plain, err := b.wrapper.Unwrap(ctx, pin.scope, pin.id.String(), pin.envelope)
 	if err != nil {
 		clear(plain)
-		return PreparationKey{}, err
+		return ImageBuildKey{}, err
 	}
 	if len(plain) != computerkey.Size {
 		clear(plain)
-		return PreparationKey{}, errors.New("preparation key provider returned invalid key length")
+		return ImageBuildKey{}, errors.New("preparation key provider returned invalid key length")
 	}
 	current, err := b.pin(ctx, host, ref, nil)
 	if err != nil {
 		clear(plain)
-		return PreparationKey{}, err
+		return ImageBuildKey{}, err
 	}
 	if current.scope != pin.scope || current.id != pin.id || current.envelope.WrappingKeyID != pin.envelope.WrappingKeyID || !bytes.Equal(current.envelope.Ciphertext, pin.envelope.Ciphertext) {
 		clear(plain)
-		return PreparationKey{}, ErrConflict
+		return ImageBuildKey{}, ErrConflict
 	}
-	return PreparationKey{Scope: pin.scope, ID: pin.id, Key: plain}, nil
+	return ImageBuildKey{Scope: pin.scope, ID: pin.id, Key: plain}, nil
 }
 
-func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPrincipal, ref PreparationExecutor, candidate *preparationKeyPin) (preparationKeyPin, error) {
-	var result preparationKeyPin
+func (b *ImageBuildKeyBroker) pin(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor, candidate *imageBuildKeyPin) (imageBuildKeyPin, error) {
+	var result imageBuildKeyPin
 	if !ref.Valid() {
 		return result, ErrInvalidInput
 	}
@@ -99,15 +99,15 @@ func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPri
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		if err := lockPreparationSecretOwners(ctx, tx, ref); err != nil {
+		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
 			return err
 		}
-		if err := lockPreparationExecutorOnHost(ctx, tx, host, ref, true); err != nil {
+		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		var org uuid.UUID
 		var id *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT e.org_id,p.write_key_id FROM image_builds p JOIN environments e ON e.id=p.environment_id WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&org, &id); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT e.org_id,p.write_key_id FROM image_builds p JOIN environments e ON e.id=p.environment_id WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.ImageBuildID).Scan(&org, &id); err != nil {
 			return err
 		}
 		var err error
@@ -122,36 +122,36 @@ func (b *PreparationKeyBroker) pin(ctx context.Context, host workergroup.HostPri
 			if candidate.id == uuid.Nil() || len(candidate.envelope.WrappingKeyID) == 0 || len(candidate.envelope.WrappingKeyID) > 2048 || len(candidate.envelope.Ciphertext) == 0 || len(candidate.envelope.Ciphertext) > computerkey.MaxWrappedSize {
 				return ErrInvalidInput
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO disk_encryption_keys(id,environment_id,writer_image_build_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, candidate.id, ref.EnvironmentID, ref.PreparationID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO disk_encryption_keys(id,environment_id,writer_image_build_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, candidate.id, ref.EnvironmentID, ref.ImageBuildID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE image_builds SET write_key_id=$3 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, candidate.id); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE image_builds SET write_key_id=$3 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID, candidate.id); err != nil {
 				return err
 			}
 			id = &candidate.id
 		}
 		if id != nil {
 			result.id = *id
-			if err = tx.QueryRow(ctx, `SELECT wrapping_key_id,wrapped_key FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2 AND id=$3 AND available FOR KEY SHARE`, ref.EnvironmentID, ref.PreparationID, *id).Scan(&result.envelope.WrappingKeyID, &result.envelope.Ciphertext); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT wrapping_key_id,wrapped_key FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2 AND id=$3 AND available FOR KEY SHARE`, ref.EnvironmentID, ref.ImageBuildID, *id).Scan(&result.envelope.WrappingKeyID, &result.envelope.Ciphertext); err != nil {
 				return err
 			}
 		}
 		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
 	})
 	if err != nil {
-		return preparationKeyPin{}, hideMissing(err)
+		return imageBuildKeyPin{}, hideMissing(err)
 	}
 	return result, nil
 }
 
 // Secrets precede spec/attempt locks. Lock declared owners even before first
 // exposure so rotation/revocation cannot cross the deciding authorization check.
-func lockPreparationSecretOwners(ctx context.Context, tx pgx.Tx, ref PreparationExecutor) error {
+func lockImageBuildSecretOwners(ctx context.Context, tx pgx.Tx, ref ImageBuildExecutor) error {
 	rows, err := tx.Query(ctx, `SELECT s.status FROM secrets s WHERE s.environment_id=$1 AND s.id IN (
  SELECT binding.secret_id FROM image_builds p
  JOIN secret_bindings binding ON (binding.environment_id,binding.image_spec_id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.id=$2
- ) ORDER BY s.id FOR SHARE`, ref.EnvironmentID, ref.PreparationID)
+ ) ORDER BY s.id FOR SHARE`, ref.EnvironmentID, ref.ImageBuildID)
 	if err != nil {
 		return err
 	}

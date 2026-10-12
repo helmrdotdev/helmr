@@ -55,7 +55,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 			clear(value)
 		}
 	}()
-	isPreparation, err := computer.IsPreparationProxyInstance(r.Context(), s.tx, instanceID)
+	isPreparation, err := computer.IsImageBuildProxyInstance(r.Context(), s.tx, instanceID)
 	if err != nil {
 		s.writeAllocationError(w, err)
 		return
@@ -65,13 +65,13 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	if isPreparation {
 		if resolve {
 			var captured []secret.ProtectedCapture
-			captured, err = computer.CapturePreparationProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
+			captured, err = computer.CaptureImageBuildProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
 			if err == nil {
 				resolution.Values, err = s.secretProxy.OpenProtectedCapture(captured, request.Placeholders)
 			}
 		} else {
-			var captured computer.PreparationProxyTrust
-			captured, err = computer.CapturePreparationProxyTrust(r.Context(), s.tx, worker, instanceID)
+			var captured computer.ImageBuildProxyTrust
+			captured, err = computer.CaptureImageBuildProxyTrust(r.Context(), s.tx, worker, instanceID)
 			if err == nil && len(captured.Origins) > 0 {
 				hosts := []string{}
 				for _, origin := range captured.Origins {
@@ -92,13 +92,13 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		}
 	} else if resolve {
 		var captured []secret.ProtectedCapture
-		captured, err = computer.CaptureComputerProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
+		captured, err = computer.CaptureProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
 		if err == nil {
 			resolution.Values, err = s.secretProxy.OpenProtectedCapture(captured, request.Placeholders)
 		}
 	} else {
-		var captured computer.ComputerProxyTrust
-		captured, err = computer.CaptureComputerProxyTrust(r.Context(), s.tx, worker, instanceID)
+		var captured computer.ProxyTrust
+		captured, err = computer.CaptureProxyTrust(r.Context(), s.tx, worker, instanceID)
 		if err == nil && len(captured.Origins) > 0 {
 			hosts := []string{}
 			for _, origin := range captured.Origins {

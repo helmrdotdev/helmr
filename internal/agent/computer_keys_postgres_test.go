@@ -19,14 +19,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func computerSourceFixture(t *testing.T) (fixture, computer.ComputerLeaseIdentity) {
+func computerSourceFixture(t *testing.T) (fixture, computer.LeaseIdentity) {
 	t.Helper()
 	f, a, computerID := freshComputerAllocationFixture(t)
 	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	id := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), id); err != nil {
 		t.Fatal(err)
 	}
@@ -35,12 +35,12 @@ func computerSourceFixture(t *testing.T) (fixture, computer.ComputerLeaseIdentit
 
 func TestComputerDiskSourceConcurrentRetryPinsOnePrivateKey(t *testing.T) {
 	f, id := computerSourceFixture(t)
-	broker, err := computer.NewComputerKeyBroker(f.pool, preparationWrapper(t))
+	broker, err := computer.NewKeyBroker(f.pool, preparationWrapper(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const n = 8
-	results := make(chan computer.ComputerDiskSource, n)
+	results := make(chan computer.DiskSource, n)
 	errors := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
@@ -54,7 +54,7 @@ func TestComputerDiskSourceConcurrentRetryPinsOnePrivateKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var first computer.ComputerDiskSource
+	var first computer.DiskSource
 	for source := range results {
 		if first.WriteKeyID == uuid.Nil() {
 			first = source
@@ -123,7 +123,7 @@ func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 				} else {
 					provider.beforeUnwrap = mutate
 				}
-				broker, _ := computer.NewComputerKeyBroker(f.pool, provider)
+				broker, _ := computer.NewKeyBroker(f.pool, provider)
 				source, err := broker.Source(t.Context(), *f.host(), id)
 				if err == nil || len(source.Keys) != 0 {
 					source.Clear()
@@ -149,8 +149,8 @@ func TestComputerDiskSourceRejectsUndeliveredAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker, _ := computer.NewComputerKeyBroker(f.pool, preparationWrapper(t))
-	source, err := broker.Source(t.Context(), *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch})
+	broker, _ := computer.NewKeyBroker(f.pool, preparationWrapper(t))
+	source, err := broker.Source(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch})
 	if !errors.Is(err, ErrDenied) || len(source.Keys) != 0 {
 		source.Clear()
 		t.Fatalf("undelivered source: %v", err)
@@ -216,7 +216,7 @@ func TestComputerDiskSourceRestoredClosureOpensMultipleKeys(t *testing.T) {
  INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,requested_at,flush_acknowledged_at,captured_at,captured_root_digest,capture_evidence,publication_evidence,root_id) VALUES($1,$10,$2,1,1,'published',now(),now(),now(),decode(substring($11::text from 8),'hex'),'fixture capture','fixture publication',$8);
  UPDATE computer_leases SET restored_from_save_id=$10 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
  `, pgx.QueryExecModeSimpleProtocol, f.env, id.ComputerID, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, first, second, rootID, string(raw), save, digest)
-	broker, _ := computer.NewComputerKeyBroker(f.pool, wrapper)
+	broker, _ := computer.NewKeyBroker(f.pool, wrapper)
 	source, err := broker.Source(t.Context(), *f.host(), id)
 	if err != nil {
 		t.Fatal(err)

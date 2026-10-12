@@ -19,20 +19,20 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 				t.Fatal(err)
 			}
 			var computerID, image uuid.UUID
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&computerID); err != nil {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&computerID); err != nil {
 				t.Fatal(err)
 			}
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&image); err != nil {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&image); err != nil {
 				t.Fatal(err)
 			}
 			if attached {
-				if _, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, computerID); err != nil {
+				if _, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID); err != nil {
 					t.Fatal(err)
 				}
 			}
 			reconcile := func() {
 				t.Helper()
-				if err := computer.ReconcileComputerDiskRetention(t.Context(), p.f.pool); err != nil {
+				if err := computer.ReconcileDiskRetention(t.Context(), p.f.pool); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -44,7 +44,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 			if err := p.f.pool.QueryRow(t.Context(), `SELECT root_id IS NOT NULL FROM images WHERE environment_id=$1 AND id=$2`, p.f.env, image).Scan(&retained); err != nil || !retained {
 				t.Fatalf("unfenced image collected: %v %v", retained, err)
 			}
-			if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+			if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			for range 8 {
@@ -63,7 +63,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 					t.Fatalf("historical revocation or Computer root lost: %v %v", lineage, err)
 				}
 			}
-			if _, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, computerID); err == nil {
+			if _, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID); err == nil {
 				t.Fatal("revoked image admitted after payload retirement")
 			}
 		})

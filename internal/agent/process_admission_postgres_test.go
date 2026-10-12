@@ -26,7 +26,7 @@ func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	if _, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), beforeReady); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("attachment before VM readiness: %v", err)
 	}
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}

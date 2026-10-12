@@ -14,7 +14,7 @@ import (
 
 // Fixture allocation isolates executor authority tests from supply selection.
 // Production allocation must go through Allocator and its capacity transaction.
-func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref computer.PreparationExecutor) (time.Time, error) {
+func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref computer.ImageBuildExecutor) (time.Time, error) {
 	if !ref.Valid() || ref.Epoch != 1 {
 		return time.Time{}, ErrInvalidInput
 	}
@@ -30,7 +30,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 		if !available {
 			return ErrNotReady
 		}
-		p, err := computer.ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.PreparationID)
+		p, err := computer.ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 		if err != nil {
 			return err
 		}

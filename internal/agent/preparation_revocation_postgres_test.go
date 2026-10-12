@@ -22,7 +22,7 @@ func preparationResidentImage(t *testing.T) *preparationPublicationTest {
 	// Install the real published image through the admission operation; the
 	// resident fixture represents the later allocator-created process and lease.
 	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET initial_root_id=NULL,initial_root_digest=NULL,image_spec_id=$3,preparation_deadline_at=clock_timestamp()+interval '5 minutes' WHERE environment_id=$1 AND id=$2`, p.f.env, p.f.computer, p.f.deployment)
-	if _, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
+	if _, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -108,15 +108,15 @@ func TestPreparationImageRevocationLifecycleAndLease(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id::text FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instanceID); err != nil {
 		t.Fatal(err)
 	}
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1}
 	identity.InstanceID = uuid.MustParse(instanceID)
-	if _, err := computer.RenewComputerLease(t.Context(), f.pool, *f.host(), identity); err != nil {
+	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.f.secrets.Revoke(t.Context(), f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := computer.RenewComputerLease(t.Context(), f.pool, *f.host(), identity); err == nil {
+	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
 		t.Fatal("revoked lease extended")
 	}
 	if _, _, err := reconcilePreparationLifecycle(t.Context(), f.pool, preparationLifecyclePosition{}); err != nil {
@@ -136,10 +136,10 @@ func checkpointImageExposure(t *testing.T, f fixture) preparationFixture {
 	p := preparationFixtureFor(t, f)
 	attempt := p.attach(t, p.waiter(t))
 	ref := p.claim(t, attempt)
-	if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
-	broker, _ := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+	broker, _ := computer.NewImageBuildKeyBroker(f.pool, preparationWrapper(t))
 	key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 	if err != nil {
 		t.Fatal(err)

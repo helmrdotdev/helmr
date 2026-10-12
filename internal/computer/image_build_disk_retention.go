@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func releasePreparationDiskAttachments(ctx context.Context, database db.TxDB) error {
+func releaseImageBuildDiskAttachments(ctx context.Context, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT p.environment_id,p.image_spec_id,p.id FROM image_builds p
  JOIN image_specs spec ON spec.environment_id=p.environment_id AND spec.id=p.image_spec_id
  WHERE p.disk_released_at IS NULL AND p.write_key_id IS NOT NULL AND p.fenced_at IS NOT NULL AND p.status IN ('succeeded','failed')

@@ -119,7 +119,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 }
 
 // Admission never holds a SQL transaction across channel or root verification.
-func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, client *WebClient, id uuid.UUID) error {
+func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
 	var p *messageAdmission
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error { var err error; p, err = readMessageAdmission(ctx, tx, id); return err })
 	if err != nil || p == nil {

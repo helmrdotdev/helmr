@@ -54,7 +54,7 @@ func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
 	return id
 }
-func (f preparationFixture) attach(t *testing.T, id uuid.UUID) computer.Preparation {
+func (f preparationFixture) attach(t *testing.T, id uuid.UUID) computer.ImageBuild {
 	t.Helper()
 	p, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, id)
 	if err != nil {
@@ -62,9 +62,9 @@ func (f preparationFixture) attach(t *testing.T, id uuid.UUID) computer.Preparat
 	}
 	return p
 }
-func (f preparationFixture) claim(t *testing.T, p computer.Preparation) computer.PreparationExecutor {
+func (f preparationFixture) claim(t *testing.T, p computer.ImageBuild) computer.ImageBuildExecutor {
 	t.Helper()
-	ref := computer.PreparationExecutor{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{5}, 32)}
+	ref := computer.ImageBuildExecutor{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{5}, 32)}
 	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 	for i := range computers {
 		computers[i] = f.waiter(t)
 	}
-	results := make(chan computer.Preparation, clients)
+	results := make(chan computer.ImageBuild, clients)
 	errs := make(chan error, clients)
 	var wg sync.WaitGroup
 	for _, id := range computers {
@@ -95,7 +95,7 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var p computer.Preparation
+	var p computer.ImageBuild
 	for got := range results {
 		if p.ID != uuid.Nil() && p.ID != got.ID {
 			t.Fatal("coalesced demand forked")
@@ -103,7 +103,7 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 		p = got
 	}
 	ref := f.claim(t, p)
-	if err := computer.FailPreparation(t.Context(), f.pool, *f.host(), ref, "command_failed"); err != nil {
+	if err := computer.FailImageBuild(t.Context(), f.pool, *f.host(), ref, "command_failed"); err != nil {
 		t.Fatal(err)
 	}
 	// Logical failure blocks a new writer without poisoning fresh demand.
@@ -111,7 +111,7 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 	if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("unfenced writer: %v", err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 		t.Fatal(err)
 	}
 	next := f.attach(t, fresh)
@@ -138,22 +138,22 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	}
 	wrong = ref
 	wrong.ChannelCredential = bytes.Repeat([]byte{6}, 32)
-	if _, err := computer.RenewPreparation(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, ErrDenied) {
 		t.Fatalf("wrong credential: %v", err)
 	}
 	host := *f.host()
 	host.Epoch++
-	if _, err := computer.RenewPreparation(t.Context(), f.pool, host, ref); !errors.Is(err, ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, host, ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("wrong host epoch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
-	if _, err := computer.RenewPreparation(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired renewal: %v", err)
 	}
 	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired reclaim: %v", err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 		t.Fatalf("late physical stop: %v", err)
 	}
 }
@@ -165,7 +165,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-2"); err != nil {
 		t.Fatal(err)
 	}
-	exposed, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
+	exposed, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
 	if err != nil || len(exposed) != 2 || exposed[0].Version != 2 || exposed[0].VersionID != exposed[1].VersionID {
 		t.Fatalf("exposure: %+v %v", exposed, err)
 	}
@@ -176,14 +176,14 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if _, err = f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
+	replay, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
 	if err != nil || len(replay) != 2 || replay[0].VersionID != exposed[0].VersionID {
 		t.Fatalf("retry replaced pins: %+v %v", replay, err)
 	}
 	if _, err = f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) || values != nil {
 		t.Fatalf("revoked exposure: %+v %v", values, err)
 	}
 }
@@ -202,7 +202,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	values, err := computer.RecordPreparationExposure(t.Context(), failedPreparationCommit{f.pool}, *f.host(), ref)
+	values, err := computer.RecordImageBuildExposure(t.Context(), failedPreparationCommit{f.pool}, *f.host(), ref)
 	if !errors.Is(err, errPreparationCommit) || values != nil {
 		t.Fatalf("failed commit released material: %+v %v", values, err)
 	}
@@ -219,7 +219,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
 	done := make(chan error, 1)
 	go func() {
-		values, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
+		values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
 		if values != nil {
 			err = errors.New("expired operation returned material")
 		}
@@ -253,18 +253,18 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 			f := newPreparationFixture(t)
 			waiter := f.waiter(t)
 			p := f.attach(t, waiter)
-			var ref computer.PreparationExecutor
+			var ref computer.ImageBuildExecutor
 			if kind != "queued" {
 				ref = f.claim(t, p)
 			}
 			if kind == "revoked" {
-				if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+				if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := computer.RenewPreparation(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
+				if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 					t.Fatalf("revoked renewal: %v", err)
 				}
 				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
@@ -286,7 +286,7 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 				if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 					t.Fatalf("unfenced blocker: %v", err)
 				}
-				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -369,7 +369,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if err = f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&fenced); err != nil || fenced {
 		t.Fatalf("false fence=%v: %v", fenced, err)
 	}
-	if _, err = computer.RenewPreparation(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err = computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatalf("waiter failure rewrote shared executor: %v", err)
 	}
 	if err = expirePreparationWaiter(t.Context(), f.pool, f.env, computerID); err != nil {
@@ -384,7 +384,7 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
@@ -402,16 +402,16 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 func TestPreparationUnclaimedExecutorOperationsAreDenied(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
-	ref := computer.PreparationExecutor{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{5}, 32)}
+	ref := computer.ImageBuildExecutor{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{5}, 32)}
 	for name, operation := range map[string]func() error{
-		"renew": func() error { _, err := computer.RenewPreparation(t.Context(), f.pool, *f.host(), ref); return err },
+		"renew": func() error { _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); return err },
 		"expose": func() error {
-			_, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
+			_, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
 			return err
 		},
-		"fail": func() error { return computer.FailPreparation(t.Context(), f.pool, *f.host(), ref, "failed") },
+		"fail": func() error { return computer.FailImageBuild(t.Context(), f.pool, *f.host(), ref, "failed") },
 		"stop": func() error {
-			return computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref))
+			return computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref))
 		},
 	} {
 		if err := operation(); !errors.Is(err, ErrDenied) {
@@ -425,7 +425,7 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 		t.Run(fmt.Sprint(claimed), func(t *testing.T) {
 			f := newPreparationFixture(t)
 			p := f.attach(t, f.waiter(t))
-			var ref computer.PreparationExecutor
+			var ref computer.ImageBuildExecutor
 			if claimed {
 				ref = f.claim(t, p)
 			}
@@ -438,7 +438,7 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 				t.Fatal(err)
 			}
 			if claimed {
-				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -516,9 +516,9 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 func TestPreparationConcurrentClaimsSelectOneExecutor(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
-	refs := []computer.PreparationExecutor{
-		{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{1}, 32)},
-		{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{2}, 32)},
+	refs := []computer.ImageBuildExecutor{
+		{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{1}, 32)},
+		{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{2}, 32)},
 	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -608,7 +608,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 			if kind == "host" {
 				host = recoveringComputerHost(t, f.fixture)
 			} else {
-				if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, host, ref); err != nil {
+				if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, host, ref); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, ""); err != nil {
@@ -630,7 +630,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
-				if err := computer.ObservePreparationStopped(t.Context(), f.pool, host, preparationIdentity(ref)); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, host, preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}

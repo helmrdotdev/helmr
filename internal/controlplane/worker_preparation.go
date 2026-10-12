@@ -13,12 +13,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func preparationExecutor(in workerapi.PreparationExecutor) (computer.PreparationExecutor, error) {
+func preparationExecutor(in workerapi.PreparationExecutor) (computer.ImageBuildExecutor, error) {
 	identity, err := allocationIdentity(in.Identity)
 	if err != nil || identity.Kind != "preparation" || len(in.ChannelCredential) != 32 {
-		return computer.PreparationExecutor{}, agent.ErrInvalidInput
+		return computer.ImageBuildExecutor{}, agent.ErrInvalidInput
 	}
-	return computer.PreparationExecutor{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch, ChannelCredential: in.ChannelCredential}, nil
+	return computer.ImageBuildExecutor{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch, ChannelCredential: in.ChannelCredential}, nil
 }
 func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
@@ -32,7 +32,7 @@ func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := computer.RenewPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref)
+	result, err := computer.RenewImageBuild(r.Context(), server.tx, workerFromContext(r.Context()), ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -72,7 +72,7 @@ func (server *Server) workerFailPreparation(w http.ResponseWriter, r *http.Reque
 		server.writeAllocationError(w, err)
 		return
 	}
-	err = computer.FailPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref, request.Code)
+	err = computer.FailImageBuild(r.Context(), server.tx, workerFromContext(r.Context()), ref, request.Code)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -190,7 +190,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		return
 	}
 	host := workerFromContext(r.Context())
-	exposed, err := computer.RecordPreparationExposure(r.Context(), server.tx, host, ref)
+	exposed, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -207,12 +207,12 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 	}
 	var protected *workerapi.ProtectedEnv
 	if hasProtected {
-		captured, err := computer.CapturePreparationProxyTrust(r.Context(), server.tx, host, ref.InstanceID)
+		captured, err := computer.CaptureImageBuildProxyTrust(r.Context(), server.tx, host, ref.InstanceID)
 		if err != nil {
 			server.writeAllocationError(w, err)
 			return
 		}
-		if captured.Trust.PreparationID != ref.PreparationID || captured.Trust.EnvironmentID != ref.EnvironmentID {
+		if captured.Trust.PreparationID != ref.ImageBuildID || captured.Trust.EnvironmentID != ref.EnvironmentID {
 			server.writeAllocationError(w, agent.ErrDenied)
 			return
 		}
@@ -228,7 +228,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	if _, err = computer.RecordPreparationExposure(r.Context(), server.tx, host, ref); err != nil {
+	if _, err = computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -259,7 +259,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	host := workerFromContext(r.Context())
-	start, err := computer.ReadPreparationStart(r.Context(), server.tx, host, ref)
+	start, err := computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -300,7 +300,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	_, err = computer.ReadPreparationStart(r.Context(), server.tx, host, ref)
+	_, err = computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

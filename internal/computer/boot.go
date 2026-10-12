@@ -13,18 +13,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type ComputerBoot struct {
+type Boot struct {
 	ImageConfig  oci.RuntimeConfig
 	RootfsDigest string
 }
 
-// ReadComputerBoot reads only immutable Computer image and VM metadata. A cold
+// ReadBoot reads only immutable Computer image and VM metadata. A cold
 // command boot never needs a Session's executable bundle or setup permission.
-func ReadComputerBoot(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (ComputerBoot, error) {
+func ReadBoot(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity LeaseIdentity) (Boot, error) {
 	if !identity.Valid() {
-		return ComputerBoot{}, ErrInvalidInput
+		return Boot{}, ErrInvalidInput
 	}
-	var result ComputerBoot
+	var result Boot
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := shortLockTimeout(ctx, tx); err != nil {
 			return err
@@ -55,7 +55,7 @@ func ReadComputerBoot(ctx context.Context, database db.TxBeginner, host workergr
 		return nil
 	})
 	if err != nil {
-		return ComputerBoot{}, notReadyOnLock(err)
+		return Boot{}, notReadyOnLock(err)
 	}
 	return result, nil
 }

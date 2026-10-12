@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AppendPreparationLog accepts diagnostics from the attempt's sole live executor.
+// AppendImageBuildLog accepts diagnostics from the attempt's sole live executor.
 // Its identity cannot be supplied by a Session or reassigned to a successor.
-func AppendPreparationLog(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor, record diagnostic.Record, bounds diagnostic.Bounds) (telemetry.DiagnosticReceipt, error) {
+func AppendImageBuildLog(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor, record diagnostic.Record, bounds diagnostic.Bounds) (telemetry.DiagnosticReceipt, error) {
 	if err := bounds.Validate(); err != nil {
 		return telemetry.DiagnosticReceipt{}, err
 	}
@@ -21,11 +21,11 @@ func AppendPreparationLog(ctx context.Context, pool db.TxBeginner, host workergr
 	}
 	var result telemetry.DiagnosticReceipt
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		admission, err := telemetry.BeginDiagnosticAdmission(ctx, tx, telemetry.DiagnosticSource{EnvironmentID: ref.EnvironmentID, Kind: "image_build", ID: ref.PreparationID, ProducerEpoch: ref.Epoch}, bounds)
+		admission, err := telemetry.BeginDiagnosticAdmission(ctx, tx, telemetry.DiagnosticSource{EnvironmentID: ref.EnvironmentID, Kind: "image_build", ID: ref.ImageBuildID, ProducerEpoch: ref.Epoch}, bounds)
 		if err != nil {
 			return err
 		}
-		if err := lockPreparationExecutor(ctx, tx, host, ref, true); err != nil {
+		if err := lockImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		result, err = admission.Append(ctx, record)

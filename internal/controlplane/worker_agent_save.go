@@ -98,7 +98,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		server.writeAgentWorkerError(w, agent.ErrInvalidInput)
 		return
 	}
-	save, err := computer.NextComputerSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.ComputerLeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
+	save, err := computer.NextSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
 	if errors.Is(err, agent.ErrNotReady) {
 		writeError(w, unavailable(errors.New("save discovery is temporarily unavailable")))
 		return

@@ -267,7 +267,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 
 	workflows := []backgroundWorkflow{
 		{name: "CAS reclamation", run: casReclaimer.Run},
-		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunComputerDiskRetention(ctx, pool, log) }},
+		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) }},
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},

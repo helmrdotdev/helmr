@@ -10,42 +10,42 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ComputerImage is the immutable initial image selected for one Computer.
+// Image is the immutable initial image selected for one Computer.
 // PreparationID is the producing attempt, which can differ from the Computer's
 // original demand receipt after the permitted sequential replacement.
-type ComputerImage struct {
-	ID            uuid.UUID
-	PreparationID uuid.UUID
-	Sequence      int64
-	Root          disk.VersionRoot
+type Image struct {
+	ID           uuid.UUID
+	ImageBuildID uuid.UUID
+	Sequence     int64
+	Root         disk.VersionRoot
 }
 
-// PinComputerImage resolves an admitted Computer's preparation without creating
+// PinImage resolves an admitted Computer's preparation without creating
 // another Computer or changing its reservation. Selection serializes with Secret
 // rotation/revocation. An existing pin is returned unchanged after rotation;
 // execution authorization separately enforces revocation of its retained lineage.
-func PinComputerImage(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) (ComputerImage, error) {
-	var result ComputerImage
+func PinImage(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) (Image, error) {
+	var result Image
 	if env == uuid.Nil() || computer == uuid.Nil() {
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var err error
-		result, err = PinImage(ctx, tx, env, computer)
+		result, err = PinAdmissionImage(ctx, tx, env, computer)
 		return err
 	})
 	if err != nil {
-		return ComputerImage{}, hideMissing(err)
+		return Image{}, hideMissing(err)
 	}
 	return result, nil
 }
 
-// PinImage participates in its caller's admission transaction. It acquires
+// PinAdmissionImage participates in its caller's admission transaction. It acquires
 // Environment and preparation owners before the Computer, so callers must invoke
 // it before acquiring existing Session-root or Computer locks. An error leaves
 // rollback responsibility with the caller.
-func PinImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (ComputerImage, error) {
-	var result ComputerImage
+func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (Image, error) {
+	var result Image
 	var locked uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 		return result, err
@@ -137,20 +137,20 @@ func LockImageSpecSecrets(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) e
 	return rows.Err()
 }
 
-func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUID) (ComputerImage, uuid.UUID, error) {
-	result := ComputerImage{ID: image}
+func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUID) (Image, uuid.UUID, error) {
+	result := Image{ID: image}
 	var rootID uuid.UUID
 	var captured string
 	err := tx.QueryRow(ctx, `SELECT i.image_build_id,i.seq,i.root_id,p.capture_root,`+DiskRootColumns+` FROM images i
  JOIN disk_roots r ON (r.environment_id,r.id)=(i.environment_id,i.root_id)
  JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
- WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.PreparationID, &result.Sequence, &rootID, &captured}, DiskRootFields(&result.Root)...)...)
+ WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.ImageBuildID, &result.Sequence, &rootID, &captured}, DiskRootFields(&result.Root)...)...)
 	if err != nil {
-		return ComputerImage{}, uuid.Nil(), err
+		return Image{}, uuid.Nil(), err
 	}
 	identity, err := result.Root.Digest()
 	if err != nil || identity != captured {
-		return ComputerImage{}, uuid.Nil(), ErrConflict
+		return Image{}, uuid.Nil(), ErrConflict
 	}
 	return result, rootID, nil
 }

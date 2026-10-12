@@ -122,7 +122,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	}
 	// Complete a real retention/reclamation pass before readiness on every
 	// incarnation, and continue the normal loops while requests execute.
-	if err := computer.ReconcileComputerDiskRetention(ctx, pool); err != nil {
+	if err := computer.ReconcileDiskRetention(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	if err := reclaimer.Reconcile(ctx); err != nil {
@@ -131,7 +131,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	failures := make(chan error, 8)
 	for _, run := range []func(context.Context) error{
 		reclaimer.Run,
-		func(ctx context.Context) error { return computer.RunComputerDiskRetention(ctx, pool, log) },
+		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return allocator.Run(ctx, log) },
 		func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) },

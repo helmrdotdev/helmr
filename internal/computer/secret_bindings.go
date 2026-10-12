@@ -105,19 +105,19 @@ func RegisterSecretBindings(ctx context.Context, tx pgx.Tx, env uuid.UUID, bindi
 	return nil
 }
 
-type preparationBinding struct {
+type imageBuildBinding struct {
 	Secret             uuid.UUID
 	Kind, Target, Mode string
 	Origins            []string
 }
 
-func readPreparationBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) ([]preparationBinding, error) {
+func readImageBuildBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) ([]imageBuildBinding, error) {
 	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=$2 ORDER BY placement_kind,placement_target`, env, spec)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (preparationBinding, error) {
-		var b preparationBinding
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (imageBuildBinding, error) {
+		var b imageBuildBinding
 		err := row.Scan(&b.Secret, &b.Kind, &b.Target, &b.Mode, &b.Origins)
 		return b, err
 	})

@@ -33,14 +33,14 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != allocation.Epoch || found.EnvironmentID != f.env {
 		t.Fatalf("closed allocation disappeared: %+v", records)
 	}
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("closed preparation delivered: %v", err)
 	}
 	var untouched bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("listing granted authority or released custody: %v %v", untouched, err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: found.EnvironmentID, PreparationID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), computer.ImageBuildIdentity{EnvironmentID: found.EnvironmentID, ImageBuildID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
 		t.Fatal(err)
 	}
 	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
@@ -92,14 +92,14 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != 1 {
 		t.Fatalf("lost undelivered Computer disappeared: %+v", records)
 	}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("lost allocation delivered: %v", err)
 	}
 	next, err := ListHostAllocations(t.Context(), f.pool, *f.host(), &records[len(records)-1])
 	if err != nil || len(next) != 0 {
 		t.Fatalf("cursor did not advance: %+v %v", next, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
@@ -160,8 +160,8 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	correct := computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, Epoch: r.Epoch, InstanceID: r.InstanceID}
-	for _, change := range []func(*computer.PreparationIdentity){func(i *computer.PreparationIdentity) { i.Epoch++ }, func(i *computer.PreparationIdentity) { i.InstanceID = uuid.NewV7() }} {
+	correct := computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, Epoch: r.Epoch, InstanceID: r.InstanceID}
+	for _, change := range []func(*computer.ImageBuildIdentity){func(i *computer.ImageBuildIdentity) { i.Epoch++ }, func(i *computer.ImageBuildIdentity) { i.InstanceID = uuid.NewV7() }} {
 		wrong := correct
 		change(&wrong)
 		if _, err := a.DeliverPreparation(t.Context(), *f.host(), wrong); !errors.Is(err, ErrDenied) {

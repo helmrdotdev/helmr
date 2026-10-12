@@ -102,8 +102,8 @@ func recordCaptureForTest(ctx context.Context, pool db.TxBeginner, c computer.Ca
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return computer.RecordCapture(ctx, tx, c) })
 }
 
-func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) (computer.Preparation, error) {
-	var result computer.Preparation
+func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) (computer.ImageBuild, error) {
+	var result computer.ImageBuild
 	if env == uuid.Nil() || computerID == uuid.Nil() {
 		return result, ErrInvalidInput
 	}
@@ -113,7 +113,7 @@ func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, e
 		return err
 	})
 	if err != nil {
-		return computer.Preparation{}, hideMissing(err)
+		return computer.ImageBuild{}, hideMissing(err)
 	}
 	return result, nil
 }
@@ -268,8 +268,8 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 	}))
 }
 
-func preparationIdentity(e computer.PreparationExecutor) computer.PreparationIdentity {
-	return computer.PreparationIdentity{EnvironmentID: e.EnvironmentID, PreparationID: e.PreparationID, InstanceID: e.InstanceID, Epoch: e.Epoch}
+func preparationIdentity(e computer.ImageBuildExecutor) computer.ImageBuildIdentity {
+	return computer.ImageBuildIdentity{EnvironmentID: e.EnvironmentID, ImageBuildID: e.ImageBuildID, InstanceID: e.InstanceID, Epoch: e.Epoch}
 }
 
 func sameLifetime(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

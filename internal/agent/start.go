@@ -38,16 +38,16 @@ type StartRequest struct {
 	Input          json.RawMessage
 }
 
-func Start(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, pool, trust, caller, req, "create")
 }
-func Spawn(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Spawn(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, pool, trust, caller, req, "spawn")
 }
 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
-func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
+func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
 	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return Admission{}, ErrInvalidInput
 	}

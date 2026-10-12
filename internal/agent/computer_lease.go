@@ -15,7 +15,7 @@ import (
 // ObserveComputerStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, invalidCheckpoint uuid.UUID) error {
+func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint uuid.UUID) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -142,7 +142,7 @@ func loseSessionProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalSto
 
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
-func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.ComputerLeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
+func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
 	members, err := lockComputerCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err

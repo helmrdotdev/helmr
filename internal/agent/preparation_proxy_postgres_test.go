@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, computer.PreparationExecutor, *Allocator, string) {
+func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, computer.ImageBuildExecutor, *Allocator, string) {
 	t.Helper()
 	f, p, a := preparationAllocationFixture(t)
 	marker, err := secretbinding.Placeholder("protected")
@@ -27,7 +27,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, co
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
+	delivery, err := a.DeliverPreparation(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,31 +36,31 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, co
 
 func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	f, ref, a, marker := protectedPreparationAllocationFixture(t)
-	capture, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
+	capture, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
 	if err != nil || capture.Env["TOKEN"] != marker || len(capture.Env) != 1 || len(capture.Trust.Certificate) == 0 {
 		t.Fatalf("public trust capture: %+v %v", capture.Env, err)
 	}
-	if _, err := a.AllocatePreparation(t.Context(), f.env, ref.PreparationID, f.worker); err != nil {
+	if _, err := a.AllocatePreparation(t.Context(), f.env, ref.ImageBuildID, f.worker); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
+	replay, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
 	if err != nil || !bytes.Equal(capture.Trust.Certificate, replay.Trust.Certificate) || !bytes.Equal(capture.Trust.PrivateKeyCiphertext, replay.Trust.PrivateKeyCiphertext) {
 		t.Fatal("retry replaced trust")
 	}
 	resolve := func(origin string, markers []string) error {
-		_, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
+		_, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
 		return err
 	}
 	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("value available before exposure commit: %v", err)
 	}
-	if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-proxy"); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
+	rows, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,10 +85,10 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	}
 	stale := *f.host()
 	stale.HostClaimVersion++
-	if _, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, stale, ref.InstanceID); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, stale, ref.InstanceID); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale CA claims: %v", err)
 	}
-	if _, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, stale, ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, stale, ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale value claims: %v", err)
 	}
 	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
@@ -109,12 +109,12 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 	for _, transition := range []string{"capture", "failure", "physical stop", "deadline", "host epoch", "revocation"} {
 		t.Run(transition, func(t *testing.T) {
 			f, ref, _, marker := protectedPreparationAllocationFixture(t)
-			if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+			if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 				t.Fatal(err)
 			}
 			switch transition {
 			case "capture":
-				broker, _ := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+				broker, _ := computer.NewImageBuildKeyBroker(f.pool, preparationWrapper(t))
 				key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 				if err != nil {
 					t.Fatal(err)
@@ -124,7 +124,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				publisher, err := computer.NewPreparationPublisher(f.pool, remote)
+				publisher, err := computer.NewImageBuildPublisher(f.pool, remote)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -132,39 +132,39 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "failure":
-				if err := computer.FailPreparation(t.Context(), f.pool, *f.host(), ref, "preparation_failed"); err != nil {
+				if err := computer.FailImageBuild(t.Context(), f.pool, *f.host(), ref, "preparation_failed"); err != nil {
 					t.Fatal(err)
 				}
 			case "physical stop":
-				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: ref.EnvironmentID, PreparationID: ref.PreparationID, InstanceID: ref.InstanceID, Epoch: ref.Epoch}); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), computer.ImageBuildIdentity{EnvironmentID: ref.EnvironmentID, ImageBuildID: ref.ImageBuildID, InstanceID: ref.InstanceID, Epoch: ref.Epoch}); err != nil {
 					t.Fatal(err)
 				}
 			case "deadline":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID)
-				if err := expirePreparation(t.Context(), f.pool, f.env, ref.PreparationID); err != nil {
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID)
+				if err := expirePreparation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			case "host epoch":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.worker)
-				if err := expirePreparation(t.Context(), f.pool, f.env, ref.PreparationID); err != nil {
+				if err := expirePreparation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			case "revocation":
 				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
 					t.Fatal(err)
 				}
-				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, ref.PreparationID); err != nil {
+				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, ErrDenied) {
 				t.Fatalf("closed authority leaf: %v", err)
 			}
-			if _, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
 				t.Fatalf("closed authority value: %v", err)
 			}
 			var cleared, unfenced bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL AND proxy_ca_private_key_nonce IS NULL AND proxy_ca_private_key_ciphertext IS NULL AND proxy_ca_not_after IS NULL,fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID).Scan(&cleared, &unfenced); err != nil || !cleared {
+			if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL AND proxy_ca_private_key_nonce IS NULL AND proxy_ca_private_key_ciphertext IS NULL AND proxy_ca_not_after IS NULL,fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID).Scan(&cleared, &unfenced); err != nil || !cleared {
 				t.Fatalf("signer retained: %v", err)
 			}
 			if transition != "physical stop" && !unfenced {

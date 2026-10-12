@@ -162,12 +162,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+func Enqueue(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
 	result, err := admitSessionInput(ctx, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {

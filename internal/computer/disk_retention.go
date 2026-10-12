@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// RunComputerDiskRetention releases domain attachments before the independent
+// RunDiskRetention releases domain attachments before the independent
 // physical CAS sweep. Historical identities and publication receipts remain.
-func RunComputerDiskRetention(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunDiskRetention(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("computer disk retention requires database and logger")
 	}
@@ -21,7 +21,7 @@ func RunComputerDiskRetention(ctx context.Context, database db.TxDB, log *slog.L
 	defer ticker.Stop()
 	for {
 		passCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := ReconcileComputerDiskRetention(passCtx, database)
+		err := ReconcileDiskRetention(passCtx, database)
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			log.ErrorContext(ctx, "Computer disk retention failed", "error", err)
@@ -36,7 +36,7 @@ func RunComputerDiskRetention(ctx context.Context, database db.TxDB, log *slog.L
 
 // Candidate predicates remove stable ineligible owners before the batch bound.
 // Every candidate is checked again under its publication/restore owner lock.
-func ReconcileComputerDiskRetention(ctx context.Context, database db.TxDB) error {
+func ReconcileDiskRetention(ctx context.Context, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT l.environment_id,l.computer_id,l.epoch FROM computer_leases l JOIN computers owner ON owner.environment_id=l.environment_id AND owner.id=l.computer_id
  WHERE l.fenced_at IS NOT NULL AND l.base_root_id IS NOT NULL AND l.disk_released_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=l.environment_id AND s.computer_id=l.computer_id AND s.computer_lease_epoch=l.epoch AND s.status IN ('requested','captured'))
@@ -83,7 +83,7 @@ func ReconcileComputerDiskRetention(ctx context.Context, database db.TxDB) error
 	if err := releaseCheckpointObjects(ctx, database); err != nil {
 		failures = append(failures, err)
 	}
-	if err := releasePreparationDiskAttachments(ctx, database); err != nil {
+	if err := releaseImageBuildDiskAttachments(ctx, database); err != nil {
 		failures = append(failures, err)
 	}
 	if err := retireRevokedComputerImages(ctx, database); err != nil {

@@ -12,29 +12,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type PreparationStart struct {
+type ImageBuildStart struct {
 	Spec         artifact.ComputerPreparationSpec
 	DeploymentID uuid.UUID
 	BundleDigest string
 	RootfsDigest string
 }
 
-// ReadPreparationStart resolves executable inputs from the admitted immutable
+// ReadImageBuildStart resolves executable inputs from the admitted immutable
 // spec. A deployment is only a container for its verified bundle; no Session
 // or caller-selected Program can replace the preparation's content identity.
-func ReadPreparationStart(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor) (PreparationStart, error) {
+func ReadImageBuildStart(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildStart, error) {
 	if !ref.Valid() {
-		return PreparationStart{}, ErrInvalidInput
+		return ImageBuildStart{}, ErrInvalidInput
 	}
-	var result PreparationStart
+	var result ImageBuildStart
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		if err := lockPreparationSecretOwners(ctx, tx, ref); err != nil {
+		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
 			return err
 		}
-		if err := lockPreparationExecutorOnHost(ctx, tx, host, ref, true); err != nil {
+		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		var raw []byte
@@ -44,7 +44,7 @@ func ReadPreparationStart(ctx context.Context, database db.TxBeginner, host work
  JOIN template_definitions d ON (d.environment_id,d.image_spec_id)=(spec.environment_id,spec.id)
  JOIN deployments deployment ON (deployment.environment_id,deployment.id)=(d.environment_id,d.deployment_id)
  JOIN vm_platforms platform ON platform.id=p.vm_platform_id
- WHERE p.environment_id=$1 AND p.id=$2 ORDER BY d.deployment_id,d.template_id LIMIT 1`, ref.EnvironmentID, ref.PreparationID).Scan(&raw, &result.DeploymentID, &result.BundleDigest, &result.RootfsDigest, &sealed); err != nil {
+ WHERE p.environment_id=$1 AND p.id=$2 ORDER BY d.deployment_id,d.template_id LIMIT 1`, ref.EnvironmentID, ref.ImageBuildID).Scan(&raw, &result.DeploymentID, &result.BundleDigest, &result.RootfsDigest, &sealed); err != nil {
 			return err
 		}
 		if sealed {
@@ -61,7 +61,7 @@ func ReadPreparationStart(ctx context.Context, database db.TxBeginner, host work
 		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
 	})
 	if err != nil {
-		return PreparationStart{}, hideMissing(err)
+		return ImageBuildStart{}, hideMissing(err)
 	}
 	return result, nil
 }

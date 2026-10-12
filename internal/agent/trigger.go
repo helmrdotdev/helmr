@@ -83,7 +83,7 @@ func evaluateTrigger(s triggerActivation, now time.Time) (triggerEvaluation, err
 // EvaluateTrigger serializes with Environment promotion. Occurrence identity,
 // admission (or its rejected/missed disposition), and the next cursor commit
 // together. The activation's pinned definition is never replaced by current defaults.
-func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, env, id uuid.UUID) error {
+func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, env, id uuid.UUID) error {
 	if env == uuid.Nil() || id == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -183,7 +183,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Com
 	})
 }
 
-func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.ComputerTrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
+func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return Admission{}, ErrSlackChannelUnavailable
 	}

@@ -59,9 +59,9 @@ type Server struct {
 	diagnosticBounds           diagnostic.Bounds
 	allocator                  *agent.Allocator
 	environmentExecutionLimits org.ExecutionLimits
-	allocationKeys             *computer.ComputerKeyBroker
-	preparationKeys            *computer.PreparationKeyBroker
-	preparationPublisher       *computer.PreparationPublisher
+	allocationKeys             *computer.KeyBroker
+	preparationKeys            *computer.ImageBuildKeyBroker
+	preparationPublisher       *computer.ImageBuildPublisher
 	savePublisher              *computer.SavePublisher
 	checkpointPublisher        *agent.CheckpointPublisher
 	log                        *slog.Logger
@@ -210,15 +210,15 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
 		return nil, errors.New("magic link delivery worker is required")
 	}
-	allocationKeys, err := computer.NewComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	allocationKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationKeys, err := computer.NewPreparationKeyBroker(cfg.TX, cfg.ComputerKeys)
+	preparationKeys, err := computer.NewImageBuildKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationPublisher, err := computer.NewPreparationPublisher(cfg.TX, cfg.CAS)
+	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}

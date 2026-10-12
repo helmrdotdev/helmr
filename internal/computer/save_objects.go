@@ -99,7 +99,7 @@ func (o saveObject) uploadedMatches(uploaded cas.Object) bool {
 // a private preparation. Authority is established by the owning operation.
 type saveObjectRetention struct {
 	environmentID, computerID, saveID pgtype.UUID
-	preparationID                     pgtype.UUID
+	buildID                           pgtype.UUID
 	leaseEpoch                        int64
 }
 
@@ -274,8 +274,8 @@ func (s saveObjectScope) lockMatching(ctx context.Context, tx pgx.Tx, object sav
 }
 
 func (s saveObjectScope) pin(ctx context.Context, tx pgx.Tx, object saveObject) error {
-	if s.preparationID.Valid {
-		_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,image_build_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
+	if s.buildID.Valid {
+		_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,image_build_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.buildID, object.digest)
 		return err
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
@@ -285,8 +285,8 @@ func (s saveObjectScope) pin(ctx context.Context, tx pgx.Tx, object saveObject) 
 func (r saveObjectRetention) requireRetained(ctx context.Context, tx pgx.Tx, object saveObject) error {
 	var retained bool
 	var err error
-	if r.preparationID.Valid {
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2 AND digest=$3)`, r.environmentID, r.preparationID, object.digest).Scan(&retained)
+	if r.buildID.Valid {
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2 AND digest=$3)`, r.environmentID, r.buildID, object.digest).Scan(&retained)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND save_id=$2 AND digest=$3)`, r.environmentID, r.saveID, object.digest).Scan(&retained)
 	}
@@ -414,7 +414,7 @@ func SaveStorageUnavailable(err error) error {
 // authenticated closure or objects retained by this same physical lease's saves.
 // Private preparations have no incremental base: only their own pins are admitted.
 func (s saveObjectScope) requireAdmittedObject(ctx context.Context, tx pgx.Tx, digest string) error {
-	if s.preparationID.Valid {
+	if s.buildID.Valid {
 		return s.requireRetained(ctx, tx, saveObject{digest: digest})
 	}
 	var admitted bool

@@ -46,7 +46,7 @@ func (server *Server) workerReadAgentCheckpoint(w http.ResponseWriter, r *http.R
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := agent.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), computer.ComputerLeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
+	result, err := agent.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

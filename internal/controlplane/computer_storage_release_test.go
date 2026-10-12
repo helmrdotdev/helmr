@@ -58,7 +58,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); err != nil {
 		t.Fatal(err)
 	}
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)
@@ -66,7 +66,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err := agent.ObserveComputerStopped(t.Context(), f.Pool, host, computer.ComputerLeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := agent.ObserveComputerStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)
@@ -75,7 +75,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	var wg sync.WaitGroup
 	cleanupErrors := make(chan error, 4)
 	for range 4 {
-		wg.Go(func() { cleanupErrors <- computer.ReconcileComputerDiskRetention(t.Context(), f.Pool) })
+		wg.Go(func() { cleanupErrors <- computer.ReconcileDiskRetention(t.Context(), f.Pool) })
 	}
 	wg.Wait()
 	close(cleanupErrors)
@@ -84,7 +84,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleted)
@@ -131,7 +131,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			if _, err := computer.Delete(t.Context(), f.Pool, computer.Deletion{Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := computer.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+			if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 				t.Fatal(err)
 			}
 			snapshot, err := computer.Read(t.Context(), f.Pool, scope, created.ComputerID)

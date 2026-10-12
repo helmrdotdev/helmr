@@ -23,7 +23,7 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			p := f.attach(t, f.waiter(t))
 			ref := f.claim(t, p)
 			if kind == "computer" {
-				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}

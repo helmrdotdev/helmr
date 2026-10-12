@@ -27,7 +27,7 @@ func ObserveProviderAbsentHostComputers(ctx context.Context, absence workergroup
 		return err
 	}
 	type allocation struct {
-		identity  computer.ComputerLeaseIdentity
+		identity  computer.LeaseIdentity
 		hostEpoch int64
 	}
 	rows, err := tx.Query(ctx, `SELECT environment_id,computer_id,allocation_id,epoch,worker_epoch FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL ORDER BY environment_id,computer_id,epoch`, host)

@@ -22,7 +22,7 @@ func ObserveRecoveredHostComputers(ctx context.Context, database db.TxDB, host w
 		return ErrInvalidInput
 	}
 	type stoppedAllocation struct {
-		identity  computer.ComputerLeaseIdentity
+		identity  computer.LeaseIdentity
 		hostEpoch int64
 	}
 	var allocations []stoppedAllocation

@@ -39,7 +39,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second',status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 	reconcile := func() {
 		t.Helper()
-		if err := computer.ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
+		if err := computer.ReconcileDiskRetention(t.Context(), f.pool); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -96,7 +96,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 func TestDiskRetentionKeepsPendingCheckpointSource(t *testing.T) {
 	f := readyCheckpointFixture(t)
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source stopped' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -128,7 +128,7 @@ func TestDiskRetentionSkipsLockedOwnerBeforeBatchBound(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if err := computer.ReconcileComputerDiskRetention(ctx, f.pool); err != nil {
+	if err := computer.ReconcileDiskRetention(ctx, f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var released bool

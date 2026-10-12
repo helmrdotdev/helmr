@@ -46,12 +46,12 @@ func preparationWrapper(t *testing.T) *computerkey.Local {
 func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 	f := newPreparationFixture(t)
 	ref := f.claim(t, f.attach(t, f.waiter(t)))
-	broker, err := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+	broker, err := computer.NewImageBuildKeyBroker(f.pool, preparationWrapper(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const n = 8
-	results := make(chan computer.PreparationKey, n)
+	results := make(chan computer.ImageBuildKey, n)
 	failures := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
@@ -65,7 +65,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var first computer.PreparationKey
+	var first computer.ImageBuildKey
 	for k := range results {
 		if first.Key == nil {
 			first = k
@@ -78,7 +78,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 	}
 	defer clear(first.Key)
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.ImageBuildID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("keys %d: %v", count, err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET writer_computer_id=$3 WHERE environment_id=$1 AND id=$2`, f.env, first.ID, f.computer); err == nil {
@@ -104,13 +104,13 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				mutate := func() {
 					switch change {
 					case "expire":
-						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID)
+						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID)
 					case "revoke":
 						if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
 							t.Fatal(err)
 						}
 					case "stop":
-						if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+						if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -120,7 +120,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				} else {
 					provider.beforeUnwrap = mutate
 				}
-				broker, _ := computer.NewPreparationKeyBroker(f.pool, provider)
+				broker, _ := computer.NewImageBuildKeyBroker(f.pool, provider)
 				key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 				if !errors.Is(err, ErrDenied) || key.Key != nil {
 					t.Fatalf("key escaped: %v", err)
@@ -130,7 +130,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				}
 				if phase == "wrap" {
 					var count int
-					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 0 {
+					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
 						t.Fatalf("unauthorized insert %d: %v", count, err)
 					}
 				}

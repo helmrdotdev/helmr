@@ -47,7 +47,7 @@ func (s materializationSupply) firstExecution() error {
 // credential and remaining lifetime; it cannot renew or resurrect authority.
 type PreparationDelivery struct {
 	computer.Allocation
-	Executor computer.PreparationExecutor
+	Executor computer.ImageBuildExecutor
 }
 type ComputerDelivery struct {
 	computer.ComputerAllocation
@@ -79,11 +79,11 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	return materializationSupply{admitting: admitting, draining: draining, healthy: healthy, hostDrainContinuation: hostDrainContinuation}, nil
 }
 
-func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.HostPrincipal, identity computer.PreparationIdentity) (PreparationDelivery, error) {
-	if identity.EnvironmentID == uuid.Nil() || identity.PreparationID == uuid.Nil() || identity.InstanceID == uuid.Nil() || identity.Epoch <= 0 {
+func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.HostPrincipal, identity computer.ImageBuildIdentity) (PreparationDelivery, error) {
+	if identity.EnvironmentID == uuid.Nil() || identity.ImageBuildID == uuid.Nil() || identity.InstanceID == uuid.Nil() || identity.Epoch <= 0 {
 		return PreparationDelivery{}, ErrInvalidInput
 	}
-	env, preparation := identity.EnvironmentID, identity.PreparationID
+	env, preparation := identity.EnvironmentID, identity.ImageBuildID
 	var result PreparationDelivery
 	err := db.RunTx(ctx, a.database, func(tx pgx.Tx) error {
 		if err := allocationLockTimeout(ctx, tx); err != nil {
@@ -128,7 +128,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 				return err
 			}
 		}
-		result = PreparationDelivery{Allocation: r, Executor: computer.PreparationExecutor{EnvironmentID: env, PreparationID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
+		result = PreparationDelivery{Allocation: r, Executor: computer.ImageBuildExecutor{EnvironmentID: env, ImageBuildID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
 		return nil
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 	return result, nil
 }
 
-func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity) (ComputerDelivery, error) {
+func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPrincipal, identity computer.LeaseIdentity) (ComputerDelivery, error) {
 	if !identity.Valid() {
 		return ComputerDelivery{}, ErrInvalidInput
 	}
@@ -196,7 +196,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 // ObserveFreshComputerReady accepts the owning Host's exact materialization
 // receipt before any Session process can be admitted. Restores have their own
 // checkpoint-member validation and may not use this fresh-boot transition.
-func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, shape computer.AllocationShape, base string) error {
+func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, shape computer.AllocationShape, base string) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}

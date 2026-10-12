@@ -530,7 +530,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	}
 	// Deletion acceptance does not release the retained root or reservation.
 	// Complete the normal collector pass before expecting a deleted tombstone.
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err = computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
@@ -580,7 +580,7 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if selector == "" || selector == marker || !bytes.Equal(first.ProxyCA, trust.Certificate) {
 		t.Fatal("missing logical owner selector")
 	}
-	values, err := computer.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
+	values, err := computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
 	if err != nil || len(values) != 1 {
 		t.Fatalf("resolve: %d %v", len(values), err)
 	}
@@ -591,17 +591,17 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if err != nil || retry.Start == nil || retry.Start.ProtectedEnv["PROTECTED_TOKEN"] != selector {
 		t.Fatalf("selector changed: %+v %v", retry, err)
 	}
-	current, err := computer.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
+	current, err := computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
 	if err != nil || len(current) != 1 || current[0].VersionID != values[0].VersionID {
 		t.Fatalf("pin changed %+v %v", current, err)
 	}
-	if _, err = computer.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
 		t.Fatal("wrong origin resolved")
 	}
 	if _, err = Cancel(t.Context(), f.Pool, f.ref(id)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = computer.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err == nil {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err == nil {
 		t.Fatal("stopping owner resolved")
 	}
 }

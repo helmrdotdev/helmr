@@ -15,7 +15,7 @@ import (
 
 // The instance is immutable and belongs to exactly one physical allocation.
 // Routing is not authorization: both captures below establish fresh authority.
-func IsPreparationProxyInstance(ctx context.Context, database db.DBTX, instance uuid.UUID) (bool, error) {
+func IsImageBuildProxyInstance(ctx context.Context, database db.DBTX, instance uuid.UUID) (bool, error) {
 	var preparation, computer bool
 	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds WHERE allocation_id=$1),EXISTS(SELECT 1 FROM computer_leases WHERE allocation_id=$1)`, instance).Scan(&preparation, &computer); err != nil {
 		return false, err
@@ -28,7 +28,7 @@ func IsPreparationProxyInstance(ctx context.Context, database db.DBTX, instance 
 
 // Each capture runs as a fresh primary statement. A preceding lookup, a channel
 // credential, or a previously signed leaf never authorizes a later resolution.
-const preparationProxyAuthority = `WITH authority AS (
+const imageBuildProxyAuthority = `WITH authority AS (
  SELECT p.environment_id,p.id,p.image_spec_id,p.proxy_ca_certificate AS certificate,p.proxy_ca_not_after AS not_after,
  p.proxy_ca_private_key_nonce AS nonce,p.proxy_ca_private_key_ciphertext AS ciphertext,
  statement_timestamp() AS authorized_at,
@@ -47,45 +47,45 @@ const preparationProxyAuthority = `WITH authority AS (
    WHERE b.environment_id=p.environment_id AND b.image_spec_id=p.image_spec_id AND s.status<>'active')
 ) `
 
-type PreparationProxyTrust struct {
+type ImageBuildProxyTrust struct {
 	Trust   secret.ProxyTrust
 	Origins []string
 	Env     map[string]string
 }
 
-func CapturePreparationProxyTrust(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID) (PreparationProxyTrust, error) {
-	var result PreparationProxyTrust
+func CaptureImageBuildProxyTrust(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID) (ImageBuildProxyTrust, error) {
+	var result ImageBuildProxyTrust
 	var expiry *time.Time
 	var current bool
 	var env []byte
-	err := database.QueryRow(ctx, preparationProxyAuthority+`SELECT a.environment_id,a.id,a.certificate,a.not_after,a.nonce,a.ciphertext,a.claims_current,
+	err := database.QueryRow(ctx, imageBuildProxyAuthority+`SELECT a.environment_id,a.id,a.certificate,a.not_after,a.nonce,a.ciphertext,a.claims_current,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.image_spec_id=a.image_spec_id AND b.mode='protected'),
  COALESCE((SELECT jsonb_object_agg(b.placement_target,b.placeholder) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.image_spec_id=a.image_spec_id AND b.mode='protected'),'{}'::jsonb)
  FROM authority a`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion).Scan(&result.Trust.EnvironmentID, &result.Trust.PreparationID, &result.Trust.Certificate, &expiry, &result.Trust.PrivateKeyNonce, &result.Trust.PrivateKeyCiphertext, &current, &result.Origins, &env)
 	if err != nil {
-		return PreparationProxyTrust{}, hideMissing(err)
+		return ImageBuildProxyTrust{}, hideMissing(err)
 	}
 	if !current {
-		return PreparationProxyTrust{}, workergroup.ErrStaleClaims
+		return ImageBuildProxyTrust{}, workergroup.ErrStaleClaims
 	}
 	if expiry != nil {
 		result.Trust.NotAfter = *expiry
 	}
 	if err := json.Unmarshal(env, &result.Env); err != nil {
-		return PreparationProxyTrust{}, err
+		return ImageBuildProxyTrust{}, err
 	}
 	if len(result.Origins) > 0 {
 		if err := secret.ValidateProxyTrust(result.Trust.Certificate, result.Trust.NotAfter, time.Now()); err != nil {
-			return PreparationProxyTrust{}, err
+			return ImageBuildProxyTrust{}, err
 		}
 	}
 	return result, nil
 }
 
-// CapturePreparationProtectedSecrets selects only already exposed versions.
+// CaptureImageBuildProtectedSecrets selects only already exposed versions.
 // Origin, current revocation, complete selector coverage and expiry remain checked
 // for every request, even when the host reuses a previously issued TLS leaf.
-func CapturePreparationProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
+func CaptureImageBuildProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
 	canonical, err := secretbinding.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
 		return nil, ErrInvalidInput
@@ -93,7 +93,7 @@ func CapturePreparationProtectedSecrets(ctx context.Context, database db.DBTX, h
 	if err := secret.ValidateProtectedSelectors(selectors); err != nil {
 		return nil, ErrInvalidInput
 	}
-	rows, err := database.Query(ctx, preparationProxyAuthority+`SELECT b.placeholder,a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
+	rows, err := database.Query(ctx, imageBuildProxyAuthority+`SELECT b.placeholder,a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
  FROM authority a JOIN secret_bindings b ON b.environment_id=a.environment_id AND b.image_spec_id=a.image_spec_id
  JOIN secret_exposures x ON x.environment_id=a.environment_id AND x.image_build_id=a.id AND x.secret_id=b.secret_id
  JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id

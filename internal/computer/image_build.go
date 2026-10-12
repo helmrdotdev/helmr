@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Preparation identifies one execution of immutable inputs. Its outcome and its
+// ImageBuild identifies one execution of immutable inputs. Its outcome and its
 // physical executor's fence are distinct; neither expiry nor failure proves stop.
-type Preparation struct {
+type ImageBuild struct {
 	EnvironmentID uuid.UUID
 	ID            uuid.UUID
 	SpecID        uuid.UUID
@@ -31,8 +31,8 @@ type Preparation struct {
 // Environment and preparation owners before the Computer, so callers must invoke
 // it before acquiring existing Session-root or Computer locks. An error leaves
 // rollback responsibility with the caller.
-func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (Preparation, error) {
-	var result Preparation
+func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (ImageBuild, error) {
+	var result ImageBuild
 	var locked uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 		return result, err
@@ -77,7 +77,7 @@ func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
  JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.image_spec_id=$2
  AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
- AND `+preparationSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
+ AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
 			return result, err
 		}
 		if successorPending {
@@ -106,44 +106,44 @@ func LockImageSpec(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) error {
 	var locked uuid.UUID
 	return tx.QueryRow(ctx, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, spec).Scan(&locked)
 }
-func ReadImageBuild(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (Preparation, error) {
-	result := Preparation{EnvironmentID: env, ID: id}
+func ReadImageBuild(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (ImageBuild, error) {
+	result := ImageBuild{EnvironmentID: env, ID: id}
 	err := tx.QueryRow(ctx, `SELECT image_spec_id,status,deadline_at FROM image_builds WHERE environment_id=$1 AND id=$2`, env, id).Scan(&result.SpecID, &result.Status, &result.Deadline)
 	return result, err
 }
 
-// PreparationExecutor is the exact private allocation selected by the trusted
+// ImageBuildExecutor is the exact private allocation selected by the trusted
 // allocator. The allocator retains this identity and credential across retries;
 // neither a new connection nor an expired lease permits another execution.
-type PreparationExecutor struct {
+type ImageBuildExecutor struct {
 	EnvironmentID     uuid.UUID
-	PreparationID     uuid.UUID
+	ImageBuildID      uuid.UUID
 	InstanceID        uuid.UUID
 	Epoch             int64
 	ChannelCredential []byte
 }
 
-func (e PreparationExecutor) Valid() bool {
-	return e.EnvironmentID != uuid.Nil() && e.PreparationID != uuid.Nil() && e.InstanceID != uuid.Nil() && e.Epoch > 0 && len(e.ChannelCredential) == 32
+func (e ImageBuildExecutor) Valid() bool {
+	return e.EnvironmentID != uuid.Nil() && e.ImageBuildID != uuid.Nil() && e.InstanceID != uuid.Nil() && e.Epoch > 0 && len(e.ChannelCredential) == 32
 }
 
 // Host operations follow supply -> Secrets (if any) -> spec -> attempt. They do
 // not acquire Environment or Computer locks. Waiter settlement takes spec locks
 // before its complete Session-root/Computer set and the deciding attempt locks.
-func lockPreparationExecutor(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref PreparationExecutor, live bool) error {
+func lockImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref ImageBuildExecutor, live bool) error {
 	if !ref.Valid() {
 		return ErrInvalidInput
 	}
 	if err := LockHost(ctx, tx, host); err != nil {
 		return err
 	}
-	return lockPreparationExecutorOnHost(ctx, tx, host, ref, live)
+	return lockImageBuildExecutorOnHost(ctx, tx, host, ref, live)
 }
 
-// lockPreparationExecutorOnHost requires the caller to hold LockHost,
+// lockImageBuildExecutorOnHost requires the caller to hold LockHost,
 // allowing declared Secret locks to be acquired before the spec/attempt locks.
-func lockPreparationExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref PreparationExecutor, live bool) error {
-	p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.PreparationID)
+func lockImageBuildExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref ImageBuildExecutor, live bool) error {
+	p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 	if err != nil {
 		return err
 	}
@@ -156,13 +156,13 @@ func lockPreparationExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergr
 	}
 	return CheckImageBuildExecutor(ctx, tx, host, ref, live)
 }
-func CheckImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref PreparationExecutor, live bool) error {
+func CheckImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref ImageBuildExecutor, live bool) error {
 	var digest []byte
 	var valid bool
 	err := tx.QueryRow(ctx, `SELECT channel_credential_digest,COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND allocation_id=$6
   AND (NOT $7 OR (status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp() AND executor_expires_at>clock_timestamp()
    AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE x.environment_id=$1 AND x.image_build_id=$2 AND s.status='revoked'))), false)
-  FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
+  FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
 	if err != nil {
 		return err
 	}
@@ -172,14 +172,14 @@ func CheckImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	}
 	return nil
 }
-func RenewPreparation(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor) (time.Time, error) {
+func RenewImageBuild(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (time.Time, error) {
 	var expires time.Time
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockPreparationExecutor(ctx, tx, host, ref, true); err != nil {
+		if err := lockImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `UPDATE image_builds SET executor_expires_at=LEAST(deadline_at,GREATEST(executor_expires_at,clock_timestamp()+interval '1 minute'))
-   WHERE environment_id=$1 AND id=$2 RETURNING executor_expires_at`, ref.EnvironmentID, ref.PreparationID).Scan(&expires)
+   WHERE environment_id=$1 AND id=$2 RETURNING executor_expires_at`, ref.EnvironmentID, ref.ImageBuildID).Scan(&expires)
 	})
 	if err != nil {
 		return time.Time{}, hideMissing(err)
@@ -201,7 +201,7 @@ type ExposedSecret struct {
 	Ciphertext     []byte
 }
 
-func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor) ([]ExposedSecret, error) {
+func RecordImageBuildExposure(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) ([]ExposedSecret, error) {
 	if !ref.Valid() {
 		return nil, ErrInvalidInput
 	}
@@ -212,10 +212,10 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 		}
 		var spec uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT s.id FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
-   WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&spec); err != nil {
+   WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.ImageBuildID).Scan(&spec); err != nil {
 			return err
 		}
-		bindings, err := readPreparationBindings(ctx, tx, ref.EnvironmentID, spec)
+		bindings, err := readImageBuildBindings(ctx, tx, ref.EnvironmentID, spec)
 		if err != nil {
 			return err
 		}
@@ -255,20 +255,20 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID).Scan(&locked); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.ImageBuildID).Scan(&locked); err != nil {
 			return err
 		}
 		if err := CheckImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		var sealed bool
-		if err := tx.QueryRow(ctx, `SELECT logical_bytes IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&sealed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT logical_bytes IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID).Scan(&sealed); err != nil {
 			return err
 		}
 		if sealed {
 			return ErrDenied
 		}
-		rows, err := tx.Query(ctx, `SELECT secret_id,version_id FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, ref.EnvironmentID, ref.PreparationID)
+		rows, err := tx.Query(ctx, `SELECT secret_id,version_id FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, ref.EnvironmentID, ref.ImageBuildID)
 		if err != nil {
 			return err
 		}
@@ -298,7 +298,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			versions = prior // Reconnect never replaces an attempt's already exposed version.
 		} else {
 			for _, id := range ids {
-				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.PreparationID, id, versions[id]); err != nil {
+				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]); err != nil {
 					return err
 				}
 			}
@@ -322,43 +322,43 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 	return result, nil
 }
 
-// FailPreparation records an executor-observed failure without releasing its
+// FailImageBuild records an executor-observed failure without releasing its
 // writer exclusion. Late reports can reconcile the original terminal outcome.
-func FailPreparation(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor, code string) error {
+func FailImageBuild(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor, code string) error {
 	if code == "" || len(code) > 256 || !utf8.ValidString(code) {
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockPreparationExecutor(ctx, tx, host, ref, false); err != nil {
+		if err := lockImageBuildExecutor(ctx, tx, host, ref, false); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3
-   WHERE environment_id=$1 AND id=$2 AND status='running'`, ref.EnvironmentID, ref.PreparationID, code)
+   WHERE environment_id=$1 AND id=$2 AND status='running'`, ref.EnvironmentID, ref.ImageBuildID, code)
 		return err
 	}))
 }
 
-// PreparationIdentity names physical custody independently of execution authority.
+// ImageBuildIdentity names physical custody independently of execution authority.
 // A Host may have received only this identity before a delivery became ineligible.
-type PreparationIdentity struct {
+type ImageBuildIdentity struct {
 	EnvironmentID uuid.UUID
-	PreparationID uuid.UUID
+	ImageBuildID  uuid.UUID
 	InstanceID    uuid.UUID
 	Epoch         int64
 }
 
-// ObservePreparationStopped accepts only the owning Host's joined physical VM
+// ObserveImageBuildStopped accepts only the owning Host's joined physical VM
 // closure. It does not need an execution credential: delivery may never have
 // arrived. Provider absence and successor cleanup have separate proof paths.
-func ObservePreparationStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationIdentity) error {
-	if ref.EnvironmentID == uuid.Nil() || ref.PreparationID == uuid.Nil() || ref.InstanceID == uuid.Nil() || ref.Epoch <= 0 {
+func ObserveImageBuildStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildIdentity) error {
+	if ref.EnvironmentID == uuid.Nil() || ref.ImageBuildID == uuid.Nil() || ref.InstanceID == uuid.Nil() || ref.Epoch <= 0 {
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.PreparationID)
+		p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 		if err != nil {
 			return err
 		}
@@ -367,13 +367,13 @@ func ObservePreparationStopped(ctx context.Context, pool db.TxBeginner, host wor
 		}
 		var owned bool
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND allocation_id=$6,false)
- FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID).Scan(&owned); err != nil {
+ FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.ImageBuildID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID).Scan(&owned); err != nil {
 			return err
 		}
 		if !owned {
 			return ErrDenied
 		}
-		return RecordImageBuildStopped(ctx, tx, ref.EnvironmentID, ref.PreparationID, "owning worker joined physical VM closure")
+		return RecordImageBuildStopped(ctx, tx, ref.EnvironmentID, ref.ImageBuildID, "owning worker joined physical VM closure")
 	}))
 }
 func RecordImageBuildStopped(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, evidence string) error {

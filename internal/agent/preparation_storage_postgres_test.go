@@ -20,8 +20,8 @@ import (
 
 type preparationPublicationTest struct {
 	f         preparationFixture
-	ref       computer.PreparationExecutor
-	publisher *computer.PreparationPublisher
+	ref       computer.ImageBuildExecutor
+	publisher *computer.ImageBuildPublisher
 	remote    *cas.File
 	inspected []blockformat.ObjectInspection
 }
@@ -39,22 +39,22 @@ func (p *preparationPublicationTest) Upload(ctx context.Context, d cas.Descripto
 	}
 	return p.remote.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }
-func newPreparationPublicationTest(t *testing.T) (*preparationPublicationTest, computer.PreparationKey) {
+func newPreparationPublicationTest(t *testing.T) (*preparationPublicationTest, computer.ImageBuildKey) {
 	t.Helper()
 	return preparationPublicationTestFor(t, newPreparationFixture(t))
 }
-func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*preparationPublicationTest, computer.PreparationKey) {
+func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*preparationPublicationTest, computer.ImageBuildKey) {
 	t.Helper()
 	ref := f.claim(t, f.attach(t, f.waiter(t)))
 	remote, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher, err := computer.NewPreparationPublisher(f.pool, remote)
+	publisher, err := computer.NewImageBuildPublisher(f.pool, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker, _ := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+	broker, _ := computer.NewImageBuildKeyBroker(f.pool, preparationWrapper(t))
 	key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 	if err != nil {
 		t.Fatal(err)
@@ -62,19 +62,19 @@ func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*prepara
 	t.Cleanup(func() { clear(key.Key) })
 	return &preparationPublicationTest{f: f, ref: ref, remote: remote, publisher: publisher}, key
 }
-func (p *preparationPublicationTest) capture(t *testing.T, key computer.PreparationKey) disk.VersionRoot {
+func (p *preparationPublicationTest) capture(t *testing.T, key computer.ImageBuildKey) disk.VersionRoot {
 	t.Helper()
 	return p.captureCapacity(t, key, disk.SeedCapacity)
 }
-func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.PreparationKey, capacity int64) disk.VersionRoot {
+func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.ImageBuildKey, capacity int64) disk.VersionRoot {
 	t.Helper()
-	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, capacity); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, ErrDenied) || values != nil {
 		t.Fatalf("sealed delivery: %v", err)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "disk")
@@ -142,13 +142,13 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var succeeded, unfenced bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
 		t.Fatalf("publication fenced executor: %v", err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
+	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID)
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "lost response replay"); err != nil {
 		t.Fatal(err)
 	}
@@ -180,17 +180,17 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 			t.Fatal(err)
 		}
 		var seq, count int64
-		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM images WHERE environment_id=$1) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&seq, &count); err != nil || seq != want || count != want {
+		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM images WHERE environment_id=$1) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&seq, &count); err != nil || seq != want || count != want {
 			t.Fatalf("image sequence %d count %d: %v", seq, count, err)
 		}
 		if want == 2 {
 			break
 		}
-		if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+		if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 			t.Fatal(err)
 		}
 		p.ref = p.f.claim(t, p.f.attach(t, p.f.waiter(t)))
-		broker, _ := computer.NewPreparationKeyBroker(p.f.pool, preparationWrapper(t))
+		broker, _ := computer.NewImageBuildKeyBroker(p.f.pool, preparationWrapper(t))
 		var err error
 		key, err = broker.WriteKey(t.Context(), *p.f.host(), p.ref)
 		if err != nil {
@@ -207,11 +207,11 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 			root := p.capture(t, key)
 			switch change {
 			case "stop":
-				if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+				if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 					t.Fatal(err)
 				}
 			case "expire":
-				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
+				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID)
 			case "revoke":
 				if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
@@ -221,7 +221,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 				t.Fatalf("late publication: %v", err)
 			}
 			var count int
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("image leaked %d: %v", count, err)
 			}
 		})
@@ -230,7 +230,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 
 func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	p, key := newPreparationPublicationTest(t)
-	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {
@@ -249,7 +249,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	if err = p.Register(t.Context(), inspection); err != nil {
 		t.Fatal(err)
 	}
-	guarded, _ := computer.NewPreparationPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	guarded, _ := computer.NewImageBuildPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		// A separate transaction must complete while Stat is in flight.
 		revokeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -271,7 +271,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	p, _ := newPreparationPublicationTest(t)
 	unrelated := newSaveStorageFixture(t, p.f.fixture)
-	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {
@@ -285,7 +285,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("retained unauthorized graph: %d %v", count, err)
 	}
 }

@@ -27,7 +27,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.f.env, f.f.computer)
-	if err := ObserveComputerStopped(t.Context(), f.f.pool, *f.f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.f.pool, *f.f.host(), computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.f.pool.Begin(t.Context())
@@ -38,7 +38,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 	if _, err := blocker.Exec(t.Context(), `SELECT id FROM checkpoints WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, f.f.env, f.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -51,7 +51,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 	if err := blocker.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var released bool

@@ -104,7 +104,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 		t.Fatal("shared selector cannot distinguish process pins")
 	}
 	resolve := func(selectors []string) (map[string][]byte, error) {
-		rows, err := computer.CaptureComputerProtectedSecrets(t.Context(), f.pool, *f.host(), instance, "https://api.example.com", selectors)
+		rows, err := computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), instance, "https://api.example.com", selectors)
 		if err != nil {
 			return nil, err
 		}
@@ -214,10 +214,10 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	selectors := []string{first.ProtectedEnv["TOKEN"]}
-	if _, err = computer.CaptureComputerProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, ErrDenied) {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, ErrDenied) {
 		t.Fatalf("old source: %v", err)
 	}
-	rows, err := computer.CaptureComputerProtectedSecrets(t.Context(), f.pool, host, uuid.MustParse(p.Envelope.ComputerInstanceId), "https://api.example.com", selectors)
+	rows, err := computer.CaptureProtectedSecrets(t.Context(), f.pool, host, uuid.MustParse(p.Envelope.ComputerInstanceId), "https://api.example.com", selectors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 		t.Run(mode, func(t *testing.T) {
 			f, _, _, _, _, instance := runtimeSecretsFixture(t)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='acquiring' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-			if _, err := computer.CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), instance); err != nil {
+			if _, err := computer.CaptureProxyTrust(t.Context(), f.pool, *f.host(), instance); err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
@@ -331,7 +331,7 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 			case "admission-paused":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason='operator' WHERE id=$1`, f.worker)
 			}
-			_, err := computer.CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), instance)
+			_, err := computer.CaptureProxyTrust(t.Context(), f.pool, *f.host(), instance)
 			if mode == "host-draining" {
 				if err != nil {
 					t.Fatalf("committed acquiring allocation lost trust on Host drain: %v", err)
@@ -340,7 +340,7 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 				t.Fatalf("acquiring on unavailable supply: %v", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='active' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-			if _, err := computer.CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), instance); err != nil {
+			if _, err := computer.CaptureProxyTrust(t.Context(), f.pool, *f.host(), instance); err != nil {
 				t.Fatalf("active continuation blocked: %v", err)
 			}
 		})

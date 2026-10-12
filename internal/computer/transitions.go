@@ -48,8 +48,8 @@ func DeliverImageBuild(ctx context.Context, tx pgx.Tx, env, build, spec uuid.UUI
 	return delivered, expires, err
 }
 
-// FailImageBuild ends a build with an error code and wipes its proxy CA.
-func FailImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, code string) error {
+// TerminateImageBuild ends a build with an error code and wipes its proxy CA.
+func TerminateImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, code string) error {
 	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, build, code)
 	return err
 }

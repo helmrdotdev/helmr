@@ -59,7 +59,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		if deadline {
 			code = "deadline_exceeded"
 		}
-		return computer.FailImageBuild(ctx, tx, env, id, code)
+		return computer.TerminateImageBuild(ctx, tx, env, id, code)
 	}))
 }
 
@@ -371,7 +371,7 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 	// Computer's scan/settlement budget. The scan context only owns discovery.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := computer.PinComputerImage(ctx, database, env, computerID); err == nil {
+	if _, err := computer.PinImage(ctx, database, env, computerID); err == nil {
 		return nil
 	} else if !errors.Is(err, ErrNotReady) {
 		return err
@@ -383,7 +383,7 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 	if attached == nil {
 		return nil
 	}
-	_, err := computer.EnsurePreparationSuccessor(ctx, database, env, *attached)
+	_, err := computer.EnsureImageBuildSuccessor(ctx, database, env, *attached)
 	if errors.Is(err, ErrNotReady) {
 		return nil
 	}
@@ -396,7 +396,7 @@ func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, com
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, err := computer.PinImage(ctx, tx, env, computerID); err == nil {
+		if _, err := computer.PinAdmissionImage(ctx, tx, env, computerID); err == nil {
 			return nil
 		} else if !errors.Is(err, ErrNotReady) {
 			return err

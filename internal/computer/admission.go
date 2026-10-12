@@ -16,7 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type ComputerTrustIssuer interface {
+// TrustIssuer issues the proxy CA of a Computer that uses protected Secrets.
+type TrustIssuer interface {
 	GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error)
 }
 
@@ -28,15 +29,15 @@ type Limits struct {
 
 // CreateForAdmission creates the Computer of an admitted Session from the
 // Agent's template, copying the definition's Secret bindings.
-func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, limits Limits) (uuid.UUID, error) {
+func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, limits Limits) (uuid.UUID, error) {
 	return createComputer(ctx, tx, trust, env, deployment, key, limits, nil)
 }
 
-// CreateStandaloneComputer joins the external owner's transaction. Explicit
+// CreateStandalone joins the external owner's transaction. Explicit
 // runtime bindings are actual-Computer declarations; Agent-created Computers
 // instead copy their immutable definition bindings. Both share preparation,
 // trust, resource validation and reservation admission.
-func CreateStandaloneComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
+func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
 	var limits Limits
 	if err := tx.QueryRow(ctx, `SELECT max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms
  FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&limits.MaxCPU, &limits.MaxMemory, &limits.MaxStorage, &limits.PreparationTimeout); err != nil {
@@ -48,7 +49,7 @@ func CreateStandaloneComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrus
 	return createComputer(ctx, tx, trust, env, deployment, key, limits, &bindings)
 }
 
-func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, limits Limits, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
+func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, limits Limits, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
 	var spec, template uuid.UUID
 	var cpuMillis, memoryBytes int64
 	var diskBytes *int64
@@ -119,7 +120,7 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 		}
 	}
 
-	if _, err := PinImage(ctx, tx, env, id); err == nil {
+	if _, err := PinAdmissionImage(ctx, tx, env, id); err == nil {
 		return id, nil
 	} else if !errors.Is(err, ErrNotReady) {
 		return uuid.Nil(), err

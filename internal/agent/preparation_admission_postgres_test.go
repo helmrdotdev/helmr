@@ -50,7 +50,7 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, computerID, p.f.deployment); err != nil {
 			return err
 		}
-		selected, err := computer.PinImage(t.Context(), tx, p.f.env, computerID)
+		selected, err := computer.PinAdmissionImage(t.Context(), tx, p.f.env, computerID)
 		if err != nil {
 			return err
 		}
@@ -66,7 +66,7 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 	}
 	// The shared image survives another admission's rollback and remains usable.
 	fresh := p.f.waiter(t)
-	selected, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh)
+	selected, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, fresh)
 	if err != nil || selected.ID != image {
 		t.Fatalf("shared image lost: %v, %v", selected, err)
 	}
@@ -77,7 +77,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	originalComputer := f.waiter(t)
 	original := f.attach(t, originalComputer)
 	executor := f.claim(t, original)
-	if err := computer.FailPreparation(t.Context(), f.pool, *f.host(), executor, "prepare_failed"); err != nil {
+	if err := computer.FailImageBuild(t.Context(), f.pool, *f.host(), executor, "prepare_failed"); err != nil {
 		t.Fatal(err)
 	}
 	fresh := f.waiter(t)
@@ -96,7 +96,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached); err != nil || attached != nil {
 		t.Fatalf("unfenced executor admitted replacement: %v %v", attached, err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
 		t.Fatal(err)
 	}
 	reconcile()
@@ -147,7 +147,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	// Sort fresh demand before every attached waiter in the actual scan page.

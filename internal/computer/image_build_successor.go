@@ -13,7 +13,7 @@ import (
 // Shared by successor creation and fresh attachment under the recipe and Secret
 // owner locks. Fresh demand must not pre-empt an eligible attached chain's one
 // replacement and force two sequential preparations for the same current inputs.
-const preparationSuccessorEligibilitySQL = `p.successor_of IS NULL AND p.status='succeeded' AND p.fenced_at IS NOT NULL
+const imageBuildSuccessorEligibilitySQL = `p.successor_of IS NULL AND p.status='succeeded' AND p.fenced_at IS NOT NULL
  AND EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id)
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS(
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
@@ -29,11 +29,11 @@ const preparationSuccessorEligibilitySQL = `p.successor_of IS NULL AND p.status=
    AND c.preparation_deadline_at>clock_timestamp()
    AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms))`
 
-// EnsurePreparationSuccessor consumes the one automatic replacement allowed for
+// EnsureImageBuildSuccessor consumes the one automatic replacement allowed for
 // a successfully published image made stale solely by ordinary Secret rotation.
 // It never changes original Computer attachments, deadlines or reservations.
-func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, predecessor uuid.UUID) (Preparation, error) {
-	var result Preparation
+func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, predecessor uuid.UUID) (ImageBuild, error) {
+	var result ImageBuild
 	if env == uuid.Nil() || predecessor == uuid.Nil() {
 		return result, ErrInvalidInput
 	}
@@ -62,7 +62,7 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 			return err
 		}
 		var eligible bool
-		err = tx.QueryRow(ctx, `SELECT `+preparationSuccessorEligibilitySQL+`
+		err = tx.QueryRow(ctx, `SELECT `+imageBuildSuccessorEligibilitySQL+`
  FROM image_builds p JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.id=$2 FOR NO KEY UPDATE OF p`, env, predecessor).Scan(&eligible)
 		if err != nil {
@@ -109,7 +109,7 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 		return err
 	})
 	if err != nil {
-		return Preparation{}, hideMissing(err)
+		return ImageBuild{}, hideMissing(err)
 	}
 	return result, nil
 }

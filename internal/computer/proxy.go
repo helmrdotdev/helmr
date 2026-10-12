@@ -38,40 +38,40 @@ const computerProxyAuthority = `WITH authority AS (
    WHERE b.environment_id=c.environment_id AND b.computer_id=c.id AND s.status<>'active')
 ) `
 
-type ComputerProxyTrust struct {
+type ProxyTrust struct {
 	Trust   secret.ProxyTrust
 	Origins []string
 }
 
-func CaptureComputerProxyTrust(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID) (ComputerProxyTrust, error) {
-	var result ComputerProxyTrust
+func CaptureProxyTrust(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID) (ProxyTrust, error) {
+	var result ProxyTrust
 	var expiry *time.Time
 	var current bool
 	err := database.QueryRow(ctx, computerProxyAuthority+`SELECT a.environment_id,a.id,a.certificate,a.not_after,a.nonce,a.ciphertext,a.claims_current,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.computer_id=a.id AND b.mode='protected')
  FROM authority a`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion).Scan(&result.Trust.EnvironmentID, &result.Trust.ComputerID, &result.Trust.Certificate, &expiry, &result.Trust.PrivateKeyNonce, &result.Trust.PrivateKeyCiphertext, &current, &result.Origins)
 	if err != nil {
-		return ComputerProxyTrust{}, hideMissing(err)
+		return ProxyTrust{}, hideMissing(err)
 	}
 	if !current {
-		return ComputerProxyTrust{}, workergroup.ErrStaleClaims
+		return ProxyTrust{}, workergroup.ErrStaleClaims
 	}
 	if expiry != nil {
 		result.Trust.NotAfter = *expiry
 	}
 	if len(result.Origins) > 0 {
 		if err := secret.ValidateProxyTrust(result.Trust.Certificate, result.Trust.NotAfter, time.Now()); err != nil {
-			return ComputerProxyTrust{}, err
+			return ProxyTrust{}, err
 		}
 	}
 	return result, nil
 }
 
-// CaptureComputerProtectedSecrets resolves a logical owner pin only while that
+// CaptureProtectedSecrets resolves a logical owner pin only while that
 // owner remains eligible on the requesting physical lease.
 // Origin, current revocation, complete selector coverage and expiry remain checked
 // for every request, even when the host reuses a previously issued TLS leaf.
-func CaptureComputerProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
+func CaptureProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
 	canonical, err := secretbinding.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
 		return nil, ErrInvalidInput

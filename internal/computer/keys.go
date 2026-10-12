@@ -14,34 +14,34 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ComputerKeyBroker delivers only the retained root and certified key closure
+// KeyBroker delivers only the retained root and certified key closure
 // of an authenticated Host's exact physical allocation. Wrapping credentials
 // remain in the control plane; callers clear returned plaintext after use.
-type ComputerKeyBroker struct {
+type KeyBroker struct {
 	database db.TxBeginner
 	wrapper  DataKeyWrapper
 }
 
-func NewComputerKeyBroker(database db.TxBeginner, wrapper DataKeyWrapper) (*ComputerKeyBroker, error) {
+func NewKeyBroker(database db.TxBeginner, wrapper DataKeyWrapper) (*KeyBroker, error) {
 	if database == nil || wrapper == nil {
 		return nil, errors.New("computer keys require a database and wrapping provider")
 	}
-	return &ComputerKeyBroker{database: database, wrapper: wrapper}, nil
+	return &KeyBroker{database: database, wrapper: wrapper}, nil
 }
 
-type ComputerDiskKey struct {
+type DiskKey struct {
 	ID  uuid.UUID
 	Key []byte
 }
-type ComputerDiskSource struct {
+type DiskSource struct {
 	Scope       string
 	BaseVersion string
 	Root        disk.VersionRoot
 	WriteKeyID  uuid.UUID
-	Keys        []ComputerDiskKey
+	Keys        []DiskKey
 }
 
-func (s *ComputerDiskSource) Clear() {
+func (s *DiskSource) Clear() {
 	for _, key := range s.Keys {
 		clear(key.Key)
 	}
@@ -52,7 +52,7 @@ type computerKeyEnvelope struct {
 	envelope computerkey.Envelope
 }
 type computerDiskPin struct {
-	source    ComputerDiskSource
+	source    DiskSource
 	rootID    uuid.UUID
 	envelopes []computerKeyEnvelope
 }
@@ -61,25 +61,25 @@ type computerDiskPin struct {
 // a newer source, replaces an existing key, or renews execution authority.
 // Every provider operation occurs without SQL locks and is reauthorized before
 // any plaintext leaves this operation.
-func (b *ComputerKeyBroker) Source(ctx context.Context, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (_ ComputerDiskSource, resultErr error) {
+func (b *KeyBroker) Source(ctx context.Context, host workergroup.HostPrincipal, identity LeaseIdentity) (_ DiskSource, resultErr error) {
 	pin, err := b.pin(ctx, host, identity, nil, "")
 	if err != nil {
-		return ComputerDiskSource{}, err
+		return DiskSource{}, err
 	}
 	if pin.source.WriteKeyID == uuid.Nil() {
 		key := make([]byte, computerkey.Size)
 		if _, err := rand.Read(key); err != nil {
-			return ComputerDiskSource{}, err
+			return DiskSource{}, err
 		}
 		candidate := computerKeyEnvelope{id: uuid.NewV7()}
 		candidate.envelope, err = b.wrapper.Wrap(ctx, pin.source.Scope, candidate.id.String(), key)
 		clear(key)
 		if err != nil {
-			return ComputerDiskSource{}, err
+			return DiskSource{}, err
 		}
 		pin, err = b.pin(ctx, host, identity, &candidate, pin.source.Scope)
 		if err != nil {
-			return ComputerDiskSource{}, err
+			return DiskSource{}, err
 		}
 	}
 	source := pin.source
@@ -92,31 +92,31 @@ func (b *ComputerKeyBroker) Source(ctx context.Context, host workergroup.HostPri
 		key, err := b.wrapper.Unwrap(ctx, source.Scope, wrapped.id.String(), wrapped.envelope)
 		if err != nil {
 			clear(key)
-			return ComputerDiskSource{}, err
+			return DiskSource{}, err
 		}
 		if len(key) != computerkey.Size {
 			clear(key)
-			return ComputerDiskSource{}, errors.New("computer key provider returned invalid key length")
+			return DiskSource{}, errors.New("computer key provider returned invalid key length")
 		}
-		source.Keys = append(source.Keys, ComputerDiskKey{ID: wrapped.id, Key: key})
+		source.Keys = append(source.Keys, DiskKey{ID: wrapped.id, Key: key})
 	}
 	current, err := b.pin(ctx, host, identity, nil, source.Scope)
 	if err != nil {
-		return ComputerDiskSource{}, err
+		return DiskSource{}, err
 	}
 	if current.rootID != pin.rootID || current.source.Scope != source.Scope || current.source.BaseVersion != source.BaseVersion || current.source.Root != source.Root || current.source.WriteKeyID != source.WriteKeyID || len(current.envelopes) != len(pin.envelopes) {
-		return ComputerDiskSource{}, ErrConflict
+		return DiskSource{}, ErrConflict
 	}
 	for i, k := range pin.envelopes {
 		now := current.envelopes[i]
 		if now.id != k.id || now.envelope.WrappingKeyID != k.envelope.WrappingKeyID || !bytes.Equal(now.envelope.Ciphertext, k.envelope.Ciphertext) {
-			return ComputerDiskSource{}, ErrConflict
+			return DiskSource{}, ErrConflict
 		}
 	}
 	return source, nil
 }
 
-func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrincipal, identity ComputerLeaseIdentity, candidate *computerKeyEnvelope, expectedScope string) (computerDiskPin, error) {
+func (b *KeyBroker) pin(ctx context.Context, host workergroup.HostPrincipal, identity LeaseIdentity, candidate *computerKeyEnvelope, expectedScope string) (computerDiskPin, error) {
 	var result computerDiskPin
 	if !identity.Valid() {
 		return result, ErrInvalidInput
@@ -229,7 +229,7 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 	return result, nil
 }
 
-func checkComputerDiskAuthority(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) error {
+func checkComputerDiskAuthority(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, identity LeaseIdentity) error {
 	var live bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3
  AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 AND status IN ('acquiring','active','releasing')

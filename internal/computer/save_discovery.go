@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// NextComputerSave returns the oldest unresolved request for this exact writer.
+// NextSave returns the oldest unresolved request for this exact writer.
 // Checkpoint cuts remain owned by coherent capture; an earlier unresolved one
 // also blocks a later live cut. A due owner may admit one optional disk save
 // only after rechecking pending work under the Computer lock.
-func NextComputerSave(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity, backgroundDue bool) (*SaveRequest, error) {
+func NextSave(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity LeaseIdentity, backgroundDue bool) (*SaveRequest, error) {
 	if !identity.Valid() {
 		return nil, ErrInvalidInput
 	}
@@ -91,7 +91,7 @@ func NextComputerSave(ctx context.Context, database db.TxBeginner, host workergr
 }
 
 // The oldest request controls ordering even when a checkpoint owns its cut.
-func oldestComputerSave(ctx context.Context, tx pgx.Tx, identity ComputerLeaseIdentity) (*SaveRequest, bool, error) {
+func oldestComputerSave(ctx context.Context, tx pgx.Tx, identity LeaseIdentity) (*SaveRequest, bool, error) {
 	var save SaveRequest
 	var checkpoint bool
 	err := tx.QueryRow(ctx, `SELECT s.id,s.computer_id,s.computer_lease_epoch,s.seq,s.requested_at,

@@ -25,19 +25,19 @@ func TestPreparationImagePinCurrentVersionAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	computerID := p.f.waiter(t)
-	got, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, computerID)
-	if err != nil || got.PreparationID != p.ref.PreparationID {
+	got, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID)
+	if err != nil || got.ImageBuildID != p.ref.ImageBuildID {
 		t.Fatalf("pin: %v %v", got, err)
 	}
 	if _, err = p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, computerID)
+	replay, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID)
 	if err != nil || replay.ID != got.ID {
 		t.Fatalf("replay: %v %v", replay, err)
 	}
 	fresh := p.f.waiter(t)
-	if _, err = computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err = computer.PinImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("stale image: %v", err)
 	}
 	var unchanged bool
@@ -67,7 +67,7 @@ func TestPreparationImageAgeAndDeadline(t *testing.T) {
 			if tc.expired {
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, c)
 			}
-			_, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, c)
+			_, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, c)
 			if tc.want && err != nil || !tc.want && !errors.Is(err, ErrNotReady) {
 				t.Fatalf("pin: %v", err)
 			}
@@ -86,19 +86,19 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := computer.EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, original.ID); !errors.Is(err, ErrNotReady) {
+	if _, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, original.ID); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("unfenced replacement: %v", err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	const clients = 8
-	results := make(chan computer.Preparation, clients)
+	results := make(chan computer.ImageBuild, clients)
 	errs := make(chan error, clients)
 	var wg sync.WaitGroup
 	for range clients {
 		wg.Go(func() {
-			next, err := computer.EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
+			next, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
 			results <- next
 			errs <- err
 		})
@@ -111,7 +111,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var next computer.Preparation
+	var next computer.ImageBuild
 	for got := range results {
 		if next.ID != uuid.Nil() && next.ID != got.ID {
 			t.Fatal("duplicate successor")
@@ -126,7 +126,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 		t.Fatal("fresh demand did not join successor")
 	}
 	p.ref = p.f.claim(t, next)
-	broker, _ := computer.NewPreparationKeyBroker(p.f.pool, preparationWrapper(t))
+	broker, _ := computer.NewImageBuildKeyBroker(p.f.pool, preparationWrapper(t))
 	key, err := broker.WriteKey(t.Context(), *p.f.host(), p.ref)
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +136,8 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if err = p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified successor"); err != nil {
 		t.Fatal(err)
 	}
-	image, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, waiting)
-	if err != nil || image.PreparationID != next.ID {
+	image, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, waiting)
+	if err != nil || image.ImageBuildID != next.ID {
 		t.Fatalf("successor image: %v %v", image, err)
 	}
 	if receipt := p.f.attach(t, waiting); receipt.ID != original.ID {
@@ -146,13 +146,13 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if _, err = p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v3"), "rotate-again"); err != nil {
 		t.Fatal(err)
 	}
-	if err = computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err = computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = computer.EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, next.ID); !errors.Is(err, ErrNotReady) {
+	if _, err = computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, next.ID); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("third execution: %v", err)
 	}
-	if _, err = computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err = computer.PinImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("stale successor: %v", err)
 	}
 	// Independent demand may start again, but cannot rescue exhausted attachments.
@@ -168,10 +168,10 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if err = p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "new demand image"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err = computer.PinImage(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("exhausted demand crossed chains: %v", err)
 	}
-	if _, err = computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, independent); err != nil {
+	if _, err = computer.PinImage(t.Context(), p.f.pool, p.f.env, independent); err != nil {
 		t.Fatalf("independent demand: %v", err)
 	}
 }
@@ -182,13 +182,13 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 			p, key := newPreparationPublicationTest(t)
 			root := p.capture(t, key)
 			if reason == "failed" {
-				if err := computer.FailPreparation(t.Context(), p.f.pool, *p.f.host(), p.ref, "command_failed"); err != nil {
+				if err := computer.FailImageBuild(t.Context(), p.f.pool, *p.f.host(), p.ref, "command_failed"); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 				t.Fatal(err)
 			}
-			if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+			if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			if reason != "current" && reason != "age" {
@@ -206,11 +206,11 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 			case "expired-waiters":
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND initial_root_id IS NULL`, p.f.env)
 			}
-			if _, err := computer.EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, p.ref.PreparationID); !errors.Is(err, ErrNotReady) {
+			if _, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, p.ref.ImageBuildID); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("replacement for %s: %v", reason, err)
 			}
 			var count int
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1 AND successor_of=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1 AND successor_of=$2`, p.f.env, p.ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("unexpected successor %d: %v", count, err)
 			}
 		})
@@ -237,7 +237,7 @@ func TestPreparationImagePinSerializesSecretMutation(t *testing.T) {
 			result := make(chan error, 1)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			go func() { _, err := computer.PinComputerImage(ctx, p.f.pool, p.f.env, computerID); result <- err }()
+			go func() { _, err := computer.PinImage(ctx, p.f.pool, p.f.env, computerID); result <- err }()
 			for {
 				var waiting bool
 				if err = p.f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%SELECT s.id FROM secrets%')`).Scan(&waiting); err != nil {
@@ -289,18 +289,18 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
-	next, err := computer.EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
+	next, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.ref = p.f.claim(t, next)
-	broker, _ := computer.NewPreparationKeyBroker(p.f.pool, preparationWrapper(t))
+	broker, _ := computer.NewImageBuildKeyBroker(p.f.pool, preparationWrapper(t))
 	key, err = broker.WriteKey(t.Context(), *p.f.host(), p.ref)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	p := preparationResidentImage(t)
 	var blocked uuid.UUID
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2 AND initial_root_id IS NULL`, p.f.env, p.ref.PreparationID).Scan(&blocked); err != nil {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2 AND initial_root_id IS NULL`, p.f.env, p.ref.ImageBuildID).Scan(&blocked); err != nil {
 		t.Fatal(err)
 	}
 	// Give this pending candidate the first key without changing any other owner.
@@ -351,7 +351,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var otherComputer uuid.UUID
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, other.ref.PreparationID).Scan(&otherComputer); err != nil {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, other.ref.ImageBuildID).Scan(&otherComputer); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {

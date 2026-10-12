@@ -24,7 +24,7 @@ type ProcessIdentity struct {
 // A deleted Computer requests physical closure through the same stop response;
 // it remains charged until the worker acknowledges actual absence.
 // An empty page ends the scan; the next poll starts without a cursor.
-func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
+func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
 	if !identity.Valid() || after != nil && (after.SessionID == uuid.Nil() || after.Epoch <= 0) {
 		return nil, ErrInvalidInput
 	}

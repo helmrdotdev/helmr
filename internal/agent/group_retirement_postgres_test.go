@@ -59,7 +59,7 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			cp := readyCheckpointFixture(t)
 			f := cp.f
 			setGroupPrimary(t, f)
-			source := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
+			source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
 			if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +138,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
+	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
 	if err = ObserveComputerStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1); err != nil {
@@ -205,7 +205,7 @@ func stopGroupFixtureComputer(t *testing.T, f fixture) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -40,7 +40,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	for _, session := range []uuid.UUID{first, peer.SessionID} {
 		if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); err != nil {
 			t.Fatalf("committed initial assignment unavailable: %v", err)
@@ -84,7 +84,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+			identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 			if expired {
 				if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 					t.Fatal(err)
@@ -125,7 +125,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 
 func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
 	f, _, e := startingSessionFixture(t)
-	var identity computer.ComputerLeaseIdentity
+	var identity computer.LeaseIdentity
 	identity.EnvironmentID = f.env
 	identity.Epoch = e.LeaseEpoch
 	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.allocation_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
@@ -238,7 +238,7 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 		t.Fatalf("held session joined initial cohort: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", IdempotencyKey: "before-ready"}); err != nil {
 		t.Fatal(err)
 	}
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}

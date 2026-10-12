@@ -10,22 +10,22 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ComputerLeaseIdentity names the exact physical allocation, not logical Session
+// LeaseIdentity names the exact physical allocation, not logical Session
 // continuity. Restoring a retained Session always uses a different allocation.
-type ComputerLeaseIdentity struct {
+type LeaseIdentity struct {
 	EnvironmentID uuid.UUID
 	ComputerID    uuid.UUID
 	InstanceID    uuid.UUID
 	Epoch         int64
 }
 
-func (identity ComputerLeaseIdentity) Valid() bool {
+func (identity LeaseIdentity) Valid() bool {
 	return identity.EnvironmentID != uuid.Nil() && identity.ComputerID != uuid.Nil() && identity.InstanceID != uuid.Nil() && identity.Epoch > 0
 }
 
-// RenewComputerLease extends a still-live allocation. Expired authority is never
+// RenewLease extends a still-live allocation. Expired authority is never
 // resurrected, even when no replacement has acquired the Computer yet.
-func RenewComputerLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (time.Time, error) {
+func RenewLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity LeaseIdentity) (time.Time, error) {
 	if !identity.Valid() {
 		return time.Time{}, ErrInvalidInput
 	}

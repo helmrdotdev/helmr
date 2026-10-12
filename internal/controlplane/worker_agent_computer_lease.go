@@ -9,22 +9,22 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func decodeAgentComputerLease(r *http.Request) (computer.ComputerLeaseIdentity, error) {
+func decodeAgentComputerLease(r *http.Request) (computer.LeaseIdentity, error) {
 	var request workerapi.AgentComputerLeaseRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		return computer.ComputerLeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, agent.ErrInvalidInput
 	}
 	return agentComputerLeaseIdentity(request)
 }
 
-func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (computer.ComputerLeaseIdentity, error) {
+func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (computer.LeaseIdentity, error) {
 	env, e1 := agentComputerID(request.EnvironmentID)
 	computerID, e2 := agentComputerID(request.ComputerID)
 	instance, e3 := agentComputerID(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || request.LeaseEpoch <= 0 {
-		return computer.ComputerLeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, agent.ErrInvalidInput
 	}
-	return computer.ComputerLeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
+	return computer.LeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
 }
 func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAgentComputerLease(r)
@@ -32,7 +32,7 @@ func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *ht
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	expires, err := computer.RenewComputerLease(r.Context(), server.tx, workerFromContext(r.Context()), identity)
+	expires, err := computer.RenewLease(r.Context(), server.tx, workerFromContext(r.Context()), identity)
 	if err != nil {
 		server.writeAgentComputerError(w, err)
 		return
