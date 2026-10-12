@@ -1,4 +1,4 @@
-package agent
+package deployment
 
 import (
 	"bytes"
@@ -24,11 +24,11 @@ import (
 // The caller holds the Environment lock before Secret and preparation-spec locks.
 func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
 	if env == uuid.Nil() || deployment == uuid.Nil() {
-		return ErrInvalidInput
+		return computer.ErrInvalidInput
 	}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return fmt.Errorf("%w: %v", computer.ErrInvalidInput, err)
 	}
 	manifests := make(map[string]*definition.TemplateManifest, len(specs))
 	var refs []secretbinding.Reference
@@ -87,7 +87,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			return err
 		}
 		if definition.ValidateResourcesManifest(m.Resources) != nil || m.Resources.MemoryMiB > math.MaxInt64/(1<<20) || (m.Resources.DiskMiB != nil && *m.Resources.DiskMiB > math.MaxInt64/(1<<20)) {
-			return ErrInvalidInput
+			return computer.ErrInvalidInput
 		}
 		var diskBytes *int64
 		if m.Resources.DiskMiB != nil {
@@ -151,9 +151,11 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed)
- SELECT $1,v.id,v.digest,v.spec,v.seed FROM jsonb_to_recordset($2::jsonb) AS v(id uuid,digest text,spec jsonb,seed jsonb,build_refs jsonb)
- ON CONFLICT(environment_id,spec_digest) DO NOTHING`, env, raw); err != nil {
+	records := make([]computer.ImageSpecRecord, 0, len(inputs))
+	for _, i := range inputs {
+		records = append(records, computer.ImageSpecRecord{ID: i.ID, Digest: i.Digest, Spec: i.Spec, Seed: i.Seed})
+	}
+	if err := computer.RecordImageSpecs(ctx, tx, env, records); err != nil {
 		return err
 	}
 	expected := make(map[string]input, len(inputs))
@@ -239,7 +241,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		return err
 	}
 	if count != len(buildBindings) {
-		return ErrConflict
+		return computer.ErrConflict
 	}
 	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
  SELECT $1,$2,v.template_id,s.id,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
@@ -254,12 +256,12 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	return computer.RegisterSecretBindings(ctx, tx, env, runtimeBindings)
 }
 
-// RegisterProgramDefinitions records the Computer and Agent definitions of an
+// registerProgramDefinitions records the Computer and Agent definitions of an
 // admitted Program atomically in the caller's deployment transaction. Stable
 // Agent identities survive deployments; their definitions remain pinned to one
 // deployment. The caller must hold the Environment lock and verify Program and
 // seed bytes before registration.
-func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
+func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
 	if err := registerTemplateDefinitions(ctx, tx, env, deployment, output); err != nil {
 		return err
 	}
@@ -288,7 +290,7 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 			for key, trigger := range d.Agent.Triggers {
 				destination, err := definition.SlackChannelReference(trigger.Slack)
 				if err != nil {
-					return fmt.Errorf("%w: agent %q trigger %q: %v", ErrInvalidInput, d.DeclaredID, key, err)
+					return fmt.Errorf("%w: agent %q trigger %q: %v", computer.ErrInvalidInput, d.DeclaredID, key, err)
 				}
 				triggers = append(triggers, triggerInput{Agent: d.DeclaredID, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Destination: destination})
 			}

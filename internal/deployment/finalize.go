@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -425,7 +424,7 @@ func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, e
 			return Record{}, fmt.Errorf("retain deployment dependency: %w", err)
 		}
 	}
-	if err := agent.RegisterProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program); err != nil {
+	if err := registerProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program); err != nil {
 		return Record{}, err
 	}
 	if err := appendEvent(ctx, tx, env, id, "deployment.registered", "Deployment registered"); err != nil {

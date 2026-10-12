@@ -27,7 +27,6 @@ var (
 	ReconcileSessionLifecycle    = reconcileSessionLifecycle
 	ReconcileTerminalSessionStop = reconcileTerminalSessionStop
 	ReconcileTriggers            = reconcileTriggers
-	RegisterTemplateDefinitions  = registerTemplateDefinitions
 	RetainSessionHistory         = retainSessionHistory
 )
 

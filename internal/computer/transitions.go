@@ -2,6 +2,7 @@ package computer
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 	"uuid"
 
@@ -288,5 +289,48 @@ func RecordCommandExposures(ctx context.Context, tx pgx.Tx, env, command uuid.UU
 	_, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation)
  SELECT uuidv7(),$1,$2,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($3::uuid[]) AND s.status='active'
  ON CONFLICT(environment_id,command_id,secret_id) WHERE command_id IS NOT NULL DO NOTHING`, env, command, secrets)
+	return err
+}
+
+// ImageSpecRecord is one image spec registered by a Deployment.
+type ImageSpecRecord struct {
+	ID     uuid.UUID       `json:"id"`
+	Digest string          `json:"digest"`
+	Spec   json.RawMessage `json:"spec"`
+	Seed   json.RawMessage `json:"seed"`
+}
+
+// RecordImageSpecs records image specs by digest; a spec already registered
+// under the same digest keeps its identity.
+func RecordImageSpecs(ctx context.Context, tx pgx.Tx, env uuid.UUID, specs []ImageSpecRecord) error {
+	raw, err := json.Marshal(specs)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed)
+ SELECT $1,v.id,v.digest,v.spec,v.seed FROM jsonb_to_recordset($2::jsonb) AS v(id uuid,digest text,spec jsonb,seed jsonb)
+ ON CONFLICT(environment_id,spec_digest) DO NOTHING`, env, raw)
+	return err
+}
+
+// ApplyImageRefreshPolicy sets each image spec's refresh interval to the
+// shortest one the promoted Deployment's templates request, clearing it for
+// specs no template refreshes. A spec whose interval is unchanged keeps its
+// next refresh; a changed one refreshes no later than one interval after the
+// cutover.
+func ApplyImageRefreshPolicy(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
+	_, err := tx.Exec(ctx, `WITH requested AS (
+ SELECT image_spec_id,min(refresh_every_ms) AS every_ms FROM template_definitions
+ WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL GROUP BY image_spec_id
+ ) , affected AS (
+ SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL
+ UNION SELECT image_spec_id FROM requested
+ ), policy AS (
+ SELECT a.id,r.every_ms FROM affected a LEFT JOIN requested r ON r.image_spec_id=a.id
+ ) UPDATE image_specs s SET refresh_every_ms=p.every_ms,
+ next_refresh_at=CASE WHEN p.every_ms IS NULL THEN NULL
+ WHEN s.refresh_every_ms=p.every_ms THEN s.next_refresh_at
+ ELSE LEAST(s.next_refresh_at,$3::timestamptz+p.every_ms*interval '1 millisecond') END
+ FROM policy p WHERE s.environment_id=$1 AND s.id=p.id AND s.refresh_every_ms IS DISTINCT FROM p.every_ms`, env, deployment, cutover)
 	return err
 }

@@ -46,3 +46,18 @@ func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 		t.Fatal("cross-Session origin accepted")
 	}
 }
+
+func TestDispatchUsesMillisecondTurnDuration(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.pool.Exec(t.Context(), `UPDATE agent_definitions SET max_turn_duration_ms=1101 WHERE environment_id=$1`, f.env); err != nil {
+		t.Fatal(err)
+	}
+	a := f.enqueue(t, "milliseconds")
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
+		t.Fatal(err)
+	}
+	var duration float64
+	if err := f.pool.QueryRow(t.Context(), `SELECT extract(epoch FROM deadline_at-started_at)*1000 FROM turns WHERE environment_id=$1 AND id=$2`, f.env, a.TurnID).Scan(&duration); err != nil || duration < 1101 || duration > 1102 {
+		t.Fatalf("duration=%f ms: %v", duration, err)
+	}
+}

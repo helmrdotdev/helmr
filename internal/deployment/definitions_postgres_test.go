@@ -1,4 +1,4 @@
-package agent_test
+package deployment
 
 import (
 	"context"
@@ -6,8 +6,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -15,10 +14,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *testing.T) {
-	f := newFixture(t)
+	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	every, age := int64(1001), int64(3507)
 	output.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every, MaxAgeMs: &age}
@@ -27,7 +27,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
+			return registerTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
 		})
 	}
 	if err := register(f.deployment, output); err != nil {
@@ -60,7 +60,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		if err := agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
+		if err := registerTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
 			return err
 		}
 		return sentinel
@@ -74,14 +74,14 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 }
 
 func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredInput(t *testing.T) {
-	f := newFixture(t)
+	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
@@ -106,7 +106,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return agent.RegisterTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if err == nil {
 		t.Fatal("registered conflicting seed projection")
@@ -118,7 +118,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 }
 
 func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *testing.T) {
-	f := newFixture(t)
+	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	duration, idle := int64(1101), int64(2203)
 	output.Metadata.Definitions[0].Agent.MaxTurnDurationMs = &duration
@@ -128,7 +128,7 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return agent.RegisterProgramDefinitions(t.Context(), tx, f.env, deployment, output)
+			return registerProgramDefinitions(t.Context(), tx, f.env, deployment, output)
 		})
 	}
 	if err := register(f.deployment); err != nil {
@@ -156,21 +156,6 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 	}
 }
 
-func TestDispatchUsesMillisecondTurnDuration(t *testing.T) {
-	f := newFixture(t)
-	if _, err := f.pool.Exec(t.Context(), `UPDATE agent_definitions SET max_turn_duration_ms=1101 WHERE environment_id=$1`, f.env); err != nil {
-		t.Fatal(err)
-	}
-	a := f.enqueue(t, "milliseconds")
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
-		t.Fatal(err)
-	}
-	var duration float64
-	if err := f.pool.QueryRow(t.Context(), `SELECT extract(epoch FROM deadline_at-started_at)*1000 FROM turns WHERE environment_id=$1 AND id=$2`, f.env, a.TurnID).Scan(&duration); err != nil || duration < 1101 || duration > 1102 {
-		t.Fatalf("duration=%f ms: %v", duration, err)
-	}
-}
-
 func lockDefinitionTestEnvironment(t *testing.T, tx pgx.Tx, env uuid.UUID) error {
 	t.Helper()
 	var id uuid.UUID
@@ -178,7 +163,7 @@ func lockDefinitionTestEnvironment(t *testing.T, tx pgx.Tx, env uuid.UUID) error
 }
 
 func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testing.T) {
-	f := newFixture(t)
+	f := newDefinitionsFixture(t)
 	otherEnv, foreign, revoked, active, version := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
  INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($3,$2,'FOREIGN_TOKEN','revoked',clock_timestamp()),($4,$1,'OLD_TOKEN','revoked',clock_timestamp());
@@ -192,7 +177,7 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return agent.RegisterProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
+			return registerProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
 		})
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
@@ -246,4 +231,15 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 		t.Fatalf("file build binding: %+v", actual[2])
 	}
 
+}
+
+type definitionsFixture struct {
+	pool            *pgxpool.Pool
+	env, deployment uuid.UUID
+}
+
+func newDefinitionsFixture(t *testing.T) definitionsFixture {
+	t.Helper()
+	f := agenttest.New(t)
+	return definitionsFixture{pool: f.Pool, env: f.Environment, deployment: f.Deployment}
 }
