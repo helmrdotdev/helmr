@@ -388,7 +388,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"sessions", "turns", "computers", "computer_commands", "computer_checkpoints", "diagnostic_chunks", "agent_schedules"}
+	logicalTables := []string{"sessions", "turns", "computers", "computer_commands", "computer_checkpoints", "diagnostic_chunks", "trigger_activations"}
 	var assignmentLeaks int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=ANY($1::text[]) AND column_name='worker_group_id'`, logicalTables).Scan(&assignmentLeaks); err != nil {
 		t.Fatal(err)

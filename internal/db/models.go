@@ -114,22 +114,6 @@ type APIKey struct {
 	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
 }
 
-type AgentSchedule struct {
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	ID                  pgtype.UUID        `json:"id"`
-	AgentID             pgtype.UUID        `json:"agent_id"`
-	DeploymentID        pgtype.UUID        `json:"deployment_id"`
-	TriggerKey          string             `json:"trigger_key"`
-	Cron                string             `json:"cron"`
-	Timezone            string             `json:"timezone"`
-	Input               []byte             `json:"input"`
-	ActiveFrom          pgtype.Timestamptz `json:"active_from"`
-	ActiveUntil         pgtype.Timestamptz `json:"active_until"`
-	NextFireAt          pgtype.Timestamptz `json:"next_fire_at"`
-	LatenessToleranceMs int64              `json:"lateness_tolerance_ms"`
-	SlackChannelID      pgtype.UUID        `json:"slack_channel_id"`
-}
-
 type AuthSession struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`

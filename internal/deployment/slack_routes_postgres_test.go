@@ -62,7 +62,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 					t.Fatal(err)
 				}
 				var clean bool
-				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM agent_schedules) AND NOT EXISTS(SELECT 1 FROM slack_channels) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
+				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) AND NOT EXISTS(SELECT 1 FROM slack_channels) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
 					t.Fatal("failed preflight retained activation", clean, err)
 				}
 				return
@@ -71,7 +71,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(calls, err)
 			}
 			var pin uuid.UUID
-			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM agent_schedules s JOIN slack_channels c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.publication_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
+			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channels c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.publication_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
 				t.Fatal("promotion lost destination", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)

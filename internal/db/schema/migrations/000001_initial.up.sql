@@ -634,7 +634,6 @@ CREATE TABLE agent_definitions (
     deployment_id uuid NOT NULL,
     template_id uuid NOT NULL,
     setup boolean NOT NULL,
-    triggers bytea NOT NULL,
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
@@ -1280,31 +1279,44 @@ CREATE TABLE slack_channels (
 CREATE INDEX slack_channels_environment ON slack_channels(environment_id,id);
 
 -- Every promotion starts a new half-open schedule activation interval.
-CREATE TABLE agent_schedules (
+-- A trigger as authored on one Agent definition. Only time triggers exist; a
+-- second kind adds its own declaration shape and identity rule.
+CREATE TABLE agent_triggers (
+    environment_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    key text NOT NULL CHECK (octet_length(key) BETWEEN 1 AND 256),
+    cron text NOT NULL CHECK (cron<>''),
+    timezone text NOT NULL CHECK (timezone<>''),
+    input bytea NOT NULL,
+    slack_destination text CHECK (slack_destination ~ '^[CG][A-Z0-9]{1,99}$'),
+    PRIMARY KEY (environment_id,agent_id,deployment_id,key),
+    FOREIGN KEY (environment_id,agent_id,deployment_id) REFERENCES agent_definitions(environment_id,agent_id,deployment_id)
+);
+
+-- The interval during which one promotion's declaration fires, with its cursor
+-- and the Slack channel binding pinned at promotion.
+CREATE TABLE trigger_activations (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
-    trigger_key text NOT NULL CHECK (octet_length(trigger_key) BETWEEN 1 AND 256),
-    cron text NOT NULL,
-    timezone text NOT NULL,
-    input bytea NOT NULL,
+    trigger_key text NOT NULL,
     active_from timestamptz NOT NULL,
     active_until timestamptz,
     next_fire_at timestamptz NOT NULL,
-    lateness_tolerance_ms bigint NOT NULL CHECK (lateness_tolerance_ms > 0),
     slack_channel_id uuid,
     PRIMARY KEY (environment_id,id),
     UNIQUE (environment_id,id,agent_id,trigger_key),
-    FOREIGN KEY (environment_id,agent_id,deployment_id) REFERENCES agent_definitions(environment_id,agent_id,deployment_id),
+    FOREIGN KEY (environment_id,agent_id,deployment_id,trigger_key) REFERENCES agent_triggers(environment_id,agent_id,deployment_id,key),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (next_fire_at >= active_from),
     FOREIGN KEY(slack_channel_id,environment_id) REFERENCES slack_channels(id,environment_id)
 );
 
-CREATE UNIQUE INDEX agent_schedules_current ON agent_schedules(environment_id,agent_id,trigger_key) WHERE active_until IS NULL;
+CREATE UNIQUE INDEX trigger_activations_current ON trigger_activations(environment_id,agent_id,trigger_key) WHERE active_until IS NULL;
 
-CREATE INDEX agent_schedules_due ON agent_schedules(next_fire_at,environment_id,id) WHERE active_until IS NULL OR next_fire_at<active_until;
+CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at,environment_id,id) WHERE active_until IS NULL OR next_fire_at<active_until;
 
 CREATE TABLE sessions (
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
@@ -1527,9 +1539,11 @@ CREATE INDEX turns_queue ON turns(environment_id,session_id,seq) WHERE status='q
 
 CREATE INDEX turns_deadlines ON turns(deadline_at,environment_id,session_id) WHERE status IN ('running','finalizing') AND deadline_at IS NOT NULL;
 
-CREATE TABLE agent_schedule_occurrences (
+-- One scheduled instant of an Agent's trigger, across every activation and
+-- deployment: the identity is (agent, key, scheduled_at).
+CREATE TABLE trigger_occurrences (
     environment_id uuid NOT NULL,
-    schedule_id uuid NOT NULL,
+    activation_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     trigger_key text NOT NULL,
     scheduled_at timestamptz NOT NULL,
@@ -1541,14 +1555,14 @@ CREATE TABLE agent_schedule_occurrences (
     PRIMARY KEY (environment_id,agent_id,trigger_key,scheduled_at),
     CHECK ((disposition = 'admitted' AND session_id IS NOT NULL AND turn_id IS NOT NULL)
      OR (disposition <> 'admitted' AND session_id IS NULL AND turn_id IS NULL AND reason IS NOT NULL)),
-    FOREIGN KEY (environment_id,schedule_id,agent_id,trigger_key)
-    REFERENCES agent_schedules(environment_id,id,agent_id,trigger_key),
+    FOREIGN KEY (environment_id,activation_id,agent_id,trigger_key)
+    REFERENCES trigger_activations(environment_id,id,agent_id,trigger_key),
     FOREIGN KEY (environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id)
 );
 
-CREATE INDEX occurrences_schedule ON agent_schedule_occurrences(environment_id,schedule_id);
+CREATE INDEX trigger_occurrences_activation ON trigger_occurrences(environment_id,activation_id);
 
-CREATE INDEX occurrences_turn ON agent_schedule_occurrences(environment_id,session_id,turn_id);
+CREATE INDEX trigger_occurrences_turn ON trigger_occurrences(environment_id,session_id,turn_id);
 
 CREATE TABLE session_holds (
     environment_id uuid NOT NULL,

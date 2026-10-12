@@ -41,7 +41,7 @@ func RunSchedules(ctx context.Context, database db.TxDB, trust ComputerTrustIssu
 }
 func reconcileSchedules(ctx context.Context, database db.TxDB, trust ComputerTrustIssuer, after schedulePosition) (schedulePosition, bool, error) {
 	scan, stop := context.WithTimeout(ctx, 10*time.Second)
-	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM agent_schedules s JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
+	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM trigger_activations s JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
  WHERE s.next_fire_at<=statement_timestamp() AND (s.active_until IS NULL OR s.next_fire_at<s.active_until)
  AND (s.environment_id,s.id)>($1,$2) ORDER BY s.environment_id,s.id LIMIT 100`, after.environment, after.id)
 	if err != nil {

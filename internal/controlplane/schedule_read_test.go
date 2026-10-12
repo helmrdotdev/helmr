@@ -2,17 +2,19 @@ package controlplane
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -87,13 +89,13 @@ func TestScheduleListQueryAcceptsAgentFilter(t *testing.T) {
 
 func TestScheduleResponseProjectsActivationInterval(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
-	row := db.AgentSchedule{ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
-	response, err := scheduleResponse(row, "worker")
+	row := db.ListSchedulesRow{Agent: "worker", ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
+	response, err := scheduleResponse(row)
 	if err != nil || response.Agent != "worker" || response.TriggerKey != "daily" || response.NextFireAt == nil || response.ActiveUntil != nil || string(response.Input) != string(row.Input) {
 		t.Fatalf("response=%+v error=%v", response, err)
 	}
 	row.ActiveUntil = row.NextFireAt
-	response, err = scheduleResponse(row, "worker")
+	response, err = scheduleResponse(row)
 	if err != nil || response.NextFireAt != nil || response.ActiveUntil == nil {
 		t.Fatalf("closed interval=%+v error=%v", response, err)
 	}
@@ -133,7 +135,8 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 			v := at.Add(time.Hour)
 			until = &v
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,active_until,next_fire_at,lateness_tolerance_ms) VALUES($1,$2,$3,$4,$5,'0 * * * *','UTC','{"report":true}',$6,$7,$8,300000)`, f.Environment, id, f.Agent, f.Deployment, trigger, at, until, at.Add(time.Hour))
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) VALUES($1,$3,$4,$5,'0 * * * *','UTC','{"report":true}') ON CONFLICT DO NOTHING;
+ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,active_until,next_fire_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, pgx.QueryExecModeSimpleProtocol, f.Environment, id, f.Agent, f.Deployment, trigger, at, until, at.Add(time.Hour))
 	}
 	q := db.New(f.Pool)
 	cfg := completeServerConfig(t)

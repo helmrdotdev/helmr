@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 	"uuid"
 
@@ -16,10 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
-
-// ScheduleLatenessTolerance bounds catch-up to the latest occurrence within
-// five minutes. Each activation records this platform policy for evaluation.
-const ScheduleLatenessTolerance = 5 * time.Minute
 
 // Promote atomically switches the current Deployment, closes prior schedule
 // intervals and recomputes background preparation cadence. Existing Sessions keep
@@ -90,64 +85,43 @@ func reconcileSchedules(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUI
 		SlackChannelID *uuid.UUID `json:"slack_channel_id"`
 		Agent          uuid.UUID  `json:"agent"`
 		Key            string     `json:"key"`
-		Cron           string     `json:"cron"`
-		Timezone       string     `json:"timezone"`
-		Input          []byte     `json:"input"`
 		Next           time.Time  `json:"next"`
 		ID             uuid.UUID  `json:"id"`
 	}
-	var entries []entry
-	rows, err := tx.Query(ctx, `SELECT agent_id,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id`, env, deployment)
+	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var agent uuid.UUID
-		var raw []byte
-		if err := rows.Scan(&agent, &raw); err != nil {
-			rows.Close()
-			return err
-		}
-		var triggers map[string]definition.CronTrigger
-		if err := json.Unmarshal(raw, &triggers); err != nil {
-			rows.Close()
-			return err
-		}
-		keys := make([]string, 0, len(triggers))
-		for key := range triggers {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
-		for _, key := range keys {
-			trigger := triggers[key]
-			next, err := definition.NextCronTime(trigger.Cron, trigger.Timezone, cutover.Add(-time.Nanosecond))
-			if err != nil {
-				rows.Close()
-				return invalidInput(fmt.Errorf("agent trigger %q cannot be scheduled: %w", key, err))
-			}
-			route, err := definition.SlackChannelReference(trigger.Slack)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			var pin *uuid.UUID
-			if route != nil {
-				value, ok := pins[scheduleRouteKey{agent, *route}]
-				if !ok {
-					rows.Close()
-					return ErrNotDeployable
-				}
-				pin = &value
-			}
-			entries = append(entries, entry{SlackChannelID: pin, Agent: agent, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Next: next, ID: uuid.NewV7()})
-		}
+	type declared struct {
+		agent               uuid.UUID
+		key, cron, timezone string
+		destination         *string
 	}
-	err = rows.Err()
-	rows.Close()
+	declarations, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (declared, error) {
+		var d declared
+		err := row.Scan(&d.agent, &d.key, &d.cron, &d.timezone, &d.destination)
+		return d, err
+	})
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE agent_schedules SET active_until=$2 WHERE environment_id=$1 AND active_until IS NULL`, env, cutover); err != nil {
+	entries := make([]entry, 0, len(declarations))
+	for _, d := range declarations {
+		next, err := definition.NextCronTime(d.cron, d.timezone, cutover.Add(-time.Nanosecond))
+		if err != nil {
+			return invalidInput(fmt.Errorf("agent trigger %q cannot be scheduled: %w", d.key, err))
+		}
+		var pin *uuid.UUID
+		if d.destination != nil {
+			value, ok := pins[scheduleRouteKey{d.agent, *d.destination}]
+			if !ok {
+				return ErrNotDeployable
+			}
+			pin = &value
+		}
+		entries = append(entries, entry{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
+	}
+	if _, err := tx.Exec(ctx, `UPDATE trigger_activations SET active_until=$2 WHERE environment_id=$1 AND active_until IS NULL`, env, cutover); err != nil {
 		return err
 	}
 	if len(entries) > 0 {
@@ -155,14 +129,13 @@ func reconcileSchedules(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUI
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,next_fire_at,lateness_tolerance_ms,slack_channel_id)
- SELECT $1,v.id,v.agent,$2,v.key,v.cron,v.timezone,decode(v.input,'base64'),$3,v.next,$4,v.slack_channel_id
- FROM jsonb_to_recordset($5::jsonb) AS v(id uuid,agent uuid,key text,cron text,timezone text,input text,next timestamptz,slack_channel_id uuid)`, env, deployment, cutover, ScheduleLatenessTolerance.Milliseconds(), raw)
+		_, err = tx.Exec(ctx, `INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at,slack_channel_id)
+ SELECT $1,v.id,v.agent,$2,v.key,$3,v.next,v.slack_channel_id
+ FROM jsonb_to_recordset($4::jsonb) AS v(id uuid,agent uuid,key text,next timestamptz,slack_channel_id uuid)`, env, deployment, cutover, raw)
 		if err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 

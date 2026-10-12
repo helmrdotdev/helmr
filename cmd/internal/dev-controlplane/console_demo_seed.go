@@ -33,10 +33,12 @@ INSERT INTO templates(environment_id,id,key) VALUES($1::uuid,$3::uuid,'demo-comp
 INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes)
 VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912);
 INSERT INTO agents(environment_id,id,key) VALUES($1::uuid,$4::uuid,'demo-agent');
-INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)
-VALUES($1::uuid,$4::uuid,$2::uuid,$3::uuid,false,'{}');
-INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,active_until,next_fire_at,lateness_tolerance_ms)
-VALUES($1::uuid,$5::uuid,$4::uuid,$2::uuid,'daily','0 9 * * 1-5','UTC','[{"type":"text","text":"Demo input"}]',now()-interval '2 days',now()-interval '1 day',now(),60000);
+INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup)
+VALUES($1::uuid,$4::uuid,$2::uuid,$3::uuid,false);
+INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input)
+VALUES($1::uuid,$4::uuid,$2::uuid,'daily','0 9 * * 1-5','UTC','[{"type":"text","text":"Demo input"}]');
+INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,active_until,next_fire_at)
+VALUES($1::uuid,$5::uuid,$4::uuid,$2::uuid,'daily',now()-interval '2 days',now()-interval '1 day',now());
 INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes,preparation_spec_id,preparation_deadline_at,preparation_failed_at)
 VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,1000,536870912,34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
 INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at)
