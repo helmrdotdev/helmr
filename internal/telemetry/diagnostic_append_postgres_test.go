@@ -111,7 +111,7 @@ func TestDiagnosticAcceptanceImmutableRetryCoverageAndClosure(t *testing.T) {
 		t.Fatalf("closed stream: %v", err)
 	}
 	var count, bytes int64
-	if err = pool.QueryRow(t.Context(), `SELECT count(*),sum(octet_length(data)) FROM telemetry_outbox`).Scan(&count, &bytes); err != nil || count != 3 || bytes != 3 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*),sum(octet_length(data)) FROM diagnostic_chunks`).Scan(&count, &bytes); err != nil || count != 3 || bytes != 3 {
 		t.Fatalf("coverage rows=%d bytes=%d err=%v", count, bytes, err)
 	}
 }
@@ -165,10 +165,10 @@ func TestDiagnosticAcceptanceCapacitySerializesConcurrentSources(t *testing.T) {
 		t.Fatalf("aggregate admitted %d", accepted)
 	}
 	var records, bytes, maxEnvironment int64
-	if err := pool.QueryRow(t.Context(), `SELECT count(*),COALESCE(sum(ingest_size_bytes),0)::bigint FROM telemetry_outbox WHERE stream_kind='diagnostic'`).Scan(&records, &bytes); err != nil {
+	if err := pool.QueryRow(t.Context(), `SELECT count(*),COALESCE(sum(ingest_size_bytes),0)::bigint FROM diagnostic_chunks WHERE TRUE`).Scan(&records, &bytes); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(t.Context(), `SELECT max(records) FROM (SELECT count(*) records FROM telemetry_outbox WHERE stream_kind='diagnostic' GROUP BY environment_id) occupied`).Scan(&maxEnvironment); err != nil {
+	if err := pool.QueryRow(t.Context(), `SELECT max(records) FROM (SELECT count(*) records FROM diagnostic_chunks WHERE TRUE GROUP BY environment_id) occupied`).Scan(&maxEnvironment); err != nil {
 		t.Fatal(err)
 	}
 	if records != 3 || bytes != 9 || maxEnvironment > 2 {
@@ -192,14 +192,14 @@ func TestDiagnosticAcceptanceRollbackAndExpiredRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var records int64
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox WHERE stream_kind='diagnostic'`).Scan(&records); err != nil || records != 0 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks WHERE TRUE`).Scan(&records); err != nil || records != 0 {
 		t.Fatalf("rollback count=%d err=%v", records, err)
 	}
 	if _, err = appendDiagnosticTest(t, pool, source, record, bounds); err != nil {
 		t.Fatal(err)
 	}
 	// Ordinary payload absence must not destroy the latest retry witness.
-	dbtest.MustExec(t, t.Context(), pool, `DELETE FROM telemetry_outbox`)
+	dbtest.MustExec(t, t.Context(), pool, `DELETE FROM diagnostic_chunks`)
 	retry, err := appendDiagnosticTest(t, pool, source, record, bounds)
 	if err != nil || retry.Expired {
 		t.Fatalf("retained latest witness %+v %v", retry, err)

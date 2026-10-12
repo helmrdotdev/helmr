@@ -324,7 +324,7 @@ func assertDatabaseConstraintBoundaries(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_checkpoint_objects.availability_required:s,computer_data_keys.available:s,computer_disk_roots.certification_required:s,computer_disk_roots.direct_key_required:s,computer_disk_roots.logical_bytes:s,computer_disk_roots.root_kind:s,computer_disk_roots.root_pack_digest:s,computer_disk_roots.root_pack_rank:s,computer_disk_roots.root_pack_size_bytes:s,computer_disk_roots.root_page_key_id:s,computer_disk_roots.root_page_offset:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_preparations.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,telemetry_outbox.ingest_size_bytes:s,telemetry_outbox.producer_epoch:s,telemetry_outbox.source_id:s,telemetry_outbox.source_kind:s,turns.completion_published:s,turns.has_recorded_result:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_checkpoint_objects.availability_required:s,computer_data_keys.available:s,computer_disk_roots.certification_required:s,computer_disk_roots.direct_key_required:s,computer_disk_roots.logical_bytes:s,computer_disk_roots.root_kind:s,computer_disk_roots.root_pack_digest:s,computer_disk_roots.root_pack_rank:s,computer_disk_roots.root_pack_size_bytes:s,computer_disk_roots.root_page_key_id:s,computer_disk_roots.root_page_offset:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_preparations.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,diagnostic_chunks.ingest_size_bytes:s,diagnostic_chunks.producer_epoch:s,diagnostic_chunks.source_id:s,diagnostic_chunks.source_kind:s,turns.completion_published:s,turns.has_recorded_result:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -388,7 +388,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"sessions", "turns", "computers", "computer_commands", "computer_checkpoints", "telemetry_outbox", "agent_schedules"}
+	logicalTables := []string{"sessions", "turns", "computers", "computer_commands", "computer_checkpoints", "diagnostic_chunks", "agent_schedules"}
 	var assignmentLeaks int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=ANY($1::text[]) AND column_name='worker_group_id'`, logicalTables).Scan(&assignmentLeaks); err != nil {
 		t.Fatal(err)
@@ -457,18 +457,18 @@ func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var columns int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='telemetry_outbox' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "preparation_id", "preparation_epoch", "command_id", "deployment_id", "source_kind", "source_id", "producer_epoch", "ingest_size_bytes"}).Scan(&columns); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "preparation_id", "preparation_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if columns != 10 {
-		t.Fatalf("typed telemetry owner columns=%d", columns)
+	if columns != 9 {
+		t.Fatalf("typed diagnostic owner columns=%d", columns)
 	}
 	var index string
-	if err := pool.QueryRow(ctx, `SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='telemetry_outbox_event_publish'`).Scan(&index); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='deployment_events_deployment'`).Scan(&index); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(index, "stream_kind = 'event'") {
-		t.Fatalf("event publish index=%s", index)
+	if !strings.Contains(index, "(environment_id, deployment_id, id)") {
+		t.Fatalf("deployment events index=%s", index)
 	}
 }
 

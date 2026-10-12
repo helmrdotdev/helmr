@@ -182,7 +182,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 					t.Fatalf("log append across drain: %v", err)
 				}
 				var accepted int
-				if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox WHERE command_id=$1`, command).Scan(&accepted); err != nil || accepted != 1 {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks WHERE command_id=$1`, command).Scan(&accepted); err != nil || accepted != 1 {
 					t.Fatalf("log append accepted=%d err=%v", accepted, err)
 				}
 			}},

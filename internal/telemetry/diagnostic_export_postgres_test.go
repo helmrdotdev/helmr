@@ -25,7 +25,7 @@ func TestDiagnosticExportRetirementPreservesRetryAndCounters(t *testing.T) {
 	}
 	// Simulate a lost sink reply: only the claim lease changes. The next exporter
 	// must preserve exact bytes and receipt times while fencing the old token.
-	dbtest.MustExec(t, t.Context(), pool, `UPDATE telemetry_outbox SET export_after=clock_timestamp()-interval '1 second'`)
+	dbtest.MustExec(t, t.Context(), pool, `UPDATE diagnostic_chunks SET export_after=clock_timestamp()-interval '1 second'`)
 	next, err := ClaimDiagnostics(t.Context(), pool, "session", diagnostic.ExportBounds{Records: 4, Bytes: 6, ClaimFor: time.Minute})
 	if err != nil || len(next.Records) != 1 || next.Token == claim.Token {
 		t.Fatalf("reclaim %+v %v", next, err)
@@ -67,7 +67,7 @@ func TestDiagnosticExportRetirementPreservesRetryAndCounters(t *testing.T) {
 		t.Fatalf("superseded witness %v", err)
 	}
 	var bytes, records int64
-	if err = pool.QueryRow(t.Context(), `SELECT COALESCE(sum(ingest_size_bytes),0)::bigint,count(*) FROM telemetry_outbox WHERE stream_kind='diagnostic'`).Scan(&bytes, &records); err != nil || bytes != 3 || records != 1 {
+	if err = pool.QueryRow(t.Context(), `SELECT COALESCE(sum(ingest_size_bytes),0)::bigint,count(*) FROM diagnostic_chunks WHERE TRUE`).Scan(&bytes, &records); err != nil || bytes != 3 || records != 1 {
 		t.Fatalf("occupancy=%d/%d %v", bytes, records, err)
 	}
 }
@@ -97,7 +97,7 @@ func TestDiagnosticExportBoundsAndFailedRowsRemainCounted(t *testing.T) {
 		t.Fatalf("failed row blocked neighbor %+v %v", next, err)
 	}
 	var records int64
-	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox WHERE stream_kind='diagnostic'`).Scan(&records); err != nil || records != 2 {
+	if err = pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks WHERE TRUE`).Scan(&records); err != nil || records != 2 {
 		t.Fatalf("failed record evicted %d %v", records, err)
 	}
 }

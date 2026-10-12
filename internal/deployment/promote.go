@@ -73,7 +73,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if _, err := tx.Exec(ctx, `UPDATE environments SET current_deployment_id=$2,updated_at=$3 WHERE id=$1`, env, id, cutover); err != nil {
 			return err
 		}
-		if _, err = db.New(tx).AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{EnvironmentID: env, DeploymentID: pgvalue.UUID(id), OrgID: pgvalue.UUID(principal.OrgID), ProjectID: project, Kind: "deployment.promoted", Message: "Deployment promoted", Payload: []byte(`{}`)}); err != nil {
+		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
 			return err
 		}
 		result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)

@@ -1,14 +1,6 @@
 package clickhouse
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
-)
+import "context"
 
 type Reader struct {
 	client historicalClient
@@ -20,90 +12,4 @@ type historicalClient interface {
 
 func NewReader(client historicalClient) *Reader {
 	return &Reader{client: client}
-}
-
-func (r *Reader) ListEvents(ctx context.Context, q telemetry.EventQuery) (telemetry.EventPage, error) {
-	sql := `SELECT seq, deployment_id, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
-FROM helmr_telemetry.events FINAL
-WHERE org_id = @org_id
-  AND subject_kind = @subject_kind
-  AND subject_id = @subject_id
-  AND (@all_severities OR severity IN @severities)
-  AND seq > @after
-ORDER BY seq ASC
-LIMIT @row_limit`
-	var rows []eventRow
-	if err := r.client.Select(ctx, &rows, sql,
-		Named("org_id", q.OrgID),
-		Named("subject_kind", q.SubjectType),
-		Named("subject_id", q.SubjectID),
-		Named("all_severities", len(q.Severities) == 0),
-		Named("severities", q.Severities),
-		Named("after", uint64(q.AfterSeq)),
-		Named("row_limit", uint32(q.Limit)),
-	); err != nil {
-		return telemetry.EventPage{}, fmt.Errorf("%w: %v", telemetry.ErrHistoricalUnavailable, err)
-	}
-	events := make([]api.DiagnosticEvent, 0, len(rows))
-	last := q.AfterSeq
-	for _, row := range rows {
-		events = append(events, row.event())
-		last = int64(row.Seq)
-	}
-	return telemetry.EventPage{Events: events, LastSeq: last, Historical: len(events)}, nil
-}
-
-type eventRow struct {
-	Seq            uint64    `ch:"seq"`
-	DeploymentID   *string   `ch:"deployment_id"`
-	TraceID        string    `ch:"trace_id"`
-	SpanID         string    `ch:"span_id"`
-	Traceparent    string    `ch:"traceparent"`
-	Category       string    `ch:"category"`
-	Severity       string    `ch:"severity"`
-	Source         string    `ch:"source"`
-	EventKind      string    `ch:"event_kind"`
-	Message        string    `ch:"message"`
-	Body           string    `ch:"body"`
-	RedactionClass string    `ch:"redaction_class"`
-	ObservedAt     time.Time `ch:"observed_at"`
-}
-
-func (r eventRow) event() api.DiagnosticEvent {
-	var deploymentID *string
-	if r.DeploymentID != nil {
-		value := *r.DeploymentID
-		deploymentID = &value
-	}
-	at := r.ObservedAt.UTC()
-	attrs := json.RawMessage(r.Body)
-	if len(attrs) == 0 || !json.Valid(attrs) {
-		attrs = json.RawMessage(`{}`)
-	}
-	if r.RedactionClass == "sensitive" {
-		attrs = json.RawMessage(`{"redacted":true}`)
-	}
-	return api.DiagnosticEvent{
-		ID:             telemetry.Cursor(int64(r.Seq)),
-		DeploymentID:   deploymentID,
-		Trace:          api.TraceContext{TraceID: r.TraceID, SpanID: r.SpanID, Traceparent: r.Traceparent},
-		Category:       r.Category,
-		Severity:       r.Severity,
-		Source:         r.Source,
-		Kind:           r.EventKind,
-		Message:        firstNonEmpty(r.Message, r.EventKind),
-		At:             at,
-		OccurredAt:     at,
-		RedactionClass: r.RedactionClass,
-		Attributes:     attrs,
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

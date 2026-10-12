@@ -41,7 +41,6 @@ helmr_dev_require_ports
 
 helmr_dev_start_postgres
 helmr_dev_write_runtime_descriptor
-helmr_dev_start_redis
 helmr_dev_start_clickhouse
 helmr_dev_export_urls
 

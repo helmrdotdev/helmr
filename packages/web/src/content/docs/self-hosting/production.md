@@ -8,7 +8,7 @@ sidebarLabel: AWS production
 
 `infra/aws/standard` is a cost-conscious production baseline for one customer AWS account. It is a starting composition, not a claim that every production requirement is complete.
 
-The baseline uses two availability zones, private Control Plane, dispatcher, migration, database, and worker subnets, an internet-facing HTTPS ALB, one NAT gateway, two Control Plane tasks, one dispatcher task, a two-node Valkey/Redis replication group, Multi-AZ RDS, deletion protection, automated backups, final snapshots, encrypted storage, and longer retention windows. Workers remain disabled by default.
+The baseline uses two availability zones, private Control Plane, dispatcher, migration, database, and worker subnets, an internet-facing HTTPS ALB, one NAT gateway, two Control Plane tasks, one dispatcher task, Multi-AZ RDS, deletion protection, automated backups, final snapshots, encrypted storage, and longer retention windows. Workers remain disabled by default.
 
 The single NAT gateway reduces cost but is an egress dependency and can incur cross-AZ data processing. ClickHouse, remote state, credentials, alerting, capacity policy, backup restore testing, drift management, disaster recovery, and any stronger availability target remain operator-owned.
 
@@ -48,9 +48,9 @@ Before serving customer traffic, at minimum:
 
 - Define ownership for Terraform state, credentials, drift, on-call response, scaling, and cost guardrails.
 - Provision and validate the ClickHouse endpoint and its network path.
-- Choose database, Redis, object-store, and log retention policies that meet your recovery targets; test restoration into a separate environment.
+- Choose database, object-store, and log retention policies that meet your recovery targets; test restoration into a separate environment.
 - Validate the single-NAT tradeoff or replace it in your deployment composition.
-- Configure monitoring for ECS service health, `/readyz`, RDS, Redis/Valkey, ClickHouse, queues, and worker capacity.
+- Configure monitoring for ECS service health, `/readyz`, RDS, ClickHouse, queues, and worker capacity.
 - Populate secrets, run database bootstrap and migrations, and verify [authentication](/docs/self-hosting/authentication).
 - Size and test immutable execution [Worker](/docs/self-hosting/workers) Pool generations.
 - Rehearse the [upgrade](/docs/self-hosting/upgrades) and worker-drain sequence in a non-production environment.

@@ -33,21 +33,6 @@ output "postgres_security_group_id" {
   value       = aws_security_group.postgres.id
 }
 
-output "redis_endpoint" {
-  description = "ElastiCache event stream primary endpoint."
-  value       = aws_elasticache_replication_group.event_stream.primary_endpoint_address
-}
-
-output "redis_url" {
-  description = "Redis/Valkey URL used by helmr-controlplane."
-  value       = local.redis_url
-}
-
-output "redis_security_group_id" {
-  description = "Redis/Valkey security group ID."
-  value       = aws_security_group.redis.id
-}
-
 output "controlplane_url" {
   description = "Configured external control-plane URL."
   value       = local.controlplane_url

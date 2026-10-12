@@ -46,7 +46,7 @@ func TestServeDevClosesDependenciesAfterHTTPDrainAndLoops(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		// runDev closes Redis, ClickHouse and PostgreSQL in defers once
+		// runDev closes ClickHouse and PostgreSQL in defers once
 		// serveDev returns; record that point.
 		err := serveDev(ctx, discardLog(), server, "", loops, 5*time.Second)
 		record("dependencies closed")

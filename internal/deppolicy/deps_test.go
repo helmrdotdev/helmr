@@ -47,7 +47,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"disk":               {"api", "computerhost", "controlplane", "db", "guestd", "pgvalue", "wire"},
 		"computer":           {"api", "command", "controlplane", "deployment", "identity", "org", "workerapi"},
 		"computerhost":       {"controlplane", "db", "guestd", "worker"},
-		"controlplane":       {"computerhost", "eventstream", "firecracker", "guestd", "pglock"},
+		"controlplane":       {"computerhost", "firecracker", "guestd", "pglock"},
 		"region":             {"controlplane", "org", "workergroup"},
 		"secret":             {"agent", "command", "computer"},
 		"secretbinding":      {"api", "db", "definition", "deployment", "disk"},
@@ -279,11 +279,10 @@ func TestDomainPackagesUseNaturalImportNames(t *testing.T) {
 func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {
 	root := filepath.Join(repositoryRoot(t), "internal")
 	for source, forbiddenPrefixes := range map[string][]string{
-		"auth":         {"github.com/jackc/pgx/"},
-		"cas":          {"github.com/aws/aws-sdk-go-v2/", "github.com/aws/smithy-go"},
-		"controlplane": {"github.com/redis/go-redis/"},
-		"email":        {"github.com/resend/resend-go/"},
-		"telemetry":    {"github.com/ClickHouse/clickhouse-go/"},
+		"auth":      {"github.com/jackc/pgx/"},
+		"cas":       {"github.com/aws/aws-sdk-go-v2/", "github.com/aws/smithy-go"},
+		"email":     {"github.com/resend/resend-go/"},
+		"telemetry": {"github.com/ClickHouse/clickhouse-go/"},
 	} {
 		imports, err := packageImports(filepath.Join(root, source))
 		if err != nil {

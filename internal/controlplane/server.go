@@ -17,7 +17,6 @@ import (
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -54,10 +53,6 @@ type SecretManager interface {
 	Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 }
 
-type SubjectEventReader interface {
-	ReadSubject(context.Context, uuid.UUID, string, uuid.UUID, int64, func(api.DiagnosticEvent) error, func() error) error
-}
-
 type Server struct {
 	slackConfig                *SlackConfig
 	diagnosticDB               db.TxDB
@@ -81,8 +76,7 @@ type Server struct {
 	secretDelivery             SecretDeliveryOpener
 	secretProxy                *secret.Store
 	computers                  computer.Creator
-	eventStream                SubjectEventReader
-	telemetryReader            telemetry.Reader
+	telemetryReader            telemetry.CommandLogReader
 	hostAuth                   workergroup.HostAuthConfig
 	workerEnrollmentGuard      *workerEnrollmentGuard
 	capacityTokenHash          []byte
@@ -123,8 +117,7 @@ type ServerConfig struct {
 	Secrets           SecretManager
 	SecretDelivery    SecretDeliveryOpener
 	SecretProxy       *secret.Store
-	EventStream       SubjectEventReader
-	TelemetryReader   telemetry.Reader
+	TelemetryReader   telemetry.CommandLogReader
 	Mailer            email.Sender
 	MagicLinkDelivery *MagicLinkDelivery
 	AuthProvider      AuthProvider
@@ -256,7 +249,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secretDelivery:             cfg.SecretDelivery,
 		secretProxy:                cfg.SecretProxy,
 		computers:                  computer.NewCreator(cfg.SecretProxy),
-		eventStream:                cfg.EventStream,
 		telemetryReader:            telemetryReader,
 		diagnosticBounds:           cfg.DiagnosticBounds,
 		diagnosticDB:               cfg.DiagnosticDB,

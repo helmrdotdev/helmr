@@ -179,7 +179,6 @@ rec {
 
   ciPostgres = ciGo ++ [
     pkgs.postgresql_18
-    pkgs.redis
   ];
 
   ciBundleBuilder = ciGo ++ [
@@ -205,7 +204,6 @@ rec {
     ++ image
     ++ smokeLinux
     ++ [
-      pkgs.redis
       pkgs.curl
     ];
 

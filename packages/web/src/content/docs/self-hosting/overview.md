@@ -16,7 +16,7 @@ The runtime has three main parts:
 | Dispatcher | Reconciles runnable and scheduled work from PostgreSQL authority. |
 | Workers | Execute verified Deployment bundles in Firecracker guests. |
 
-The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store. ClickHouse is an external, operator-provisioned dependency.
+The AWS examples compose RDS PostgreSQL, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store. ClickHouse is an external, operator-provisioned dependency.
 
 ## Choose a deployment path
 

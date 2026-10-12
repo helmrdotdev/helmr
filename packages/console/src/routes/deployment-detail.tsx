@@ -183,12 +183,11 @@ export function DeploymentDetail() {
           </Show>
           <Show when={!events.isPending} fallback={<StatePanel loading="Loading events..." />}>
             <Show when={eventItems().length > 0} fallback={<StatePanel empty="No events recorded for this Deployment." />}>
-              <DataTable columns={["Kind", "Severity", "Message", "At"]} minWidth="min-w-180">
+              <DataTable columns={["Kind", "Message", "At"]} minWidth="min-w-180">
                 <For each={eventItems()}>
                   {(event) => (
                     <tr>
                       <td><code>{event.kind}</code></td>
-                      <td><span class={ui.muted}>{event.severity}</span></td>
                       <td>{event.message}</td>
                       <td><RelativeTime value={event.at} /></td>
                     </tr>

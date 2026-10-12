@@ -2,11 +2,12 @@ package clickhouse
 
 import (
 	"bytes"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 )
 
 func TestCommandLogsRoundTripDeduplicatesAndScopesObservedCursor(t *testing.T) {

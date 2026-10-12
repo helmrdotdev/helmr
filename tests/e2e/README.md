@@ -131,7 +131,7 @@ new code while reading the prior Computer writes. This does not require replacin
 the VM. Restore the ordinary deployment afterward; deployment orchestration stays
 outside the driver.
 
-## Real PostgreSQL and Redis
+## Real PostgreSQL
 
 Run a focused top-level Go test against fresh real dependencies:
 

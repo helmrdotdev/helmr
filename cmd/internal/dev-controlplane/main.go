@@ -22,6 +22,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/command"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -37,22 +38,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
 	defaultAddr                    = ":8080"
 	defaultPublicURL               = "http://127.0.0.1:3000"
-	defaultRedisURL                = "redis://127.0.0.1:6379/0"
 	defaultAuthKey                 = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
 	defaultSetupToken              = "dev-setup-token"
 	defaultWorkerHostCredentialKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
@@ -156,26 +153,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	redisOptions, err := redis.ParseURL(cfg.redisURL)
-	if err != nil {
-		return fmt.Errorf("parse redis URL: %w", err)
-	}
-	redisClient := redis.NewClient(redisOptions)
-	defer redisClient.Close()
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("ping redis: %w", err)
-	}
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
-	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
-		TelemetryReader: telemetryReader,
-	})
-	if err != nil {
-		return fmt.Errorf("configure event stream: %w", err)
-	}
-	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
-	if err != nil {
-		return fmt.Errorf("configure telemetry ingester: %w", err)
-	}
 	secretStore, err := secret.New(queries, pool, cfg.encryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
@@ -216,7 +194,6 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		SetupToken:                     cfg.setupToken,
 		AuthKey:                        cfg.authKey,
 		PublicURL:                      publicURL,
-		EventStream:                    eventStream,
 		TelemetryReader:                telemetryReader,
 	})
 	if err != nil {
@@ -244,11 +221,10 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
 		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
-		{name: "event stream publisher", run: eventStream.RunPublisher},
-		{name: "telemetry ingester", run: telemetryIngestor.Run},
+		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 	}
 	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"
-	// Deferred Redis, ClickHouse and PostgreSQL closes run only after serveDev
+	// Deferred ClickHouse and PostgreSQL closes run only after serveDev
 	// has drained or force-closed HTTP and joined every background loop.
 	return serveDev(ctx, log, httpServer, loginURL, loops, 10*time.Second)
 }
@@ -329,7 +305,6 @@ type devConfig struct {
 	clickHouseURL                   string
 	clickHouseUser                  string
 	clickHousePassword              string
-	redisURL                        string
 	casURI                          string
 	platformStoreURI                string
 	deploymentRuntimeDescriptorPath string
@@ -356,7 +331,6 @@ func loadConfig() (devConfig, error) {
 		clickHouseURL:                   textEnv("CLICKHOUSE_URL", ""),
 		clickHouseUser:                  textEnv("CLICKHOUSE_USER", ""),
 		clickHousePassword:              secretEnv("CLICKHOUSE_PASSWORD", ""),
-		redisURL:                        textEnv("REDIS_URL", defaultRedisURL),
 		casURI:                          textEnv("CAS_URI", ""),
 		platformStoreURI:                textEnv("PLATFORM_STORE_URI", ""),
 		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),

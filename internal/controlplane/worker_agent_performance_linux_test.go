@@ -399,7 +399,7 @@ func readNativeTurnTimings(ctx context.Context, pool *pgxpool.Pool, env uuid.UUI
 	var raw []byte
 	err := pool.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('sessionId',session_id,'epoch',process_epoch,'kind',kind,
  'sequence',sequence,'offset',byte_offset,'throughOffset',through_byte_offset,'data',encode(data,'base64')) ORDER BY session_id,process_epoch,sequence),'[]'::jsonb)
- FROM telemetry_outbox WHERE environment_id=$1 AND session_id IN ($2,$3) AND stream='stderr' AND stream_kind='diagnostic'`, env, sessions["codex"], sessions["claude"]).Scan(&raw)
+ FROM diagnostic_chunks WHERE environment_id=$1 AND session_id IN ($2,$3) AND stream='stderr'`, env, sessions["codex"], sessions["claude"]).Scan(&raw)
 	if err != nil {
 		return nil, nil, err
 	}

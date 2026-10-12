@@ -4,9 +4,9 @@ go 1.27.1
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
-	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.4
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
 	github.com/aws/aws-sdk-go-v2/service/kms v1.61.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/aws/smithy-go v1.28.1
@@ -18,13 +18,13 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.20.1
+	github.com/google/jsonschema-go v0.4.3
 	github.com/gowebpki/jcs v1.0.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.20.0
 	github.com/mdlayher/vsock v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pelletier/go-toml/v2 v2.4.3
-	github.com/redis/go-redis/v9 v9.22.0
 	github.com/resend/resend-go/v4 v4.4.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sirupsen/logrus v1.10.2
@@ -34,7 +34,6 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
 	go.opentelemetry.io/otel v1.46.0
-	go.opentelemetry.io/otel/metric v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
@@ -49,7 +48,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/andybalholm/brotli v1.2.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.4 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.0 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.3 // indirect
@@ -94,7 +92,6 @@ require (
 	github.com/go-openapi/validate v1.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
@@ -114,9 +111,8 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
