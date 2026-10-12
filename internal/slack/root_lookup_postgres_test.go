@@ -12,7 +12,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -99,12 +100,12 @@ func TestConnectionAdmissionSharesGateButDeliverySerializesPacing(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer second.Rollback(context.Background())
-	if ok, err := agent.LockSlackConnections(t.Context(), first, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
+	if ok, err := slackroute.LockConnections(t.Context(), first, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if ok, err := agent.LockSlackConnections(ctx, second, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
+	if ok, err := slackroute.LockConnections(ctx, second, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
 		t.Fatal("independent admission serialized", ok, err)
 	}
 	writer, err := f.Pool.Begin(t.Context())
@@ -115,7 +116,7 @@ func TestConnectionAdmissionSharesGateButDeliverySerializesPacing(t *testing.T) 
 	if _, err = writer.Exec(t.Context(), `SET LOCAL lock_timeout='50ms'`); err != nil {
 		t.Fatal(err)
 	}
-	_, err = agent.LockSlackChannelsForDelivery(t.Context(), writer, f.Environment, []uuid.UUID{f.channel})
+	_, err = slackroute.LockChannelsForDelivery(t.Context(), writer, f.Environment, []uuid.UUID{f.channel})
 	var blocked *pgconn.PgError
 	if !errors.As(err, &blocked) || blocked.Code != "55P03" {
 		t.Fatal("delivery write bypassed admission gate", err)

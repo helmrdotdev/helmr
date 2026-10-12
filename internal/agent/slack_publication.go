@@ -6,6 +6,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -41,7 +43,7 @@ func lockSlackPublication(ctx context.Context, tx pgx.Tx, env, session uuid.UUID
 	if err != nil {
 		return p, err
 	}
-	p.active, err = LockSlackChannels(ctx, tx, env, []uuid.UUID{*p.channel})
+	p.active, err = slackroute.LockChannels(ctx, tx, env, []uuid.UUID{*p.channel})
 	return p, err
 }
 

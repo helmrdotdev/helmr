@@ -8,7 +8,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -19,7 +20,7 @@ import (
 // Promote atomically switches the current Deployment, closes prior trigger
 // intervals and recomputes background preparation cadence. Existing Sessions keep
 // their deployment pins. Re-promotion starts new intervals, never reopens old ones.
-func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight agent.SlackStartPreflight) (Record, error) {
+func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
 	if err := authorizeDeploy(principal, scope); err != nil {
 		return Record{}, err
 	}

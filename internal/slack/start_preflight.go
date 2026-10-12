@@ -9,12 +9,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func (c *WebClient) PrepareStart(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
+func (c *WebClient) PrepareStart(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 	target := value.Route.Target
 	if _, err := c.verifyChannel(ctx, target.InstallationID, target.CredentialRevision, target.TeamID, target.ChannelID); err != nil {
 		return nil, agent.ErrSlackChannelUnavailable
@@ -60,7 +62,7 @@ func (c *WebClient) PrepareStart(ctx context.Context, value agent.SlackStartCont
 	return json.Marshal(map[string]any{"text": quoteLiteral(text), "blocks": []any{map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": elements}}}}, "mrkdwn": false, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false, "reply_broadcast": false})
 }
 
-func (c *WebClient) sourcePermalink(ctx context.Context, source agent.SlackStartSource) (string, error) {
+func (c *WebClient) sourcePermalink(ctx context.Context, source slackroute.StartSource) (string, error) {
 	token, err := c.credentials.BotToken(ctx, source.Connection.InstallationID, source.Connection.CredentialRevision)
 	if err != nil || token == "" {
 		return "", agent.ErrSourceConversationUnavailable

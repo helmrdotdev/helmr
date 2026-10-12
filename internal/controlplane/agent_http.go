@@ -2,9 +2,12 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/content"
 	"net/http"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/content"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
@@ -55,7 +58,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 			s.writeAgentHTTPError(w, agent.ErrInvalidInput)
 			return
 		}
-		if !agent.ValidSlackChannelID(route.ChannelID) {
+		if !definition.ValidSlackChannelID(route.ChannelID) {
 			s.writeAgentHTTPError(w, agent.ErrInvalidInput)
 			return
 		}
@@ -77,7 +80,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var preflight agent.SlackStartPreflight
+	var preflight slackroute.StartPreflight
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
@@ -297,13 +300,13 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "source_conversation_pending", message: err.Error()}))
 	case errors.Is(err, agent.ErrSourceConversationUnavailable):
 		writeError(w, conflict(codedError{code: "source_conversation_unavailable", message: err.Error()}))
-	case errors.Is(err, agent.ErrTargetNotPublished):
+	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		writeError(w, conflict(codedError{code: "target_not_published", message: err.Error()}))
 	case errors.Is(err, agent.ErrTargetWorkspaceMismatch):
 		writeError(w, conflict(codedError{code: "target_workspace_mismatch", message: err.Error()}))
 	case errors.Is(err, agent.ErrStartMessageTooLarge):
 		writeError(w, conflict(codedError{code: "start_message_too_large", message: err.Error()}))
-	case errors.Is(err, agent.ErrConversationChanged):
+	case errors.Is(err, slackroute.ErrConversationChanged):
 		writeError(w, conflict(codedError{code: "conversation_changed", message: err.Error()}))
 	case errors.Is(err, agent.ErrSlackDestinationConflict):
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))

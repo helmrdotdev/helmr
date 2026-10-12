@@ -51,9 +51,12 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"region":             {"controlplane", "org", "workergroup"},
 		"secret":             {"agent", "command", "computer"},
 		"secretbinding":      {"api", "db", "definition", "deployment", "disk"},
-		"telemetry":          {"clickhouse"},
-		"workerapi":          {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
-		"workerclient":       {"client"},
+		// The Slack route authority sits beneath every owner that admits or
+		// delivers through a route.
+		"slackroute":   {"agent", "api", "command", "computer", "controlplane", "deployment", "identity", "org", "secret", "slack", "workerapi", "workergroup"},
+		"telemetry":    {"clickhouse"},
+		"workerapi":    {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
+		"workerclient": {"client"},
 		// Worker supply sits beneath the Agent and Computer owners.
 		// TestWorkerSupplyDoesNotReachWireContracts also
 		// forbids api and workerapi across the transitive closure.

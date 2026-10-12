@@ -18,7 +18,7 @@ type deliveryCandidate struct {
 // its durable owner before freezing a mutation or reserving a history read.
 // Omit dependency-blocked pending mutations, but retain unavailable-route cleanup
 // and all uncertain/expired mutation recovery even behind a paused predecessor.
-// Cleanup exceptions follow agent.LockSlackChannels and ClaimPost speaker checks.
+// Cleanup exceptions follow slackroute.LockChannels and ClaimPost speaker checks.
 func deliveryCandidates(ctx context.Context, pool db.TxBeginner, limit int) ([]deliveryCandidate, error) {
 	if limit < 1 || limit > 64 {
 		return nil, errGestureInvalid

@@ -5,62 +5,23 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
 )
 
-func ValidSlackChannelID(value string) bool { return definition.ValidSlackChannelID(value) }
-
-// SlackConnection is an internal preflight snapshot. Authored requests contain
-// only the actual Slack channel ID; none of these resolved identities enter the
-// caller's idempotency fingerprint.
-type SlackConnection struct {
-	ConnectionID, RegistrationID, InstallationID, EnvironmentID, OrganizationID uuid.UUID
-	AgentID                                                                     uuid.UUID
-	TeamID, ChannelID, AppID, BotUserID, AgentName                              string
-	CredentialRevision                                                          int64
-	AuthorizedAt                                                                time.Time
-}
-type SlackStartSource struct {
-	Connection                   SlackConnection
-	ThreadID, SessionID, RouteID uuid.UUID
-	ThreadTS                     string
-}
-type SlackStartRoute struct {
-	Target                    SlackConnection
-	DeploymentID              uuid.UUID
-	Source                    *SlackStartSource
-	Opening                   json.RawMessage
-	HumanThreadTS, HumanActor string
-}
-type SlackStartContext struct {
-	Route SlackStartRoute
-	Input json.RawMessage
-}
-type SlackStartPreflight interface {
-	PrepareStart(context.Context, SlackStartContext) (json.RawMessage, error)
-}
-
-func ReadSlackConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, channel string) (SlackConnection, error) {
-	var c SlackConnection
-	c.EnvironmentID = env
-	c.ChannelID = channel
-	c.AgentID = agent
-	err := tx.QueryRow(ctx, `SELECT p.id,r.id,i.id,e.org_id,i.team_id,i.app_id,i.bot_user_id,a.key,i.credential_revision,i.authorized_at
- FROM slack_connections p JOIN environments e ON e.id=p.environment_id JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id)
- JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id
- WHERE p.environment_id=$1 AND p.agent_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL
- AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL AND i.granted_scopes @> $3::text[]
- AND i.org_id=e.org_id AND r.org_id=e.org_id AND r.app_id=i.app_id`, env, agent, RequiredSlackScopes()).Scan(&c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.AppID, &c.BotUserID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return c, ErrTargetNotPublished
-	}
-	return c, err
-}
+var (
+	ErrSlackChannelUnavailable       = errors.New("the Slack channel is unavailable; check that both apps can access this channel")
+	ErrSlackDestinationConflict      = errors.New("session Slack destination conflicts")
+	ErrSourceConversationPending     = errors.New("source conversation is still being delivered; retry after its Slack thread is confirmed")
+	ErrSourceConversationUnavailable = errors.New("source Slack conversation is unavailable")
+	ErrTargetWorkspaceMismatch       = errors.New("target Agent is connected to a different Slack workspace")
+	ErrStartMessageTooLarge          = errors.New("start input and attribution must fit in one Slack message")
+)
 
 // slackRouteOf returns the channel of the Slack route a root Session owns, or
 // nil when the Session owns none. The thread row is the route authority.
@@ -76,12 +37,12 @@ func slackRouteOf(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (*uuid
 	return &route, nil
 }
 
-func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID) (*SlackStartSource, error) {
+func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID) (*slackroute.StartSource, error) {
 	route, err := slackRouteOf(ctx, tx, env, caller)
 	if err != nil || route == nil {
 		return nil, err
 	}
-	source := &SlackStartSource{SessionID: caller, RouteID: *route}
+	source := &slackroute.StartSource{SessionID: caller, RouteID: *route}
 	c := &source.Connection
 	c.EnvironmentID = env
 	var root *string
@@ -111,12 +72,12 @@ func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID)
 
 // prepareStart returns an authorized exact receipt before live promotion or
 // connection checks. All remote work happens after this transaction ends.
-func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req StartRequest, method string, digest [32]byte) (*Admission, *SlackStartRoute, error) {
+func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req StartRequest, method string, digest [32]byte) (*Admission, *slackroute.StartRoute, error) {
 	if req.PreparedSlack != nil {
 		return nil, req.PreparedSlack, nil
 	}
 	var receipt *Admission
-	var route *SlackStartRoute
+	var route *slackroute.StartRoute
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if caller.Kind == "session" {
 			if err := lockRuntimeHost(ctx, tx, caller); err != nil {
@@ -165,7 +126,7 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 			}
 		}
 
-		var source *SlackStartSource
+		var source *slackroute.StartSource
 		channel := ""
 		if caller.Kind == "session" {
 			source, err = readSlackStartSource(ctx, tx, req.EnvironmentID, caller.ID)
@@ -185,14 +146,14 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 		if err = tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND current_deployment_id IS NOT NULL`, req.EnvironmentID).Scan(&deployment); err != nil {
 			return ErrNotReady
 		}
-		target, err := ReadSlackConnection(ctx, tx, req.EnvironmentID, agent, channel)
+		target, err := slackroute.ReadConnection(ctx, tx, req.EnvironmentID, agent, channel)
 		if err != nil {
 			return err
 		}
 		if source != nil && (source.Connection.TeamID != target.TeamID || source.Connection.OrganizationID != target.OrganizationID) {
 			return ErrTargetWorkspaceMismatch
 		}
-		route = &SlackStartRoute{Target: target, DeploymentID: deployment, Source: source}
+		route = &slackroute.StartRoute{Target: target, DeploymentID: deployment, Source: source}
 		return nil
 	})
 	if err != nil {
@@ -204,26 +165,26 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 	if req.SlackPreflight == nil {
 		return nil, nil, ErrSlackChannelUnavailable
 	}
-	route.Opening, err = req.SlackPreflight.PrepareStart(ctx, SlackStartContext{Route: *route, Input: req.Input})
+	route.Opening, err = req.SlackPreflight.PrepareStart(ctx, slackroute.StartContext{Route: *route, Input: req.Input})
 	if err != nil {
 		return nil, nil, err
 	}
 	return nil, route, nil
 }
 
-func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment uuid.UUID, caller Caller, p *SlackStartRoute) error {
+func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment uuid.UUID, caller Caller, p *slackroute.StartRoute) error {
 	if p == nil {
 		return nil
 	}
-	if p.Target.EnvironmentID != env || p.Target.AgentID != agent || p.DeploymentID != deployment || !ValidSlackChannelID(p.Target.ChannelID) {
-		return ErrConversationChanged
+	if p.Target.EnvironmentID != env || p.Target.AgentID != agent || p.DeploymentID != deployment || !definition.ValidSlackChannelID(p.Target.ChannelID) {
+		return slackroute.ErrConversationChanged
 	}
-	c, err := ReadSlackConnection(ctx, tx, env, agent, p.Target.ChannelID)
+	c, err := slackroute.ReadConnection(ctx, tx, env, agent, p.Target.ChannelID)
 	if err != nil {
-		return ErrConversationChanged
+		return slackroute.ErrConversationChanged
 	}
 	if c.ConnectionID != p.Target.ConnectionID || c.RegistrationID != p.Target.RegistrationID || c.InstallationID != p.Target.InstallationID || c.TeamID != p.Target.TeamID || c.OrganizationID != p.Target.OrganizationID || !c.AuthorizedAt.Equal(p.Target.AuthorizedAt) {
-		return ErrConversationChanged
+		return slackroute.ErrConversationChanged
 	}
 	if caller.Kind == "session" {
 		if p.HumanThreadTS != "" {
@@ -234,11 +195,11 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 			return err
 		}
 		if (source == nil) != (p.Source == nil) || source != nil && (source.ThreadID != p.Source.ThreadID || source.RouteID != p.Source.RouteID || source.ThreadTS != p.Source.ThreadTS || !source.Connection.AuthorizedAt.Equal(p.Source.Connection.AuthorizedAt)) {
-			return ErrConversationChanged
+			return slackroute.ErrConversationChanged
 		}
 	}
 	if p.Source != nil && (p.Source.Connection.TeamID != c.TeamID || p.Source.Connection.ChannelID != c.ChannelID || p.Source.Connection.OrganizationID != c.OrganizationID) {
-		return ErrConversationChanged
+		return slackroute.ErrConversationChanged
 	}
 	if p.HumanThreadTS == "" && (len(p.Opening) == 0 || !json.Valid(p.Opening)) {
 		return ErrInvalidInput
@@ -246,21 +207,8 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 	return nil
 }
 
-func ResolveSlackRoute(ctx context.Context, tx pgx.Tx, c SlackConnection) (uuid.UUID, error) {
-	id := uuid.NewV7()
-	tag, err := tx.Exec(ctx, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(connection_id,slack_channel_id) DO NOTHING`, id, c.EnvironmentID, c.ConnectionID, c.InstallationID, c.OrganizationID, c.TeamID, c.ChannelID)
-	if err != nil {
-		return uuid.Nil(), err
-	}
-	if tag.RowsAffected() == 1 {
-		return id, nil
-	}
-	err = tx.QueryRow(ctx, `SELECT id FROM slack_channel_bindings WHERE connection_id=$1 AND environment_id=$2 AND installation_id=$3 AND slack_channel_id=$4`, c.ConnectionID, c.EnvironmentID, c.InstallationID, c.ChannelID).Scan(&id)
-	return id, err
-}
-
-func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel uuid.UUID, p SlackStartRoute) error {
-	thread, source := uuid.NewV7(), uuid.NewV7()
+func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel uuid.UUID, p slackroute.StartRoute) error {
+	thread := uuid.NewV7()
 	var opening, root, recipientTeam, recipientUser any
 	if p.HumanThreadTS != "" {
 		root = p.HumanThreadTS
@@ -275,7 +223,8 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($1,$2,$3,$4)`, source, thread, env, session); err != nil {
+	source, err := slackroute.AddMember(ctx, tx, env, thread, session)
+	if err != nil {
 		return err
 	}
 	if p.HumanThreadTS != "" {

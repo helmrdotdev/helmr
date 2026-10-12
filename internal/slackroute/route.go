@@ -1,4 +1,8 @@
-package agent
+// Package slackroute owns the Slack route authority: connections, channel
+// bindings and thread membership, and the locks that gate them. Lock order:
+// registration, installation, connection, channel binding (step 3 of the
+// global order in package pglock), before Environment or Session owners.
+package slackroute
 
 import (
 	"context"
@@ -8,28 +12,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrSlackChannelUnavailable = errors.New("the Slack channel is unavailable; check that both apps can access this channel")
-var ErrSlackDestinationConflict = errors.New("session Slack destination conflicts")
-var ErrSourceConversationPending = errors.New("source conversation is still being delivered; retry after its Slack thread is confirmed")
-var ErrSourceConversationUnavailable = errors.New("source Slack conversation is unavailable")
-var ErrTargetNotPublished = errors.New("target Agent has no connected Slack app")
-var ErrTargetWorkspaceMismatch = errors.New("target Agent is connected to a different Slack workspace")
-var ErrStartMessageTooLarge = errors.New("start input and attribution must fit in one Slack message")
-var ErrConversationChanged = errors.New("conversation configuration changed during validation; retry the same request")
+var (
+	ErrTargetNotPublished  = errors.New("target Agent has no connected Slack app")
+	ErrConversationChanged = errors.New("conversation configuration changed during validation; retry the same request")
+)
 
-// RequiredSlackScopes returns the bot scopes needed by connected Slack connections.
+// RequiredScopes returns the bot scopes needed by connected Slack connections.
 // OAuth, app manifests and transactional admission use the same scope set.
-func RequiredSlackScopes() []string {
+func RequiredScopes() []string {
 	return []string{"app_mentions:read", "channels:read", "channels:history", "groups:read", "groups:history", "chat:write", "assistant:write"}
 }
 
-// LockSlackConnections takes registration, installation, then connection gates
+// LockConnections takes registration, installation, then connection gates
 // before Environment or Session owners. Immutable routes never confer access.
-func LockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
-	return lockSlackConnections(ctx, tx, env, ids, false)
+func LockConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
+	return lockConnections(ctx, tx, env, ids, false)
 }
 
-func lockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
+func lockConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
 	if len(ids) == 0 {
 		return true, nil
 	}
@@ -97,7 +97,7 @@ func lockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
  AND r.org_id=e.org_id AND i.org_id=e.org_id AND r.app_id=i.app_id AND i.granted_scopes @> $3::text[]
  FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id
  LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
- WHERE p.environment_id=$1 AND p.id=ANY($2::uuid[]) ORDER BY p.id FOR SHARE OF p`, env, ids, RequiredSlackScopes())
+ WHERE p.environment_id=$1 AND p.id=ANY($2::uuid[]) ORDER BY p.id FOR SHARE OF p`, env, ids, RequiredScopes())
 	if err != nil {
 		return false, err
 	}
@@ -127,17 +127,17 @@ func lockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 	return active, nil
 }
 
-func LockSlackChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
-	return lockSlackChannels(ctx, tx, env, ids, false)
+func LockChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
+	return lockChannels(ctx, tx, env, ids, false)
 }
 
-// LockSlackChannelsForDelivery uses the same authority and lock order, with a
+// LockChannelsForDelivery uses the same authority and lock order, with a
 // write gate for callers that reserve installation-wide delivery/read pacing.
-func LockSlackChannelsForDelivery(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
-	return lockSlackChannels(ctx, tx, env, ids, true)
+func LockChannelsForDelivery(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
+	return lockChannels(ctx, tx, env, ids, true)
 }
 
-func lockSlackChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
+func lockChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
 	if len(ids) == 0 {
 		return true, nil
 	}
@@ -160,7 +160,7 @@ func lockSlackChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid
 	if err = rows.Err(); err != nil {
 		return false, err
 	}
-	active, err := lockSlackConnections(ctx, tx, env, pubs, reserve)
+	active, err := lockConnections(ctx, tx, env, pubs, reserve)
 	if err != nil {
 		return false, err
 	}

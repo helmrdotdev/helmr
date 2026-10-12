@@ -9,7 +9,8 @@ import (
 	"net/url"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +18,7 @@ import (
 
 // resolveMentionRoot reads exactly one requested root. Only a positive match or
 // positive unrelated sender permits admission; missing evidence stays pending.
-func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, connection agent.SlackConnection, root string) (bool, error) {
+func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, connection slackroute.Connection, root string) (bool, error) {
 	var reserved bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=clock_timestamp()+$3*interval '1 second' WHERE id=$1 AND authorized_at=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL AND history_next_at<=clock_timestamp()`, connection.InstallationID, connection.AuthorizedAt, historyReadInterval.Seconds())

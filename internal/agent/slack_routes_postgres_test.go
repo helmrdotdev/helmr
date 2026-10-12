@@ -7,18 +7,20 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type startPreflightFunc func(context.Context, SlackStartContext) (json.RawMessage, error)
+type startPreflightFunc func(context.Context, slackroute.StartContext) (json.RawMessage, error)
 
-func (f startPreflightFunc) PrepareStart(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
+func (f startPreflightFunc) PrepareStart(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 	return f(ctx, value)
 }
-func acceptedStartPreflight(context.Context, SlackStartContext) (json.RawMessage, error) {
+func acceptedStartPreflight(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 	return json.RawMessage(`{"text":"Started agent.","mrkdwn":false}`), nil
 }
 
@@ -37,11 +39,11 @@ func slackRouteFixture(t *testing.T, f fixture) (uuid.UUID, uuid.UUID) {
 func bindFixtureSlackRoot(t *testing.T, f fixture, channel uuid.UUID) {
 	t.Helper()
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		connection, err := ReadSlackConnection(t.Context(), tx, f.env, f.agent, "C1")
+		connection, err := slackroute.ReadConnection(t.Context(), tx, f.env, f.agent, "C1")
 		if err != nil {
 			return err
 		}
-		return createSlackRoot(t.Context(), tx, f.env, f.session, uuid.Nil(), channel, SlackStartRoute{Target: connection, HumanThreadTS: "123.456", HumanActor: "human"})
+		return createSlackRoot(t.Context(), tx, f.env, f.session, uuid.Nil(), channel, slackroute.StartRoute{Target: connection, HumanThreadTS: "123.456", HumanActor: "human"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +59,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	req.SlackChannelID = &channel
 	req.SessionKey = &key
 	calls := 0
-	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
+	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 		calls++
 		return acceptedStartPreflight(ctx, value)
 	})
@@ -96,7 +98,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	req.IdempotencyKey = "fresh"
 	req.SessionKey = nil
 	req.SlackChannelID = &channel
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrTargetNotPublished) {
+	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, slackroute.ErrTargetNotPublished) {
 		t.Fatal(err)
 	}
 }
@@ -113,7 +115,7 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 			channel := "C1"
 			req := f.startRequest("new")
 			req.SlackChannelID = &channel
-			req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
+			req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 				if kind == "access" {
 					return nil, ErrSlackChannelUnavailable
 				}
@@ -126,7 +128,7 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 			_, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 			want := ErrSlackChannelUnavailable
 			if kind == "changed" {
-				want = ErrConversationChanged
+				want = slackroute.ErrConversationChanged
 			}
 			if !errors.Is(err, want) {
 				t.Fatal(err)
@@ -150,7 +152,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	caller := Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
-	req.SlackPreflight = startPreflightFunc(func(context.Context, SlackStartContext) (json.RawMessage, error) {
+	req.SlackPreflight = startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 		t.Fatal("spawn performed Slack preflight")
 		return nil, nil
 	})
@@ -169,7 +171,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatalf("child owned a Slack route: %v", err)
 	}
 	req.IdempotencyKey = "independent"
-	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
+	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 		if value.Route.Source == nil || value.Route.Source.SessionID != f.session {
 			t.Fatal("missing source provenance")
 		}
@@ -204,8 +206,8 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read := func() (*SlackStartSource, error) {
-		var source *SlackStartSource
+	read := func() (*slackroute.StartSource, error) {
+		var source *slackroute.StartSource
 		err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			var err error
 			source, err = readSlackStartSource(t.Context(), tx, f.env, root.SessionID)
@@ -245,12 +247,12 @@ func TestSlackConnectionAdmissionRequiresEveryBotScope(t *testing.T) {
 			if missing != "" {
 				dbtest.MustExec(t, t.Context(), tx, `UPDATE slack_installations SET granted_scopes=array_remove(granted_scopes,$2) WHERE id=$1`, installation, missing)
 			}
-			allowed, err := LockSlackConnections(t.Context(), tx, f.env, []uuid.UUID{publication})
+			allowed, err := slackroute.LockConnections(t.Context(), tx, f.env, []uuid.UUID{publication})
 			if err != nil || allowed != (missing == "") {
 				t.Fatalf("publication gate=%v err=%v", allowed, err)
 			}
-			_, err = ReadSlackConnection(t.Context(), tx, f.env, f.agent, "C1")
-			if missing == "" && err != nil || missing != "" && !errors.Is(err, ErrTargetNotPublished) {
+			_, err = slackroute.ReadConnection(t.Context(), tx, f.env, f.agent, "C1")
+			if missing == "" && err != nil || missing != "" && !errors.Is(err, slackroute.ErrTargetNotPublished) {
 				t.Fatalf("connection gate: %v", err)
 			}
 		})

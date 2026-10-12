@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 
@@ -28,8 +30,8 @@ import (
 // Agent references are definition keys in the caller's pinned Deployment.
 type StartRequest struct {
 	CloseAfterIdle lifetime.Policy
-	SlackPreflight SlackStartPreflight
-	PreparedSlack  *SlackStartRoute
+	SlackPreflight slackroute.StartPreflight
+	PreparedSlack  *slackroute.StartRoute
 	EnvironmentID  uuid.UUID
 	Agent          string
 	ComputerID     uuid.UUID
@@ -56,7 +58,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return Admission{}, ErrInvalidInput
 	}
-	if req.SlackChannelID != nil && (!ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
+	if req.SlackChannelID != nil && (!definition.ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
 		return Admission{}, ErrInvalidInput
 	}
 	if caller.ID == uuid.Nil() || (method == "spawn" && caller.Kind != "session") {
@@ -119,25 +121,25 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			if prepared.Source != nil {
 				pubs = append(pubs, prepared.Source.Connection.ConnectionID)
 			}
-			active, err := LockSlackConnections(ctx, tx, req.EnvironmentID, pubs)
+			active, err := slackroute.LockConnections(ctx, tx, req.EnvironmentID, pubs)
 			if err != nil {
 				return err
 			}
 			// Exact retries are checked below before fresh connection eligibility.
 			routeActive = active
 		}
-		var binding slackAdmissionBinding
+		var rootThread uuid.UUID
 		if caller.Kind == "session" && method == "spawn" {
 			sourceRoute, err := slackRouteOf(ctx, tx, req.EnvironmentID, caller.ID)
 			if err != nil {
 				return err
 			}
 			if sourceRoute != nil {
-				if _, err := LockSlackChannels(ctx, tx, req.EnvironmentID, []uuid.UUID{*sourceRoute}); err != nil {
+				if _, err := slackroute.LockChannels(ctx, tx, req.EnvironmentID, []uuid.UUID{*sourceRoute}); err != nil {
 					return err
 				}
 			}
-			binding, err = resolveSlackChildBinding(ctx, tx, req.EnvironmentID, caller.ID)
+			rootThread, err = slackroute.RootThread(ctx, tx, req.EnvironmentID, caller.ID)
 			if err != nil {
 				return err
 			}
@@ -197,18 +199,18 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		var route *uuid.UUID
 		if prepared != nil {
 			if !routeActive {
-				return ErrConversationChanged
+				return slackroute.ErrConversationChanged
 			}
 			if err = validateSlackStart(ctx, tx, req.EnvironmentID, agentID, deployment, caller, prepared); err != nil {
 				return err
 			}
-			routeID, err := ResolveSlackRoute(ctx, tx, prepared.Target)
+			routeID, err := slackroute.ResolveChannelBinding(ctx, tx, prepared.Target)
 			if err != nil {
 				return err
 			}
 			route = &routeID
 		} else if req.SlackChannelID != nil {
-			return ErrConversationChanged
+			return slackroute.ErrConversationChanged
 		}
 		computer := req.ComputerID
 		if computer == uuid.Nil() && hasInput {
@@ -287,9 +289,13 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 				return err
 			}
 		}
-		if binding.thread != uuid.Nil() {
-			if err = insertSlackSource(ctx, tx, req.EnvironmentID, result.SessionID, binding.thread); err != nil {
+		if rootThread != uuid.Nil() {
+			joined, err := slackroute.JoinRootThread(ctx, tx, req.EnvironmentID, result.SessionID, rootThread)
+			if err != nil {
 				return err
+			}
+			if !joined {
+				return ErrDenied
 			}
 		}
 		if hasInput {

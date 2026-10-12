@@ -6,7 +6,8 @@ import (
 	"errors"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/definition"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -72,7 +73,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		if err != nil {
 			return err
 		}
-		if !agent.ValidSlackChannelID(channel) {
+		if !definition.ValidSlackChannelID(channel) {
 			return nil
 		}
 		text := "Helmr could not accept that action. Check your access in Console, then try again."

@@ -11,7 +11,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
@@ -47,7 +48,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 
 func refreshResult() oauthResult {
 	expires := time.Now().Add(12 * time.Hour)
-	return oauthResult{grant: oauthGrant{bundle: credentialBundle{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: &expires}, app: "app", team: "team", bot: "bot", scopes: agent.RequiredSlackScopes()}}
+	return oauthResult{grant: oauthGrant{bundle: credentialBundle{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: &expires}, app: "app", team: "team", bot: "bot", scopes: slackroute.RequiredScopes()}}
 }
 
 func TestCredentialRefreshSerializesAndPreservesConnectionAuthority(t *testing.T) {

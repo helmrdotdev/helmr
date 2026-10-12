@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"io"
 	"net/http"
 	"net/url"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 var ErrChannelVerification = errors.New("the Slack channel could not be verified; invite the app to an unshared workspace channel and try again")

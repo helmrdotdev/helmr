@@ -8,7 +8,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -38,7 +39,7 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if err != nil {
 			return err
 		}
-		active, err := agent.LockSlackChannelsForDelivery(ctx, tx, env, []uuid.UUID{channel})
+		active, err := slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{channel})
 		if err != nil {
 			return err
 		}

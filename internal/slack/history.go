@@ -10,7 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/jackc/pgx/v5"
@@ -136,7 +137,7 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 		}
 		// Lock both exact generations before selecting a currently authorized
 		// reader. A retired sender does not prevent the target proving its post.
-		if _, err = agent.LockSlackChannelsForDelivery(ctx, tx, env, []uuid.UUID{sourceChannel, targetChannel}); err != nil {
+		if _, err = slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{sourceChannel, targetChannel}); err != nil {
 			return err
 		}
 		var ready bool

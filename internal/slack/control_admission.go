@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -51,7 +53,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		eligible, err := agent.LockSlackChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
+		eligible, err := slackroute.LockChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
 		if err != nil {
 			return err
 		}

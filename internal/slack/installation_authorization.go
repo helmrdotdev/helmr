@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 )
 
 var ErrOAuthAuthorization = errors.New("the Slack authorization could not be completed; start authorization again")
@@ -26,6 +26,6 @@ func ControlKey(root []byte) ([]byte, error) {
 }
 
 func (c *OAuthClient) AuthorizationURL(state, redirect string) string {
-	query := url.Values{"client_id": {c.clientID}, "scope": {strings.Join(agent.RequiredSlackScopes(), ",")}, "state": {state}, "redirect_uri": {redirect}}
+	query := url.Values{"client_id": {c.clientID}, "scope": {strings.Join(slackroute.RequiredScopes(), ",")}, "state": {state}, "redirect_uri": {redirect}}
 	return "https://slack.com/oauth/v2/authorize?" + query.Encode()
 }

@@ -23,7 +23,7 @@ var dynamicStatementSites = map[string]string{
 	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/agent:reclaimComputerGraphRow":        "statement is a constant at each caller, which the preparation test covers",
-	"internal/agent:lockSlackConnections":           "two constant lock statements selected by lock strength",
+	"internal/slackroute:lockConnections":           "two constant lock statements selected by lock strength",
 	"internal/telemetry:BeginDiagnosticAdmission":   "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 	"internal/telemetry:DiagnosticAdmission.Append": "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 }
@@ -58,9 +58,10 @@ var tableOwners = map[string]string{
 	// secrets
 	"secrets": "internal/secret", "secret_versions": "internal/secret",
 	// Slack
-	"slack_connections": "internal/slack", "slack_app_registrations": "internal/slack", "slack_channel_bindings": "internal/slack",
-	"slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_requests": "internal/slack",
-	"slack_thread_sources": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
+	"slack_app_registrations": "internal/slack", "slack_installations": "internal/slack", "slack_posts": "internal/slack",
+	"slack_requests": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
+	// Slack route authority
+	"slack_connections": "internal/slackroute", "slack_channel_bindings": "internal/slackroute", "slack_thread_sources": "internal/slackroute",
 	// telemetry
 	"diagnostic_chunks": "internal/telemetry", "deployment_events": "internal/deployment",
 	// worker supply
@@ -73,25 +74,23 @@ var tableOwners = map[string]string{
 // coWriters are packages that still write another owner's table. Each entry
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
-	"agent_definitions":      {"internal/agent": "owner split"},
-	"agent_triggers":         {"internal/agent": "owner split"},
-	"trigger_activations":    {"internal/agent": "owner split"},
-	"agents":                 {"internal/agent": "owner split"},
-	"image_specs":            {"internal/agent": "owner split"},
-	"template_definitions":   {"internal/agent": "owner split"},
-	"templates":              {"internal/agent": "owner split"},
-	"environments":           {"internal/agent": "owner split", "internal/deployment": "owner split"},
-	"checkpoints":            {"internal/computer": "owner split"},
-	"computer_leases":        {"internal/computer": "owner split"},
-	"computers":              {"internal/computer": "owner split", "internal/command": "owner split"},
-	"secret_exposures":       {"internal/command": "owner split"},
-	"slack_channel_bindings": {"internal/agent": "owner split"},
-	"slack_posts":            {"internal/agent": "owner split"},
-	"slack_requests":         {"internal/agent": "owner split"},
-	"slack_thread_sources":   {"internal/agent": "owner split"},
-	"slack_threads":          {"internal/agent": "owner split"},
-	"login_sessions":         {"internal/org": "member disablement revokes sessions"},
-	"users":                  {"internal/org": "organization creation records the owner"},
+	"agent_definitions":    {"internal/agent": "owner split"},
+	"agent_triggers":       {"internal/agent": "owner split"},
+	"trigger_activations":  {"internal/agent": "owner split"},
+	"agents":               {"internal/agent": "owner split"},
+	"image_specs":          {"internal/agent": "owner split"},
+	"template_definitions": {"internal/agent": "owner split"},
+	"templates":            {"internal/agent": "owner split"},
+	"environments":         {"internal/agent": "owner split", "internal/deployment": "owner split"},
+	"checkpoints":          {"internal/computer": "owner split"},
+	"computer_leases":      {"internal/computer": "owner split"},
+	"computers":            {"internal/computer": "owner split", "internal/command": "owner split"},
+	"secret_exposures":     {"internal/command": "owner split"},
+	"slack_posts":          {"internal/agent": "owner split"},
+	"slack_requests":       {"internal/agent": "owner split"},
+	"slack_threads":        {"internal/agent": "owner split"},
+	"login_sessions":       {"internal/org": "member disablement revokes sessions"},
+	"users":                {"internal/org": "organization creation records the owner"},
 }
 
 // queryFileOwners maps each sqlc query file to the owner whose writes it

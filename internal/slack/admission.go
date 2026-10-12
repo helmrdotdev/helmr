@@ -7,6 +7,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -19,7 +22,7 @@ var errAdmissionExpired = errors.New("slack gesture expired during admission")
 // grant. The receipt, connection and human authority are rechecked at commit.
 type messageAdmission struct {
 	installation            uuid.UUID
-	route                   agent.SlackStartRoute
+	route                   slackroute.StartRoute
 	message                 messageGesture
 	root                    string
 	user                    uuid.UUID
@@ -41,7 +44,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	if err != nil || status != "received" {
 		return nil, err
 	}
-	if json.Unmarshal(raw, &p.message) != nil || !agent.ValidSlackChannelID(p.message.Channel) {
+	if json.Unmarshal(raw, &p.message) != nil || !definition.ValidSlackChannelID(p.message.Channel) {
 		return nil, errGestureInvalid
 	}
 	p.root = p.message.Thread
@@ -63,8 +66,8 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	if err != nil {
 		return nil, err
 	}
-	p.route.Target, err = agent.ReadSlackConnection(ctx, tx, env, target, p.message.Channel)
-	if errors.Is(err, agent.ErrTargetNotPublished) {
+	p.route.Target, err = slackroute.ReadConnection(ctx, tx, env, target, p.message.Channel)
+	if errors.Is(err, slackroute.ErrTargetNotPublished) {
 		return reject("binding_unavailable")
 	}
 	if err != nil {
@@ -151,7 +154,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		active, err := agent.LockSlackConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
+		active, err := slackroute.LockConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
 			return err
 		}
@@ -174,7 +177,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 			return err
 		}
 		if current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
-			return agent.ErrConversationChanged
+			return slackroute.ErrConversationChanged
 		}
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source

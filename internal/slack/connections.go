@@ -5,6 +5,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -44,8 +46,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, setup.ID, environment, agent, setup.RegistrationID, user)
-		return err
+		return slackroute.CreateConnection(ctx, tx, setup.ID, environment, agent, setup.RegistrationID, user)
 	})
 	if err != nil {
 		return ConnectionSetup{}, err
@@ -152,7 +153,7 @@ func (s *CredentialStore) DisconnectConnection(ctx context.Context, org, user, e
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_connections SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1`, connection); err != nil {
+		if err = slackroute.RevokeConnection(ctx, tx, connection); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)

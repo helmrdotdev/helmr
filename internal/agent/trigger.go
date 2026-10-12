@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -94,7 +96,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust ComputerTrus
 		routeActive := true
 		if route != nil {
 			var err error
-			routeActive, err = LockSlackChannels(ctx, tx, env, []uuid.UUID{*route})
+			routeActive, err = slackroute.LockChannels(ctx, tx, env, []uuid.UUID{*route})
 			if err != nil {
 				return err
 			}
@@ -229,7 +231,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 		if err = tx.QueryRow(ctx, `SELECT connection_id,slack_channel_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=$2`, s.environment, *s.slackChannelID).Scan(&publication, &channel); err != nil {
 			return Admission{}, err
 		}
-		connection, err := ReadSlackConnection(ctx, tx, s.environment, s.agent, channel)
+		connection, err := slackroute.ReadConnection(ctx, tx, s.environment, s.agent, channel)
 		if err != nil {
 			return Admission{}, err
 		}
@@ -237,7 +239,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 			return Admission{}, ErrSlackChannelUnavailable
 		}
 		opening, _ := json.Marshal(map[string]any{"text": "Started " + connection.AgentName + ".", "mrkdwn": false, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false})
-		if err = createSlackRoot(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, *s.slackChannelID, SlackStartRoute{Target: connection, DeploymentID: s.deployment, Opening: opening}); err != nil {
+		if err = createSlackRoot(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, *s.slackChannelID, slackroute.StartRoute{Target: connection, DeploymentID: s.deployment, Opening: opening}); err != nil {
 			return Admission{}, err
 		}
 	}

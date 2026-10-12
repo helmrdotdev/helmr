@@ -11,6 +11,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -86,7 +88,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			result, err := agent.Start(t.Context(), f.Pool, nil, caller, agent.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input, SlackPreflight: client})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
-				want := map[string]error{"pending-source": agent.ErrSourceConversationPending, "unpublished-target": agent.ErrTargetNotPublished, "workspace-mismatch": agent.ErrTargetWorkspaceMismatch, "target-denied": agent.ErrSlackChannelUnavailable, "source-denied": agent.ErrSlackChannelUnavailable, "source-revoked": agent.ErrConversationChanged, "permalink-unavailable": agent.ErrSourceConversationUnavailable, "too-large": agent.ErrStartMessageTooLarge}[kind]
+				want := map[string]error{"pending-source": agent.ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": agent.ErrTargetWorkspaceMismatch, "target-denied": agent.ErrSlackChannelUnavailable, "source-denied": agent.ErrSlackChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": agent.ErrSourceConversationUnavailable, "too-large": agent.ErrStartMessageTooLarge}[kind]
 				if !errors.Is(err, want) {
 					t.Fatal("wrong rejection", err, want)
 				}

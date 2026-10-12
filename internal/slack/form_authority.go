@@ -6,6 +6,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/jackc/pgx/v5"
 )
@@ -36,7 +38,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 	if err != nil {
 		return empty, 0, err
 	}
-	active, err := agent.LockSlackChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
+	active, err := slackroute.LockChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
 	if err != nil {
 		return empty, 0, err
 	}

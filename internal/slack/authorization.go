@@ -5,6 +5,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -44,10 +46,7 @@ func suppressInstallationPosts(ctx context.Context, tx pgx.Tx, installation uuid
 	// Closing existing publications and disposing the unread prefix here prevents
 	// a later cumulative update from carrying bytes across reauthorization.
 	// Repeat this at reauthorization to exclude content accepted during the outage.
-	_, err = tx.Exec(ctx, `UPDATE slack_thread_sources p SET projected_event_seq=GREATEST(p.projected_event_seq,s.next_event_seq-1)
- FROM sessions s,slack_threads t,slack_channel_bindings c WHERE p.environment_id=s.environment_id AND p.session_id=s.id
- AND t.id=p.thread_id AND c.id=t.channel_id AND c.installation_id=$1`, installation)
-	return err
+	return slackroute.SkipInstallationProjection(ctx, tx, installation)
 }
 
 // These responses establish that the rejected mutation did not execute. Missing

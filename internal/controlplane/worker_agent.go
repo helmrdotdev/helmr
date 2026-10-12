@@ -8,6 +8,8 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
@@ -349,7 +351,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		var preflight agent.SlackStartPreflight
+		var preflight slackroute.StartPreflight
 		if server.slackConfig != nil {
 			preflight = server.slackConfig.Client
 		}
@@ -492,7 +494,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "source_conversation_pending"
 	case errors.Is(err, agent.ErrSourceConversationUnavailable):
 		code = "source_conversation_unavailable"
-	case errors.Is(err, agent.ErrTargetNotPublished):
+	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		code = "target_not_published"
 	case errors.Is(err, agent.ErrTargetWorkspaceMismatch):
 		code = "target_workspace_mismatch"
@@ -500,7 +502,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "channel_unavailable"
 	case errors.Is(err, agent.ErrStartMessageTooLarge):
 		code = "start_message_too_large"
-	case errors.Is(err, agent.ErrConversationChanged):
+	case errors.Is(err, slackroute.ErrConversationChanged):
 		code = "conversation_changed"
 	case errors.Is(err, agent.ErrRootSessionRequired):
 		code = "root_session_required"
@@ -528,7 +530,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		return
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, agent.ErrSourceConversationPending) || errors.Is(err, agent.ErrSourceConversationUnavailable) || errors.Is(err, agent.ErrTargetNotPublished) || errors.Is(err, agent.ErrTargetWorkspaceMismatch) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrStartMessageTooLarge) || errors.Is(err, agent.ErrConversationChanged) || errors.Is(err, agent.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, agent.ErrResponseAlreadyStaged) {
+	if errors.Is(err, agent.ErrSourceConversationPending) || errors.Is(err, agent.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, agent.ErrTargetWorkspaceMismatch) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, agent.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, agent.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))

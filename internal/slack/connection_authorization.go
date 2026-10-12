@@ -7,7 +7,8 @@ import (
 	"net/url"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -62,7 +63,7 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, org, user, co
 	if result.code != "" || result.grant.app == "" || result.grant.team == "" || result.grant.bot == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
-	for _, required := range agent.RequiredSlackScopes() {
+	for _, required := range slackroute.RequiredScopes() {
 		found := false
 		for _, scope := range result.grant.scopes {
 			if scope == required {
@@ -146,8 +147,7 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, org, user, 
 		if _, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET app_id=$2 WHERE id=$1 AND app_id IS NULL`, observed.registration, grant.app); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_connections SET slack_installation_id=$2 WHERE id=$1 AND slack_installation_id IS NULL`, connection, installation)
-		return err
+		return slackroute.AttachInstallation(ctx, tx, connection, installation)
 	})
 	if err != nil {
 		return uuid.Nil(), err
