@@ -40,7 +40,7 @@ func ReadPreparationStart(ctx context.Context, database db.TxBeginner, host work
 		var raw []byte
 		var sealed bool
 		if err := tx.QueryRow(ctx, `SELECT spec.spec,d.deployment_id,deployment.bundle_digest,platform.rootfs_digest,p.logical_bytes IS NOT NULL
- FROM computer_preparations p JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
+ FROM image_builds p JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
  JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(spec.environment_id,spec.id)
  JOIN deployments deployment ON (deployment.environment_id,deployment.id)=(d.environment_id,d.deployment_id)
  JOIN vm_platforms platform ON platform.id=p.vm_platform_id

@@ -93,10 +93,10 @@ func ListMembers(ctx context.Context, database db.DBTX, scope Scope, computer uu
  SELECT 'session'::text kind,s.id,
  CASE WHEN s.status IN ('closed','cancelled') THEN 'unreconciled' WHEN s.status='closing' THEN 'draining'
  WHEN EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running','finalizing')) THEN 'running'
- WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('ready','restoring')) THEN 'parked' ELSE 'admitted' END state,s.created_at
+ WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('ready','restoring')) THEN 'parked' ELSE 'admitted' END state,s.created_at
  FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND (s.status IN ('open','closing') OR EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL))
  UNION ALL SELECT 'command',c.id,CASE WHEN c.terminal_at IS NOT NULL THEN 'unreconciled' WHEN c.status='stopping' THEN 'draining' WHEN c.status='running' THEN 'running' ELSE 'admitted' END,c.created_at
- FROM computer_commands c WHERE c.environment_id=$1 AND c.computer_id=$2 AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
+ FROM commands c WHERE c.environment_id=$1 AND c.computer_id=$2 AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
  ) SELECT kind,id::text,state,created_at FROM members WHERE kind=$8 AND (NOT $3 OR (created_at,id,kind)<($4,$5,$6)) ORDER BY created_at DESC,id DESC,kind DESC LIMIT $7`, scope.EnvironmentID, computer, query.Cursor != "", cursor.CreatedAt, after, cursor.Kind, limit+1, query.Kind)
 	if err != nil {
 		return MembersPage{}, err

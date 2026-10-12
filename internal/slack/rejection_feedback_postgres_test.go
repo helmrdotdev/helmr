@@ -96,9 +96,9 @@ func TestSlackRejectedFeedbackCutoffsAndExactControlDestination(t *testing.T) {
 			case "reauthorized":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=clock_timestamp() WHERE id=$1`, f.installation)
 			case "publication_revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "publication_reconfigured":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET created_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET created_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "malformed":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET payload=convert_to('{"unknown":true}','UTF8') WHERE id=$1`, id)
 			}

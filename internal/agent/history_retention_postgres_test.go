@@ -126,7 +126,7 @@ func TestHistoryRetentionCheckpointObligation(t *testing.T) {
 	if historyClock(t, f) != nil {
 		t.Fatal("continuation started history clock")
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='continuation unavailable',capture_request=NULL WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',terminal_evidence='continuation unavailable',capture_request=NULL WHERE environment_id=$1`, f.env)
 	reconcileHistory(t, f)
 	if historyClock(t, f) == nil {
 		t.Fatal("released continuation did not start clock")

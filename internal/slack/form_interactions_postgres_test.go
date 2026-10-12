@@ -51,7 +51,7 @@ func TestSlackFormOpeningAndSubmissionKeepImmediateReceiptBoundary(t *testing.T)
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `SELECT id FROM slack_channels WHERE id=$1 FOR UPDATE NOWAIT`, f.channel)
+			_, err = tx.Exec(ctx, `SELECT id FROM slack_channel_bindings WHERE id=$1 FOR UPDATE NOWAIT`, f.channel)
 			return err
 		}); err != nil {
 			t.Fatal(err)

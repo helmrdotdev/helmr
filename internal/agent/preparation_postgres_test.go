@@ -43,7 +43,7 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 		t.Fatal(err)
 	}
 	f.secretID = pgvalue.MustUUIDValue(record.ID)
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM computer_secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2; INSERT INTO computer_secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2; INSERT INTO secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
 	return f
 }
 func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
@@ -144,7 +144,7 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	if _, err := RenewPreparation(t.Context(), f.pool, host, ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("wrong host epoch: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if _, err := RenewPreparation(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired renewal: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Rollback(t.Context())
-	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
+	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
 	done := make(chan error, 1)
 	go func() {
 		values, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
@@ -226,7 +226,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var waiting bool
-		if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%computer_preparation_specs%')`).Scan(&waiting); err != nil {
+		if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%image_specs%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
@@ -236,7 +236,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 			t.Fatal("exposure did not reach deciding lock")
 		}
 	}
-	dbtest.MustExec(t, t.Context(), blocker, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), blocker, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if err = blocker.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -269,14 +269,14 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 				if err := expirePreparation(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
 			var state string
 			var fenced bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT status,fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&state, &fenced); err != nil || state != "failed" || fenced {
+			if err := f.pool.QueryRow(t.Context(), `SELECT status,fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&state, &fenced); err != nil || state != "failed" || fenced {
 				t.Fatalf("state=%s fence=%v: %v", state, fenced, err)
 			}
 			fresh := f.waiter(t)
@@ -306,7 +306,7 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 			t.Fatal(err)
 		}
 		var stopped bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL AND status='failed' FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL AND status='failed' FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
 			t.Fatalf("provider stop=%v: %v", stopped, err)
 		}
 	})
@@ -322,13 +322,13 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 			t.Fatal(err)
 		}
 		var stopped bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
 			t.Fatalf("quarantine inferred stop=%v: %v", stopped, err)
 		}
 		if err := ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
 			t.Fatalf("recovered stop=%v: %v", stopped, err)
 		}
 	})
@@ -364,7 +364,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	}
 	// Failing a waiter never claims its shared preparation writer stopped.
 	var fenced bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&fenced); err != nil || fenced {
+	if err = f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&fenced); err != nil || fenced {
 		t.Fatalf("false fence=%v: %v", fenced, err)
 	}
 	if _, err = RenewPreparation(t.Context(), f.pool, *f.host(), ref); err != nil {
@@ -392,7 +392,7 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 		t.Fatalf("lifecycle more=%v: %v", more, err)
 	}
 	var code string
-	if err := f.pool.QueryRow(t.Context(), `SELECT error_code FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&code); err != nil || code != "secret_revoked" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT error_code FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&code); err != nil || code != "secret_revoked" {
 		t.Fatalf("code=%s: %v", code, err)
 	}
 }
@@ -424,7 +424,7 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 			if claimed {
 				ref = f.claim(t, p)
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
 			fresh := f.waiter(t)
 			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("expired attach: %v", err)

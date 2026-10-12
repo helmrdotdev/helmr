@@ -76,7 +76,7 @@ func TestComputerDiskSourceConcurrentRetryPinsOnePrivateKey(t *testing.T) {
 		t.Fatal("Computer reused preparation write key")
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys WHERE environment_id=$1 AND writer_computer_id=$2`, f.env, id.ComputerID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_computer_id=$2`, f.env, id.ComputerID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("private keys: %d %v", count, err)
 	}
 	var rootDigest string
@@ -180,7 +180,7 @@ func TestComputerDiskSourceRestoredClosureOpensMultipleKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_data_keys(environment_id,id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, f.env, keyID, id.ComputerID, envelope.WrappingKeyID, envelope.Ciphertext)
+		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_encryption_keys(environment_id,id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, f.env, keyID, id.ComputerID, envelope.WrappingKeyID, envelope.Ciphertext)
 	}
 	writer := blockformat.Writer{Source: store, Sink: store, Scope: scope, ActiveKey: first.String(), Keys: keys, PackLimit: blockformat.MinPackLimit}
 	base, err := writer.Empty(t.Context(), 1<<20, 64)
@@ -208,8 +208,8 @@ func TestComputerDiskSourceRestoredClosureOpensMultipleKeys(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `
  INSERT INTO cas_blobs(digest,size_bytes) VALUES($3,$4);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$3,$4,'application/octet-stream' FROM environments WHERE id=$1;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$3,org_id,project_id,$4,'application/octet-stream','root',$5,'{}',clock_timestamp() FROM environments WHERE id=$1;
- INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$3,$6,false),($1,$3,$7,true);
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$3,org_id,project_id,$4,'application/octet-stream','root',$5,'{}',clock_timestamp() FROM environments WHERE id=$1;
+ INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$3,$6,false),($1,$3,$7,true);
  `+agenttest.DiskRootInsert("$1", "$8", "$9")+`;
  INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,requested_at,flush_acknowledged_at,captured_at,captured_root_digest,capture_evidence,publication_evidence,root_id) VALUES($1,$10,$2,1,1,'published',now(),now(),now(),decode(substring($11::text from 8),'hex'),'fixture capture','fixture publication',$8);
  UPDATE computer_leases SET restored_from_save_id=$10 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;

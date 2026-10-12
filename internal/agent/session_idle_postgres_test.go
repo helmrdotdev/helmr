@@ -140,7 +140,7 @@ func TestSessionIdleBlocksUnfinishedCheckpointTransitions(t *testing.T) {
 			capture, _ := beginCapture(t, f, request)
 			// Isolate checkpoint controls from pending Save and process-control blockers.
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='settled',requested_at=clock_timestamp()-interval '2 days' WHERE id=$1`, capture.SaveID)
-			dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_checkpoints SET status=$2 WHERE id=$1`, request.CheckpointID, checkpointState)
+			dbtest.MustExec(t, ctx, f.pool, `UPDATE checkpoints SET status=$2 WHERE id=$1`, request.CheckpointID, checkpointState)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 			if err := reconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
@@ -151,7 +151,7 @@ func TestSessionIdleBlocksUnfinishedCheckpointTransitions(t *testing.T) {
 				t.Fatalf("unfinished checkpoint aged: %v %v", blocked, err)
 			}
 			if checkpointState == "aborting" {
-				dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE environment_id=$2 AND computer_id=$3 AND epoch=1),ready_at=clock_timestamp() WHERE id=$1`, request.CheckpointID, f.env, f.computer)
+				dbtest.MustExec(t, ctx, f.pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE environment_id=$2 AND computer_id=$3 AND epoch=1),ready_at=clock_timestamp() WHERE id=$1`, request.CheckpointID, f.env, f.computer)
 				if err := reconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 					t.Fatal(err)
 				}

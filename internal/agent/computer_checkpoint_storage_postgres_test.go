@@ -123,7 +123,7 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status string
-	if err = f.f.pool.QueryRow(ctx, `SELECT status FROM computer_checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&status); err != nil || status != "ready" {
+	if err = f.f.pool.QueryRow(ctx, `SELECT status FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&status); err != nil || status != "ready" {
 		t.Fatalf("status=%s %v", status, err)
 	}
 	// Ready does not dispatch the still-sealed source, including newly queued work.
@@ -181,7 +181,7 @@ func TestCheckpointRuntimeRejectsMismatchedCapture(t *testing.T) {
 				t.Fatalf("mismatch accepted: %v", err)
 			}
 			var pins int
-			if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoint_objects`).Scan(&pins); err != nil || pins != 0 {
+			if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoint_objects`).Scan(&pins); err != nil || pins != 0 {
 				t.Fatalf("pins=%d %v", pins, err)
 			}
 		})
@@ -217,7 +217,7 @@ func TestCheckpointRuntimeRechecksAuthorityAfterIO(t *testing.T) {
 		t.Fatalf("expired publication: %v", err)
 	}
 	var ready bool
-	if err := f.f.pool.QueryRow(ctx, `SELECT ready_at IS NOT NULL FROM computer_checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&ready); err != nil || ready {
+	if err := f.f.pool.QueryRow(ctx, `SELECT ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&ready); err != nil || ready {
 		t.Fatalf("ready=%v %v", ready, err)
 	}
 	if err := f.publisher.RegisterCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, ErrDenied) {
@@ -356,7 +356,7 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	}
 	var state string
 	var ready bool
-	if err := f.f.pool.QueryRow(ctx, `SELECT status,ready_at IS NOT NULL FROM computer_checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&state, &ready); err != nil || state != "aborting" || ready {
+	if err := f.f.pool.QueryRow(ctx, `SELECT status,ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&state, &ready); err != nil || state != "aborting" || ready {
 		t.Fatalf("state=%s ready=%v %v", state, ready, err)
 	}
 }

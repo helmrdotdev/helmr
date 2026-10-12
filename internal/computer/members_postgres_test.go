@@ -23,7 +23,7 @@ func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
 	// Commands are newer than both Sessions: a combined page followed by filtering would lose Sessions.
 	commandIDs := []uuid.UUID{uuid.NewV7(), uuid.NewV7(), uuid.NewV7()}
 	for _, id := range commandIDs {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,'cancelled',ARRAY['true'],'{}',decode('','hex'),1000,'session',$4,clock_timestamp(),'cancelled')`, f.Environment, id, f.Computer, f.User)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,'cancelled',ARRAY['true'],'{}',decode('','hex'),1000,'session',$4,clock_timestamp(),'cancelled')`, f.Environment, id, f.Computer, f.User)
 	}
 	for _, kind := range []string{"session", "command"} {
 		seen := map[string]bool{}
@@ -65,7 +65,7 @@ func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
 			}
 		}
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET process_reconciled_at=clock_timestamp() WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET process_reconciled_at=clock_timestamp() WHERE environment_id=$1`, f.Environment)
 	page, err := computer.ListMembers(t.Context(), f.Pool, scope, f.Computer, computer.MembersQuery{Kind: "command"})
 	if err != nil || len(page.Members) != 0 {
 		t.Fatalf("reconciled history shown as usage: %+v %v", page, err)

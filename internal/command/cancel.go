@@ -67,7 +67,7 @@ func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 			result = replayed
 			return idempotency.Completion{}, nil
 		}
-		if _, err := q.RequestComputerCommandCancellation(ctx, db.RequestComputerCommandCancellationParams{
+		if _, err := q.RequestCommandCancellation(ctx, db.RequestCommandCancellationParams{
 			EnvironmentID: pgvalue.UUID(ref.EnvironmentID), CommandID: pgvalue.UUID(ref.CommandID),
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return idempotency.Completion{}, err

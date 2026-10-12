@@ -18,7 +18,7 @@ func ExpirePending(ctx context.Context, database db.TxDB, limit int) (int, error
 	if limit <= 0 {
 		return 0, errors.New("command pending batch limit must be positive")
 	}
-	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.revision FROM computer_commands c JOIN environments e ON e.id=c.environment_id
+	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.revision FROM commands c JOIN environments e ON e.id=c.environment_id
  WHERE c.status='pending' AND c.computer_lease_epoch IS NULL AND c.created_at<=clock_timestamp()-$1*interval '1 millisecond'
  ORDER BY c.created_at,c.id LIMIT $2`, pendingTimeout.Milliseconds(), limit)
 	if err != nil {

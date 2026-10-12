@@ -38,9 +38,9 @@ func TestGroupDrainRetainsPhysicalCustodyAcrossEpochs(t *testing.T) {
 	}
 	// An expired allocation owned by an earlier service epoch remains physical custody.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1;
- UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
+ UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
 	assertGroupDrainBlocked(t, f.fixture)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
 	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1)
 	if err != nil || result.Status != "draining" {
 		t.Fatalf("resolved preparation: %+v %v", result, err)
@@ -65,12 +65,12 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 				// Target allocation is fenced too: the source-owned checkpoint must protect the Group on its own.
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
- UPDATE computer_checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
+ UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
 			assertGroupDrainBlocked(t, f)
 			// Terminal disposition is fixture setup here; this test does not prove its operation.
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
 			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1); err != nil {
 				t.Fatal(err)
 			}

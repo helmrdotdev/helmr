@@ -102,9 +102,9 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, 
 			if err := tx.QueryRow(ctx, `SELECT
  EXISTS(SELECT 1 FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE h.worker_group_id=$1 AND l.fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM computer_preparations p JOIN worker_hosts h ON h.id=p.worker_host_id
+ OR EXISTS(SELECT 1 FROM image_builds p JOIN worker_hosts h ON h.id=p.worker_host_id
  WHERE h.worker_group_id=$1 AND p.fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM computer_checkpoints c
+ OR EXISTS(SELECT 1 FROM checkpoints c
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))`, groupID).Scan(&retained); err != nil {

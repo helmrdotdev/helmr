@@ -186,7 +186,7 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 			}
 			switch revocation {
 			case "publication":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 			case "disconnected":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET disconnected_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, installation)
 			case "authorization_lost":

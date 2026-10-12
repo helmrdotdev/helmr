@@ -29,7 +29,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 	target := control.Target
 	var channel uuid.UUID
 	var enabled time.Time
-	err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications pub ON pub.id=c.publication_id WHERE p.id=$1 AND p.thread_id=$2 AND p.environment_id=$3 AND p.session_id=$4 AND c.installation_id=$5 AND t.deleted_at IS NULL`, target.Participant, target.Thread, target.Environment, target.Session, target.Installation).Scan(&channel, &enabled)
+	err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.publication_id WHERE p.id=$1 AND p.thread_id=$2 AND p.environment_id=$3 AND p.session_id=$4 AND c.installation_id=$5 AND t.deleted_at IS NULL`, target.Participant, target.Thread, target.Environment, target.Session, target.Installation).Scan(&channel, &enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, 0, errControlInvalid
 	}

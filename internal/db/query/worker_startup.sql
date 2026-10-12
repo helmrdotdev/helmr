@@ -50,7 +50,7 @@ UPDATE worker_hosts
           AND computer_leases.fenced_at IS NULL
    )
    AND NOT EXISTS (
-       SELECT 1 FROM computer_preparations p
+       SELECT 1 FROM image_builds p
         WHERE p.worker_host_id = worker_hosts.id
           AND p.worker_epoch < worker_hosts.current_epoch
           AND p.fenced_at IS NULL
@@ -106,7 +106,7 @@ UPDATE worker_hosts SET updated_at=now() FROM target
  SELECT 1 FROM computer_leases l WHERE l.worker_host_id=target.id AND l.worker_epoch<target.current_epoch
  AND l.fenced_at IS NULL AND l.computer_instance_id NOT IN (SELECT quarantined.id FROM quarantined))
  AND NOT EXISTS (
- SELECT 1 FROM computer_preparations p WHERE p.worker_host_id=target.id AND p.worker_epoch<target.current_epoch
+ SELECT 1 FROM image_builds p WHERE p.worker_host_id=target.id AND p.worker_epoch<target.current_epoch
  AND p.fenced_at IS NULL AND p.instance_id NOT IN (SELECT quarantined.id FROM quarantined))
  RETURNING worker_hosts.*;
 
@@ -123,7 +123,7 @@ SELECT worker_hosts.*,
        (SELECT count(*)::int FROM computer_leases i
           WHERE i.worker_host_id=worker_hosts.id AND i.worker_epoch=worker_hosts.current_epoch
             AND i.fenced_at IS NULL)
-       + (SELECT count(*)::int FROM computer_preparations p
+       + (SELECT count(*)::int FROM image_builds p
           WHERE p.worker_host_id=worker_hosts.id AND p.worker_epoch=worker_hosts.current_epoch
             AND p.fenced_at IS NULL) AS active_instances
   FROM worker_hosts

@@ -155,7 +155,7 @@ func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
 		}
 	}
 	var reconciled bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL AND capture_request IS NULL FROM computer_checkpoints WHERE id=$1`, request.CheckpointID).Scan(&reconciled); err != nil || !reconciled {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL AND capture_request IS NULL FROM checkpoints WHERE id=$1`, request.CheckpointID).Scan(&reconciled); err != nil || !reconciled {
 		t.Fatalf("completion not durable: %v", err)
 	}
 }
@@ -176,7 +176,7 @@ func TestWorkerAgentComputerCancellationRequiresOwnedEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE id=$1`, request.CheckpointID).Scan(&state); err != nil || state != "cancelled" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE id=$1`, request.CheckpointID).Scan(&state); err != nil || state != "cancelled" {
 		t.Fatalf("state=%s: %v", state, err)
 	}
 }
@@ -327,7 +327,7 @@ func TestWorkerAgentComputerCaptureRejectsExpiredAuthority(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.Pool, change.sql)
 			client.post(t, "/worker/v1/agent-computers/capture/begin", workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}, change.status, nil)
 			var count int
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoints`).Scan(&count); err != nil || count != 0 {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoints`).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("unauthorized capture changed state: %d %v", count, err)
 			}
 		})
@@ -351,7 +351,7 @@ func assertForeignAgentComputer(t *testing.T, f agenttest.Fixture, call func() e
 	t.Helper()
 	snapshot := func() string {
 		var value string
-		if err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_object('checkpoints',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM computer_checkpoints c WHERE environment_id=$1),'saves',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM computer_saves s WHERE environment_id=$1),'leases',(SELECT jsonb_agg(to_jsonb(l) ORDER BY epoch) FROM computer_leases l WHERE environment_id=$1),'sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM sessions s WHERE environment_id=$1),'computers',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM computers c WHERE environment_id=$1),'processes',(SELECT jsonb_agg(to_jsonb(p) ORDER BY session_id,epoch) FROM session_processes p WHERE environment_id=$1))::text`, f.Environment).Scan(&value); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_object('checkpoints',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM checkpoints c WHERE environment_id=$1),'saves',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM computer_saves s WHERE environment_id=$1),'leases',(SELECT jsonb_agg(to_jsonb(l) ORDER BY epoch) FROM computer_leases l WHERE environment_id=$1),'sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM sessions s WHERE environment_id=$1),'computers',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM computers c WHERE environment_id=$1),'processes',(SELECT jsonb_agg(to_jsonb(p) ORDER BY session_id,epoch) FROM session_processes p WHERE environment_id=$1))::text`, f.Environment).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
@@ -424,7 +424,7 @@ func assertWorkerCurrentControls(t *testing.T, f agenttest.Fixture, client, fore
 		t.Fatalf("activated controls: %v", err)
 	}
 	var acknowledged bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL FROM computer_checkpoints WHERE id=$1`, current.CheckpointId).Scan(&acknowledged); err != nil || acknowledged {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL FROM checkpoints WHERE id=$1`, current.CheckpointId).Scan(&acknowledged); err != nil || acknowledged {
 		t.Fatalf("control read acknowledged physical application: %v %v", acknowledged, err)
 	}
 }
@@ -463,15 +463,15 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f agenttest.Fixture, request wor
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($4,$1,$2,'test',decode('01','hex'));
+ INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($4,$1,$2,'test',decode('01','hex'));
  INSERT INTO cas_blobs(digest,size_bytes) VALUES($6,64);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,64,'application/octet-stream' FROM environments WHERE id=$1;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',2,'{}',clock_timestamp() FROM environments WHERE id=$1;
- INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$4,true);
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',2,'{}',clock_timestamp() FROM environments WHERE id=$1;
+ INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$4,true);
  `+agenttest.DiskRootInsert("$1", "$5", "$7")+`;
  UPDATE computer_saves SET status='published',root_id=$5,captured_root_digest=decode(substring($8::text from 8),'hex'),flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),capture_evidence='fixture coherent cut',publication_evidence='fixture certified root' WHERE id=$3;
  UPDATE computers SET recovery_save_id=$3 WHERE environment_id=$1 AND id=$2;
- UPDATE computer_checkpoints SET status='ready',manifest=$9,vm_platform_id=$8,ready_at=clock_timestamp() WHERE id=$10;
+ UPDATE checkpoints SET status='ready',manifest=$9,vm_platform_id=$8,ready_at=clock_timestamp() WHERE id=$10;
  UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1 AND computer_id=$2;
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($1,$2,2,$11,1,clock_timestamp()+interval '1 hour',$12,$13,$3,'acquiring',1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),NULL);
  UPDATE computer_leases SET base_root_id=$5,write_key_id=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=2;

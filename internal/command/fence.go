@@ -52,12 +52,12 @@ func readLease(row pgx.Row) (Lease, error) {
 
 // lockCommandLease reads only the immutable historical assignment. In particular,
 // a pending Command does not acquire whichever newer lease happens to exist.
-func lockCommandLease(ctx context.Context, tx pgx.Tx, target db.GetComputerCommandTargetRow, id uuid.UUID) (Lease, error) {
+func lockCommandLease(ctx context.Context, tx pgx.Tx, target db.GetCommandTargetRow, id uuid.UUID) (Lease, error) {
 	env, computer := uuid.UUID(target.EnvironmentID.Bytes), uuid.UUID(target.ComputerID.Bytes)
 	if err := lockComputer(ctx, tx, env, computer); err != nil {
 		return Lease{}, err
 	}
-	l, err := readLease(tx.QueryRow(ctx, `SELECT `+leaseColumns+` FROM computer_leases l JOIN computer_commands c
+	l, err := readLease(tx.QueryRow(ctx, `SELECT `+leaseColumns+` FROM computer_leases l JOIN commands c
  ON (c.environment_id,c.computer_id,c.computer_lease_epoch)=(l.environment_id,l.computer_id,l.epoch)
  WHERE c.environment_id=$1 AND c.id=$2 FOR NO KEY UPDATE OF l`, env, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -90,6 +90,6 @@ func producerStillAuthorized(ctx context.Context, tx db.DBTX, host workergroup.H
 	return nil
 }
 
-func lockCommand(ctx context.Context, tx pgx.Tx, env, computer, id uuid.UUID) (db.ComputerCommand, error) {
-	return db.New(tx).LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: pgvalue.UUID(env), ComputerID: pgvalue.UUID(computer), CommandID: pgvalue.UUID(id)})
+func lockCommand(ctx context.Context, tx pgx.Tx, env, computer, id uuid.UUID) (db.Command, error) {
+	return db.New(tx).LockCommand(ctx, db.LockCommandParams{EnvironmentID: pgvalue.UUID(env), ComputerID: pgvalue.UUID(computer), CommandID: pgvalue.UUID(id)})
 }

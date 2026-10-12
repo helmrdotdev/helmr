@@ -56,7 +56,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("gesture_expired")
 	}
 	var env, target uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT environment_id,agent_id FROM agent_publications WHERE slack_installation_id=$1`, p.installation).Scan(&env, &target)
+	err = tx.QueryRow(ctx, `SELECT environment_id,agent_id FROM slack_connections WHERE slack_installation_id=$1`, p.installation).Scan(&env, &target)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return reject("binding_unavailable")
 	}
@@ -74,7 +74,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("thread_generation_unavailable")
 	}
 	var enabled, connected time.Time
-	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM agent_publications p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.PublicationID).Scan(&enabled, &connected); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM slack_connections p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.PublicationID).Scan(&enabled, &connected); err != nil {
 		return nil, err
 	}
 	if occurred.Before(enabled) || occurred.Before(connected) || occurred.Before(p.route.Target.AuthorizedAt) {
@@ -91,7 +91,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	var owner uuid.UUID
 	var deleted bool
 	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.publication_id,t.deleted_at IS NOT NULL
- FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
  WHERE t.organization_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
 	if err == nil {
 		if owner != p.route.Target.PublicationID || deleted {

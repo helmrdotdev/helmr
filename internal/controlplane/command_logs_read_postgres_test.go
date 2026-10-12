@@ -60,7 +60,7 @@ func TestCommandHistoryUsesExplicitCoverageAndAcceptanceRetention(t *testing.T) 
 	code := int32(0)
 	worker.post(t, "/worker/v1/computer-commands/complete", workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: 1, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 4, Complete: true, Gapped: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}, http.StatusOK, nil)
 	// A command's creation clock must not expire newly accepted output.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET created_at=created_at-interval '91 days' WHERE id=$1`, target.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET created_at=created_at-interval '91 days' WHERE id=$1`, target.ID)
 	q := db.New(f.Pool)
 	command, err := q.GetCommandLogState(t.Context(), db.GetCommandLogStateParams{OrgID: pgvalue.UUID(f.OrgID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), CommandID: pgvalue.UUID(target.ID)})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestCommandHistoryUsesExplicitCoverageAndAcceptanceRetention(t *testing.T) 
 	if !errors.As(err, &lag) {
 		t.Fatalf("missing end fabricated closure: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET stdout_last_accepted_at=stdout_last_accepted_at-interval '91 days' WHERE id=$1`, target.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET stdout_last_accepted_at=stdout_last_accepted_at-interval '91 days' WHERE id=$1`, target.ID)
 	_, err = server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, "", 10)
 	if errorStatus(err) != http.StatusGone {
 		t.Fatalf("expired acceptance: %v", err)

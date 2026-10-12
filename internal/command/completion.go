@@ -146,7 +146,7 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
 		return pgx.ErrNoRows
 	}
 	q := db.New(tx)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{EnvironmentID: p.environment, CommandID: p.command})
+	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: p.environment, CommandID: p.command})
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
 			if err = producerStillAuthorized(ctx, tx, worker, l, false); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE computer_commands SET output_fenced=true WHERE environment_id=$1 AND id=$2`, l.EnvironmentID, p.command); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE commands SET output_fenced=true WHERE environment_id=$1 AND id=$2`, l.EnvironmentID, p.command); err != nil {
 				return err
 			}
 			if err = producerStillAuthorized(ctx, tx, worker, l, false); err != nil {
@@ -216,7 +216,7 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
 		if c.StdoutAcceptedThrough > p.stdout.ThroughSequence || c.StderrAcceptedThrough > p.stderr.ThroughSequence || (c.StdoutEnded && (c.StdoutAcceptedThrough != p.stdout.ThroughSequence || c.StdoutEndComplete != p.stdout.Complete)) || (c.StderrEnded && (c.StderrAcceptedThrough != p.stderr.ThroughSequence || c.StderrEndComplete != p.stderr.Complete)) || (c.StdoutGapped && !p.stdout.Gapped) || (c.StderrGapped && !p.stderr.Gapped) {
 			return pgx.ErrNoRows
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_commands SET status=$3,exit_code=$4,failure_reason=NULLIF($5,''),error=$6,
+		if _, err = tx.Exec(ctx, `UPDATE commands SET status=$3,exit_code=$4,failure_reason=NULLIF($5,''),error=$6,
  process_exited_at=CASE WHEN $7 THEN clock_timestamp() END,terminal_at=clock_timestamp(),terminal_reason_code=$8,
  stdout_final_through=$9,stdout_final_complete=$10,stdout_final_gapped=$11,stderr_final_through=$12,stderr_final_complete=$13,stderr_final_gapped=$14,output_fenced=$15,
  result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
@@ -225,7 +225,7 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
 		}
 	}
 	if reconcile {
-		if _, err = tx.Exec(ctx, `UPDATE computer_commands SET process_reconciled_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp()
+		if _, err = tx.Exec(ctx, `UPDATE commands SET process_reconciled_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2 AND process_reconciled_at IS NULL`, l.EnvironmentID, p.command); err != nil {
 			return err
 		}
@@ -236,7 +236,7 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
 // release is the completion a worker host replays to release the process
 // scope of a terminal Command it no longer runs, or nil when the scope needs
 // recovery evidence instead.
-func release(command db.ComputerCommand, environment uuid.UUID, lease Lease) (*CompletionReport, error) {
+func release(command db.Command, environment uuid.UUID, lease Lease) (*CompletionReport, error) {
 	if (!command.OutputFenced && !commandOutputSettled(command)) || !command.TerminalAt.Valid || command.ProcessReconciledAt.Valid || command.Status == "lost" || command.FailureReason.String == "scope_termination_failed" {
 		return nil, nil
 	}
@@ -258,6 +258,6 @@ func release(command db.ComputerCommand, environment uuid.UUID, lease Lease) (*C
 	return &report, nil
 }
 
-func commandOutputSettled(c db.ComputerCommand) bool {
+func commandOutputSettled(c db.Command) bool {
 	return c.StdoutFinalThrough.Valid && c.StderrFinalThrough.Valid && c.StdoutEnded && c.StderrEnded && c.StdoutAcceptedThrough == c.StdoutFinalThrough.Int64 && c.StderrAcceptedThrough == c.StderrFinalThrough.Int64
 }

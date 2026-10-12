@@ -95,7 +95,7 @@ func bindFixtureLeaseDisk(t *testing.T, pool *pgxpool.Pool, host workergroup.Hos
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := pool.Query(t.Context(), `SELECT id FROM computer_data_keys WHERE environment_id=$1`, env)
+	rows, err := pool.Query(t.Context(), `SELECT id FROM disk_encryption_keys WHERE environment_id=$1`, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func bindFixtureLeaseDisk(t *testing.T, pool *pgxpool.Pool, host workergroup.Hos
 		if err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), pool, `UPDATE computer_data_keys SET wrapping_key_id=$3,wrapped_key=$4 WHERE environment_id=$1 AND id=$2`, env, id, envelope.WrappingKeyID, envelope.Ciphertext)
+		dbtest.MustExec(t, t.Context(), pool, `UPDATE disk_encryption_keys SET wrapping_key_id=$3,wrapped_key=$4 WHERE environment_id=$1 AND id=$2`, env, id, envelope.WrappingKeyID, envelope.Ciphertext)
 	}
 	broker, err := agent.NewComputerKeyBroker(pool, wrapper)
 	if err != nil {

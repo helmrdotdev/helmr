@@ -82,7 +82,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 		t.Fatalf("finalize: %v verified=%d", err, verified)
 	}
 	var stored []byte
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.spec FROM computer_preparation_specs s JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, result.ID).Scan(&stored); err != nil {
+	if err = f.pool.QueryRow(t.Context(), `SELECT s.spec FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, result.ID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	spec, err := artifact.ParseComputerPreparationSpec(stored)

@@ -226,7 +226,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	if s.slackChannelID != nil {
 		var channel string
 		var publication uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT publication_id,slack_channel_id FROM slack_channels WHERE environment_id=$1 AND id=$2`, s.environment, *s.slackChannelID).Scan(&publication, &channel); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT publication_id,slack_channel_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=$2`, s.environment, *s.slackChannelID).Scan(&publication, &channel); err != nil {
 			return Admission{}, err
 		}
 		connection, err := ReadSlackConnection(ctx, tx, s.environment, s.agent, channel)

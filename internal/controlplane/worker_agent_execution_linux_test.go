@@ -505,7 +505,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		for {
 			var settled bool
 			settleErr := database.Pool.QueryRow(settleCtx, `SELECT NOT EXISTS (
- SELECT 1 FROM computer_commands WHERE environment_id=$1 AND terminal_at IS NOT NULL AND NOT output_fenced
+ SELECT 1 FROM commands WHERE environment_id=$1 AND terminal_at IS NOT NULL AND NOT output_fenced
  AND NOT COALESCE(stdout_final_through IS NOT NULL AND stderr_final_through IS NOT NULL
    AND stdout_ended AND stderr_ended AND stdout_accepted_through=stdout_final_through
    AND stderr_accepted_through=stderr_final_through,false))`, env).Scan(&settled)
@@ -537,7 +537,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
                   'acceptedAt',o.accepted_at,'observedAtUnixNano',o.observed_at_unix_nano,
                   'dataBase64',encode(o.data,'base64')) ORDER BY o.id),'[]'::jsonb)
                FROM diagnostic_chunks o WHERE o.environment_id=c.environment_id AND o.command_id=c.id AND o.kind='data') AS output
-       FROM computer_commands c WHERE c.environment_id=$1) command`, env).Scan(&commands)
+       FROM commands c WHERE c.environment_id=$1) command`, env).Scan(&commands)
 		stopDiagnostic()
 		if commandErr == nil {
 			commandErr = os.WriteFile(filepath.Join(input.Evidence, "command-diagnostics.json"), commands, 0600)
@@ -553,10 +553,10 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			checkpointErr := database.Pool.QueryRow(diagnosticCtx, `SELECT COALESCE(jsonb_agg(observed),'[]'::jsonb) FROM (
  SELECT jsonb_build_object('checkpointId',p.id,'status',p.status,'createdAt',p.created_at,
   'readyAt',p.ready_at,'terminalEvidence',p.terminal_evidence,'hasManifest',p.manifest IS NOT NULL,
-  'runtimeObjectCount',(SELECT count(*) FROM computer_checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id),
+  'runtimeObjectCount',(SELECT count(*) FROM checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id),
   'diskSaveId',s.id,'diskSaveStatus',s.status,'diskCapturedAt',s.captured_at,'diskFailureEvidence',s.failure_evidence,
   'sourceLeaseStatus',l.status,'sourceFencedAt',l.fenced_at) observed
- FROM computer_checkpoints p JOIN computer_saves s ON(s.environment_id,s.id)=(p.environment_id,p.disk_save_id)
+ FROM checkpoints p JOIN computer_saves s ON(s.environment_id,s.id)=(p.environment_id,p.disk_save_id)
  JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  WHERE p.environment_id=$1 ORDER BY p.created_at DESC LIMIT 10) recent`, env).Scan(&checkpoints)
 			stopDiagnostic()
@@ -811,7 +811,7 @@ func retireNativeExecution(ctx context.Context, pool *pgxpool.Pool, c *client.Cl
 			return err
 		}
 	}
-	commands, err := ids(`SELECT id::text FROM computer_commands WHERE environment_id=$1`)
+	commands, err := ids(`SELECT id::text FROM commands WHERE environment_id=$1`)
 	if err != nil {
 		return err
 	}
@@ -846,7 +846,7 @@ func retireNativeExecution(ctx context.Context, pool *pgxpool.Pool, c *client.Cl
 	for {
 		var stopped bool
 		err := pool.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL)
-      AND NOT EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL)`, env).Scan(&stopped)
+      AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL)`, env).Scan(&stopped)
 		if err != nil {
 			return err
 		}

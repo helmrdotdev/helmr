@@ -65,11 +65,11 @@ func TestSchemaPhysicalStopAndCheckpointRejectPartialEvidence(t *testing.T) {
 	rejectSchemaRow(t, tx, "23514", `UPDATE computer_leases SET fenced_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
 	save, checkpoint := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest) VALUES($1,$2,$3,1,1,$4,'capturing',decode('01','hex'),clock_timestamp()+interval '1 minute',decode(repeat('02',32),'hex'))`, f.Environment, checkpoint, f.Computer, save)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest) VALUES($1,$2,$3,1,1,$4,'capturing',decode('01','hex'),clock_timestamp()+interval '1 minute',decode(repeat('02',32),'hex'))`, f.Environment, checkpoint, f.Computer, save)
 	for _, set := range []string{"status='ready'", "manifest=decode('01','hex')", "status='lost'", "capture_request=NULL", "target_lease_epoch=2", "restore_control_version=2", "restore_identity=decode(repeat('00',32),'hex')"} {
-		rejectSchemaRow(t, tx, "23514", "UPDATE computer_checkpoints SET "+set+" WHERE environment_id=$1 AND id=$2", f.Environment, checkpoint)
+		rejectSchemaRow(t, tx, "23514", "UPDATE checkpoints SET "+set+" WHERE environment_id=$1 AND id=$2", f.Environment, checkpoint)
 	}
-	rejectSchemaRow(t, tx, "23503", `UPDATE computer_checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='host fenced',capture_request=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
+	rejectSchemaRow(t, tx, "23503", `UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE checkpoints SET status='lost',terminal_evidence='host fenced',capture_request=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
 }

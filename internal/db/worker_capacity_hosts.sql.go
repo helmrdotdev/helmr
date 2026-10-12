@@ -97,7 +97,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, 
        draining_at, drain_reason, termination_ready_at, lost_at,
        created_at, updated_at,
        ((SELECT count(*) FROM computer_leases l WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL)
-        + (SELECT count(*) FROM computer_preparations p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
+        + (SELECT count(*) FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
   FROM worker_hosts
  WHERE worker_hosts.id = $1
@@ -151,7 +151,7 @@ WITH current_instances AS (
            draining_at, drain_reason, termination_ready_at, lost_at,
            created_at, updated_at,
        ((SELECT count(*) FROM computer_leases l WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL)
-        + (SELECT count(*) FROM computer_preparations p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
+        + (SELECT count(*) FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
      FROM worker_hosts
      WHERE ($3::uuid IS NULL OR worker_group_id = $3)
@@ -163,7 +163,7 @@ WITH current_instances AS (
                 WHERE computer_leases.worker_host_id = worker_hosts.id
                   AND computer_leases.fenced_at IS NULL
            )
-           OR EXISTS (SELECT 1 FROM computer_preparations p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL)
+           OR EXISTS (SELECT 1 FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL)
        )
        AND (
            cardinality($5::text[]) = 0

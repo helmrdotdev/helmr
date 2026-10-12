@@ -128,7 +128,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		if binding.mode == "protected" {
 			origins = append(origins, "https://api.example.com")
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.Environment, f.Computer, id, binding.kind, binding.target, binding.mode, origins, marker)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.Environment, f.Computer, id, binding.kind, binding.target, binding.mode, origins, marker)
 	}
 	trust, err := secrets.GenerateProxyTrust(f.Environment, f.Computer, time.Now())
 	if err != nil {

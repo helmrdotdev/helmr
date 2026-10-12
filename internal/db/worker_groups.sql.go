@@ -470,7 +470,7 @@ WITH live_workers AS (
   FROM computer_leases WHERE fenced_at IS NULL
   UNION ALL
   SELECT worker_host_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,delivered_at IS NULL
-  FROM computer_preparations WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+  FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
  ) a ON a.host_id=h.worker_host_id
  GROUP BY h.worker_host_id
 )

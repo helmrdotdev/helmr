@@ -71,7 +71,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		var priorComputer uuid.UUID
 		var priorEpoch int64
 		var priorState string
-		err = tx.QueryRow(ctx, `SELECT computer_id,source_lease_epoch,status,capture_request,disk_save_id FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.CheckpointID).Scan(&priorComputer, &priorEpoch, &priorState, &result.Request, &result.SaveID)
+		err = tx.QueryRow(ctx, `SELECT computer_id,source_lease_epoch,status,capture_request,disk_save_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.CheckpointID).Scan(&priorComputer, &priorEpoch, &priorState, &result.Request, &result.SaveID)
 		if err == nil {
 			if priorComputer != req.ComputerID || priorEpoch != req.LeaseEpoch {
 				return ErrConflict
@@ -99,9 +99,9 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status IN ('running','finalizing'))
    OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
      WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+noSessionHoldsSQL+`)
-   OR EXISTS(SELECT 1 FROM computer_commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
+   OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
    OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))
-   OR EXISTS(SELECT 1 FROM computer_commands WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)
+   OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)
    OR EXISTS(SELECT 1 FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
      JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
      WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id)))`, req.EnvironmentID, req.ComputerID).Scan(&busy); err != nil {
@@ -149,12 +149,12 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if _, err = tx.Exec(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,$4,$5)`, req.EnvironmentID, result.SaveID, req.ComputerID, req.LeaseEpoch, saveSeq); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO computer_checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest)
+		if _, err = tx.Exec(ctx, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest)
    VALUES($1,$2,$3,$4,$5,$6,'capturing',$7,$8,$9)`, req.EnvironmentID, req.CheckpointID, req.ComputerID, req.LeaseEpoch, version, result.SaveID, result.Request, lease.Expires, captureDigest(result.Request)); err != nil {
 			return err
 		}
 		for _, m := range members {
-			if _, err = tx.Exec(ctx, `INSERT INTO computer_checkpoint_members(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,$5)`, req.EnvironmentID, req.ComputerID, req.CheckpointID, m.Session, m.Epoch); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,$5)`, req.EnvironmentID, req.ComputerID, req.CheckpointID, m.Session, m.Epoch); err != nil {
 				return err
 			}
 		}
@@ -183,7 +183,7 @@ func lockComputerMembers(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID
 func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computer, checkpoint uuid.UUID) ([]computerMember, error) {
 	read := func() ([]computerMember, error) {
 		rows, err := tx.Query(ctx, `SELECT p.session_id,p.epoch,p.status,p.computer_lease_epoch FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2
- AND (p.fenced_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.computer_id=p.computer_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch)) ORDER BY p.session_id,p.epoch`, env, computer, checkpoint)
+ AND (p.fenced_at IS NULL OR EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.computer_id=p.computer_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch)) ORDER BY p.session_id,p.epoch`, env, computer, checkpoint)
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +246,7 @@ func currentComputerLease(ctx context.Context, tx pgx.Tx, host workergroup.HostP
 
 func computerDispatchAvailable(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
 	var sealed bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) OR EXISTS(SELECT 1 FROM computer_checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (status IN ('capturing','sealed','ready','restoring','aborting') OR (status='consumed' AND controls_reconciled_at IS NULL)))`, env, computer).Scan(&sealed)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) OR EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (status IN ('capturing','sealed','ready','restoring','aborting') OR (status='consumed' AND controls_reconciled_at IS NULL)))`, env, computer).Scan(&sealed)
 	if err != nil {
 		return err
 	}

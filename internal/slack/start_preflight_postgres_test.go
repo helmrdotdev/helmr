@@ -31,12 +31,12 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup) SELECT environment_id,$2,deployment_id,template_id,setup FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) SELECT $4,org_id,'target-app','target-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$7 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) SELECT $5,$4,org_id,'target-app','team','target-bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$7 FROM environments WHERE id=$1;
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($6,$1,$2,$4,$5,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent, registration, installation, publication, f.User)
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($6,$1,$2,$4,$5,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent, registration, installation, publication, f.User)
 			switch kind {
 			case "pending-source":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET thread_ts=NULL WHERE id=$1`, f.thread)
 			case "unpublished-target":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
 			case "workspace-mismatch":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET team_id='other-team' WHERE id=$1`, installation)
 			}
@@ -69,7 +69,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 						t.Fatal("permalink used target identity", r.URL, token)
 					}
 					if kind == "source-revoked" {
-						dbtest.MustExec(t, r.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+						dbtest.MustExec(t, r.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 					}
 					body = map[string]any{"ok": kind != "permalink-unavailable", "permalink": "https://workspace.slack.com/archives/C1/p123456"}
 				default:
@@ -155,7 +155,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 					t.Fatal(err)
 				}
 				if kind == "source-revoked-after-issued" {
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 				}
 				peer.due(t)
 				peer.noPostClaim(t, opening)

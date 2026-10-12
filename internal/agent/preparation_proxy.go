@@ -17,7 +17,7 @@ import (
 // Routing is not authorization: both captures below establish fresh authority.
 func IsPreparationProxyInstance(ctx context.Context, database db.DBTX, instance uuid.UUID) (bool, error) {
 	var preparation, computer bool
-	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_preparations WHERE instance_id=$1),EXISTS(SELECT 1 FROM computer_leases WHERE computer_instance_id=$1)`, instance).Scan(&preparation, &computer); err != nil {
+	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds WHERE instance_id=$1),EXISTS(SELECT 1 FROM computer_leases WHERE computer_instance_id=$1)`, instance).Scan(&preparation, &computer); err != nil {
 		return false, err
 	}
 	if preparation && computer {
@@ -33,7 +33,7 @@ const preparationProxyAuthority = `WITH authority AS (
  p.proxy_ca_private_key_nonce AS nonce,p.proxy_ca_private_key_ciphertext AS ciphertext,
  statement_timestamp() AS authorized_at,
  COALESCE(h.claim_version=$5 AND g.claim_version=$6,false) AS claims_current
- FROM computer_preparations p
+ FROM image_builds p
  JOIN environments e ON e.id=p.environment_id AND e.retired_at IS NULL
  JOIN worker_hosts h ON h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
@@ -43,7 +43,7 @@ const preparationProxyAuthority = `WITH authority AS (
  AND p.status='running' AND p.fenced_at IS NULL AND p.logical_bytes IS NULL
  AND p.deadline_at>statement_timestamp() AND p.executor_expires_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.computer_instance_id=p.instance_id)
- AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
    WHERE b.environment_id=p.environment_id AND b.preparation_spec_id=p.preparation_spec_id AND s.status<>'active')
 ) `
 
@@ -59,8 +59,8 @@ func CapturePreparationProxyTrust(ctx context.Context, database db.DBTX, host wo
 	var current bool
 	var env []byte
 	err := database.QueryRow(ctx, preparationProxyAuthority+`SELECT a.environment_id,a.id,a.certificate,a.not_after,a.nonce,a.ciphertext,a.claims_current,
- ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM computer_secret_bindings b WHERE b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id AND b.mode='protected'),
- COALESCE((SELECT jsonb_object_agg(b.placement_target,b.placeholder) FROM computer_secret_bindings b WHERE b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id AND b.mode='protected'),'{}'::jsonb)
+ ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id AND b.mode='protected'),
+ COALESCE((SELECT jsonb_object_agg(b.placement_target,b.placeholder) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id AND b.mode='protected'),'{}'::jsonb)
  FROM authority a`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion).Scan(&result.Trust.EnvironmentID, &result.Trust.PreparationID, &result.Trust.Certificate, &expiry, &result.Trust.PrivateKeyNonce, &result.Trust.PrivateKeyCiphertext, &current, &result.Origins, &env)
 	if err != nil {
 		return PreparationProxyTrust{}, hideMissing(err)
@@ -94,7 +94,7 @@ func CapturePreparationProtectedSecrets(ctx context.Context, database db.DBTX, h
 		return nil, ErrInvalidInput
 	}
 	rows, err := database.Query(ctx, preparationProxyAuthority+`SELECT b.placeholder,a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
- FROM authority a JOIN computer_secret_bindings b ON b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id
+ FROM authority a JOIN secret_bindings b ON b.environment_id=a.environment_id AND b.preparation_spec_id=a.preparation_spec_id
  JOIN secret_exposures x ON x.environment_id=a.environment_id AND x.preparation_id=a.id AND x.secret_id=b.secret_id
  JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id
  WHERE b.mode='protected' AND b.placeholder=ANY($7::text[]) AND $8=ANY(b.allowed_origins)

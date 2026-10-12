@@ -59,7 +59,7 @@ func newInitialRoot(t *testing.T, environment uuid.UUID) initialRootFixture {
 // JSON-encoded disk.VersionRoot parameter, expanding it into the typed columns.
 // The arguments are the parameter references, for example "$1".
 func DiskRootInsert(environment, id, root string) string {
-	return `INSERT INTO computer_disk_roots(environment_id,id,format_version,logical_bytes,pack_digest,pack_size_bytes,pack_rank,page_digest,page_salt,page_key_id,page_kind,page_count,page_size_bytes,page_offset)
+	return `INSERT INTO disk_roots(environment_id,id,format_version,logical_bytes,pack_digest,pack_size_bytes,pack_rank,page_digest,page_salt,page_key_id,page_kind,page_count,page_size_bytes,page_offset)
  SELECT ` + environment + `,` + id + `,(r->>'format_version')::int,(r->>'logical_bytes')::bigint,r->'pack'->>'digest',(r->'pack'->>'size_bytes')::bigint,(r->'pack'->>'rank')::int,
  r->'page'->>'digest',r->'page'->>'salt',(r->'page'->>'key_id')::uuid,(r->'page'->>'kind')::int,(r->'page'->>'count')::int,(r->'page'->>'size_bytes')::bigint,(r->>'offset')::bigint
  FROM (SELECT ` + root + `::jsonb AS r) root`

@@ -150,7 +150,7 @@ func assertPrimitiveLifecycleSchema(
 	pool *pgxpool.Pool,
 ) {
 	t.Helper()
-	tableNames := []string{"secrets", "worker_pools", "sessions", "worker_groups", "device_codes", "worker_hosts", "computer_checkpoints", "computer_leases", "computer_commands", "session_processes", "turns", "computer_saves", "computer_preparations"}
+	tableNames := []string{"secrets", "worker_pools", "sessions", "worker_groups", "device_codes", "worker_hosts", "checkpoints", "computer_leases", "commands", "session_processes", "turns", "computer_saves", "image_builds"}
 	columnNames := []string{"status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status"}
 	var constrainedTextColumns int
 	if err := pool.QueryRow(ctx, `
@@ -250,7 +250,7 @@ func assertDatabaseConstraintBoundaries(
 ) {
 	t.Helper()
 	var deferredRetryReferences int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='platform_retry_keys'::regclass AND contype='f' AND condeferrable`).Scan(&deferredRetryReferences); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='idempotency_receipts'::regclass AND contype='f' AND condeferrable`).Scan(&deferredRetryReferences); err != nil {
 		t.Fatal(err)
 	}
 	if deferredRetryReferences != 0 {
@@ -324,7 +324,7 @@ func assertDatabaseConstraintBoundaries(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_checkpoint_objects.availability_required:s,computer_data_keys.available:s,computer_disk_roots.certification_required:s,computer_disk_roots.direct_key_required:s,computer_disk_roots.root_kind:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_preparations.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,diagnostic_chunks.ingest_size_bytes:s,diagnostic_chunks.producer_epoch:s,diagnostic_chunks.source_id:s,diagnostic_chunks.source_kind:s,slack_threads.front_root_session_id:s,turns.completion_published:s,turns.has_recorded_result:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,checkpoint_objects.availability_required:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,diagnostic_chunks.ingest_size_bytes:s,diagnostic_chunks.producer_epoch:s,diagnostic_chunks.source_id:s,diagnostic_chunks.source_kind:s,disk_encryption_keys.available:s,disk_object_edges.certification_required:s,disk_object_keys.availability_required:s,disk_objects.availability_required:s,disk_objects.certified:s,disk_objects.certified_org_id:s,disk_roots.certification_required:s,disk_roots.direct_key_required:s,disk_roots.root_kind:s,image_builds.write_key_required:s,slack_threads.front_root_session_id:s,turns.completion_published:s,turns.has_recorded_result:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -388,7 +388,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"sessions", "turns", "computers", "computer_commands", "computer_checkpoints", "diagnostic_chunks", "trigger_activations"}
+	logicalTables := []string{"sessions", "turns", "computers", "commands", "checkpoints", "diagnostic_chunks", "trigger_activations"}
 	var assignmentLeaks int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=ANY($1::text[]) AND column_name='worker_group_id'`, logicalTables).Scan(&assignmentLeaks); err != nil {
 		t.Fatal(err)
@@ -396,7 +396,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if assignmentLeaks != 0 {
 		t.Fatalf("logical group assignment columns=%d", assignmentLeaks)
 	}
-	requiredIndexes := []string{"computer_leases_one_writer", "computer_leases_expiring", "computer_leases_host_unfenced", "session_processes_one_writer", "session_processes_computer_custody", "computer_commands_pending", "computer_commands_unreconciled", "computer_checkpoints_one_pending", "turns_one_active", "turns_queue", "platform_retry_keys_receipt_expiry"}
+	requiredIndexes := []string{"computer_leases_one_writer", "computer_leases_expiring", "computer_leases_host_unfenced", "session_processes_one_writer", "session_processes_computer_custody", "commands_pending", "commands_unreconciled", "checkpoints_one_pending", "turns_one_active", "turns_queue", "idempotency_receipts_receipt_expiry"}
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname=ANY($1::text[])`, requiredIndexes).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -483,7 +483,7 @@ func assertComputerCommandSchema(
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
-		   AND table_name = 'computer_commands'
+		   AND table_name = 'commands'
 		   AND column_name = ANY($1::text[])
 	`, []string{"argv", "cwd", "env", "timeout_ms", "stdin"}).Scan(&payloadColumns); err != nil {
 		t.Fatal(err)
@@ -491,7 +491,7 @@ func assertComputerCommandSchema(
 	if payloadColumns != 5 {
 		t.Fatalf("Command input columns = %d, want 5", payloadColumns)
 	}
-	assertForeignKey(t, ctx, pool, "computer_commands", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)")
+	assertForeignKey(t, ctx, pool, "commands", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)")
 
 }
 
@@ -539,16 +539,16 @@ func assertExecutionOwnershipSchema(t *testing.T, ctx context.Context, pool *pgx
 	t.Helper()
 	for _, fk := range [][3]string{
 		{"agent_definitions", "environment_id, template_id, deployment_id", "template_definitions(environment_id, template_id, deployment_id)"},
-		{"template_definitions", "environment_id, preparation_spec_id", "computer_preparation_specs(environment_id, id)"},
+		{"template_definitions", "environment_id, preparation_spec_id", "image_specs(environment_id, id)"},
 		{"computer_saves", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
 		{"computer_saves", "environment_id, turn_id, computer_id, requires_recorded_result", "turns(environment_id, id, computer_id, has_recorded_result)"},
 		{"turns", "environment_id, computer_id, id, completion_save_id, completion_published", "computer_saves(environment_id, computer_id, turn_id, id, published)"},
-		{"computer_checkpoint_members", "environment_id, computer_id, session_id, process_epoch", "session_processes(environment_id, computer_id, session_id, epoch)"},
-		{"computer_checkpoint_members", "environment_id, computer_id, checkpoint_id", "computer_checkpoints(environment_id, computer_id, id)"},
-		{"computer_checkpoints", "environment_id, computer_id, disk_save_id", "computer_saves(environment_id, computer_id, id)"},
-		{"computer_checkpoints", "environment_id, computer_id, source_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
-		{"computer_checkpoints", "environment_id, computer_id, target_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
-		{"computer_checkpoint_objects", "digest, size_bytes, availability_required", "cas_blobs(digest, size_bytes, not_retired)"},
+		{"checkpoint_processes", "environment_id, computer_id, session_id, process_epoch", "session_processes(environment_id, computer_id, session_id, epoch)"},
+		{"checkpoint_processes", "environment_id, computer_id, checkpoint_id", "checkpoints(environment_id, computer_id, id)"},
+		{"checkpoints", "environment_id, computer_id, disk_save_id", "computer_saves(environment_id, computer_id, id)"},
+		{"checkpoints", "environment_id, computer_id, source_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
+		{"checkpoints", "environment_id, computer_id, target_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
+		{"checkpoint_objects", "digest, size_bytes, availability_required", "cas_blobs(digest, size_bytes, not_retired)"},
 	} {
 		assertForeignKey(t, ctx, pool, fk[0], fk[1], fk[2])
 	}

@@ -30,7 +30,7 @@ func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 		t.Fatalf("admission: %v", err)
 	}
 	var leaked bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1 AND id=$3)`, f.env, computer, attempt).Scan(&leaked); err != nil || leaked {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND id=$3)`, f.env, computer, attempt).Scan(&leaked); err != nil || leaked {
 		t.Fatalf("rollback leaked demand or attempt: %v, %v", leaked, err)
 	}
 }
@@ -108,7 +108,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	}
 	reconcile()
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_preparations WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("duplicate preparation: %d %v", count, err)
 	}
 }
@@ -123,7 +123,7 @@ func TestPreparationUnattachedDemandExpiresWithoutAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var settled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_failed_at IS NOT NULL AND preparation_id IS NULL AND NOT EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1) FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&settled); err != nil || !settled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_failed_at IS NOT NULL AND preparation_id IS NULL AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1) FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&settled); err != nil || !settled {
 		t.Fatalf("unattached demand not settled: %v %v", settled, err)
 	}
 }
@@ -163,17 +163,17 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 	var successor, predecessor, retained uuid.UUID
 	var count int
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id,p.successor_of,(SELECT count(*) FROM computer_preparations WHERE environment_id=$1) FROM computers c JOIN computer_preparations p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id,p.successor_of,(SELECT count(*) FROM image_builds WHERE environment_id=$1) FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
 		t.Fatalf("fresh demand did not join the single successor: %v %v %d %v", successor, predecessor, count, err)
 	}
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, p.f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {
 		t.Fatalf("original chain changed: %v %v", retained, err)
 	}
 	var attemptDeadline, freshDeadline time.Time
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT p.deadline_at,c.preparation_deadline_at FROM computer_preparations p JOIN computers c ON (c.environment_id,c.preparation_id)=(p.environment_id,p.id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&attemptDeadline, &freshDeadline); err != nil || !attemptDeadline.Equal(originalDeadline) || !freshDeadline.After(attemptDeadline) {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT p.deadline_at,c.preparation_deadline_at FROM image_builds p JOIN computers c ON (c.environment_id,c.preparation_id)=(p.environment_id,p.id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&attemptDeadline, &freshDeadline); err != nil || !attemptDeadline.Equal(originalDeadline) || !freshDeadline.After(attemptDeadline) {
 		t.Fatalf("join changed deadlines: %v %v %v", attemptDeadline, freshDeadline, err)
 	}
-	if _, err := p.f.pool.Exec(t.Context(), `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, successor); err != nil {
+	if _, err := p.f.pool.Exec(t.Context(), `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, successor); err != nil {
 		t.Fatal(err)
 	}
 	if err := expirePreparation(t.Context(), p.f.pool, p.f.env, successor); err != nil {
@@ -183,7 +183,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	var unchanged bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id=$3 AND c.preparation_deadline_at=$4 AND (SELECT count(*) FROM computer_preparations WHERE environment_id=$1)=2 FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, fresh, successor, freshDeadline).Scan(&unchanged); err != nil || !unchanged {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id=$3 AND c.preparation_deadline_at=$4 AND (SELECT count(*) FROM image_builds WHERE environment_id=$1)=2 FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, fresh, successor, freshDeadline).Scan(&unchanged); err != nil || !unchanged {
 		t.Fatalf("joined expiry created another attempt or moved deadline: %v %v", unchanged, err)
 	}
 

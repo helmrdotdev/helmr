@@ -35,7 +35,7 @@ func suppressInstallationPosts(ctx context.Context, tx pgx.Tx, installation uuid
  inflight_revision=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_revision END,
  inflight_stream_text=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_stream_text END,
  inflight_attempt_id=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_attempt_id END
- FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id
  WHERE (p.thread_id=t.id OR p.source_thread_id=t.id) AND c.installation_id=$1 `, installation)
 	if err != nil {
 		return err
@@ -45,7 +45,7 @@ func suppressInstallationPosts(ctx context.Context, tx pgx.Tx, installation uuid
 	// a later cumulative update from carrying bytes across reauthorization.
 	// Repeat this at reauthorization to exclude content accepted during the outage.
 	_, err = tx.Exec(ctx, `UPDATE slack_thread_sources p SET projected_event_seq=GREATEST(p.projected_event_seq,s.next_event_seq-1)
- FROM sessions s,slack_threads t,slack_channels c WHERE p.environment_id=s.environment_id AND p.session_id=s.id
+ FROM sessions s,slack_threads t,slack_channel_bindings c WHERE p.environment_id=s.environment_id AND p.session_id=s.id
  AND t.id=p.thread_id AND c.id=t.channel_id AND c.installation_id=$1`, installation)
 	return err
 }

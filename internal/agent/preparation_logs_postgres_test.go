@@ -39,7 +39,7 @@ func TestPreparationLogAcceptanceBindsAttemptExecutor(t *testing.T) {
 	if _, err := AppendPreparationLog(t.Context(), f.pool, host, ref, record, bounds); err == nil {
 		t.Fatal("foreign physical host accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, ref.PreparationID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, ref.PreparationID)
 	if _, err := AppendPreparationLog(t.Context(), f.pool, *f.host(), ref, record, bounds); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired executor: %v", err)
 	}

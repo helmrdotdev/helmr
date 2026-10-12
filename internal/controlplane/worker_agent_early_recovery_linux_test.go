@@ -150,10 +150,10 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 			var certified, rootCertified, pinned bool
 			var certifiedBytes int64
 			err = g.pool.QueryRow(r.Context(), `SELECT
-    EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2 AND certified),
-    EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$3 AND certified),
- EXISTS(SELECT 1 FROM computer_object_pins WHERE environment_id=$1 AND save_id=$4 AND digest=$2),
- COALESCE((SELECT sum(o.size_bytes) FROM computer_object_pins p JOIN computer_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=$1 AND p.save_id=$4 AND o.certified),0)`, g.environment, digest, recovery.RootPack, save).Scan(&certified, &rootCertified, &pinned, &certifiedBytes)
+    EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2 AND certified),
+    EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$3 AND certified),
+ EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND save_id=$4 AND digest=$2),
+ COALESCE((SELECT sum(o.size_bytes) FROM disk_object_pins p JOIN disk_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=$1 AND p.save_id=$4 AND o.certified),0)`, g.environment, digest, recovery.RootPack, save).Scan(&certified, &rootCertified, &pinned, &certifiedBytes)
 			if err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 		}
 		if !capture {
 			var pending bool
-			if err := g.pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM computer_object_pins p JOIN computer_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=$1 AND p.save_id=$2 AND p.digest=$3 AND NOT o.certified)`, g.environment, save, digest).Scan(&pending); err != nil {
+			if err := g.pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM disk_object_pins p JOIN disk_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=$1 AND p.save_id=$2 AND p.digest=$3 AND NOT o.certified)`, g.environment, save, digest).Scan(&pending); err != nil {
 				return err
 			}
 			if !pending {

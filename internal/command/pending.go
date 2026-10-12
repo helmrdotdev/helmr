@@ -36,14 +36,14 @@ func FailPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failur
 func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failure) error {
 	q := db.New(tx)
 	commandID := pgvalue.UUID(pending.CommandID)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{EnvironmentID: pgvalue.UUID(pending.EnvironmentID), CommandID: commandID})
+	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: pgvalue.UUID(pending.EnvironmentID), CommandID: commandID})
 	if err != nil {
 		return err
 	}
 	if _, err = lockCommandLease(ctx, tx, target, pending.CommandID); err != nil {
 		return err
 	}
-	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: commandID})
+	command, err := q.LockCommand(ctx, db.LockCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: commandID})
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failur
 	if command.Status != "pending" || command.ComputerLeaseEpoch.Valid {
 		return ErrChanged
 	}
-	_, err = tx.Exec(ctx, `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',error=$3,
+	_, err = tx.Exec(ctx, `UPDATE commands SET status='failed',failure_reason='dispatch_failed',error=$3,
  terminal_at=clock_timestamp(),terminal_reason_code=$4,result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2`, target.EnvironmentID, commandID, failure.Detail, failure.Code)
 	return err

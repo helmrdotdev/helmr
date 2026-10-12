@@ -28,12 +28,12 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	// This incompatible preparation sorts before the eligible candidate. It must
 	// not consume the one-row budget, even on repeated planning passes.
 	incompatibleSpec, incompatible := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','{}','{}')`, f.Environment, incompatibleSpec)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','{}','{}')`, f.Environment, incompatibleSpec)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'incompatible');
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes) VALUES($1,$2,$3,$3,2000,536870912)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, incompatibleSpec)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'incompatible','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, incompatible, incompatibleSpec)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'incompatible','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, incompatible, incompatibleSpec)
 	preparation := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'queued','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, preparation, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'queued','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, preparation, f.Deployment)
 	q := db.New(f.Pool)
 	rows, err := q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 1})
 	if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].OwnerID) != preparation {
@@ -71,7 +71,7 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_cpu_millis=1024000 WHERE id=$1`, f.Environment)
 	secret := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secret, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secret)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secret)
 	rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("revoked preparation demand=%+v %v", rows, err)

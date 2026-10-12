@@ -28,7 +28,7 @@ func Recover(ctx context.Context, txb db.TxBeginner, candidate RecoveryCandidate
 }
 func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate) error {
 	q := db.New(tx)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{EnvironmentID: pgvalue.UUID(candidate.EnvironmentID), CommandID: pgvalue.UUID(candidate.CommandID)})
+	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: pgvalue.UUID(candidate.EnvironmentID), CommandID: pgvalue.UUID(candidate.CommandID)})
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate)
 		}
 	}
 	if revoked && !c.TerminalAt.Valid && !c.CancelRequestedAt.Valid {
-		if _, err = tx.Exec(ctx, `UPDATE computer_commands SET cancel_requested_at=clock_timestamp(),
+		if _, err = tx.Exec(ctx, `UPDATE commands SET cancel_requested_at=clock_timestamp(),
  status=CASE WHEN computer_lease_epoch IS NULL THEN 'failed' ELSE 'stopping' END,
  failure_reason=CASE WHEN computer_lease_epoch IS NULL THEN 'guest_failure' END,
  error=CASE WHEN computer_lease_epoch IS NULL THEN '{"code":"secret_revoked","retryable":false}'::jsonb END,
@@ -84,14 +84,14 @@ func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate)
 		return err
 	}
 	if lost && !c.TerminalAt.Valid {
-		if _, err = tx.Exec(ctx, `UPDATE computer_commands SET status='lost',failure_reason='guest_failure',terminal_reason_code='computer_lease_lost',
+		if _, err = tx.Exec(ctx, `UPDATE commands SET status='lost',failure_reason='guest_failure',terminal_reason_code='computer_lease_lost',
  error='{"code":"computer_lease_lost","retryable":false}'::jsonb,terminal_at=clock_timestamp(),result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2 AND terminal_at IS NULL`, env, candidate.CommandID); err != nil {
 			return err
 		}
 	}
 	if l.FencedAt != nil {
-		_, err = tx.Exec(ctx, `UPDATE computer_commands SET process_reconciled_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp()
+		_, err = tx.Exec(ctx, `UPDATE commands SET process_reconciled_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2 AND terminal_at IS NOT NULL AND process_reconciled_at IS NULL`, env, candidate.CommandID)
 	}
 	return err

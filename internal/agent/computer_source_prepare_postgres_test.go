@@ -31,7 +31,7 @@ func TestSourceAbortPreparationUsesCurrentAuthorityAndPreservesState(t *testing.
 	}
 	var state string
 	var next int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT p.status,c.next_control_version FROM computer_checkpoints p JOIN computers c ON c.id=p.computer_id WHERE p.id=$1`, checkpoint).Scan(&state, &next); err != nil || state != "capturing" || next != p.DesiredVersion {
+	if err := f.pool.QueryRow(t.Context(), `SELECT p.status,c.next_control_version FROM checkpoints p JOIN computers c ON c.id=p.computer_id WHERE p.id=$1`, checkpoint).Scan(&state, &next); err != nil || state != "capturing" || next != p.DesiredVersion {
 		t.Fatalf("prepare mutated capture: %s %d %v", state, next, err)
 	}
 	if err := ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, observed); err != nil {
@@ -80,7 +80,7 @@ func TestSourceAbortPreparationRefreshesTerminalSetOnlyBeforeInstallation(t *tes
 	}
 	var state string
 	var next int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT p.status,c.next_control_version FROM computer_checkpoints p JOIN computers c ON c.id=p.computer_id WHERE p.id=$1`, p.Capture.CheckpointId).Scan(&state, &next); err != nil || state != "aborting" || next != p.DesiredVersion+1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT p.status,c.next_control_version FROM checkpoints p JOIN computers c ON c.id=p.computer_id WHERE p.id=$1`, p.Capture.CheckpointId).Scan(&state, &next); err != nil || state != "aborting" || next != p.DesiredVersion+1 {
 		t.Fatalf("refresh changed state or version: %s %d %v", state, next, err)
 	}
 
@@ -134,7 +134,7 @@ func TestSourceAbortPreparationRejectsChangedOwnerAndReceipt(t *testing.T) {
 				t.Fatalf("wrong rejection: got %v want %v", err, expected)
 			}
 			var state string
-			if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&state); err != nil || state != "capturing" {
+			if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&state); err != nil || state != "capturing" {
 				t.Fatalf("rejection mutated state: %s %v", state, err)
 			}
 		})

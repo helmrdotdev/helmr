@@ -140,13 +140,13 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var succeeded, unfenced bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
 		t.Fatalf("publication fenced executor: %v", err)
 	}
 	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
+	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "lost response replay"); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, changed, "different cut"); err == nil {
 		t.Fatal("changed root accepted")
 	}
-	if _, err := p.f.pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, p.f.env, root.Pack.Digest); err == nil {
+	if _, err := p.f.pool.Exec(t.Context(), `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, p.f.env, root.Pack.Digest); err == nil {
 		t.Fatal("retained root deleted")
 	}
 }
@@ -178,7 +178,7 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 			t.Fatal(err)
 		}
 		var seq, count int64
-		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM computer_images WHERE environment_id=$1) FROM computer_images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&seq, &count); err != nil || seq != want || count != want {
+		if err := p.f.pool.QueryRow(t.Context(), `SELECT seq,(SELECT count(*) FROM images WHERE environment_id=$1) FROM images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&seq, &count); err != nil || seq != want || count != want {
 			t.Fatalf("image sequence %d count %d: %v", seq, count, err)
 		}
 		if want == 2 {
@@ -209,7 +209,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "expire":
-				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
+				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
 			case "revoke":
 				if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
@@ -219,7 +219,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 				t.Fatalf("late publication: %v", err)
 			}
 			var count int
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("image leaked %d: %v", count, err)
 			}
 		})
@@ -261,7 +261,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	}
 	object, _ := describeSaveObject(inspection)
 	var certified bool
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT certified FROM computer_objects WHERE environment_id=$1 AND digest=$2`, p.f.env, object.digest).Scan(&certified); err != nil || certified {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT certified FROM disk_objects WHERE environment_id=$1 AND digest=$2`, p.f.env, object.digest).Scan(&certified); err != nil || certified {
 		t.Fatalf("certified stale object: %v", err)
 	}
 }
@@ -283,7 +283,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE environment_id=$1 AND preparation_id=$2`, p.f.env, p.ref.PreparationID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("retained unauthorized graph: %d %v", count, err)
 	}
 }

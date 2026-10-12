@@ -9,7 +9,7 @@ import (
 )
 
 func TestCommandOutputClosureRequiresPipeEvidence(t *testing.T) {
-	c := db.ComputerCommand{ComputerLeaseEpoch: pgtype.Int8{Int64: 1, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_command_completed"), StdoutFinalThrough: pgtype.Int8{Int64: 2, Valid: true}, StderrFinalThrough: pgtype.Int8{Int64: 1, Valid: true}}
+	c := db.Command{ComputerLeaseEpoch: pgtype.Int8{Int64: 1, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_command_completed"), StdoutFinalThrough: pgtype.Int8{Int64: 2, Valid: true}, StderrFinalThrough: pgtype.Int8{Int64: 1, Valid: true}}
 	if got := commandOutputState(c); got != "open" {
 		t.Fatal(got)
 	}

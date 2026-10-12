@@ -185,7 +185,7 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 				return nil
 			}
 			var bound bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id
  WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3)`, installation, e.Channel, e.Thread).Scan(&bound); err != nil {
 				return err
 			}
@@ -270,7 +270,7 @@ func (h EventHandler) observeEvent(ctx context.Context, team string, message obs
 	var installation uuid.UUID
 	err := db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT i.id FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channels c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
+ JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND i.app_id=$2 AND i.team_id=$3 AND i.bot_user_id=$4 AND c.slack_channel_id=$5`, post, h.AppID, team, message.User, message.Channel).Scan(&installation)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

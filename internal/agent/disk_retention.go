@@ -40,7 +40,7 @@ func ReconcileComputerDiskRetention(ctx context.Context, database db.TxDB) error
 	rows, err := database.Query(ctx, `SELECT l.environment_id,l.computer_id,l.epoch FROM computer_leases l JOIN computers owner ON owner.environment_id=l.environment_id AND owner.id=l.computer_id
  WHERE l.fenced_at IS NOT NULL AND l.base_root_id IS NOT NULL AND l.disk_released_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=l.environment_id AND s.computer_id=l.computer_id AND s.computer_lease_epoch=l.epoch AND s.status IN ('requested','captured'))
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints k WHERE k.environment_id=l.environment_id AND k.computer_id=l.computer_id AND (k.source_lease_epoch=l.epoch OR k.target_lease_epoch=l.epoch) AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM checkpoints k WHERE k.environment_id=l.environment_id AND k.computer_id=l.computer_id AND (k.source_lease_epoch=l.epoch OR k.target_lease_epoch=l.epoch) AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)
  ORDER BY l.environment_id,l.computer_id,l.epoch LIMIT 100 FOR NO KEY UPDATE OF owner,l SKIP LOCKED`)
 	if err != nil {
 		return err
@@ -102,12 +102,12 @@ func ReconcileComputerDiskRetention(ctx context.Context, database db.TxDB) error
 // writer nor an unresolved publication is a retention clock. Completed Turns
 // retain their own save identity without retaining every old disk version.
 const retirableSave = `s.status IN ('published','failed')
- AND (s.root_id IS NOT NULL OR EXISTS(SELECT 1 FROM computer_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id))
+ AND (s.root_id IS NOT NULL OR EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id))
  AND EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=s.computer_lease_epoch AND l.fenced_at IS NOT NULL)
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=s.environment_id AND c.recovery_save_id=s.id)
  AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.id=s.turn_id AND t.status IN ('running','finalizing'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.restored_from_save_id=s.id AND l.disk_released_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints k WHERE k.environment_id=s.environment_id AND k.disk_save_id=s.id AND (k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL))`
+ AND NOT EXISTS(SELECT 1 FROM checkpoints k WHERE k.environment_id=s.environment_id AND k.disk_save_id=s.id AND (k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL))`
 
 func retireComputerSave(ctx context.Context, database db.TxBeginner, environment, computer, save uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
@@ -134,7 +134,7 @@ func retireComputerSave(ctx context.Context, database db.TxBeginner, environment
 		if _, err := tx.Exec(ctx, `UPDATE computer_saves SET root_id=NULL,payload_retired_at=clock_timestamp() WHERE environment_id=$1 AND id=$2 AND status='published' AND root_id IS NOT NULL`, environment, save); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM computer_object_pins WHERE environment_id=$1 AND save_id=$2`, environment, save)
+		_, err := tx.Exec(ctx, `DELETE FROM disk_object_pins WHERE environment_id=$1 AND save_id=$2`, environment, save)
 		return err
 	})
 }

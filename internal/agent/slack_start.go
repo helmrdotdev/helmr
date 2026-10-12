@@ -51,7 +51,7 @@ func ReadSlackConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, c
 	c.ChannelID = channel
 	c.AgentID = agent
 	err := tx.QueryRow(ctx, `SELECT p.id,r.id,i.id,e.org_id,i.team_id,i.app_id,i.bot_user_id,a.key,i.credential_revision,i.authorized_at
- FROM agent_publications p JOIN environments e ON e.id=p.environment_id JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id)
+ FROM slack_connections p JOIN environments e ON e.id=p.environment_id JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id)
  JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.agent_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL
  AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL AND i.granted_scopes @> $3::text[]
@@ -89,7 +89,7 @@ func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID)
 	err = tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.organization_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND t.deleted_at IS NULL,
  EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.role='opening' AND (post.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND post.status IN ('failed','suppressed'))))
- FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications p ON p.id=c.publication_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections p ON p.id=c.publication_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=i.app_registration_id
  JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
  WHERE t.environment_id=$1 AND t.front_session_id=$2 AND t.channel_id=$3`, env, caller, *route).Scan(&source.ThreadID, &root, &c.PublicationID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.ChannelID, &c.AppID, &c.BotUserID, &c.AgentID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt, &active, &abandoned)
@@ -248,14 +248,14 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 
 func ResolveSlackRoute(ctx context.Context, tx pgx.Tx, c SlackConnection) (uuid.UUID, error) {
 	id := uuid.NewV7()
-	tag, err := tx.Exec(ctx, `INSERT INTO slack_channels(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(publication_id,slack_channel_id) DO NOTHING`, id, c.EnvironmentID, c.PublicationID, c.InstallationID, c.OrganizationID, c.TeamID, c.ChannelID)
+	tag, err := tx.Exec(ctx, `INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(publication_id,slack_channel_id) DO NOTHING`, id, c.EnvironmentID, c.PublicationID, c.InstallationID, c.OrganizationID, c.TeamID, c.ChannelID)
 	if err != nil {
 		return uuid.Nil(), err
 	}
 	if tag.RowsAffected() == 1 {
 		return id, nil
 	}
-	err = tx.QueryRow(ctx, `SELECT id FROM slack_channels WHERE publication_id=$1 AND environment_id=$2 AND installation_id=$3 AND slack_channel_id=$4`, c.PublicationID, c.EnvironmentID, c.InstallationID, c.ChannelID).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id FROM slack_channel_bindings WHERE publication_id=$1 AND environment_id=$2 AND installation_id=$3 AND slack_channel_id=$4`, c.PublicationID, c.EnvironmentID, c.InstallationID, c.ChannelID).Scan(&id)
 	return id, err
 }
 

@@ -40,7 +40,7 @@ func TestAllocationPreparationUsesResourcesWithoutComputerCount(t *testing.T) {
 	}
 	// Historical lookup is independent of current provisioning authority.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='lost',lost_at=clock_timestamp() WHERE id=$1;
- UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
+ UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
 	got, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
 	if err != nil || got.InstanceID != r.InstanceID || got.Shape != r.Shape || got.Status != "failed" || got.DeliveredAt != nil {
 		t.Fatalf("retry replaced allocation: %+v %v", got, err)
@@ -54,7 +54,7 @@ func TestAllocationPreparationCapacityFailureRollsBack(t *testing.T) {
 		t.Fatalf("overcommitted physical CPU: %v", err)
 	}
 	var untouched bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND reserved_cpu_millis IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND reserved_cpu_millis IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("rejected reservation leaked: %v %v", untouched, err)
 	}
 }
@@ -75,7 +75,7 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 		t.Fatalf("wrong epoch accepted: %v", err)
 	}
 	var untouched bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
+	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("failed delivery changed authority: %v %v", untouched, err)
 	}
 	first, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
@@ -90,7 +90,7 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 	if first.InstanceID != r.InstanceID || !bytes.Equal(first.Executor.ChannelCredential, again.Executor.ChannelCredential) || !first.ExpiresAt.Equal(*again.ExpiresAt) || !first.DeliveredAt.Equal(*again.DeliveredAt) {
 		t.Fatalf("redelivery changed identity or authority")
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("expired delivery resurrected: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestAllocationPreparationConcurrentQuotaIsAtomic(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
 	otherSpec := uuid.NewV7()
 	otherComputer := f.waiter(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_preparation_specs SELECT (jsonb_populate_record(NULL::computer_preparation_specs,to_jsonb(s)||jsonb_build_object('id',$3::text,'spec_digest','sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'))).* FROM computer_preparation_specs s WHERE environment_id=$1 AND id=$2;
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO image_specs SELECT (jsonb_populate_record(NULL::image_specs,to_jsonb(s)||jsonb_build_object('id',$3::text,'spec_digest','sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'))).* FROM image_specs s WHERE environment_id=$1 AND id=$2;
  INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'other');
  INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('template_id',$3::text,'preparation_spec_id',$3::text))).* FROM template_definitions d WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE computers SET preparation_spec_id=$3 WHERE environment_id=$1 AND id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, otherSpec, otherComputer)
@@ -287,7 +287,7 @@ func TestAllocationPreparationConcurrentQuotaIsAtomic(t *testing.T) {
 		t.Fatalf("quota admitted %d executors", successes)
 	}
 	var reserved int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT sum(reserved_cpu_millis) FROM computer_preparations WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL`, f.env).Scan(&reserved); err != nil || reserved != 1000 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT sum(reserved_cpu_millis) FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL`, f.env).Scan(&reserved); err != nil || reserved != 1000 {
 		t.Fatalf("reservation total %d: %v", reserved, err)
 	}
 }
@@ -305,7 +305,7 @@ func TestAllocationPreparationStopDoesNotRequireDeliveredCredential(t *testing.T
 					t.Fatal(err)
 				}
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 			if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 				t.Fatalf("deadline is not terminal: %v", err)
 			}
@@ -324,7 +324,7 @@ func TestAllocationPreparationStopDoesNotRequireDeliveredCredential(t *testing.T
 				}
 			}
 			var held bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1 AND id=$2 AND fenced_at IS NULL)`, f.env, p.ID).Scan(&held); err != nil || held {
+			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND id=$2 AND fenced_at IS NULL)`, f.env, p.ID).Scan(&held); err != nil || held {
 				t.Fatalf("unreturned grant stranded custody: %v %v", held, err)
 			}
 		})
@@ -403,10 +403,10 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET epoch_cpu_millis=2000 WHERE id=$3;
  INSERT INTO environments SELECT (jsonb_populate_record(NULL::environments,to_jsonb(e)||jsonb_build_object('id',$2::text,'slug','other','is_default',false,'current_deployment_id',NULL))).* FROM environments e WHERE e.id=$1;
  INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM deployments d WHERE d.environment_id=$1;
- INSERT INTO computer_preparation_specs SELECT (jsonb_populate_record(NULL::computer_preparation_specs,to_jsonb(s)||jsonb_build_object('environment_id',$2::text))).* FROM computer_preparation_specs s WHERE s.environment_id=$1;
+ INSERT INTO image_specs SELECT (jsonb_populate_record(NULL::image_specs,to_jsonb(s)||jsonb_build_object('environment_id',$2::text))).* FROM image_specs s WHERE s.environment_id=$1;
  INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
  INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM template_definitions d WHERE d.environment_id=$1;
- INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,deadline_at) SELECT $2,id,preparation_spec_id,retry_key,deadline_at FROM computer_preparations WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, f.worker)
+ INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at) SELECT $2,id,preparation_spec_id,retry_key,deadline_at FROM image_builds WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, f.worker)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, env := range []uuid.UUID{f.env, otherEnv} {
@@ -442,7 +442,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 				}
 			}
 			var secretID uuid.UUID
-			if err := f.pool.QueryRow(t.Context(), `SELECT x.secret_id FROM computers c JOIN computer_images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
+			if err := f.pool.QueryRow(t.Context(), `SELECT x.secret_id FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
  JOIN secret_exposures x ON (x.environment_id,x.preparation_id)=(i.environment_id,i.preparation_id) WHERE c.environment_id=$1 AND c.id=$2 LIMIT 1`, f.env, computer).Scan(&secretID); err != nil {
 				t.Fatal(err)
 			}
@@ -483,7 +483,7 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	}
 	var root, key uuid.UUID
 	var pack string
-	if err := f.pool.QueryRow(t.Context(), `SELECT r.id,r.page_key_id,r.pack_digest FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&root, &key, &pack); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT r.id,r.page_key_id,r.pack_digest FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&root, &key, &pack); err != nil {
 		t.Fatal(err)
 	}
 	// Fixture the retention owner's completed physical-stop/deletion transition.
@@ -491,9 +491,9 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `
  UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computers SET deleted_at=clock_timestamp(),initial_root_id=NULL,initial_payload_retired_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
- DELETE FROM computer_disk_roots WHERE environment_id=$1 AND id=$3;
- DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$4;
- UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$5;
+ DELETE FROM disk_roots WHERE environment_id=$1 AND id=$3;
+ DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$4;
+ UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$5;
  `, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, root, pack, key)
 	after, err := a.AllocateFreshComputer(t.Context(), f.env, f.computer, 1, f.worker)
 	if err != nil || after.BaseVersion != before.BaseVersion || after.InstanceID != before.InstanceID || after.Shape != before.Shape || after.Status != "released" {
@@ -601,7 +601,7 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 	if _, err := RenewPreparation(t.Context(), f.pool, *f.host(), first.Executor); err != nil {
 		t.Fatalf("preparation renewal on drain: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if _, err := a.DeliverPreparation(t.Context(), *f.host(), identity); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("drain revived expired preparation: %v", err)
 	}
@@ -639,7 +639,7 @@ func TestAllocationPreparationRemainsInDrainReadinessUntilFenced(t *testing.T) {
 		}
 	}
 	check(2)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	check(2)
 	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
 		t.Fatal(err)

@@ -17,7 +17,7 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1;
- UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.group, f.env, p.ID)
+ UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.group, f.env, p.ID)
 	records, err := ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 		t.Fatalf("closed preparation delivered: %v", err)
 	}
 	var untouched bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
+	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("listing granted authority or released custody: %v %v", untouched, err)
 	}
 	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: found.EnvironmentID, PreparationID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
@@ -167,7 +167,7 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 		}
 	}
 	var untouched bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
+	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("wrong delivery consumed lifetime: %v %v", untouched, err)
 	}
 }

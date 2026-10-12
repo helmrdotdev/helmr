@@ -13,8 +13,8 @@ SELECT json_build_object(
 FROM sessions s
 LEFT JOIN LATERAL (
  SELECT checkpoint.*,member.process_epoch
- FROM computer_checkpoint_members member
- JOIN computer_checkpoints checkpoint ON (checkpoint.environment_id,checkpoint.id)=(member.environment_id,member.checkpoint_id)
+ FROM checkpoint_processes member
+ JOIN checkpoints checkpoint ON (checkpoint.environment_id,checkpoint.id)=(member.environment_id,member.checkpoint_id)
  WHERE member.environment_id=s.environment_id AND member.session_id=s.id AND checkpoint.computer_id=s.computer_id
  ORDER BY checkpoint.created_at DESC,checkpoint.id DESC LIMIT 1
 ) c ON true

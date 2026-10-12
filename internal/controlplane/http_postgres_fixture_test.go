@@ -106,7 +106,7 @@ func (f httpPostgresFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.
 	if orgID != uuid.Nil() {
 		orgRef = pgvalue.UUID(orgID)
 	}
-	if _, err := f.queries.CreateAuthSession(t.Context(), db.CreateAuthSessionParams{
+	if _, err := f.queries.CreateLoginSession(t.Context(), db.CreateLoginSessionParams{
 		ID: pgvalue.UUID(uuid.NewV7()), OrgID: orgRef, UserID: pgvalue.UUID(userID),
 		TokenHash: tokenHash, ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	}); err != nil {

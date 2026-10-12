@@ -35,7 +35,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 					park()
 				}
 				var before []byte
-				if err := f.pool.QueryRow(ctx, `SELECT manifest FROM computer_checkpoints WHERE id=$1`, checkpoint.manifest.CheckpointID).Scan(&before); err != nil {
+				if err := f.pool.QueryRow(ctx, `SELECT manifest FROM checkpoints WHERE id=$1`, checkpoint.manifest.CheckpointID).Scan(&before); err != nil {
 					t.Fatal(err)
 				}
 				for range 2 {
@@ -50,7 +50,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				}
 				var after []byte
 				var ready bool
-				if err := f.pool.QueryRow(ctx, `SELECT manifest,status='ready' FROM computer_checkpoints WHERE id=$1`, checkpoint.manifest.CheckpointID).Scan(&after, &ready); err != nil || !ready || !bytes.Equal(before, after) {
+				if err := f.pool.QueryRow(ctx, `SELECT manifest,status='ready' FROM checkpoints WHERE id=$1`, checkpoint.manifest.CheckpointID).Scan(&after, &ready); err != nil || !ready || !bytes.Equal(before, after) {
 					t.Fatalf("shared checkpoint altered: %v %v", ready, err)
 				}
 				var events int

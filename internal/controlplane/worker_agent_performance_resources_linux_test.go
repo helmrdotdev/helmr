@@ -84,7 +84,7 @@ func observeNativePerformanceResources(ctx context.Context, input nativeExecutio
 		observation, cancel := context.WithTimeout(ctx, 10*time.Second)
 		var retained json.RawMessage
 		err = pool.QueryRow(observation, `SELECT jsonb_build_object('objects',count(*),'bytes',COALESCE(sum(o.size_bytes),0))
- FROM computer_objects o WHERE o.environment_id=$1 AND EXISTS(SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)`, env).Scan(&retained)
+ FROM disk_objects o WHERE o.environment_id=$1 AND EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)`, env).Scan(&retained)
 		if err != nil {
 			failures = append(failures, "retained object inventory: "+err.Error())
 		} else {

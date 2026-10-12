@@ -97,7 +97,7 @@ func (g *nativePublicationGate) serveCheckpointReadRetry(w http.ResponseWriter, 
   AND bad.initialized_at IS NULL AND bad.fence_evidence='owning worker joined physical VM closure'
   AND bad.fenced_at<=current.delivered_at AND bad.restored_from_save_id=p.disk_save_id),true)
   FROM computer_leases bad WHERE bad.environment_id=p.environment_id AND bad.computer_id=p.computer_id AND bad.epoch=ANY($5::bigint[]))
- FROM computer_checkpoints p
+ FROM checkpoints p
  JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN computer_leases current ON current.environment_id=p.environment_id AND current.computer_id=p.computer_id AND current.epoch=$3 AND current.computer_instance_id=$4
  WHERE p.environment_id=$1 AND p.id=$2`, g.environment, proof.CheckpointID, identity.Epoch, identity.InstanceID, proof.FailedEpochs).Scan(&valid)
@@ -142,7 +142,7 @@ func (g *nativePublicationGate) verifyCheckpointReadRetry(ctx context.Context) e
   AND bad.fenced_at<=target.delivered_at AND bad.restored_from_save_id=p.disk_save_id)
   FROM computer_leases bad WHERE bad.environment_id=p.environment_id AND bad.computer_id=p.computer_id
   AND bad.epoch>p.source_lease_epoch AND bad.epoch<target.epoch),p.manifest
- FROM computer_checkpoints p
+ FROM checkpoints p
  JOIN computer_leases target ON(target.environment_id,target.computer_id,target.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
  WHERE p.environment_id=$1 AND p.id=$2`, g.environment, proof.CheckpointID, proof.ResumedEpoch).Scan(&valid, &raw)
 	if err != nil {

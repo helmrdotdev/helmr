@@ -24,7 +24,7 @@ func releaseComputerLeaseDisk(ctx context.Context, tx pgx.Tx, env, computer uuid
 	}
 	var pending bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch=$3 AND status IN ('requested','captured'))
- OR EXISTS(SELECT 1 FROM computer_checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (source_lease_epoch=$3 OR target_lease_epoch=$3) AND status NOT IN ('cancelled','lost') AND controls_reconciled_at IS NULL)`, env, computer, epoch).Scan(&pending); err != nil {
+ OR EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (source_lease_epoch=$3 OR target_lease_epoch=$3) AND status NOT IN ('cancelled','lost') AND controls_reconciled_at IS NULL)`, env, computer, epoch).Scan(&pending); err != nil {
 		return err
 	}
 	if pending {

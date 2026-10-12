@@ -136,7 +136,7 @@ func TestPublicationGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 		t.Fatal("repeated callback created another installation", err)
 	}
 	var pin bool
-	if err = f.Pool.QueryRow(t.Context(), `SELECT p.slack_installation_id=$2 AND i.app_registration_id=p.slack_app_registration_id AND r.app_id=i.app_id AND r.organization_id=i.organization_id FROM agent_publications p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, setup.ID, installation).Scan(&pin); err != nil || !pin {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT p.slack_installation_id=$2 AND i.app_registration_id=p.slack_app_registration_id AND r.app_id=i.app_id AND r.organization_id=i.organization_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, setup.ID, installation).Scan(&pin); err != nil || !pin {
 		t.Fatal("grant identity not pinned", err)
 	}
 

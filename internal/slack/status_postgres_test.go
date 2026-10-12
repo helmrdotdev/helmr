@@ -24,8 +24,8 @@ func newStatusFixture(t *testing.T) statusFixture {
  SELECT $10,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$3 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$10,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$3 FROM environments WHERE id=$1;
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$10,$2,$3);
- INSERT INTO slack_channels(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$10,$2,$3);
+ INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
  INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $8,$1,$7,$4,org_id,'team','C1','123.456','opening' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.installation, f.User, f.channel, f.publication, f.Agent, f.Session, f.thread, f.participant, f.registration)
 
@@ -152,7 +152,7 @@ func TestSlackStatusRejectsRevokedRouteAndScopesAuthorizationLoss(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT authorization_lost_at IS NOT NULL FROM slack_installations WHERE id=$1`, f.installation).Scan(&lost); err != nil || lost == reauthorized {
 				t.Fatalf("wrong authorization generation disabled: %v %v", lost, err)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			f.due(t)
 			if next, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || next != nil {
 				t.Fatalf("revoked route claimed: %+v %v", next, err)
@@ -191,7 +191,7 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 	other, peer, participant := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $4,$6,$2,$5,organization_id,team_id,slack_channel_id,'789.012','other' FROM slack_channels WHERE id=$5;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $4,$6,$2,$5,organization_id,team_id,slack_channel_id,'789.012','other' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, other, f.channel, f.Environment)
 	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: RateLimited, Code: "ratelimited", RetryAfter: 90 * time.Second}); err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var usable bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT i.authorization_lost_at IS NULL AND t.delivery_error='feature_disabled' AND t.status_confirmation='unknown' FROM slack_installations i JOIN slack_channels c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id WHERE t.id=$1`, f.thread).Scan(&usable); err != nil || !usable {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT i.authorization_lost_at IS NULL AND t.delivery_error='feature_disabled' AND t.status_confirmation='unknown' FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id WHERE t.id=$1`, f.thread).Scan(&usable); err != nil || !usable {
 		t.Fatalf("feature failure revoked installation or lost diagnostic: %v %v", usable, err)
 	}
 	f.due(t)

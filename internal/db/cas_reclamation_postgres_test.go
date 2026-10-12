@@ -40,12 +40,12 @@ func registeredUpload(t *testing.T, f agenttest.Fixture) uploadCandidate {
 	t.Helper()
 	p := uploadCandidate{ID: uuid.NewV7(), Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, MediaType: "application/octet-stream"}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, p.Digest, p.SizeBytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
 	return p
 }
 func abandonUpload(t *testing.T, f agenttest.Fixture, p uploadCandidate) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.Environment, p.Digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.Environment, p.Digest)
 }
 
 func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
@@ -77,7 +77,7 @@ func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,$4)`, otherOrg, p.Digest, p.SizeBytes, p.MediaType)
 	requireFK(t, err)
 	// Re-registering the same upload cannot reopen retired availability.
-	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
+	_, err = f.Pool.Exec(t.Context(), `INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
 	requireFK(t, err)
 }
 

@@ -166,7 +166,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 		t.Fatal(err)
 	}
 	var retained bool
-	if err = f.Pool.QueryRow(t.Context(), `SELECT i.disconnected_at IS NOT NULL AND i.credential_ciphertext IS NULL AND i.credential_nonce IS NULL AND p.revoked_at IS NOT NULL AND r.retired_at IS NOT NULL AND r.credential_ciphertext IS NULL FROM slack_installations i JOIN agent_publications p ON p.slack_installation_id=i.id JOIN slack_app_registrations r ON r.id=i.app_registration_id WHERE i.id=$1`, f.installation).Scan(&retained); err != nil || !retained {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT i.disconnected_at IS NOT NULL AND i.credential_ciphertext IS NULL AND i.credential_nonce IS NULL AND p.revoked_at IS NOT NULL AND r.retired_at IS NOT NULL AND r.credential_ciphertext IS NULL FROM slack_installations i JOIN slack_connections p ON p.slack_installation_id=i.id JOIN slack_app_registrations r ON r.id=i.app_registration_id WHERE i.id=$1`, f.installation).Scan(&retained); err != nil || !retained {
 		t.Fatal("retirement retained secret material", retained, err)
 	}
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err == nil || token != "" {

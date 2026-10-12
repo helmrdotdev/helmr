@@ -8,7 +8,7 @@ WITH restore_profiles AS MATERIALIZED (
  UNION
  SELECT h.worker_group_id,l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,
    l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes
- FROM computer_checkpoints c
+ FROM checkpoints c
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE h.worker_group_id=sqlc.arg(worker_group_id)
@@ -34,7 +34,7 @@ UPDATE worker_pools AS target
            AND (h.status IN ('registering','active','draining')
              OR EXISTS (SELECT 1 FROM computer_leases l
                WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL)
-             OR EXISTS (SELECT 1 FROM computer_preparations p
+             OR EXISTS (SELECT 1 FROM image_builds p
                WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL))
        ))
    )
@@ -105,7 +105,7 @@ WITH transitioned AS (
                     WHERE h.worker_group_id=worker_groups.id AND l.fenced_at IS NULL
                )
                AND NOT EXISTS (
-                   SELECT 1 FROM computer_preparations p JOIN worker_hosts h ON h.id=p.worker_host_id
+                   SELECT 1 FROM image_builds p JOIN worker_hosts h ON h.id=p.worker_host_id
                     WHERE h.worker_group_id=worker_groups.id AND p.fenced_at IS NULL
                )
            )
@@ -177,16 +177,16 @@ WITH retained_ids AS (
  WHERE h.worker_group_id=sqlc.arg(worker_group_id) AND l.fenced_at IS NULL
  UNION
  SELECT l.environment_id,l.computer_id,l.epoch
- FROM computer_checkpoints c
+ FROM checkpoints c
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE h.worker_group_id=sqlc.arg(worker_group_id) AND c.status IN ('capturing','sealed','ready','restoring','aborting')
 ), retained AS (
  SELECT l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,l.fenced_at,
-   (SELECT count(*) FROM computer_checkpoints c
+   (SELECT count(*) FROM checkpoints c
     WHERE (c.environment_id,c.computer_id,c.source_lease_epoch)=(l.environment_id,l.computer_id,l.epoch)
       AND c.status IN ('capturing','sealed','aborting'))::bigint AS captures,
-   (SELECT count(*) FROM computer_checkpoints c
+   (SELECT count(*) FROM checkpoints c
     WHERE (c.environment_id,c.computer_id,c.source_lease_epoch)=(l.environment_id,l.computer_id,l.epoch)
       AND c.status IN ('ready','restoring'))::bigint AS parked
  FROM retained_ids r JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(r.environment_id,r.computer_id,r.epoch)

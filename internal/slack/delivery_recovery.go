@@ -118,7 +118,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		var installation, thread, participant uuid.UUID
 		var publication string
 		err := tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.publication_key
- FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channels c ON c.id=sender.channel_id
+ FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.channel_id
  JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND p.session_id=$3 AND e.org_id=$4`, post, environment, session, org).Scan(&installation, &thread, &participant, &publication)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDeliveryUnavailable
@@ -156,7 +156,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 			}
 			var available bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id OR t.id=p.source_thread_id
- JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications pub ON pub.id=c.publication_id
+ JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.publication_id
  JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, post).Scan(&available); err != nil {
 				return err

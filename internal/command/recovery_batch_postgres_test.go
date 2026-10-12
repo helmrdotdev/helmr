@@ -20,11 +20,11 @@ func revokedCommands(t *testing.T, f agenttest.Fixture, count int) []uuid.UUID {
 	t.Helper()
 	secretID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),1)`, secretID, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
 	ids := make([]uuid.UUID, 0, count)
 	for i := range count {
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,updated_at)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,updated_at)
  VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),'running',clock_timestamp()+($4::int*interval '1 microsecond'))`, f.Environment, id, f.Computer, i)
 		ids = append(ids, id)
 	}
@@ -34,7 +34,7 @@ func revokedCommands(t *testing.T, f agenttest.Fixture, count int) []uuid.UUID {
 func convergedCount(t *testing.T, f agenttest.Fixture) int {
 	t.Helper()
 	var n int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&n); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -165,7 +165,7 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 	}
 	for _, id := range poisoned {
 		var requested bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT cancel_requested_at IS NOT NULL FROM computer_commands WHERE id=$1`, id).Scan(&requested); err != nil || requested {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT cancel_requested_at IS NOT NULL FROM commands WHERE id=$1`, id).Scan(&requested); err != nil || requested {
 			t.Fatalf("poisoned Command %s converged: %v %v", id, requested, err)
 		}
 	}

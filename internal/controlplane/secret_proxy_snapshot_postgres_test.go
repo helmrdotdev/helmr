@@ -62,7 +62,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 		marker := "hlmr_protected_" + strings.Repeat(name, 64)
 		f.markers = append(f.markers, secret.RuntimeSelector(f.fixture.Environment, "process", f.fixture.Session, 1, marker))
 		f.secrets = append(f.secrets, record.ID)
-		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO computer_secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.computer, f.fixture.Environment, record.ID, "TOKEN_"+name, marker)
+		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.computer, f.fixture.Environment, record.ID, "TOKEN_"+name, marker)
 		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,1,id,current_version_id,revocation_generation FROM secrets WHERE id=$3`, f.fixture.Environment, f.fixture.Session, record.ID)
 	}
 	if root {
@@ -310,7 +310,7 @@ func TestProtectedSnapshotRootExpiryUsesCapturedStatementTime(t *testing.T) {
 func TestProtectedSnapshotMultipleBindingsAndRawExclusion(t *testing.T) {
 	f := newSnapshotFixture(t, 1, true)
 	alias := "hlmr_protected_" + strings.Repeat("d", 64)
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO computer_secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','ALIAS','protected',ARRAY['https://example.com'],$4)", f.computer, f.fixture.Environment, f.secrets[0], alias)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','ALIAS','protected',ARRAY['https://example.com'],$4)", f.computer, f.fixture.Environment, f.secrets[0], alias)
 	alias = secret.RuntimeSelector(f.fixture.Environment, "process", f.fixture.Session, 1, alias)
 	f.markers = append(f.markers, alias)
 	rows, err := f.capture(t.Context(), f.fixture.Pool)
@@ -325,7 +325,7 @@ func TestProtectedSnapshotMultipleBindingsAndRawExclusion(t *testing.T) {
 	if _, err := f.store.OpenProtectedCapture([]secret.ProtectedCapture{rows[0], rows[0]}, f.markers); err == nil {
 		t.Fatal("duplicate result row accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_secret_bindings SET mode='raw',allowed_origins='{}',placeholder=NULL WHERE computer_id=$1 AND placement_target='ALIAS'", f.computer)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE secret_bindings SET mode='raw',allowed_origins='{}',placeholder=NULL WHERE computer_id=$1 AND placement_target='ALIAS'", f.computer)
 	rows, err = f.capture(t.Context(), f.fixture.Pool)
 	if err == nil {
 		if _, err := f.store.OpenProtectedCapture(rows, f.markers); err == nil {

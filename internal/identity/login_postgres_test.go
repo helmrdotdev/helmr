@@ -25,7 +25,7 @@ func TestSignInPostgres(t *testing.T) {
 		t.Fatal("verified configured address did not become an administrator")
 	}
 	var storedHash []byte
-	if err := fixture.pool.QueryRow(ctx, `SELECT token_hash FROM auth_sessions WHERE user_id = $1`, adminID).Scan(&storedHash); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT token_hash FROM login_sessions WHERE user_id = $1`, adminID).Scan(&storedHash); err != nil {
 		t.Fatal(err)
 	}
 	if want, _ := auth.HashToken(fixture.keys.Session, raw); !bytes.Equal(storedHash, want) {
@@ -224,12 +224,12 @@ func TestLoginSessionPostgresFollowsSelectedMembership(t *testing.T) {
 
 	// Authentication extends the session's lifetime.
 	tokenHash, _ := auth.HashToken(fixture.keys.Session, unpinned)
-	fixture.exec(t, `UPDATE auth_sessions SET expires_at = now() + interval '1 minute' WHERE token_hash = $1`, tokenHash)
+	fixture.exec(t, `UPDATE login_sessions SET expires_at = now() + interval '1 minute' WHERE token_hash = $1`, tokenHash)
 	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, unpinned); err != nil {
 		t.Fatal(err)
 	}
 	var expiresAt time.Time
-	if err := fixture.pool.QueryRow(ctx, `SELECT expires_at FROM auth_sessions WHERE token_hash = $1`, tokenHash).Scan(&expiresAt); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT expires_at FROM login_sessions WHERE token_hash = $1`, tokenHash).Scan(&expiresAt); err != nil {
 		t.Fatal(err)
 	}
 	if time.Until(expiresAt) < fixture.cfg.Lifetimes().Session-time.Minute {

@@ -156,7 +156,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		t.Fatalf("restored FIFO: %+v %v", dispatched, err)
 	}
 	var scrubbed bool
-	if err = f.f.pool.QueryRow(ctx, `SELECT capture_request IS NULL FROM computer_checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
+	if err = f.f.pool.QueryRow(ctx, `SELECT capture_request IS NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatal("retained secret capture")
 	}
 }

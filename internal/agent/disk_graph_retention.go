@@ -15,11 +15,11 @@ import (
 // unrelated progress. Deleting an object also drops only its outgoing edges and
 // key summaries; children remain protected by every other parent.
 func collectComputerDiskGraph(ctx context.Context, database db.TxDB) error {
-	rows, err := database.Query(ctx, `SELECT r.id FROM computer_disk_roots r
+	rows, err := database.Query(ctx, `SELECT r.id FROM disk_roots r
  WHERE NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=r.environment_id AND s.root_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=r.environment_id AND c.initial_root_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=r.environment_id AND l.retained_base_root_id=r.id)
- AND NOT EXISTS(SELECT 1 FROM computer_images i WHERE i.environment_id=r.environment_id AND i.root_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM images i WHERE i.environment_id=r.environment_id AND i.root_id=r.id)
  ORDER BY r.id LIMIT 100 FOR UPDATE OF r SKIP LOCKED`)
 	if err != nil {
 		return err
@@ -30,14 +30,14 @@ func collectComputerDiskGraph(ctx context.Context, database db.TxDB) error {
 	}
 	var failures []error
 	for _, id := range roots {
-		if err := reclaimComputerGraphRow(ctx, database, `DELETE FROM computer_disk_roots WHERE id=$1`, id); err != nil {
+		if err := reclaimComputerGraphRow(ctx, database, `DELETE FROM disk_roots WHERE id=$1`, id); err != nil {
 			failures = append(failures, err)
 		}
 	}
-	rows, err = database.Query(ctx, `SELECT o.environment_id,o.digest FROM computer_objects o
- WHERE NOT EXISTS(SELECT 1 FROM computer_disk_roots r WHERE r.environment_id=o.environment_id AND r.pack_digest=o.digest)
- AND NOT EXISTS(SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
- AND NOT EXISTS(SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest)
+	rows, err = database.Query(ctx, `SELECT o.environment_id,o.digest FROM disk_objects o
+ WHERE NOT EXISTS(SELECT 1 FROM disk_roots r WHERE r.environment_id=o.environment_id AND r.pack_digest=o.digest)
+ AND NOT EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
+ AND NOT EXISTS(SELECT 1 FROM disk_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest)
  ORDER BY o.rank DESC,o.environment_id,o.digest LIMIT 100 FOR UPDATE OF o SKIP LOCKED`)
 	if err != nil {
 		return errors.Join(append(failures, err)...)
@@ -59,10 +59,10 @@ func collectComputerDiskGraph(ctx context.Context, database db.TxDB) error {
 			failures = append(failures, err)
 		}
 	}
-	rows, err = database.Query(ctx, `SELECT k.id FROM computer_data_keys k WHERE k.available
- AND NOT EXISTS(SELECT 1 FROM computer_object_keys r WHERE r.environment_id=k.environment_id AND r.key_id=k.id)
+	rows, err = database.Query(ctx, `SELECT k.id FROM disk_encryption_keys k WHERE k.available
+ AND NOT EXISTS(SELECT 1 FROM disk_object_keys r WHERE r.environment_id=k.environment_id AND r.key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=k.environment_id AND l.write_key_id=k.id AND l.disk_released_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM computer_preparations p WHERE p.environment_id=k.environment_id AND p.write_key_id=k.id AND p.disk_released_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=k.environment_id AND p.write_key_id=k.id AND p.disk_released_at IS NULL)
  ORDER BY k.id LIMIT 100 FOR UPDATE OF k SKIP LOCKED`)
 	if err != nil {
 		return errors.Join(append(failures, err)...)
@@ -72,7 +72,7 @@ func collectComputerDiskGraph(ctx context.Context, database db.TxDB) error {
 		return errors.Join(append(failures, err)...)
 	}
 	for _, id := range keys {
-		if err := reclaimComputerGraphRow(ctx, database, `UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1 AND available`, id); err != nil {
+		if err := reclaimComputerGraphRow(ctx, database, `UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1 AND available`, id); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -109,7 +109,7 @@ func reclaimComputerObject(ctx context.Context, database db.TxBeginner, environm
 			return err
 		}
 		var org uuid.UUID
-		if err := tx.QueryRow(ctx, `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2 RETURNING org_id`, environment, digest).Scan(&org); err != nil {
+		if err := tx.QueryRow(ctx, `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2 RETURNING org_id`, environment, digest).Scan(&org); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}

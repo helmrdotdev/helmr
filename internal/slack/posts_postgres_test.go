@@ -173,7 +173,7 @@ func TestSlackPostRechecksPublicationAndAuthorizationLoss(t *testing.T) {
 			f := newStatusFixture(t)
 			post := f.post(t, 1, "content", "lifecycle", nil)
 			if kind == "publication" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			} else {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
@@ -203,7 +203,7 @@ func TestSlackPostRechecksClaimBeforeHTTP(t *testing.T) {
 	if allowed, err := postClaimAuthorized(t.Context(), f.Pool, claim); err != nil || !allowed {
 		t.Fatalf("fresh claim not authorized: %v %v", allowed, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 	if allowed, err := postClaimAuthorized(t.Context(), f.Pool, claim); err != nil || allowed {
 		t.Fatalf("revoked claim authorized: %v %v", allowed, err)
 	}
