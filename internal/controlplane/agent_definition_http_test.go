@@ -54,7 +54,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := h.session(t, f.User, org)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/agent-definitions", project, f.Environment)
+	base := fmt.Sprintf("/api/projects/%s/environments/%s/agents", project, f.Environment)
 	get := func(path, token string, status int) []byte {
 		t.Helper()
 		r := h.request(t, http.MethodGet, path, token, "")
@@ -64,7 +64,30 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		return r.Body.Bytes()
 	}
 
-	computerBase := strings.TrimSuffix(base, "/agent-definitions") + "/template-definitions"
+	computerBase := strings.TrimSuffix(base, "/agents") + "/templates"
+	for _, check := range []struct {
+		path   string
+		want   []string
+		absent []string
+	}{
+		{base + "/agent", []string{"agent", "agent_id", "template", "deployment_id"}, []string{"id", "key", "template_id"}},
+		{computerBase + "/fixture-computer", []string{"template", "resources", "deployment_id"}, []string{"id", "key", "definition_id"}},
+	} {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(get(check.path, owner, http.StatusOK), &fields); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range check.want {
+			if _, ok := fields[key]; !ok {
+				t.Fatalf("%s missing %s: %s", check.path, key, fields)
+			}
+		}
+		for _, key := range check.absent {
+			if _, ok := fields[key]; ok {
+				t.Fatalf("%s exposes old %s", check.path, key)
+			}
+		}
+	}
 	var definitions api.ListTemplateDefinitionsResponse
 	if err := json.Unmarshal(get(computerBase, owner, http.StatusOK), &definitions); err != nil {
 		t.Fatal(err)
@@ -79,9 +102,9 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if templateDefinition.ID != "fixture-computer" || templateDefinition.DeploymentID != f.Deployment.String() {
 		t.Fatalf("template definition: %+v", templateDefinition)
 	}
-	get(strings.TrimSuffix(base, "/agent-definitions")+"/sandboxes", owner, http.StatusNotFound)
-	get(strings.TrimSuffix(base, "/agent-definitions")+"/agents", owner, http.StatusNotFound)
-	get(strings.TrimSuffix(base, "/agent-definitions")+"/agents/agent", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agents")+"/sandboxes", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agents")+"/agent-definitions", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agents")+"/template-definitions", owner, http.StatusNotFound)
 	get(base, "", http.StatusUnauthorized)
 	viewer := h.user(t, "Viewer")
 	h.member(t, org, viewer, db.OrgMemberRoleViewer)
@@ -104,7 +127,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	get(computerBase+"?cursor="+url.QueryEscape(first.NextCursor), owner, http.StatusBadRequest)
 	var pinned api.AgentSession
-	sessionPath := strings.TrimSuffix(base, "/agent-definitions") + "/sessions/" + f.Session.String()
+	sessionPath := strings.TrimSuffix(base, "/agents") + "/sessions/" + f.Session.String()
 	if err := json.Unmarshal(get(sessionPath, owner, http.StatusOK), &pinned); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +145,12 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	get(base, owner, http.StatusNotFound)
 	get(base+"/agent", owner, http.StatusNotFound)
-	get(base+"/absent"+selected, owner, http.StatusNotFound)
+	missing := decodeHTTPError(t, get(base+"/absent"+selected, owner, http.StatusNotFound))
+	var missingDeployment string
+	if err := json.Unmarshal(missing.Details["deployment_id"], &missingDeployment); err != nil || missingDeployment != f.Deployment.String() {
+		t.Fatalf("missing resource deployment: %+v %v", missing, err)
+	}
+	get(base+"/agent?deployment_id="+uuid.NewV7().String(), owner, http.StatusNotFound)
 	get(base+"?limit=101", owner, http.StatusBadRequest)
 	get(base+"/agent?limit=1", owner, http.StatusBadRequest)
 	get(base+"?cursor="+url.QueryEscape(first.NextCursor)+"&deployment_id="+uuid.NewV7().String(), owner, http.StatusBadRequest)
@@ -139,16 +167,16 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		return key.Raw
 	}
 	reader := issue(auth.PermissionSessionsRead)
-	get("/v1/agent-definitions"+selected, reader, http.StatusOK)
-	get("/v1/agent-definitions/agent"+selected, reader, http.StatusOK)
-	get("/v1/agent-definitions"+selected, issue(auth.PermissionSessionsCreate), http.StatusForbidden)
+	get("/v1/agents"+selected, reader, http.StatusOK)
+	get("/v1/agents/agent"+selected, reader, http.StatusOK)
+	get("/v1/agents"+selected, issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
  UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	var resourceList api.ListTemplateDefinitionsResponse
-	if err := json.Unmarshal(get("/v1/template-definitions", reader, http.StatusOK), &resourceList); err != nil {
+	if err := json.Unmarshal(get("/v1/templates", reader, http.StatusOK), &resourceList); err != nil {
 		t.Fatal(err)
 	}
 	if len(resourceList.TemplateDefinitions) != 1 {
@@ -160,7 +188,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 
 	var resourceDefinition api.TemplateDefinition
-	if err := json.Unmarshal(get("/v1/template-definitions/fixture-computer", reader, http.StatusOK), &resourceDefinition); err != nil {
+	if err := json.Unmarshal(get("/v1/templates/fixture-computer", reader, http.StatusOK), &resourceDefinition); err != nil {
 		t.Fatal(err)
 	}
 	var resources struct {
@@ -171,18 +199,37 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		t.Fatalf("definition resources: %+v %v", resources, err)
 	}
 	get("/v1/sandboxes", reader, http.StatusNotFound)
-	get("/v1/template-definitions", issue(auth.PermissionSessionsCreate), http.StatusForbidden)
+	get("/v1/templates", issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	denied := h.request(t, http.MethodPost, "/v1/computers", reader, `{"template":"fixture-computer"}`)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "computer SDK", Permissions: []auth.Permission{auth.PermissionSessionsRead, auth.PermissionComputersCreate, auth.PermissionComputersRead, auth.PermissionSecretsWrite}})
+	sdkKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "computer SDK", Permissions: []auth.Permission{auth.PermissionSessionsRead, auth.PermissionComputersCreate, auth.PermissionComputersRead, auth.PermissionComputersUpdate, auth.PermissionSecretsWrite}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sdkServer := httptest.NewServer(handler)
 	defer sdkServer.Close()
 	assertDefinitionCLIHTTP(t, sdkServer.URL, reader, f.Deployment.String())
+	run := newAgentTestCLI(t, sdkServer.URL, sdkKey.Raw)
+	var computers api.ListComputersResponse
+	if err := json.Unmarshal(run("computer", "list", "--limit", "1", "--json"), &computers); err != nil || len(computers.Computers) != 1 {
+		t.Fatalf("computer list: %+v %v", computers, err)
+	}
+	var sessions api.ListComputerSessionsResponse
+	if err := json.Unmarshal(run("computer", "sessions", "--id", f.Computer.String(), "--json"), &sessions); err != nil || len(sessions.Sessions) != 1 || sessions.Sessions[0].ID != f.Session.String() {
+		t.Fatalf("computer sessions: %+v %v", sessions, err)
+	}
+	var commands api.ListComputerCommandsResponse
+	if err := json.Unmarshal(run("computer", "commands", "--id", f.Computer.String(), "--json"), &commands); err != nil || len(commands.Commands) != 0 {
+		t.Fatalf("computer commands: %+v %v", commands, err)
+	}
+	var updated api.ComputerSnapshot
+	if err := json.Unmarshal(run("computer", "update", "--id", f.Computer.String(), "--delete-after-unused", "1h", "--json"), &updated); err != nil || updated.DeleteAfterUnusedMs == nil || *updated.DeleteAfterUnusedMs != 3600000 {
+		t.Fatalf("computer update: %+v %v", updated, err)
+	}
+	get("/v1/computers/"+f.Computer.String()+"/members", sdkKey.Raw, http.StatusNotFound)
+	get("/v1/computers/"+f.Computer.String()+"/sessions", reader, http.StatusForbidden)
 	script, err := filepath.Abs("../../sdk/typescript/testdata/computer-catalog-http.ts")
 	if err != nil {
 		t.Fatal(err)

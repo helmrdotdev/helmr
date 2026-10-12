@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -105,17 +106,39 @@ func (c *Client) GetComputer(ctx context.Context, computerID string, opts Comput
 	return response, nil
 }
 
+type ComputerListOptions struct {
+	Key    *string
+	Cursor string
+	Limit  int32
+}
+
 func (c *Client) ListComputers(
 	ctx context.Context,
-	key *string,
+	query ComputerListOptions,
 	opts ComputerScopeOptions,
 ) (api.ListComputersResponse, error) {
 	path, err := c.computerCollectionPath(opts)
 	if err != nil {
 		return api.ListComputersResponse{}, err
 	}
-	if key != nil {
-		path += "?" + url.Values{"key": []string{*key}}.Encode()
+	if query.Limit < 0 || query.Limit > 100 {
+		return api.ListComputersResponse{}, errors.New("limit must be in [1,100]")
+	}
+	if query.Key != nil && (query.Cursor != "" || query.Limit != 0) {
+		return api.ListComputersResponse{}, errors.New("key lookup does not accept cursor or limit")
+	}
+	values := url.Values{}
+	if query.Key != nil {
+		values.Set("key", *query.Key)
+	}
+	if query.Cursor != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	if query.Limit > 0 {
+		values.Set("limit", strconv.Itoa(int(query.Limit)))
+	}
+	if len(values) > 0 {
+		path += "?" + values.Encode()
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -233,4 +256,66 @@ func (c *Client) ListCommandLogs(ctx context.Context, id, cursor string, limit i
 		return api.CommandLogPage{}, err
 	}
 	return result, nil
+}
+
+func (c *Client) UpdateComputer(ctx context.Context, computerID string, input api.UpdateComputerRequest, opts ComputerScopeOptions) (api.ComputerSnapshot, error) {
+	path, err := c.computerResourcePath(computerID, "", opts)
+	if err != nil {
+		return api.ComputerSnapshot{}, err
+	}
+	var response api.ComputerSnapshot
+	err = c.patchJSON(ctx, path, input, &response)
+	return response, err
+}
+
+type ComputerUsageOptions struct {
+	Cursor string
+	Limit  int32
+}
+
+func (c *Client) computerUsagePath(computerID, kind string, query ComputerUsageOptions, opts ComputerScopeOptions) (string, error) {
+	if query.Limit < 0 || query.Limit > 100 {
+		return "", errors.New("limit must be in [1,100]")
+	}
+	path, err := c.computerResourcePath(computerID, "/"+kind, opts)
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	if query.Cursor != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	if query.Limit > 0 {
+		values.Set("limit", strconv.Itoa(int(query.Limit)))
+	}
+	if len(values) > 0 {
+		path += "?" + values.Encode()
+	}
+	return path, nil
+}
+func (c *Client) ListComputerSessions(ctx context.Context, computerID string, query ComputerUsageOptions, opts ComputerScopeOptions) (api.ListComputerSessionsResponse, error) {
+	var result api.ListComputerSessionsResponse
+	path, err := c.computerUsagePath(computerID, "sessions", query, opts)
+	if err != nil {
+		return result, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return result, err
+	}
+	err = c.doJSON(req, &result)
+	return result, err
+}
+func (c *Client) ListComputerCommands(ctx context.Context, computerID string, query ComputerUsageOptions, opts ComputerScopeOptions) (api.ListComputerCommandsResponse, error) {
+	var result api.ListComputerCommandsResponse
+	path, err := c.computerUsagePath(computerID, "commands", query, opts)
+	if err != nil {
+		return result, err
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return result, err
+	}
+	err = c.doJSON(req, &result)
+	return result, err
 }

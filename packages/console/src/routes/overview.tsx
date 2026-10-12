@@ -28,7 +28,7 @@ function CliOnboarding() {
 cd ./my-agent
 bun install
 helmr deploy . --project PROJECT --env ENVIRONMENT`}</pre>
-      <p class={ui.muted}>Then create a Session through the CLI or a connected Slack app. Browse the current Deployment to inspect its Agent definitions. Each Session retains its Turns, output, questions and controls.</p>
+      <p class={ui.muted}>Then create a Session through the CLI or a connected Slack app. Browse the current Deployment to inspect its Agents. Each Session retains its Turns, output, questions and controls.</p>
     </Panel>
   );
 }

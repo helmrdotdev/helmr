@@ -16,6 +16,7 @@ import type {
 } from "../contract"
 import { normalizeContent, normalizeInput } from "../content"
 import { canonicalizeJsonValue } from "./jsoncanon"
+import { validateDefinitionId } from "../schema/definition"
 import { resourceID } from "./id"
 import { slackStartOption } from "../client-slack"
 import { timestampString } from "./timestamp"
@@ -29,6 +30,8 @@ export function parseSession(value: unknown): Session {
     activity: parseSessionActivity(v["activity"]),
     id: resourceID(v["id"], "Session.id"),
     agentId: resourceID(v["agent_id"], "Session.agent_id"),
+    agent: parseAuthoredIdentifier(v["agent"], "Session.agent"),
+    template: parseAuthoredIdentifier(v["template"], "Session.template"),
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),
     computerId: v["computer_id"] === null ? null : resourceID(v["computer_id"], "Session.computer_id"),
     rootSessionId: resourceID(v["root_session_id"], "Session.root_session_id"),
@@ -72,7 +75,7 @@ export function parseSessionPage(value: unknown): CursorPage<Session> {
   if (!Array.isArray(page["sessions"])) throw new Error("Session list response.sessions must be an array")
   return Object.freeze({
     items: Object.freeze(page["sessions"].map(parseSession)),
-    ...(page["next_cursor"] === undefined ? {} : { nextCursor: resourceID(page["next_cursor"], "Session list response.next_cursor") }),
+    ...(page["next_cursor"] === undefined ? {} : { nextCursor: requiredString(page["next_cursor"], "Session list response.next_cursor") }),
   })
 }
 
@@ -307,4 +310,10 @@ function parseSessionActivity(value: unknown): import("../contract").SessionActi
     process = Object.freeze({ epoch: safeSequence(p["epoch"], "Process epoch"), status: p["status"] as NonNullable<import("../contract").SessionActivity["process"]>["status"], applied: p["applied"], reconstructionRequired: p["reconstruction_required"], stop: p["stop"] === null ? null : parseProcessStop(p["stop"]) })
   }
   return Object.freeze({ process })
+}
+
+function parseAuthoredIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`)
+  validateDefinitionId(value)
+  return value
 }

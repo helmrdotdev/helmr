@@ -285,9 +285,9 @@ export function App() {
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
       <Route path="/agents" component={wrap(Agents)} />
-      <Route path="/agents/:definition_id" component={wrap(AgentDetail)} />
+      <Route path="/agents/:agent" component={wrap(AgentDetail)} />
       <Route path="/templates" component={wrap(Templates)} />
-      <Route path="/templates/:definition_id" component={wrap(TemplateDetail)} />
+      <Route path="/templates/:template" component={wrap(TemplateDetail)} />
       <Route path="/sessions" component={wrap(Sessions)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />

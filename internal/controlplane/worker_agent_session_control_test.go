@@ -63,7 +63,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 		}
 		return values
 	}
-	admission := map[string]any{"agentId": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String()}
+	admission := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String()}
 	child := call(request, admission, "")
 	request.Method = int32(agentv1.Operation_METHOD_START)
 	request.RequestID = "independent"

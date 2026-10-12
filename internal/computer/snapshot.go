@@ -40,7 +40,7 @@ type Snapshot struct {
 	Error               json.RawMessage           `json:"error,omitempty"`
 	ID                  string                    `json:"id"`
 	Key                 *string                   `json:"key,omitempty"`
-	DefinitionKey       string                    `json:"definition_id"`
+	DefinitionKey       string                    `json:"template"`
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              Status                    `json:"status"`
 	Secrets             []secretbinding.Reference `json:"secrets"`

@@ -9,7 +9,7 @@ sidebarLabel: session
 ```text
 helmr session create AGENT [--text TEXT | --input-json JSON | --input-file FILE]
     [--computer COMPUTER_ID] [--key KEY] [--idempotency-key KEY] [--slack-channel CHANNEL_ID] [--json]
-helmr session list [--agent AGENT_UUID] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
+helmr session list [--agent AGENT | --agent-id UUID] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
     [--status STATUS] [--limit N] [--cursor CURSOR] [--json]
 helmr session get SESSION_ID [--json]
 helmr session enqueue SESSION_ID (--text TEXT | --input-json JSON | --input-file FILE) [--idempotency-key KEY] [--json]
@@ -60,7 +60,7 @@ first input. An explicit Computer binds placement without starting execution.
 
 `--key` gives the Session a unique identity within its Agent. An occupied key is
 a conflict, including for closed Sessions. Discover an existing Session with
-`list --agent AGENT_UUID --key KEY`, then enqueue input using its ID.
+`list --agent AGENT --key KEY`, then enqueue input using its ID.
 `--idempotency-key` retries the same creation request and returns its receipt.
 `--slack-channel` optionally chooses one Slack channel ID.
 
@@ -80,8 +80,9 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 
 | Flag | Description |
 | --- | --- |
-| `--agent AGENT_UUID` | Filter by stable Agent UUID (`agent_id` from definition inspection). |
-| `--key KEY` | Filter by Session key. Requires `--agent`. |
+| `--agent AGENT` | Filter by the identifier declared in code, even if absent from current. |
+| `--agent-id UUID` | Filter by stable Agent UUID; mutually exclusive with `--agent`. |
+| `--key KEY` | Filter by Session key. Requires `--agent` or `--agent-id`. |
 | `--parent-session SESSION_ID` | Sessions owned by this parent. |
 | `--requester-session SESSION_ID` | Sessions requested by this Session. |
 | `--status STATUS` | `open`, `closing`, `closed` or `cancelled`. Repeat the flag or separate values with commas. |

@@ -13,7 +13,7 @@ import (
 )
 
 type RuntimeAgentDefinition struct {
-	ID string `json:"id"`
+	ID string `json:"agent"`
 }
 
 type RuntimeAgentPage struct {

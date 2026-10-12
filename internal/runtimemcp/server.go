@@ -30,7 +30,7 @@ type agentsInput struct {
 }
 type createInput struct {
 	CloseAfterIdle json.RawMessage `json:"closeAfterIdleMs,omitempty" jsonschema:"Idle retention in positive integer milliseconds; null disables idle closure. Omit to inherit the Agent definition."`
-	AgentID        string          `json:"agentId"`
+	AgentID        string          `json:"agent"`
 	Input          []textPart      `json:"input" jsonschema:"Ordered text parts delivered unchanged to the new Turn."`
 	ComputerID     string          `json:"computerId,omitempty"`
 	IdempotencyKey string          `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
@@ -175,7 +175,7 @@ func validate(input any) error {
 			return err
 		}
 		if value.AgentID == "" || value.IdempotencyKey == "" {
-			return errors.New("agentId and idempotencyKey are required")
+			return errors.New("agent and idempotencyKey are required")
 		}
 	case enqueueInput:
 		raw, err := json.Marshal(value.Input)

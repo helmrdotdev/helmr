@@ -179,7 +179,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	var found DefinitionRecord
 	err = q.QueryRow(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND key=$3`, r.EnvironmentID, r.ID, id).Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrDefinitionNotFound
+		return r.ID, DefinitionRecord{}, ErrDefinitionNotFound
 	}
 	if err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err

@@ -41,7 +41,7 @@ async function conversation(turn: Turn, speaker: string, currentComputer: Comput
     if (speaker !== "Alpha" || marker.length > 59) throw new Error("Start multi with Alpha and a marker of at most 59 characters")
     await turn.output.write(`Alpha ${marker}: starting a separate Beta task on this Computer.`)
     const child = await callMcp<ManagedAdmission>(turn.signal, "start", {
-      agentId: beta.id,
+      agent: beta.id,
       computerId: currentComputer.id,
       input: [{ type: "text", text: `case:choice marker:${marker}_beta` }],
       idempotencyKey: `${turn.id}:beta`,
@@ -111,7 +111,7 @@ export const coordinator = agent({
     const { mode, marker } = command(turn.input)
     if (mode !== "progress" || marker.length > 58) throw new Error("Start the coordinator with progress and a marker of at most 58 characters")
     const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
-      agentId: beta.id,
+      agent: beta.id,
       computerId: ctx.computer.id,
       input: [{ type: "text", text: `case:progress marker:${marker}_child` }],
       idempotencyKey: `${turn.id}:beta`,

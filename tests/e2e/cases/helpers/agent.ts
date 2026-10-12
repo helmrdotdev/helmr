@@ -37,7 +37,7 @@ export const helperCaller = agent({
   turn: async (turn, ctx): Promise<Json> => {
     const input = callerInput.parse(fixtureValue(turn.input))
     const options = {
-      agentId: helperChild.id, computerId: input.mode === "same-computer" ? ctx.computer.id : input.childComputerId,
+      agent: helperChild.id, computerId: input.mode === "same-computer" ? ctx.computer.id : input.childComputerId,
       input: fixtureInput({ marker: input.marker, fail: input.mode === "spawn-failure", waitForAnswer: input.mode === "start-independent", holdSeconds: input.holdSeconds }),
       idempotencyKey: `${turn.id}:${input.mode}`,
     }
@@ -69,7 +69,7 @@ export const helperContinuity = agent({
   turn: async (turn, ctx) => {
     const input = continuityInput.parse(fixtureValue(turn.input))
     const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
-      agentId: helperChild.id, input: fixtureInput({ marker: input.marker }), computerId: input.childComputerId, idempotencyKey: `${turn.id}:helper`,
+      agent: helperChild.id, input: fixtureInput({ marker: input.marker }), computerId: input.childComputerId, idempotencyKey: `${turn.id}:helper`,
     })
     const outcome = await waitManagedTurn(turn.signal, child.sessionId, child.turnId)
     if (outcome.status !== "completed" || !outcome.result) throw new Error(`Helper did not complete: ${JSON.stringify(outcome)}`)

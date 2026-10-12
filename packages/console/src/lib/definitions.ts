@@ -1,23 +1,21 @@
 import { request } from "./api";
 
-export type DefinitionListItem = {
-  id: string;
-};
-
-export type AgentDefinitionListItem = DefinitionListItem & { agent_id: string; template_id: string };
-export type TemplateDefinitionListItem = DefinitionListItem & { resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
-export type AgentDefinition = AgentDefinitionListItem & { deployment_id: string };
-export type TemplateDefinition = TemplateDefinitionListItem & { deployment_id: string };
+export type AgentListItem = { agent: string; agent_id: string; template: string };
+export type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
+export type DefinitionListItem = AgentListItem | TemplateListItem;
+export function definitionName(item: DefinitionListItem): string { return "agent" in item ? item.agent : item.template; }
+export type AgentDefinition = AgentListItem & { deployment_id: string };
+export type TemplateDefinition = TemplateListItem & { deployment_id: string };
 
 export type ListAgentDefinitionsResponse = {
   deployment_id: string;
-  agent_definitions: AgentDefinitionListItem[];
+  agents: AgentListItem[];
   next_cursor?: string;
 };
 
 export type ListTemplateDefinitionsResponse = {
   deployment_id: string;
-  template_definitions: TemplateDefinitionListItem[];
+  templates: TemplateListItem[];
   next_cursor?: string;
 };
 
@@ -35,14 +33,14 @@ export type DefinitionListOptions = {
 };
 
 export async function listAgentDefinitions(options: DefinitionListOptions): Promise<ListAgentDefinitionsResponse> {
-  return request<ListAgentDefinitionsResponse>(definitionPath("agent-definitions", options));
+  return request<ListAgentDefinitionsResponse>(definitionPath("agents", options));
 }
 
 export async function listTemplateDefinitions(options: DefinitionListOptions): Promise<ListTemplateDefinitionsResponse> {
-  return request<ListTemplateDefinitionsResponse>(definitionPath("template-definitions", options));
+  return request<ListTemplateDefinitionsResponse>(definitionPath("templates", options));
 }
 
-function definitionPath(kind: "agent-definitions" | "template-definitions", options: DefinitionScope & Partial<DefinitionListOptions>): string {
+function definitionPath(kind: "agents" | "templates", options: DefinitionScope & Partial<DefinitionListOptions>): string {
   if (!options.projectID || !options.environmentID) {
     throw new Error("project and environment are required");
   }
@@ -55,12 +53,12 @@ function definitionPath(kind: "agent-definitions" | "template-definitions", opti
 }
 
 export function getAgentDefinition(id: string, options: DefinitionScope & { deploymentID?: string | undefined }): Promise<AgentDefinition> {
-  return request(definitionItemPath("agent-definitions", id, options));
+  return request(definitionItemPath("agents", id, options));
 }
 export function getTemplateDefinition(id: string, options: DefinitionScope & { deploymentID?: string | undefined }): Promise<TemplateDefinition> {
-  return request(definitionItemPath("template-definitions", id, options));
+  return request(definitionItemPath("templates", id, options));
 }
-function definitionItemPath(kind: "agent-definitions" | "template-definitions", id: string, options: DefinitionScope & { deploymentID?: string | undefined }): string {
+function definitionItemPath(kind: "agents" | "templates", id: string, options: DefinitionScope & { deploymentID?: string | undefined }): string {
   const base = definitionPath(kind, { projectID: options.projectID, environmentID: options.environmentID });
   const query = options.deploymentID ? `?${new URLSearchParams({ deployment_id: options.deploymentID })}` : "";
   return `${base}/${encodeURIComponent(id)}${query}`;

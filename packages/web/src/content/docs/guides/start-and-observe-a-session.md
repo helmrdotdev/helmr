@@ -33,7 +33,7 @@ receipt. Input can be given in one of three ways:
 | `--input-file PATH` | The same JSON array, read from a file. |
 
 `--key` uniquely names the Session within its Agent; another creation with that
-key conflicts. Use `session list --agent AGENT_UUID --key issue-42` to find it, using `agent_id` from definition inspection.
+key conflicts. Use `session list --agent-id AGENT_UUID --key issue-42` to find it, using `agent_id` from Agent inspection.
 `--idempotency-key` identifies this creation request: repeat the same request
 with that key after an uncertain failure to recover its receipt.
 

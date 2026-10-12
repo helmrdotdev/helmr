@@ -19,6 +19,7 @@ import type {
   SessionInterruptReceipt,
   SessionOperationOptions,
 } from "./contract"
+import { validateDefinitionId } from "./schema/definition"
 import { resourceID } from "./internal/id"
 import { canonicalizeJsonValue } from "./internal/jsoncanon"
 import {
@@ -38,25 +39,28 @@ import {
 import { sessionOperationOptions } from "./session"
 import type { RequestOptions } from "./request"
 
-export type SessionListQuery =
-  | Readonly<{
-      agentId?: never
+type SessionAgentSelector =
+  | { agent: string; agentId?: never }
+  | { agent?: never; agentId: string }
+
+export type SessionListQuery = Readonly<
+  | ((SessionAgentSelector | { agent?: never; agentId?: never }) & {
+      key?: never
       parentSessionId?: string
       requesterSessionId?: string
-      key?: never
       status?: SessionStatus | readonly SessionStatus[]
       cursor?: string
       limit?: number
-    }>
-  | Readonly<{
-      agentId: string
+    })
+  | (SessionAgentSelector & {
+      key: string
       parentSessionId?: never
       requesterSessionId?: never
-      key: string
       status?: never
       cursor?: never
       limit?: never
-    }>
+    })
+>
 
 export interface ClientSessionRef extends SessionRef {
   interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<SessionInterruptReceipt>
@@ -329,12 +333,13 @@ export function createSessionRef(
 }
 
 function sessionListQuery(queryInput: SessionListQuery): string {
-  const exact = queryInput.agentId !== undefined || queryInput.key !== undefined
+  if (queryInput.agent !== undefined && queryInput.agentId !== undefined) throw new Error("agent and agentId are mutually exclusive")
+  const exact = queryInput.key !== undefined
   if (
     exact &&
-    (queryInput.agentId === undefined || queryInput.key === undefined)
+    (queryInput.agentId === undefined && queryInput.agent === undefined)
   ) {
-    throw new Error("Session exact key lookup requires agentId and key")
+    throw new Error("Session exact key lookup requires agent or agentId with key")
   }
   if (
     exact &&
@@ -357,6 +362,10 @@ function sessionListQuery(queryInput: SessionListQuery): string {
         : [queryInput.status]
   for (const status of statuses) {
     query.append("status", sessionStatus(status, "Session list status"))
+  }
+  if (queryInput.agent !== undefined) {
+    validateDefinitionId(queryInput.agent)
+    query.set("agent", queryInput.agent)
   }
   if (queryInput.agentId !== undefined) {
     resourceID(queryInput.agentId, "Session Agent ID")

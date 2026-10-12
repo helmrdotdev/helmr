@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,8 +16,10 @@ import (
 const maxScheduleListLimit = int32(100)
 
 type ListSchedulesOptions struct {
-	Cursor string
-	Limit  int32
+	Agent   string
+	AgentID string
+	Cursor  string
+	Limit   int32
 	EnvironmentScopeOptions
 }
 
@@ -38,6 +42,22 @@ func (c *Client) ListSchedules(
 		return api.ListSchedulesResponse{}, err
 	}
 	query := url.Values{}
+	if opts.Agent != "" {
+		if opts.AgentID != "" {
+			return api.ListSchedulesResponse{}, errors.New("agent and agent_id are mutually exclusive")
+		}
+		if err := api.ValidateDefinitionID(opts.Agent); err != nil {
+			return api.ListSchedulesResponse{}, err
+		}
+		query.Set("agent", opts.Agent)
+	}
+	if opts.AgentID != "" {
+		if err := ids.Validate(opts.AgentID); err != nil {
+			return api.ListSchedulesResponse{}, err
+		}
+		query.Set("agent_id", opts.AgentID)
+	}
+
 	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
 		query.Set("cursor", cursor)
 	}

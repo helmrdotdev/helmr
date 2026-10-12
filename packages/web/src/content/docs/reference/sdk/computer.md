@@ -132,17 +132,17 @@ Bindings reference Secrets by stable ID and never contain values. The same
 field names (`secretId`, `allowedOrigins`) are used in REST request bodies. See
 [Secrets](/docs/concepts/secrets) for the protection modes.
 
-## Client: Template definitions
+## Client: Templates
 
 ```ts
-client.templateDefinitions.get(id: string, query?: { deploymentId?: string }, options?): Promise<TemplateDefinitionInfo>
-client.templateDefinitions.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<TemplateDefinitionPage>
+client.templates.get(id: string, query?: { deploymentId?: string }, options?): Promise<TemplateInfo>
+client.templates.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<TemplatePage>
 ```
 
-`TemplateDefinitionInfo` is `{ id, deploymentId }`. `TemplateDefinitionPage` is
-`{ deploymentId, items: { id }[], nextCursor? }`. Omitting `deploymentId` reads
+`TemplateInfo` is `{ template, deploymentId, resources }`. `TemplatePage` is
+`{ deploymentId, items: { template, resources }[], nextCursor? }`. Omitting `deploymentId` reads
 the current Deployment; a list cursor keeps its original Deployment. `limit` is
-1–100.
+1–100. `resources` contains normalized `milliCpu`, `memoryMiB` and optional `diskMiB`, rather than the authoring input format.
 
 ## Client: Computers
 
@@ -153,7 +153,7 @@ client.computers.list(query?: ComputerListQuery, options?): Promise<CursorPage<C
 client.computers.ref(id: string): ClientComputerRef
 
 interface ComputerCreateRequest {
-  readonly definition: string
+  readonly template: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
   readonly deleteAfterUnused?: Duration      // or "never"
@@ -161,8 +161,7 @@ interface ComputerCreateRequest {
 }
 ```
 
-`create` uses the current Deployment. `definition` is the Template definition
-ID. `key` is an optional immutable lookup value; it does not make creation
+`create` uses the current Deployment. `template` is the identifier declared in `template({ id, ... })`. `key` is an optional immutable lookup value; it does not make creation
 get-or-create. `deleteAfterUnused` overrides the definition.
 
 `ComputerListQuery` is either `{ cursor?, limit? }` or an exact lookup
@@ -174,7 +173,8 @@ get-or-create. `deleteAfterUnused` overrides the definition.
 | Method | Returns | Description |
 | --- | --- | --- |
 | `get(options?)` | `Computer` | Current state, including Secret bindings. |
-| `members({ cursor?, limit? }?, options?)` | `CursorPage<ComputerMember>` | Sessions and Commands attached to the Computer; `limit` 1–100. |
+| `sessions.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Sessions currently using the Computer, including pending cleanup; `limit` 1–100. |
+| `commands.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Commands currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `exec(request, options?)` | `CommandRef` | Admits a Command. See [Commands](#client-commands). |
 | `update({ deleteAfterUnused }, options?)` | `Computer` | Changes retention. Requires the `computers:update` permission. |
 | `delete({ idempotencyKey? }?, options?)` | `{ computerId }` | Requests deletion. |
@@ -190,15 +190,16 @@ interface ComputerCommandRequest {
 }
 ```
 
-`ComputerMember` is `{ kind: "session" | "command", id, state, createdAt }`,
-where `state` is `admitted`, `running`, `waiting`, `parked`, `draining` or
-`unreconciled`.
+`ComputerUsage` is `{ id, usageState, createdAt }`,
+where `usageState` is `admitted`, `running`, `waiting`, `parked`, `draining` or
+`unreconciled`. These are current occupancy summaries, not full history or
+Session/Command lifecycle statuses. Each collection has a separate cursor.
 
 ### `Computer`
 
 | Field | Type |
 | --- | --- |
-| `id`, `definitionId`, `deploymentId` | `string` |
+| `id`, `template`, `deploymentId` | `string` |
 | `key` | `string`, optional |
 | `status` | `"available" \| "deleting" \| "deleted"` |
 | `residency` | `"cold" \| "starting" \| "running" \| "parking" \| "parked" \| "restoring" \| "unavailable"` |

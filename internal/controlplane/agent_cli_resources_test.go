@@ -35,16 +35,16 @@ func assertDefinitionCLIHTTP(t *testing.T, serverURL, key, deployment string) {
 		t.Fatalf("Go Template definition=%+v err=%v", computer, err)
 	}
 	run := newAgentTestCLI(t, serverURL, key)
-	if err := json.Unmarshal(run("agent", "definition", "list", "--limit", "1", "--deployment", deployment, "--json"), &page); err != nil || page.NextCursor == "" {
+	if err := json.Unmarshal(run("agent", "list", "--limit", "1", "--deployment", deployment, "--json"), &page); err != nil || page.NextCursor == "" {
 		t.Fatalf("CLI catalog=%+v err=%v", page, err)
 	}
-	if err := json.Unmarshal(run("agent", "definition", "get", "agent", "--deployment", deployment, "--json"), &item); err != nil || item.DeploymentID != deployment {
+	if err := json.Unmarshal(run("agent", "get", "agent", "--deployment", deployment, "--json"), &item); err != nil || item.DeploymentID != deployment {
 		t.Fatalf("CLI definition=%+v err=%v", item, err)
 	}
-	if err := json.Unmarshal(run("template", "definition", "list", "--deployment", deployment, "--json"), &computers); err != nil || len(computers.TemplateDefinitions) != 1 {
+	if err := json.Unmarshal(run("template", "list", "--deployment", deployment, "--json"), &computers); err != nil || len(computers.TemplateDefinitions) != 1 {
 		t.Fatalf("CLI Computer catalog=%+v err=%v", computers, err)
 	}
-	if err := json.Unmarshal(run("template", "definition", "get", "fixture-computer", "--deployment", deployment, "--json"), &computer); err != nil || computer.ID != "fixture-computer" {
+	if err := json.Unmarshal(run("template", "get", "fixture-computer", "--deployment", deployment, "--json"), &computer); err != nil || computer.ID != "fixture-computer" {
 		t.Fatalf("CLI Template definition=%+v err=%v", computer, err)
 	}
 }

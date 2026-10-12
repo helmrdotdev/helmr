@@ -6,8 +6,8 @@ import { postJson, request } from "./api";
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
 export type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
-  agent_definition_id: string;
-  template_definition_id: string;
+  agent: string;
+  template: string;
   activity: {
     process: { epoch: number; status: string; applied: boolean; reconstruction_required: boolean; stop: ProcessStop | null } | null;
   };

@@ -22,13 +22,13 @@ func TestScheduleListAndGet(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
 				Schedules: []api.ScheduleResponse{{
-					ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
+					ID: scheduleID, Agent: "nightly", AgentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", TriggerKey: "daily",
 				}},
 				NextCursor: "cursor-next",
 			})
 		case "/v1/schedules/" + scheduleID:
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
+				ID: scheduleID, Agent: "nightly", AgentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", TriggerKey: "daily",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())

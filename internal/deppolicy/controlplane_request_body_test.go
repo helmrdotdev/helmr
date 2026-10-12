@@ -51,6 +51,7 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"decodeProjectListCursor":            "opaque cursor, fixed message",
 	"decodeScheduleListCursor":           "opaque cursor, fixed message",
 	"decodeSecretListCursor":             "opaque cursor, fixed message",
+	"parseSessionListCursor":             "opaque cursor, fixed message",
 	"githubOAuthProvider.Resolve":        "identity provider response",
 	"githubOAuthProvider.verifiedEmails": "identity provider response",
 	"normalizeAnnotations":               "owner-decoded metadata, fixed message",

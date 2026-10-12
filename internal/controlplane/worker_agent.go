@@ -324,7 +324,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		server.workerAgentFinalize(w, r, request, host, execution, caller.TurnID)
 	case agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN:
 		var input struct {
-			AgentID        string          `json:"agentId"`
+			AgentID        string          `json:"agent"`
 			CloseAfterIdle lifetime.Policy `json:"closeAfterIdleMs,omitzero"`
 			Input          json.RawMessage `json:"input"`
 			ComputerID     json.RawMessage `json:"computerId,omitempty"`

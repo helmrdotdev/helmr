@@ -290,7 +290,7 @@ function SessionDetailContent() {
                 <DetailList title="Session details">
                   <Show when={current().activity.process}>{process => <DetailItem label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></DetailItem>}</Show>
                   <DetailItem label="Agent">
-                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent_definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().agent_definition_id}</a>
+                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().agent}</a>
                   </DetailItem>
                   <Show when={current().initial_turn} fallback={<DetailItem label="Work">No input yet</DetailItem>}>
                     {turn => <DetailItem label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></DetailItem>}
@@ -311,7 +311,7 @@ function SessionDetailContent() {
                   <DetailItem label="Status">
                     <StatusBadge resource="session" status={current().status} />
                   </DetailItem>
-                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template_definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template_definition_id}</a></DetailItem>
+                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template}</a></DetailItem>
                   <DetailItem label="Deployment">
                     <IDText
                       value={current().deployment_id}

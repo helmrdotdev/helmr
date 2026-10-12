@@ -28,7 +28,7 @@ export interface Computer {
   readonly error?: Readonly<{ code: string; message: string }>
   readonly id: string
   readonly key?: string
-  readonly definitionId: string
+  readonly template: string
   readonly deploymentId: string
   readonly status: ComputerStatus
   readonly residency: ComputerResidency
@@ -58,31 +58,35 @@ export interface ComputerDeleteReceipt {
 export interface ComputerRef {
   readonly id: string
   get(options?: RequestOptions): Promise<Computer>
-  members(query?: ComputerMembersQuery, options?: RequestOptions): Promise<CursorPage<ComputerMember>>
+  readonly sessions: ComputerUsageCollection
+  readonly commands: ComputerUsageCollection
   delete(
     request?: ComputerDeleteRequest,
     options?: RequestOptions,
   ): Promise<ComputerDeleteReceipt>
 }
 
-export interface ComputerMembersQuery {
+export interface ComputerUsageQuery {
   readonly cursor?: string
   readonly limit?: number
 }
 
-export interface ComputerMember {
-  readonly kind: "session" | "command"
+export interface ComputerUsageCollection {
+  list(query?: ComputerUsageQuery, options?: RequestOptions): Promise<CursorPage<ComputerUsage>>
+}
+
+export interface ComputerUsage {
   readonly id: string
-  readonly state: "admitted" | "running" | "waiting" | "parked" | "draining" | "unreconciled"
+  readonly usageState: "admitted" | "running" | "waiting" | "parked" | "draining" | "unreconciled"
   readonly createdAt: string
 }
 
-export function encodeComputerMembersQuery(query: ComputerMembersQuery): Readonly<{ cursor?: string; limit?: number }> {
+export function encodeComputerUsageQuery(query: ComputerUsageQuery): Readonly<{ cursor?: string; limit?: number }> {
   if (query.cursor !== undefined && (typeof query.cursor !== "string" || query.cursor.length === 0)) {
-    throw new Error("Computer member cursor must be a nonempty string")
+    throw new Error("Computer usage cursor must be a nonempty string")
   }
   if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
-    throw new Error("Computer member limit must be an integer in [1,100]")
+    throw new Error("Computer usage limit must be an integer in [1,100]")
   }
   return {
     ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
@@ -90,23 +94,21 @@ export function encodeComputerMembersQuery(query: ComputerMembersQuery): Readonl
   }
 }
 
-export function parseComputerMembers(value: unknown): CursorPage<ComputerMember> {
-  const response = computerObject(value, "Computer members response")
-  if (!Array.isArray(response["members"])) throw new Error("Computer members response.members must be an array")
-  const items = response["members"].map((value): ComputerMember => {
-    const member = computerObject(value, "Computer member")
-    const kind = member["kind"]
-    if (kind !== "session" && kind !== "command") throw new Error("Computer member.kind is invalid")
-    const state = member["state"]
+export function parseComputerUsage(value: unknown, collection: "sessions" | "commands"): CursorPage<ComputerUsage> {
+  const response = computerObject(value, "Computer usage response")
+  if (!Array.isArray(response[collection])) throw new Error("Computer usage collection must be an array")
+  const items = response[collection].map((value): ComputerUsage => {
+    const member = computerObject(value, "Computer usage")
+    const state = member["usage_state"]
     if (state !== "admitted" && state !== "running" && state !== "waiting" && state !== "parked" && state !== "draining" && state !== "unreconciled") {
-      throw new Error("Computer member.state is invalid")
+      throw new Error("Computer usage.state is invalid")
     }
-    return Object.freeze({ kind, id: resourceID(member["id"], "Computer member.id"), state,
-      createdAt: timestampString(member["created_at"], "Computer member.created_at") })
+    return Object.freeze({ id: resourceID(member["id"], "Computer usage.id"), usageState: state,
+      createdAt: timestampString(member["created_at"], "Computer usage.created_at") })
   })
   const nextCursor = response["next_cursor"]
   if (nextCursor !== undefined && (typeof nextCursor !== "string" || nextCursor.length === 0)) {
-    throw new Error("Computer members response.next_cursor is invalid")
+    throw new Error("Computer usage response.next_cursor is invalid")
   }
   return Object.freeze({ items: Object.freeze(items), ...(nextCursor === undefined ? {} : { nextCursor }) })
 }
@@ -167,11 +169,11 @@ export function parseComputer(value: unknown): Computer {
   if (key !== undefined && typeof key !== "string") {
     throw new Error("Computer response.key must be a string")
   }
-  const definitionId = input["definition_id"]
-  if (typeof definitionId !== "string") {
-    throw new Error("Computer response.definition_id must be a string")
+  const template = input["template"]
+  if (typeof template !== "string") {
+    throw new Error("Computer response.template must be a string")
   }
-  validateDefinitionId(definitionId)
+  validateDefinitionId(template)
   const status = input["status"]
   if (
     status !== "available" &&
@@ -191,7 +193,7 @@ export function parseComputer(value: unknown): Computer {
     deleteAfterUnused: retentionFromMilliseconds(input["delete_after_unused_ms"], "deleteAfterUnused"),
     unusedSince: input["unused_since"] === null ? null : timestampString(input["unused_since"], "Computer.unused_since"),
     ...(key === undefined ? {} : { key }),
-    definitionId,
+    template,
     deploymentId: resourceID(input["deployment_id"], "Computer response.deployment_id"),
     status,
     residency: residency as ComputerResidency,

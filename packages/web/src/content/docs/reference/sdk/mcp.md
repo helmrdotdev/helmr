@@ -101,7 +101,7 @@ List Agent definitions that `spawn` or `start` can target.
 | `operation` | `"spawn" \| "start"` | Required. `spawn` lists the caller's pinned Deployment; `start` lists the Environment's current Deployment. |
 | `cursor` | string | Optional continuation cursor. |
 
-Result: `{ "deploymentId": string, "agents": [{ "id": string }], "nextCursor"?: string }`.
+Result: `{ "deploymentId": string, "agents": [{ "agent": string }], "nextCursor"?: string }`.
 Pages hold up to 50 definitions.
 
 ### `list_computers`
@@ -113,7 +113,7 @@ List Computers visible to this Session.
 | `cursor` | string | Optional continuation cursor. |
 
 Result: `{ "computers": [Computer], "next_cursor"?: string }`. Each Computer has
-`id`, `key?`, `definition_id`, `deployment_id`, `status`, `residency`, `error?`,
+`id`, `key?`, `template`, `deployment_id`, `status`, `residency`, `error?`,
 `delete_after_unused_ms`, `unused_since`, `last_activity_at`, `created_at` and
 `updated_at`. Pass an `id` as `computerId` to `spawn` or `start`.
 
@@ -130,7 +130,7 @@ Session records the caller as its requester but is not owned by it.
 
 | Input | Type | Description |
 | --- | --- | --- |
-| `agentId` | string | Required. Target definition ID from `list_agents`. |
+| `agent` | string | Required. Agent name from `list_agents`. |
 | `input` | text-part array | Required. Initial Turn input, delivered unchanged. |
 | `idempotencyKey` | string | Required. |
 | `computerId` | string | Optional. Existing Computer ID. Omit to create a Computer from the target's definition. |
@@ -213,7 +213,7 @@ Result: `{ "id", "sessionId", "status": "accepted", "holdId" }`.
 | --- | --- | --- |
 | `sessionId` | string | Required. |
 
-Result: one Session with `id`, `agent_id`, `deployment_id`, `computer_id`,
+Result: one Session with `id`, `agent`, `template`, `agent_id`, `deployment_id`, `computer_id`,
 `root_session_id`, `parent_session_id`, `requester_session_id`, `initial_turn`
 (`{ id, status }` or `null`), `key?`, `slack_channel_id?`, `status`,
 `close_after_idle_ms`, `idle_since`, `holds` and `created_at`. Inspection does

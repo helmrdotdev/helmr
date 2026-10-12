@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -82,6 +83,7 @@ type TurnView struct {
 }
 
 type SessionListRequest struct {
+	Agent              string
 	EnvironmentID      uuid.UUID
 	Before             uuid.UUID
 	AgentID            uuid.UUID
@@ -209,14 +211,18 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
 			return result, ErrInvalidInput
 		}
 	}
-	if req.Key != nil && (req.AgentID == uuid.Nil() || *req.Key == "") {
+	if req.Agent != "" && (req.AgentID != uuid.Nil() || !definition.ValidDeclaredID(req.Agent)) {
+		return result, ErrInvalidInput
+	}
+	if req.Key != nil && ((req.AgentID == uuid.Nil() && req.Agent == "") || *req.Key == "") {
 		return result, ErrInvalidInput
 	}
 	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND ($2::uuid IS NULL OR id<$2)
  AND ($4::uuid IS NULL OR agent_id=$4) AND ($5::text IS NULL OR session_key=$5)
  AND (cardinality($6::text[]) IS NULL OR cardinality($6::text[])=0 OR status=ANY($6))
  AND ($7::uuid IS NULL OR parent_session_id=$7) AND ($8::uuid IS NULL OR requester_session_id=$8)
- ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, nullableID(req.AgentID), req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID))
+ AND ($9::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$9))
+ ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, nullableID(req.AgentID), req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
 	if err != nil {
 		return result, err
 	}

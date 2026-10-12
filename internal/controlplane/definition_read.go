@@ -34,7 +34,7 @@ func (s *Server) listAgentDefinitions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAgentDefinition(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindAgent, chi.URLParam(r, "agentDefinitionID"))
+	s.getDefinition(w, r, definition.KindAgent, chi.URLParam(r, "agent"))
 }
 
 func (s *Server) listTemplateDefinitions(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (s *Server) listTemplateDefinitions(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) getTemplateDefinition(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindTemplate, chi.URLParam(r, "templateDefinitionID"))
+	s.getDefinition(w, r, definition.KindTemplate, chi.URLParam(r, "template"))
 }
 
 func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind definition.Kind) {
@@ -100,6 +100,10 @@ func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind defi
 	}
 	deploymentID, item, err := deployment.GetDefinition(r.Context(), s.tx, principal, scope, kind, selected, id)
 	if err != nil {
+		if errors.Is(err, deployment.ErrDefinitionNotFound) {
+			writeError(w, notFound(deployedResourceMissing{Kind: string(kind), DeploymentID: deploymentID}))
+			return
+		}
 		s.writeDeploymentError(w, err)
 		return
 	}
@@ -224,4 +228,18 @@ func writeDefinition(w http.ResponseWriter, kind definition.Kind, item deploymen
 	case definition.KindTemplate:
 		writeJSON(w, http.StatusOK, api.TemplateDefinition{ID: item.ID, DeploymentID: deploymentID, Resources: item.Resources})
 	}
+}
+
+type deployedResourceMissing struct {
+	Kind         string
+	DeploymentID uuid.UUID
+}
+
+func (e deployedResourceMissing) Error() string {
+	return e.Kind + " is not defined in Deployment " + e.DeploymentID.String()
+}
+func (e deployedResourceMissing) ErrorCode() string { return "not_found" }
+func (e deployedResourceMissing) ErrorDetails() map[string]json.RawMessage {
+	raw, _ := json.Marshal(e.DeploymentID.String())
+	return map[string]json.RawMessage{"deployment_id": raw}
 }

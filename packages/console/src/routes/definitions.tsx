@@ -3,7 +3,7 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { getCurrentDeployment } from "../lib/deployments";
-import { definitionHref, scopedConsoleHref, getAgentDefinition, getTemplateDefinition, listAgentDefinitions, listTemplateDefinitions, type DefinitionKind, type DefinitionScope, type AgentDefinitionListItem, type TemplateDefinitionListItem, type AgentDefinition, type TemplateDefinition } from "../lib/definitions";
+import { definitionHref, definitionName, scopedConsoleHref, getAgentDefinition, getTemplateDefinition, listAgentDefinitions, listTemplateDefinitions, type DefinitionKind, type DefinitionScope, type AgentListItem, type TemplateListItem, type AgentDefinition, type TemplateDefinition } from "../lib/definitions";
 import { useRouteScope } from "../lib/scope";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -13,9 +13,9 @@ import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
 function value(input: string | string[] | undefined): string { return typeof input === "string" ? input : ""; }
-function failure(error: unknown): string { return error instanceof ApiError ? error.message : "Could not load definitions."; }
+function failure(error: unknown): string { return error instanceof ApiError ? error.message : "Could not load resources."; }
 function deploymentLink(id: string, scope: DefinitionScope): string { return scopedConsoleHref(`/deployments/${encodeURIComponent(id)}`, scope); }
-function Resources(props: { item: TemplateDefinitionListItem }) {
+function Resources(props: { item: TemplateListItem }) {
   return <span>{props.item.resources.milliCpu / 1000} vCPU · {props.item.resources.memoryMiB} MiB RAM · {props.item.resources.diskMiB === undefined ? "Default disk" : `${props.item.resources.diskMiB} MiB disk`}</span>;
 }
 
@@ -32,8 +32,8 @@ function Definitions(props: { kind: DefinitionKind }) {
     queryKey: [props.kind, "current-definitions", scope().projectID, scope().environmentID, current.data?.id],
     queryFn: async ({ pageParam }) => {
       const options = { ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 };
-      if (props.kind === "agents") { const page = await listAgentDefinitions(options); return { items: page.agent_definitions as (AgentDefinitionListItem | TemplateDefinitionListItem)[], next_cursor: page.next_cursor, deployment_id: page.deployment_id }; }
-      const page = await listTemplateDefinitions(options); return { items: page.template_definitions as (AgentDefinitionListItem | TemplateDefinitionListItem)[], next_cursor: page.next_cursor, deployment_id: page.deployment_id };
+      if (props.kind === "agents") { const page = await listAgentDefinitions(options); return { items: page.agents as (AgentListItem | TemplateListItem)[], next_cursor: page.next_cursor, deployment_id: page.deployment_id }; }
+      const page = await listTemplateDefinitions(options); return { items: page.templates as (AgentListItem | TemplateListItem)[], next_cursor: page.next_cursor, deployment_id: page.deployment_id };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
     enabled: enabled() && !!current.data && !current.isError, retry: false,
@@ -42,7 +42,7 @@ function Definitions(props: { kind: DefinitionKind }) {
   return <section class={ui.page}>
     <PageHeader title={title()} subtitle={props.kind === "agents" ? "Agents defined in the current Deployment. Existing Sessions keep their pinned definitions." : "Templates defined in the current Deployment for creating Computers."} />
     <Show when={current.isError}><StatePanel error={failure(current.error)} /></Show>
-    <Show when={enabled() && !current.isError} fallback={!enabled() ? <StatePanel empty="Select an environment to view definitions." /> : undefined}>
+    <Show when={enabled() && !current.isError} fallback={!enabled() ? <StatePanel empty="Select an environment to view Agents and Templates." /> : undefined}>
       <Show when={!current.isPending} fallback={<StatePanel loading="Loading current Deployment..." />}>
         <Show when={current.data} fallback={<StatePanel empty="No current Deployment." hint="Deploy your code to make its Agents and Templates available here." />}>
           {deployment => <>
@@ -52,8 +52,8 @@ function Definitions(props: { kind: DefinitionKind }) {
               <Show when={items().length} fallback={!definitions.isError ? <StatePanel empty={`No ${title()} in the current Deployment.`} hint="Add definitions in your code and deploy them. Older definitions remain accessible from their Sessions, Computers and Deployments." /> : undefined}>
                 <DataTable columns={[props.kind === "agents" ? "Agent" : "Template", props.kind === "agents" ? "Template" : "Resources"]}>
                   <For each={items()}>{entry => <tr>
-                    <td><A class="text-console-accent hover:text-console-accent-hover" href={definitionHref(props.kind, entry.item.id, { ...scope(), deploymentID: entry.deploymentID })}><code>{entry.item.id}</code></A></td>
-                    <td>{"template_id" in entry.item ? <A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", entry.item.template_id, { ...scope(), deploymentID: entry.deploymentID })}><code>{entry.item.template_id}</code></A> : <Resources item={entry.item} />}</td>
+                    <td><A class="text-console-accent hover:text-console-accent-hover" href={definitionHref(props.kind, definitionName(entry.item), { ...scope(), deploymentID: entry.deploymentID })}><code>{definitionName(entry.item)}</code></A></td>
+                    <td>{"agent" in entry.item ? <A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", entry.item.template, { ...scope(), deploymentID: entry.deploymentID })}><code>{entry.item.template}</code></A> : <Resources item={entry.item} />}</td>
                   </tr>}</For>
                 </DataTable>
               </Show>
@@ -72,7 +72,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
   const scope = useRouteScope();
   const params = useParams();
   const [search] = useSearchParams();
-  const id = () => params["definition_id"] ?? "";
+  const id = () => params[props.kind === "agents" ? "agent" : "template"] ?? "";
   const selected = () => value(search["deployment_id"]);
   const enabled = () => !!id() && !!scope().projectID && !!scope().environmentID;
   const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: enabled(), retry: false, refetchInterval: 15_000 }));
@@ -84,7 +84,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
   }));
   const title = () => props.kind === "agents" ? "Agent" : "Template";
   return <section class={ui.page}>
-    <PageHeader title={id()} subtitle={`${title()} definition in the selected Deployment.`} back={{ href: scopedConsoleHref(`/${props.kind}`, scope()), label: props.kind === "agents" ? "Agents" : "Templates" }} />
+    <PageHeader title={id()} subtitle={`${title()} in the selected Deployment.`} back={{ href: scopedConsoleHref(`/${props.kind}`, scope()), label: props.kind === "agents" ? "Agents" : "Templates" }} />
     <Show when={current.isError}><StatePanel error={failure(current.error)} /></Show>
     <Show when={definition.isError}><StatePanel error={failure(definition.error)} /></Show>
     <Show when={enabled() && (selected() || !current.isPending)} fallback={enabled() ? <StatePanel loading="Loading definition..." /> : <StatePanel empty="Select an environment to view this definition." />}>
@@ -95,10 +95,10 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
               <p class={ui.muted}>{current.data?.id === item().deployment_id ? "This definition belongs to the current Deployment." : "This definition belongs to an earlier or unpromoted Deployment. Existing Sessions and Computers retain their original definitions; new independent work uses the current Deployment."}</p>
             </Show>
             <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
-              <Panel title="Definition">
+              <Panel title="Configuration">
                 <p class={ui.muted}>Managed in code. Deploy a new version to change this definition.</p>
-                <Show when={"template_id" in item() ? item() as AgentDefinition : undefined}>{agent => <>
-                  <p>Template: <A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", agent().template_id, { ...scope(), deploymentID: item().deployment_id })}>{agent().template_id}</A></p>
+                <Show when={"agent" in item() ? item() as AgentDefinition : undefined}>{agent => <>
+                  <p>Template: <A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", agent().template, { ...scope(), deploymentID: item().deployment_id })}>{agent().template}</A></p>
                   <p><A class="text-console-accent hover:text-console-accent-hover" href={`${scopedConsoleHref("/sessions", scope())}&agent_id=${encodeURIComponent(agent().agent_id)}`}>View Sessions for this Agent across Deployments</A></p>
                   <p><A class="text-console-accent hover:text-console-accent-hover" href={deploymentLink(item().deployment_id, scope())}>View Deployment, schedules and Slack connections</A></p>
                 </>}</Show>
@@ -109,7 +109,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
                 </>}</Show>
               </Panel>
               <DetailList title={`${title()} details`}>
-                <DetailItem label="Name"><code>{item().id}</code></DetailItem>
+                <DetailItem label="Name"><code>{definitionName(item())}</code></DetailItem>
                 <DetailItem label="Deployment"><IDText value={item().deployment_id} mode="link" href={deploymentLink(item().deployment_id, scope())} /></DetailItem>
                 <Show when={"agent_id" in item() ? (item() as AgentDefinition).agent_id : undefined}>{agentID => <DetailItem label="Agent ID"><IDText value={agentID()} /></DetailItem>}</Show>
               </DetailList>

@@ -7,10 +7,12 @@ sidebarLabel: computer
 # `helmr computer`
 
 ```text
-helmr template definition list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
-helmr template definition get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
-helmr computer create DECLARED_ID [--key KEY] [--idempotency-key KEY] [--json]
+helmr computer create TEMPLATE [--key KEY] [--idempotency-key KEY] [--json]
+helmr computer list [--key KEY | --cursor CURSOR] [--limit N] [--json]
 helmr computer get (--id UUID | --key KEY) [--json]
+helmr computer sessions (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
+helmr computer commands (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
+helmr computer update (--id UUID | --key KEY) --delete-after-unused DURATION_OR_NEVER [--json]
 helmr computer delete (--id UUID | --key KEY) [--idempotency-key KEY] [--json]
 helmr computer exec (--id UUID | --key KEY) --idempotency-key KEY -- COMMAND [ARG...]
 ```
@@ -58,9 +60,24 @@ for client support, upstream trust, rotation, and revocation limits. The Console
 Computer detail page shows modes and origins without values.
 
 
-## Inspect definitions
+## Inspect Templates and usage
 
-`helmr template definition list` and `helmr template definition get` inspect the current Deployment, or the
-explicit `--deployment` snapshot. A list returns the pinned Deployment ID and a
-continuation cursor when needed; its default limit is 50, maximum 100. These are
-authored Template definitions. `get --id COMPUTER_ID` inspects an actual Computer.
+Use [`helmr template list` and `get`](/docs/reference/cli/template) to inspect
+available Templates. Computer `get` reports the actual instance and its origin
+`template` and `deployment_id`.
+
+`sessions` and `commands` list work currently occupying the Computer, including
+terminated work whose process cleanup is pending (`unreconciled`). These are not
+historical lists. Each entry includes `id`, `usage_state` and `created_at`;
+usage state is distinct from the Session or Command's lifecycle status. Each
+collection has its own cursor; do not move a cursor between them.
+
+`list`, `sessions` and `commands` accept page sizes 1–100 (default 50).
+Computer `list --key KEY` is an exact lookup and rejects cursor/limit.
+
+`update` changes only retention after the Computer becomes unused. For example:
+
+```sh
+helmr computer update --key repository --delete-after-unused 1h
+helmr computer update --key repository --delete-after-unused never
+```

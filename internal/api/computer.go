@@ -33,7 +33,7 @@ type ComputerSnapshot struct {
 	Error               json.RawMessage           `json:"error,omitempty"`
 	ID                  string                    `json:"id"`
 	Key                 *string                   `json:"key,omitempty"`
-	DefinitionID        string                    `json:"definition_id"`
+	DefinitionID        string                    `json:"template"`
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              ComputerStatus            `json:"status"`
 	Secrets             []secretbinding.Reference `json:"secrets"`
@@ -49,7 +49,7 @@ type ComputerListItem struct {
 	Error               json.RawMessage   `json:"error,omitempty"`
 	ID                  string            `json:"id"`
 	Key                 *string           `json:"key,omitempty"`
-	DefinitionID        string            `json:"definition_id"`
+	DefinitionID        string            `json:"template"`
 	DeploymentID        string            `json:"deployment_id"`
 	Status              ComputerStatus    `json:"status"`
 	LastActivityAt      time.Time         `json:"last_activity_at"`
@@ -62,21 +62,20 @@ type ListComputersResponse struct {
 	NextCursor string             `json:"next_cursor,omitempty"`
 }
 
-type ComputerMember struct {
-	Kind      string    `json:"kind"`
-	ID        string    `json:"id"`
-	State     string    `json:"state"`
-	CreatedAt time.Time `json:"created_at"`
+// ComputerUsage describes work still occupying a Computer, including pending cleanup.
+type ComputerUsage struct {
+	ID         string    `json:"id"`
+	UsageState string    `json:"usage_state"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
-type ComputerMembersQuery struct {
-	Cursor string `json:"cursor,omitempty"`
-	Limit  int32  `json:"limit,omitempty"`
+type ListComputerSessionsResponse struct {
+	Sessions   []ComputerUsage `json:"sessions"`
+	NextCursor string          `json:"next_cursor,omitempty"`
 }
-
-type ListComputerMembersResponse struct {
-	Members    []ComputerMember `json:"members"`
-	NextCursor string           `json:"next_cursor,omitempty"`
+type ListComputerCommandsResponse struct {
+	Commands   []ComputerUsage `json:"commands"`
+	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
 type DeleteComputerRequest struct {

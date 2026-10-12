@@ -48,7 +48,7 @@ function SessionRow(props: {
         <IDText value={props.session.id} mode="link"
           href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)} />
       </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent_definition_id, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent_definition_id}</a></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent}</a></td>
       <td>
         <Show
           when={props.session.key}

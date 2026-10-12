@@ -25,6 +25,7 @@ const (
 )
 
 type scheduleListCursor struct {
+	FilterAgent   string `json:"filter_agent,omitempty"`
 	FilterAgentID string `json:"filter_agent_id,omitempty"`
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id"`
@@ -74,6 +75,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		AgentID:       agentID,
+		Agent:         pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
 		AfterAgentID:  afterAgent,
 		AfterID:       afterID,
 		LimitCount:    limit + 1,
@@ -91,9 +93,9 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		Schedules: make([]api.ScheduleResponse, 0, len(rows)),
 	}
 	for _, row := range rows {
-		item, err := scheduleResponse(row)
+		item, err := scheduleResponse(row.AgentSchedule, row.Agent)
 		if err != nil {
-			s.log.Error("project schedule failed", "schedule_id", pgvalue.UUIDString(row.ID), "error", err)
+			s.log.Error("project schedule failed", "schedule_id", pgvalue.UUIDString(row.AgentSchedule.ID), "error", err)
 			writeError(w, errors.New("list schedules"))
 			return
 		}
@@ -102,8 +104,8 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeScheduleListCursor(scheduleListCursor{
-			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgentID: r.URL.Query().Get("agent_id"),
-			AgentID: pgvalue.UUIDString(last.AgentID), ScheduleID: pgvalue.UUIDString(last.ID),
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgentID: r.URL.Query().Get("agent_id"), FilterAgent: r.URL.Query().Get("agent"),
+			AgentID: pgvalue.UUIDString(last.AgentSchedule.AgentID), ScheduleID: pgvalue.UUIDString(last.AgentSchedule.ID),
 		})
 		if err != nil {
 			s.log.Error("encode schedule cursor failed", "error", err)
@@ -121,11 +123,19 @@ func parseScheduleListQuery(
 ) (int32, *scheduleListCursor, *string, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "agent_id" && name != "cursor" && name != "limit" {
+		if name != "agent" && name != "agent_id" && name != "cursor" && name != "limit" {
 			return 0, nil, nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
 			return 0, nil, nil, fmt.Errorf("query parameter %q must appear once", name)
+		}
+	}
+	if values.Has("agent") {
+		if values.Has("agent_id") {
+			return 0, nil, nil, errors.New("agent and agent_id are mutually exclusive")
+		}
+		if err := api.ValidateDefinitionID(values.Get("agent")); err != nil {
+			return 0, nil, nil, err
 		}
 	}
 	var filter *string
@@ -163,7 +173,7 @@ func parseScheduleListQuery(
 	if ids.Validate(cursor.ScheduleID) != nil {
 		return 0, nil, nil, errors.New("schedule cursor is invalid")
 	}
-	if cursor.FilterAgentID != values.Get("agent_id") {
+	if cursor.FilterAgentID != values.Get("agent_id") || cursor.FilterAgent != values.Get("agent") {
 		return 0, nil, nil, errors.New("schedule cursor belongs to another filter")
 	}
 	return limit, &cursor, filter, nil
@@ -224,7 +234,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get schedule"))
 		return
 	}
-	response, err := scheduleResponse(row)
+	response, err := scheduleResponse(row.AgentSchedule, row.Agent)
 	if err != nil {
 		s.log.Error("project schedule failed", "schedule_id", scheduleID.String(), "error", err)
 		writeError(w, errors.New("get schedule"))
@@ -233,12 +243,13 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func scheduleResponse(row db.AgentSchedule) (api.ScheduleResponse, error) {
+func scheduleResponse(row db.AgentSchedule, name string) (api.ScheduleResponse, error) {
 	if !row.ID.Valid || !row.AgentID.Valid || !row.DeploymentID.Valid || !row.ActiveFrom.Valid || !row.NextFireAt.Valid {
 		return api.ScheduleResponse{}, errors.New("schedule identity or interval is invalid")
 	}
 	result := api.ScheduleResponse{
-		ID: pgvalue.UUIDString(row.ID), AgentID: pgvalue.UUIDString(row.AgentID),
+		Agent: name,
+		ID:    pgvalue.UUIDString(row.ID), AgentID: pgvalue.UUIDString(row.AgentID),
 		DeploymentID: pgvalue.UUIDString(row.DeploymentID), TriggerKey: row.TriggerKey,
 		Cron: api.ScheduleCron{Pattern: row.Cron, Timezone: row.Timezone}, Input: row.Input,
 		ActiveFrom: row.ActiveFrom.Time.UTC(), ActiveUntil: pgvalue.TimePtr(row.ActiveUntil),

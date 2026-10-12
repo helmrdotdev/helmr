@@ -134,7 +134,7 @@ on the `every` interval; see [Computers](/docs/concepts/computers).
 3. Confirm the definition in the new current Deployment:
 
    ```sh
-   helmr template definition get repo --project demo --env staging --json
+   helmr template get repo --project demo --env staging --json
    ```
 
 Computers created after the Deployment is promoted use the new definition; the

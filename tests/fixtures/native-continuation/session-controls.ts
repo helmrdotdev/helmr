@@ -60,7 +60,7 @@ export async function checkSessionControls(turn: Turn, computer: ComputerIdentit
   assert.deepEqual(await callMcp(turn.signal,"interrupt_session",interruption), interrupted)
   assert.deepEqual((await retrieve()).holds, [])
   assert.equal((await waitManagedTurn(turn.signal,owned.id,active.turnId)).status, "interrupted")
-  const cancelled = await callMcp<ManagedAdmission>(turn.signal,"spawn",{ agentId: definition.id, input: fixtureInput("native-control-hold"), computerId:computer.id, idempotencyKey:`${turn.id}:cancel-target` })
+  const cancelled = await callMcp<ManagedAdmission>(turn.signal,"spawn",{ agent: definition.id, input: fixtureInput("native-control-hold"), computerId:computer.id, idempotencyKey:`${turn.id}:cancel-target` })
   await entered(turn, cancelled.sessionId, cancelled.turnId)
   const queued = await callMcp<ManagedAdmission>(turn.signal,"enqueue",{sessionId:cancelled.sessionId,input:fixtureInput("must-not-run"),idempotencyKey:`${turn.id}:cancel-queued`})
   await callMcp(turn.signal,"cancel_session",{sessionId:cancelled.sessionId,idempotencyKey:"native-control-cancel"})

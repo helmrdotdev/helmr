@@ -18,6 +18,7 @@ func scheduleCommand() *cobra.Command {
 }
 
 func scheduleListCommand() *cobra.Command {
+	var agent, agentID string
 	var projectID string
 	var environmentID string
 	var cursor string
@@ -41,7 +42,7 @@ func scheduleListCommand() *cobra.Command {
 				return err
 			}
 			response, err := controlPlane.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
-				Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope,
+				Cursor: cursor, Limit: limit, Agent: agent, AgentID: agentID, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
 				return err
@@ -53,7 +54,7 @@ func scheduleListCommand() *cobra.Command {
 				return writeJSONLines(cmd.OutOrStdout(), response.Schedules)
 			}
 			for _, schedule := range response.Schedules {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.AgentID, schedule.TriggerKey)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.Agent, schedule.TriggerKey)
 			}
 			if response.NextCursor != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", response.NextCursor)
@@ -63,6 +64,9 @@ func scheduleListCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue a prior Schedule page.")
+	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Filter by stable Agent UUID.")
+	cmd.MarkFlagsMutuallyExclusive("agent", "agent-id")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Schedules (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON Schedule per line.")
@@ -95,7 +99,7 @@ func scheduleGetCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), schedule)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "schedule_id: %s\n", schedule.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", schedule.AgentID)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", schedule.Agent)
 			fmt.Fprintf(cmd.OutOrStdout(), "trigger: %s\n", schedule.TriggerKey)
 			if schedule.NextFireAt != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "next_fire_at: %s\n", schedule.NextFireAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))

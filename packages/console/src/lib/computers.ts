@@ -9,7 +9,7 @@ export type ComputerStatus = "available" | "deleted" | "deleting";
 export type Computer = {
   id: string;
   key?: string;
-  definition_id: string;
+  template: string;
   deployment_id: string;
   status: ComputerStatus;
   residency: "cold" | "starting" | "running" | "parking" | "parked" | "restoring" | "unavailable";
@@ -43,22 +43,23 @@ export async function listComputers(
   return request<ListComputersResponse>(`${environmentPath(scope)}/computers${query}`);
 }
 
-export type ComputerMember = {
-  kind: "session" | "command";
+export type ComputerUsage = {
   id: string;
-  state: "admitted" | "running" | "waiting" | "parked" | "draining" | "unreconciled";
+  usage_state: "admitted" | "running" | "waiting" | "parked" | "draining" | "unreconciled";
   created_at: string;
 };
 
-export async function listComputerMembers(
-  id: string,
-  scope: ComputerScope,
-  options: { cursor?: string | undefined; limit?: number | undefined } = {},
-): Promise<{ members: ComputerMember[]; next_cursor?: string }> {
+export function listComputerSessions(id: string, scope: ComputerScope, options: { cursor?: string | undefined; limit?: number | undefined } = {}): Promise<{ sessions: ComputerUsage[]; next_cursor?: string }> {
+  return request(usagePath(id, scope, "sessions", options));
+}
+export function listComputerCommands(id: string, scope: ComputerScope, options: { cursor?: string | undefined; limit?: number | undefined } = {}): Promise<{ commands: ComputerUsage[]; next_cursor?: string }> {
+  return request(usagePath(id, scope, "commands", options));
+}
+function usagePath(id: string, scope: ComputerScope, collection: "sessions" | "commands", options: { cursor?: string | undefined; limit?: number | undefined }): string {
   const params = new URLSearchParams();
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
-  return request(`${computerPath(id, scope)}/members${params.size ? `?${params}` : ""}`);
+  return `${computerPath(id, scope)}/${collection}${params.size ? `?${params}` : ""}`;
 }
 
 export async function getComputer(id: string, scope: ComputerScope): Promise<Computer> {

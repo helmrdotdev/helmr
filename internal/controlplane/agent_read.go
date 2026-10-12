@@ -1,9 +1,12 @@
 package controlplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"time"
 	"uuid"
@@ -37,13 +40,10 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
-	var before uuid.UUID
-	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
-		before, err = ids.Parse(cursor)
-		if err != nil {
-			s.writeAgentHTTPError(w, agent.ErrInvalidInput)
-			return
-		}
+	before, filter, err := parseSessionListCursor(r, env)
+	if err != nil {
+		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		return
 	}
 	var agentID uuid.UUID
 	if value := r.URL.Query().Get("agent_id"); value != "" {
@@ -68,7 +68,7 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	result, err := agent.ListSessions(r.Context(), s.tx, caller, agent.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, AgentID: agentID, Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
+	result, err := agent.ListSessions(r.Context(), s.tx, caller, agent.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, AgentID: agentID, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
@@ -78,7 +78,12 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Sessions = append(response.Sessions, agentSessionResponse(v))
 	}
 	if result.NextCursor != uuid.Nil() {
-		response.NextCursor = result.NextCursor.String()
+		raw, err := json.Marshal(sessionListCursor{EnvironmentID: env.String(), Filter: filter, Before: result.NextCursor.String()})
+		if err != nil {
+			s.writeAgentHTTPError(w, err)
+			return
+		}
+		response.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -260,4 +265,49 @@ func agentActivityResponse(v agent.SessionActivityView) api.AgentSessionActivity
 		result.Process = &api.AgentProcessActivity{Epoch: p.Epoch, Status: p.Status, Applied: p.Applied, ReconstructionRequired: p.ReconstructionRequired, Stop: agentStopResponse(p.Stop)}
 	}
 	return result
+}
+
+// Cursor scope includes selectors so a continuation cannot silently change its dataset.
+type sessionListCursor struct {
+	EnvironmentID string `json:"environment_id"`
+	Filter        string `json:"filter"`
+	Before        string `json:"before"`
+}
+
+func parseSessionListCursor(r *http.Request, env uuid.UUID) (uuid.UUID, string, error) {
+	values := r.URL.Query()
+	filters := url.Values{}
+	for name, entries := range values {
+		switch name {
+		case "cursor", "limit", "agent", "agent_id", "key", "status", "parent_session_id", "requester_session_id":
+		default:
+			return uuid.Nil(), "", agent.ErrInvalidInput
+		}
+		if len(entries) != 1 && name != "status" {
+			return uuid.Nil(), "", agent.ErrInvalidInput
+		}
+		for _, value := range entries {
+			if value == "" {
+				return uuid.Nil(), "", agent.ErrInvalidInput
+			}
+		}
+		if name != "cursor" && name != "limit" {
+			filters[name] = append([]string(nil), entries...)
+			sort.Strings(filters[name])
+		}
+	}
+	if values.Has("agent") && values.Has("agent_id") {
+		return uuid.Nil(), "", agent.ErrInvalidInput
+	}
+	filter := filters.Encode()
+	if !values.Has("cursor") {
+		return uuid.Nil(), filter, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(values.Get("cursor"))
+	var cursor sessionListCursor
+	if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.EnvironmentID != env.String() || cursor.Filter != filter {
+		return uuid.Nil(), "", agent.ErrInvalidInput
+	}
+	before, err := ids.Parse(cursor.Before)
+	return before, filter, err
 }

@@ -38,7 +38,7 @@ export const restoreParent = agent({
       memory.marker = marker
       await writeFile(path, JSON.stringify({ marker, nonce: memory.nonce }), { flag: "wx" })
       const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
-        agentId: restoreChild.id, input: fixtureInput({ marker }), computerId: ctx.computer.id, idempotencyKey: `${turn.id}:child`,
+        agent: restoreChild.id, input: fixtureInput({ marker }), computerId: ctx.computer.id, idempotencyKey: `${turn.id}:child`,
       })
       memory.childSessionId = child.sessionId
       childTurn = child.turnId

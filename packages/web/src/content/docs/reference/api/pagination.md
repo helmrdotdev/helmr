@@ -22,22 +22,23 @@ Pass `next_cursor` unchanged as `cursor` in the next request. A response without
 | `GET /v1/sessions` | `sessions` | 1–100, default 50 |
 | `GET /v1/sessions/{sessionID}/turns` | `turns` | 1–100, default 50 |
 | `GET /v1/sessions/{sessionID}/turns/{turnID}/asks` | `asks` | 1–100, default 50 |
-| `GET /v1/agent-definitions` | `agent_definitions` | 1–100, default 50 |
-| `GET /v1/template-definitions` | `template_definitions` | 1–100, default 50 |
+| `GET /v1/agents` | `agents` | 1–100, default 50 |
+| `GET /v1/templates` | `templates` | 1–100, default 50 |
 | `GET /v1/computers` | `computers` | 1–100, default 50 |
-| `GET /v1/computers/{computerID}/members` | `members` | 1–100, default 50 |
+| `GET /v1/computers/{computerID}/sessions` | `sessions` | 1–100, default 50 |
+| `GET /v1/computers/{computerID}/commands` | `commands` | 1–100, default 50 |
 | `GET /v1/schedules` | `schedules` | 1–100, default 50 |
 | `GET /v1/secrets` | `secrets` | 1–100, default 50 |
 | `GET /v1/deployments` | `deployments` | 1–100, default 50 |
 
-Definition pages also return `deployment_id`. A definition cursor keeps the
+Agent and Template pages also return `deployment_id`. A resource cursor keeps the
 Deployment its first page selected, even if a newer Deployment is promoted.
 
 Exact lookups are not paged: `key` on `/v1/computers`, `name` on
-`/v1/secrets`, and `agent_id` with `key` on `/v1/sessions`. Do not send
-`cursor` or `limit` with them; the SDK query types reject the combination.
+`/v1/secrets`, and `agent` or `agent_id` with `key` on `/v1/sessions`. Do not send
+`cursor` or `limit` with them; the SDK rejects the combination.
 
-In the SDK, list methods return `{ items, nextCursor? }`; definition pages also
+In the SDK, list methods return `{ items, nextCursor? }`; Agent/Template pages also
 include `deploymentId`. See [Client](/docs/reference/sdk/client).
 
 ## Session events
@@ -62,3 +63,7 @@ has finished; new events can arrive later. Event kinds are listed in
 `output_state` of `open`, `closed` or `unavailable`. A page can be empty while
 the Command is running or output delivery is pending; check the Command outcome
 and `output_state` separately.
+
+Session and Schedule cursors are bound to their scope and filters. Computer
+Sessions and Commands cursors are also bound to their collection kind. These
+Computer collections show current usage and pending cleanup, not historical work.

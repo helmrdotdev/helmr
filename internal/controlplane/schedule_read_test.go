@@ -88,12 +88,12 @@ func TestScheduleListQueryAcceptsAgentFilter(t *testing.T) {
 func TestScheduleResponseProjectsActivationInterval(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
 	row := db.AgentSchedule{ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
-	response, err := scheduleResponse(row)
+	response, err := scheduleResponse(row, "worker")
 	if err != nil || response.AgentID != pgvalue.UUIDString(row.AgentID) || response.TriggerKey != "daily" || response.NextFireAt == nil || response.ActiveUntil != nil || string(response.Input) != string(row.Input) {
 		t.Fatalf("response=%+v error=%v", response, err)
 	}
 	row.ActiveUntil = row.NextFireAt
-	response, err = scheduleResponse(row)
+	response, err = scheduleResponse(row, "worker")
 	if err != nil || response.NextFireAt != nil || response.ActiveUntil == nil {
 		t.Fatalf("closed interval=%+v error=%v", response, err)
 	}
@@ -152,7 +152,8 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: q, handler: handler, keys: keys}
 	token := httpFixture.session(t, f.User, org)
 	base := fmt.Sprintf("/api/projects/%s/environments/%s/schedules", project, f.Environment)
-	path := base + "?agent_id=" + f.Agent.String() + "&limit=1"
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
+	path := base + "?agent=agent&limit=1"
 	seen := map[string]bool{}
 	for range 3 {
 		response := httpFixture.request(t, http.MethodGet, path, token, "")
@@ -174,7 +175,7 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 		if err := json.Unmarshal(row.Input, &input); err != nil {
 			t.Fatal(err)
 		}
-		if row.AgentID != f.Agent.String() || row.DeploymentID != f.Deployment.String() || !input.Report {
+		if row.Agent != "agent" || row.AgentID != f.Agent.String() || row.DeploymentID != f.Deployment.String() || !input.Report {
 			t.Fatalf("projection=%+v", row)
 		}
 		if row.ID == oldID.String() && (row.ActiveUntil == nil || row.NextFireAt != nil) {
@@ -186,7 +187,7 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 		if len(seen) == 3 && page.NextCursor != "" {
 			t.Fatal("unexpected cursor")
 		}
-		path = base + "?agent_id=" + f.Agent.String() + "&limit=1&cursor=" + page.NextCursor
+		path = base + "?agent=agent&limit=1&cursor=" + page.NextCursor
 	}
 	item := httpFixture.request(t, http.MethodGet, base+"/"+oldID.String(), token, "")
 	if item.Code != http.StatusOK {

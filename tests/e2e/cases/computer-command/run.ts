@@ -34,7 +34,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
   const computer = matches.items[0]!
   const byKey = client.computers.ref(computer.id)
   assertEqual(computer.id, created.id, "computer key resolved to a different Computer")
-  assertEqual(computer.definitionId, "helmr-runtime-smoke", "template definition key mismatch")
+  assertEqual(computer.template, "helmr-runtime-smoke", "template definition key mismatch")
 
   const markerDirectory = "sandbox-smoke/nested"
   const markerPath = `${markerDirectory}/marker.txt`

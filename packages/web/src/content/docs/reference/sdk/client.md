@@ -41,10 +41,9 @@ their permissions are described in [Authentication](/docs/reference/api/authenti
 
 | Property | Methods | Reference |
 | --- | --- | --- |
-| `agents` | `start` | [Agent](/docs/reference/sdk/agent#client-start-an-agent) |
-| `agentDefinitions` | `get`, `list` | [Agent](/docs/reference/sdk/agent#client-agent-definitions) |
-| `sessions` | `get`, `list`, `ref` | [Agent](/docs/reference/sdk/agent#client-sessions) |
-| `templateDefinitions` | `get`, `list` | [Computer](/docs/reference/sdk/computer#client-template-definitions) |
+| `agents` | `get`, `list` | [Agent](/docs/reference/sdk/agent#client-agents) |
+| `sessions` | `create`, `get`, `list`, `ref` | [Agent](/docs/reference/sdk/agent#client-sessions) |
+| `templates` | `get`, `list` | [Computer](/docs/reference/sdk/computer#client-templates) |
 | `computers` | `create`, `get`, `list`, `ref` | [Computer](/docs/reference/sdk/computer#client-computers) |
 | `commands` | `ref` | [Computer](/docs/reference/sdk/computer#client-commands) |
 | `deployments` | `list`, `current`, `get` | [Deployments](#deployments) |

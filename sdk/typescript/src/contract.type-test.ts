@@ -1,5 +1,5 @@
 import { agent, template, triggers, builder as configBuilder, defineConfig, image, source,
-  type HelmrClient, type ImageBuilder, type TemplateDefinitionInfo, type SessionEventPage,
+  type HelmrClient, type ImageBuilder, type TemplateInfo, type SessionEventPage,
   type SecretCreateRequest, type SecretRotateRequest, type SecretRevokeRequest,
   type SecretBinding, type SourceFile, type SourceDirectory, type ComputerRef } from "."
 import * as sdk from "."
@@ -67,23 +67,23 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error Directory copy has no implementation-defined ignore language.
   source.directory("./src", { ignore: ["**/*.test.ts"] })
   const client = null as unknown as HelmrClient
-  client.agentDefinitions.get("operator").then((info) => {
-    info.id satisfies string
+  client.agents.get("operator").then((info) => {
+    info.agent satisfies string
     info.agentId satisfies string
     info.deploymentId satisfies string
   })
-  client.templateDefinitions.get("machine").then((info: TemplateDefinitionInfo) => {
-    info.id satisfies string
+  client.templates.get("machine").then((info: TemplateInfo) => {
+    info.template satisfies string
     info.deploymentId satisfies string
   })
-  // @ts-expect-error Agent reads belong to the deployed definition catalog.
-  client.agents.get("operator")
-  // @ts-expect-error Agent lists belong to the deployed definition catalog.
-  client.agents.list()
+  // @ts-expect-error Removed discovery accessor has no compatibility alias.
+  client.agentDefinitions.list()
+  // @ts-expect-error Removed discovery accessor has no compatibility alias.
+  client.templateDefinitions.list()
   // @ts-expect-error Creation requires the deployed definition selector.
   client.computers.create({ key: "shared-repository" })
   // @ts-expect-error Definition inspection does not create Computer instances.
-  client.templateDefinitions.createComputer("machine")
+  client.templates.createComputer("machine")
   const clientComputer = client.computers.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
@@ -144,3 +144,17 @@ function assertExactTurnInterruption(client: HelmrClient): void {
  void turn.interrupt()
 }
 void assertExactTurnInterruption
+
+function sessionLookupTypes(client: HelmrClient) {
+  client.sessions.list({ agent: "worker", key: "thread" })
+  client.sessions.list({ agent: "worker", status: "open" })
+  // @ts-expect-error Exact key lookup requires an Agent selector.
+  client.sessions.list({ key: "thread" })
+  // @ts-expect-error Exact key lookup cannot page.
+  client.sessions.list({ agent: "worker", key: "thread", cursor: "next" })
+  // @ts-expect-error Exact key lookup cannot add lifecycle filters.
+  client.sessions.list({ agentId: "id", key: "thread", status: "open" })
+  // @ts-expect-error Authored and UUID Agent selectors are mutually exclusive.
+  client.sessions.list({ agent: "worker", agentId: "id" })
+}
+void sessionLookupTypes

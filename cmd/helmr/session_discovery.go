@@ -11,7 +11,7 @@ import (
 )
 
 func sessionListCommand() *cobra.Command {
-	var project, environment, agent, key, parent, requester, cursor string
+	var project, environment, agent, agentID, key, parent, requester, cursor string
 	var statuses []string
 	var limit int32
 	var jsonOutput bool
@@ -23,7 +23,7 @@ func sessionListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		opts := client.SessionListOptions{AgentID: agent, ParentSessionID: parent, RequesterSessionID: requester, Statuses: statuses, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope}
+		opts := client.SessionListOptions{Agent: agent, AgentID: agentID, ParentSessionID: parent, RequesterSessionID: requester, Statuses: statuses, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope}
 		if cmd.Flags().Changed("key") {
 			opts.Key = &key
 		}
@@ -47,8 +47,10 @@ func sessionListCommand() *cobra.Command {
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)
-	cmd.Flags().StringVar(&agent, "agent", "", "Filter by stable Agent UUID.")
-	cmd.Flags().StringVar(&key, "key", "", "Filter by explicit Session key; requires --agent.")
+	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Filter by stable Agent UUID.")
+	cmd.MarkFlagsMutuallyExclusive("agent", "agent-id")
+	cmd.Flags().StringVar(&key, "key", "", "Filter by explicit Session key; requires --agent or --agent-id.")
 	cmd.Flags().StringVar(&parent, "parent-session", "", "Filter by owning parent Session UUID.")
 	cmd.Flags().StringVar(&requester, "requester-session", "", "Filter by requesting Session UUID.")
 	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Filter by open, closing, closed or cancelled status.")

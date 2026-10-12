@@ -30,7 +30,7 @@ function ComputerRow(props: { computer: ComputerListItem; scope: DefinitionScope
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", props.computer.definition_id, { ...props.scope, deploymentID: props.computer.deployment_id })}>{props.computer.definition_id}</a></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", props.computer.template, { ...props.scope, deploymentID: props.computer.deployment_id })}>{props.computer.template}</a></td>
       <td><StatusBadge resource="computer" status={props.computer.status} /><span class="ml-2">{props.computer.residency}</span></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>

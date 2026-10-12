@@ -1,4 +1,4 @@
-import { createClientAgentDefinitions, type ClientAgentDefinitionsApi } from "./client-agent-definition"
+import { createClientAgents, type ClientAgentsApi } from "./client-agent"
 import type { CommandRef } from "./command"
 import type { JsonValue } from "./contract"
 import {
@@ -7,9 +7,9 @@ import {
   type ClientComputersApi,
 } from "./client-computer"
 import {
-  createClientTemplateDefinitions,
-  type ClientTemplateDefinitionsApi,
-} from "./client-template-definition"
+  createClientTemplates,
+  type ClientTemplatesApi,
+} from "./client-template"
 import {
   createClientSessions,
   type ClientSessionsApi,
@@ -34,9 +34,9 @@ export interface HelmrClientOptions {
 }
 
 export class HelmrClient {
-  readonly agentDefinitions: ClientAgentDefinitionsApi
+  readonly agents: ClientAgentsApi
   readonly sessions: ClientSessionsApi
-  readonly templateDefinitions: ClientTemplateDefinitionsApi
+  readonly templates: ClientTemplatesApi
   readonly deployments: ClientDeploymentsApi
   readonly schedules: ClientSchedulesApi
   readonly secrets: ClientSecretsApi
@@ -45,9 +45,9 @@ export class HelmrClient {
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
-    this.agentDefinitions = createClientAgentDefinitions(transport)
+    this.agents = createClientAgents(transport)
     this.sessions = createClientSessions(transport)
-    this.templateDefinitions = createClientTemplateDefinitions(transport)
+    this.templates = createClientTemplates(transport)
     this.deployments = createClientDeployments(transport)
     this.schedules = createClientSchedules(transport)
     this.secrets = createClientSecrets(transport)
@@ -72,7 +72,7 @@ class ClientTransport {
   }
 
   async request(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "DELETE" | "PATCH",
     path: string,
     options: Readonly<{ body?: unknown; signal?: AbortSignal }> = {},
   ): Promise<unknown> {

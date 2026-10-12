@@ -9,7 +9,6 @@ describe("HelmrClient Computers", () => {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       template: "repository-agent",
       key: "repository",
-      definition_id: "repository-agent",
       delete_after_unused_ms: null, unused_since: null,
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
@@ -26,7 +25,7 @@ describe("HelmrClient Computers", () => {
 			computers: [{
 				id: computer.id,
 				key: computer.key,
-				definition_id: computer.definition_id,
+				template: computer.template,
       delete_after_unused_ms: null, unused_since: null,
 				deployment_id: computer.deployment_id,
 				status: "available",
@@ -87,14 +86,14 @@ describe("HelmrClient Computers", () => {
     expect(retrieved).toMatchObject({
       id: computer.id,
       key: "repository",
-      definitionId: "repository-agent",
+      template: "repository-agent",
     })
     expect(requests[1]!.url).toBe(
       "https://api.example.test/v1/computers/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     )
 
     const matches = await client.computers.list({ key: "repository" })
-    expect(matches.items[0]?.definitionId).toBe("repository-agent")
+    expect(matches.items[0]?.template).toBe("repository-agent")
     expect(matches.items[0]?.residency).toBe("unavailable")
     expect(requests[2]!.url).toBe(
       "https://api.example.test/v1/computers?key=repository",
@@ -383,7 +382,7 @@ describe("HelmrClient Deployments", () => {
 
 describe("HelmrClient Schedules", () => {
   const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-  const schedule = { id, agent_id:id, deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
+  const schedule = { id, agent:"reporter", agent_id:id, deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
   test("retrieves pinned activations and pages Agent-filtered triggers", async () => {
     const requests:string[]=[]
     const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
@@ -405,6 +404,7 @@ describe("HelmrClient Schedules", () => {
 
 describe("HelmrClient Sessions", () => {
   const session = {
+    agent: "worker", template: "machine",
     id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     agent_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
     deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",

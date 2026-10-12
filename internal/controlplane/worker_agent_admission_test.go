@@ -68,7 +68,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 				defer server.Close()
 				secret := seedHostSecret(t, f.Pool, f.Worker)
 				client := secret.client(t, server.URL)
-				payload := map[string]any{"agentId": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "retained-decision"}
+				payload := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "retained-decision"}
 				if placed {
 					payload["computerId"] = f.Computer.String()
 				}
@@ -130,15 +130,15 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	for _, method := range []agentv1.Operation_Method{agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN} {
 		for _, test := range []struct{ name, payload, turn, code string }{
-			{"missing key", `{"agentId":"agent","input":[{"type":"text","text":"work"}]}`, "", "invalid_arguments"},
-			{"foreign origin", `{"agentId":"agent","input":[{"type":"text","text":"work"}]}`, uuid.NewV7().String(), "invalid_arguments"},
-			{"bad placement", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"computerId":""}`, "", "invalid_arguments"},
-			{"null placement", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"computerId":null}`, "", "invalid_arguments"},
-			{"numeric placement", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"computerId":1}`, "", "invalid_arguments"},
-			{"missing input", `{"agentId":"agent"}`, "", "invalid_arguments"},
-			{"deployment override", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"deploymentId":"other"}`, "", "invalid_arguments"},
-			{"environment override", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"environmentId":"other"}`, "", "invalid_arguments"},
-			{"conversation key", `{"agentId":"agent","input":[{"type":"text","text":"work"}],"sessionKey":"shared"}`, "", "invalid_arguments"},
+			{"missing key", `{"agent":"agent","input":[{"type":"text","text":"work"}]}`, "", "invalid_arguments"},
+			{"foreign origin", `{"agent":"agent","input":[{"type":"text","text":"work"}]}`, uuid.NewV7().String(), "invalid_arguments"},
+			{"bad placement", `{"agent":"agent","input":[{"type":"text","text":"work"}],"computerId":""}`, "", "invalid_arguments"},
+			{"null placement", `{"agent":"agent","input":[{"type":"text","text":"work"}],"computerId":null}`, "", "invalid_arguments"},
+			{"numeric placement", `{"agent":"agent","input":[{"type":"text","text":"work"}],"computerId":1}`, "", "invalid_arguments"},
+			{"missing input", `{"agent":"agent"}`, "", "invalid_arguments"},
+			{"deployment override", `{"agent":"agent","input":[{"type":"text","text":"work"}],"deploymentId":"other"}`, "", "invalid_arguments"},
+			{"environment override", `{"agent":"agent","input":[{"type":"text","text":"work"}],"environmentId":"other"}`, "", "invalid_arguments"},
+			{"conversation key", `{"agent":"agent","input":[{"type":"text","text":"work"}],"sessionKey":"shared"}`, "", "invalid_arguments"},
 		} {
 			t.Run(method.String()+"/"+test.name, func(t *testing.T) {
 				var arguments map[string]any
@@ -167,7 +167,7 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
 			server := httptest.NewServer(newPostgresServer(t, f.Pool))
 			defer server.Close()
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-			arguments := map[string]any{"agentId": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "durable-model-decision"}
+			arguments := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "durable-model-decision"}
 			payload := func() json.RawMessage {
 				b, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 				return b

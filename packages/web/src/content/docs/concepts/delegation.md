@@ -47,7 +47,7 @@ export const coordinator = agent({
     }
 
     const child = await call("spawn", {
-      agentId: "reviewer",
+      agent: "reviewer",
       input: turn.input,
       idempotencyKey: `review:${turn.id}`,
     })
@@ -77,7 +77,7 @@ There are two ways to create work:
 | `spawn` | A child Session owned by the caller. | The caller's pinned Deployment. |
 | `start` | An independent root Session. | The Environment's current Deployment. |
 
-Both take `agentId`, `input` (text parts) and a required `idempotencyKey`, plus
+Both take `agent`, `input` (text parts) and a required `idempotencyKey`, plus
 optional `computerId` and `closeAfterIdleMs`. They return
 `{ sessionId, turnId, sequence, closeAfterIdleMs }`. Reuse the same
 idempotency key with the same arguments when you are unsure whether a call
