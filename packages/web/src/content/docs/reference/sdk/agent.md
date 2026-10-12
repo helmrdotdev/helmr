@@ -265,7 +265,7 @@ client.sessions.ref(id: string): ClientSessionRef
 | Form | Fields |
 | --- | --- |
 | Page | `parentSessionId?`, `requesterSessionId?`, `status?` (one `SessionStatus` or an array), `cursor?`, `limit?` (1–100) |
-| Agent filter | `agent` (declared identifier) or `agentId` (UUID), mutually exclusive; current membership is not required |
+| Agent filter | `agent` (declared identifier); current membership is not required |
 | Exact key lookup | One Agent selector plus the Session `key`; no other filters or pagination |
 
 ### `ClientSessionRef`
@@ -292,7 +292,7 @@ payloads are listed in [Session events](/docs/reference/events).
 
 | Field | Type |
 | --- | --- |
-| `id`, `agentId`, `deploymentId`, `rootSessionId` | `string` UUIDs |
+| `id`, `deploymentId`, `rootSessionId` | `string` UUIDs |
 | `agent`, `template` | Authored Agent identifier and its pinned default Template identifier |
 | `computerId`, `parentSessionId`, `requesterSessionId` | `string \| null` |
 | `key` | `string`, optional |
@@ -331,8 +331,8 @@ client.agents.get(id: string, query?: { deploymentId?: string }, options?): Prom
 client.agents.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<AgentPage>
 ```
 
-`AgentInfo` is `{ agent, template, agentId, deploymentId }`, where `agent` is the
-identifier declared in code and `agentId` is the Agent's stable UUID across Deployments.
-`AgentPage` is `{ deploymentId, items: { agent, template, agentId }[], nextCursor? }`.
+`AgentInfo` is `{ agent, template, deploymentId }`, where `agent` is the
+identifier declared in code and remains stable across Deployments within its environment.
+`AgentPage` is `{ deploymentId, items: { agent, template }[], nextCursor? }`.
 Omitting `deploymentId` reads the current Deployment; a list cursor keeps its
 original Deployment.

@@ -66,7 +66,7 @@ export function Overview() {
                   <div class="flex flex-wrap items-center gap-3">
                     <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} />
                     <span class={ui.muted}>Created <RelativeTime value={deployment().created_at} /></span>
-                    <A class={ui.secondaryButton} href={deploymentHref(deployment().id)}>View Agents</A>
+                    <A class={ui.secondaryButton} href="/agents">View Agents</A>
                   </div>
                 </Panel>
               )}
@@ -83,7 +83,7 @@ export function Overview() {
                   <For each={sessions.data?.sessions}>{session => (
                     <tr>
                       <td><IDText value={session.id} mode="link" href={sessionConsolePath(session.id, projectID(), environmentID())} /></td>
-                      <td><IDText value={session.agent_id} /></td>
+                      <td><code>{session.agent}</code></td>
                       <td><StatusBadge resource="session" status={session.status} /></td>
                       <td>{session.holds.length ? `${session.holds.length} active` : "None"}</td>
                       <td><RelativeTime value={session.created_at} /></td>

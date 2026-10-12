@@ -34,7 +34,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 		"/v1/schedules?limit=25&cursor="+raw,
 		nil,
 	)
-	limit, cursor, taskID, err := parseScheduleListQuery(
+	limit, cursor, err := parseScheduleListQuery(
 		request,
 		"project-1",
 		"environment-1",
@@ -42,12 +42,12 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if limit != 25 || cursor == nil || taskID != nil ||
+	if limit != 25 || cursor == nil ||
 		cursor.AgentID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" ||
 		cursor.ScheduleID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" {
 		t.Fatalf("limit=%d cursor=%+v", limit, cursor)
 	}
-	if _, _, _, err := parseScheduleListQuery(
+	if _, _, err := parseScheduleListQuery(
 		request,
 		"project-1",
 		"environment-2",
@@ -59,12 +59,13 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	for _, target := range []string{
 		"/v1/schedules?task=unexpected",
+		"/v1/schedules?agent_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
 		"/v1/schedules?limit=0",
 		"/v1/schedules?limit=101",
 		"/v1/schedules?cursor=invalid",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
-		if _, _, _, err := parseScheduleListQuery(
+		if _, _, err := parseScheduleListQuery(
 			request,
 			"project-1",
 			"environment-1",
@@ -75,13 +76,13 @@ func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 }
 
 func TestScheduleListQueryAcceptsAgentFilter(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?agent_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", nil)
-	limit, cursor, taskID, err := parseScheduleListQuery(request, "project-1", "environment-1")
+	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?agent=worker", nil)
+	limit, cursor, err := parseScheduleListQuery(request, "project-1", "environment-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if limit != 50 || cursor != nil || taskID == nil || *taskID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" {
-		t.Fatalf("limit=%d cursor=%+v taskID=%v", limit, cursor, taskID)
+	if limit != 50 || cursor != nil {
+		t.Fatalf("limit=%d cursor=%+v ", limit, cursor)
 	}
 }
 
@@ -89,7 +90,7 @@ func TestScheduleResponseProjectsActivationInterval(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
 	row := db.AgentSchedule{ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
 	response, err := scheduleResponse(row, "worker")
-	if err != nil || response.AgentID != pgvalue.UUIDString(row.AgentID) || response.TriggerKey != "daily" || response.NextFireAt == nil || response.ActiveUntil != nil || string(response.Input) != string(row.Input) {
+	if err != nil || response.Agent != "worker" || response.TriggerKey != "daily" || response.NextFireAt == nil || response.ActiveUntil != nil || string(response.Input) != string(row.Input) {
 		t.Fatalf("response=%+v error=%v", response, err)
 	}
 	row.ActiveUntil = row.NextFireAt
@@ -101,17 +102,17 @@ func TestScheduleResponseProjectsActivationInterval(t *testing.T) {
 
 func TestScheduleCursorRejectsFilterChange(t *testing.T) {
 	id := uuid.NewV7().String()
-	raw, err := encodeScheduleListCursor(scheduleListCursor{ProjectID: "p", EnvironmentID: "e", AgentID: id, ScheduleID: id, FilterAgentID: id})
+	raw, err := encodeScheduleListCursor(scheduleListCursor{ProjectID: "p", EnvironmentID: "e", AgentID: id, ScheduleID: id, FilterAgent: id})
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?cursor="+raw, nil)
-	if _, _, _, err := parseScheduleListQuery(request, "p", "e"); err == nil {
+	if _, _, err := parseScheduleListQuery(request, "p", "e"); err == nil {
 		t.Fatal("changed filter accepted")
 	}
-	request = httptest.NewRequest(http.MethodGet, "/v1/schedules?agent_id="+id+"&cursor="+raw+"&limit=2", nil)
-	if limit, _, filter, err := parseScheduleListQuery(request, "p", "e"); err != nil || limit != 2 || filter == nil || *filter != id {
-		t.Fatalf("filter=%v error=%v", filter, err)
+	request = httptest.NewRequest(http.MethodGet, "/v1/schedules?agent="+id+"&cursor="+raw+"&limit=2", nil)
+	if limit, _, err := parseScheduleListQuery(request, "p", "e"); err != nil || limit != 2 {
+		t.Fatalf("error=%v", err)
 	}
 }
 
@@ -175,7 +176,7 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 		if err := json.Unmarshal(row.Input, &input); err != nil {
 			t.Fatal(err)
 		}
-		if row.Agent != "agent" || row.AgentID != f.Agent.String() || row.DeploymentID != f.Deployment.String() || !input.Report {
+		if row.Agent != "agent" || row.DeploymentID != f.Deployment.String() || !input.Report {
 			t.Fatalf("projection=%+v", row)
 		}
 		if row.ID == oldID.String() && (row.ActiveUntil == nil || row.NextFireAt != nil) {

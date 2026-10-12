@@ -18,7 +18,7 @@ func scheduleCommand() *cobra.Command {
 }
 
 func scheduleListCommand() *cobra.Command {
-	var agent, agentID string
+	var agent string
 	var projectID string
 	var environmentID string
 	var cursor string
@@ -42,7 +42,7 @@ func scheduleListCommand() *cobra.Command {
 				return err
 			}
 			response, err := controlPlane.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
-				Cursor: cursor, Limit: limit, Agent: agent, AgentID: agentID, EnvironmentScopeOptions: scope,
+				Cursor: cursor, Limit: limit, Agent: agent, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
 				return err
@@ -65,8 +65,6 @@ func scheduleListCommand() *cobra.Command {
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue a prior Schedule page.")
 	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
-	cmd.Flags().StringVar(&agentID, "agent-id", "", "Filter by stable Agent UUID.")
-	cmd.MarkFlagsMutuallyExclusive("agent", "agent-id")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Schedules (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON Schedule per line.")

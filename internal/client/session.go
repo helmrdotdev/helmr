@@ -44,7 +44,6 @@ type SessionListOptions struct {
 	Statuses           []string
 	Cursor             string
 	Limit              int32
-	AgentID            string
 	Key                *string
 	ParentSessionID    string
 	RequesterSessionID string
@@ -52,13 +51,10 @@ type SessionListOptions struct {
 }
 
 func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api.AgentSessionsPage, error) {
-	if opts.Key != nil && ((opts.AgentID == "" && opts.Agent == "") || *opts.Key == "") {
-		return api.AgentSessionsPage{}, errors.New("a nonempty key requires agent or agent_id")
+	if opts.Key != nil && (opts.Agent == "" || *opts.Key == "") {
+		return api.AgentSessionsPage{}, errors.New("a nonempty key requires agent")
 	}
 	if opts.Agent != "" {
-		if opts.AgentID != "" {
-			return api.AgentSessionsPage{}, errors.New("agent and agent_id are mutually exclusive")
-		}
 		if err := api.ValidateDefinitionID(opts.Agent); err != nil {
 			return api.AgentSessionsPage{}, err
 		}
@@ -68,7 +64,7 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 			return api.AgentSessionsPage{}, errors.New("invalid Session status")
 		}
 	}
-	for _, id := range []string{opts.AgentID, opts.ParentSessionID, opts.RequesterSessionID} {
+	for _, id := range []string{opts.ParentSessionID, opts.RequesterSessionID} {
 		if id != "" {
 			if err := ids.Validate(id); err != nil {
 				return api.AgentSessionsPage{}, err
@@ -92,7 +88,7 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	if opts.Limit > 0 {
 		values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
 	}
-	for name, value := range map[string]string{"agent": opts.Agent, "agent_id": opts.AgentID, "parent_session_id": opts.ParentSessionID, "requester_session_id": opts.RequesterSessionID} {
+	for name, value := range map[string]string{"agent": opts.Agent, "parent_session_id": opts.ParentSessionID, "requester_session_id": opts.RequesterSessionID} {
 		if value != "" {
 			values.Set(name, value)
 		}

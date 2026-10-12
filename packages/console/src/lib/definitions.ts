@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-export type AgentListItem = { agent: string; agent_id: string; template: string };
+export type AgentListItem = { agent: string; template: string };
 export type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
 export type DefinitionListItem = AgentListItem | TemplateListItem;
 export function definitionName(item: DefinitionListItem): string { return "agent" in item ? item.agent : item.template; }
@@ -65,9 +65,21 @@ function definitionItemPath(kind: "agents" | "templates", id: string, options: D
 }
 export type DefinitionKind = "agents" | "templates";
 export function definitionHref(kind: DefinitionKind, id: string, options: DefinitionScope & { deploymentID: string }): string {
-  const query = new URLSearchParams({ project_id: options.projectID, environment_id: options.environmentID, deployment_id: options.deploymentID });
-  return `/${kind}/${encodeURIComponent(id)}?${query}`;
+  return scopedConsoleHref(`/deployments/${encodeURIComponent(options.deploymentID)}/${kind}/${encodeURIComponent(id)}`, options);
 }
 export function scopedConsoleHref(path: string, options: DefinitionScope): string {
   return `${path}?${new URLSearchParams({ project_id: options.projectID, environment_id: options.environmentID })}`;
+}
+
+export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
+export function agentHref(agent: string, scope: DefinitionScope): string {
+  return scopedConsoleHref(`/agents/${encodeURIComponent(agent)}`, scope);
+}
+export function listRetainedAgents(scope: DefinitionScope, cursor?: string): Promise<{ agents: RetainedAgent[]; next_cursor?: string }> {
+  const query = new URLSearchParams({ view: "all", limit: "100" });
+  if (cursor) query.set("cursor", cursor);
+  return request(`${definitionPath("agents", scope)}?${query}`);
+}
+export function getAgentStatus(agent: string, scope: DefinitionScope): Promise<RetainedAgent> {
+  return request(`${definitionItemPath("agents", agent, scope)}/status`);
 }

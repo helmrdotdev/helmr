@@ -38,7 +38,7 @@ func sessionGetCommand() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", session.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
-			fmt.Fprintf(cmd.OutOrStdout(), "agent_id: %s\n", session.AgentID)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", session.AgentDefinitionID)
 			if session.ComputerID == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), "computer: No Computer assigned")
 			} else {

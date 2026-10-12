@@ -86,7 +86,6 @@ type SessionListRequest struct {
 	Agent              string
 	EnvironmentID      uuid.UUID
 	Before             uuid.UUID
-	AgentID            uuid.UUID
 	ParentSessionID    uuid.UUID
 	RequesterSessionID uuid.UUID
 	Key                *string
@@ -211,18 +210,18 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
 			return result, ErrInvalidInput
 		}
 	}
-	if req.Agent != "" && (req.AgentID != uuid.Nil() || !definition.ValidDeclaredID(req.Agent)) {
+	if req.Agent != "" && !definition.ValidDeclaredID(req.Agent) {
 		return result, ErrInvalidInput
 	}
-	if req.Key != nil && ((req.AgentID == uuid.Nil() && req.Agent == "") || *req.Key == "") {
+	if req.Key != nil && (req.Agent == "" || *req.Key == "") {
 		return result, ErrInvalidInput
 	}
 	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND ($2::uuid IS NULL OR id<$2)
- AND ($4::uuid IS NULL OR agent_id=$4) AND ($5::text IS NULL OR session_key=$5)
- AND (cardinality($6::text[]) IS NULL OR cardinality($6::text[])=0 OR status=ANY($6))
- AND ($7::uuid IS NULL OR parent_session_id=$7) AND ($8::uuid IS NULL OR requester_session_id=$8)
- AND ($9::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$9))
- ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, nullableID(req.AgentID), req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
+ AND ($4::text IS NULL OR session_key=$4)
+ AND (cardinality($5::text[]) IS NULL OR cardinality($5::text[])=0 OR status=ANY($5))
+ AND ($6::uuid IS NULL OR parent_session_id=$6) AND ($7::uuid IS NULL OR requester_session_id=$7)
+ AND ($8::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$8))
+ ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
 	if err != nil {
 		return result, err
 	}

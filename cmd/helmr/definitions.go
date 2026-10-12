@@ -34,7 +34,7 @@ func agentDefinitionListCommand() *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "deployment_id: %s\n", page.DeploymentID)
 		for _, item := range page.AgentDefinitions {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.ID, item.AgentID)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.ID, item.TemplateID)
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -64,7 +64,7 @@ func agentDefinitionGetCommand() *cobra.Command {
 		if jsonOutput {
 			return writeJSON(cmd.OutOrStdout(), item)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\nagent_id: %s\ndeployment_id: %s\n", item.ID, item.AgentID, item.DeploymentID)
+		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\ndeployment_id: %s\n", item.ID, item.DeploymentID)
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)

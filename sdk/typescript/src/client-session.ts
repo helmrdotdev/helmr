@@ -39,12 +39,10 @@ import {
 import { sessionOperationOptions } from "./session"
 import type { RequestOptions } from "./request"
 
-type SessionAgentSelector =
-  | { agent: string; agentId?: never }
-  | { agent?: never; agentId: string }
+type SessionAgentSelector = { agent: string }
 
 export type SessionListQuery = Readonly<
-  | ((SessionAgentSelector | { agent?: never; agentId?: never }) & {
+  | ((SessionAgentSelector | { agent?: never }) & {
       key?: never
       parentSessionId?: string
       requesterSessionId?: string
@@ -333,13 +331,15 @@ export function createSessionRef(
 }
 
 function sessionListQuery(queryInput: SessionListQuery): string {
-  if (queryInput.agent !== undefined && queryInput.agentId !== undefined) throw new Error("agent and agentId are mutually exclusive")
+  for (const key of Object.keys(queryInput)) {
+    if (!["agent", "key", "status", "cursor", "limit", "parentSessionId", "requesterSessionId"].includes(key)) throw new Error(`Unsupported Session list query: ${key}`)
+  }
   const exact = queryInput.key !== undefined
   if (
     exact &&
-    (queryInput.agentId === undefined && queryInput.agent === undefined)
+    queryInput.agent === undefined
   ) {
-    throw new Error("Session exact key lookup requires agent or agentId with key")
+    throw new Error("Session exact key lookup requires agent with key")
   }
   if (
     exact &&
@@ -366,10 +366,6 @@ function sessionListQuery(queryInput: SessionListQuery): string {
   if (queryInput.agent !== undefined) {
     validateDefinitionId(queryInput.agent)
     query.set("agent", queryInput.agent)
-  }
-  if (queryInput.agentId !== undefined) {
-    resourceID(queryInput.agentId, "Session Agent ID")
-    query.set("agent_id", queryInput.agentId)
   }
   if (queryInput.key !== undefined) {
     if (queryInput.key.length === 0) throw new Error("Session key is required")

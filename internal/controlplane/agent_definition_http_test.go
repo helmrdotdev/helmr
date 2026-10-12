@@ -70,7 +70,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		want   []string
 		absent []string
 	}{
-		{base + "/agent", []string{"agent", "agent_id", "template", "deployment_id"}, []string{"id", "key", "template_id"}},
+		{base + "/agent", []string{"agent", "template", "deployment_id"}, []string{"id", "key", "template_id", "agent_id"}},
 		{computerBase + "/fixture-computer", []string{"template", "resources", "deployment_id"}, []string{"id", "key", "definition_id"}},
 	} {
 		var fields map[string]json.RawMessage
@@ -113,7 +113,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err := json.Unmarshal(get(base+"?limit=1", owner, http.StatusOK), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.DeploymentID != f.Deployment.String() || len(first.AgentDefinitions) != 1 || first.AgentDefinitions[0].ID != "agent" || first.AgentDefinitions[0].AgentID != f.Agent.String() || first.AgentDefinitions[0].TemplateID != "fixture-computer" || first.NextCursor == "" {
+	if first.DeploymentID != f.Deployment.String() || len(first.AgentDefinitions) != 1 || first.AgentDefinitions[0].ID != "agent" || first.AgentDefinitions[0].TemplateID != "fixture-computer" || first.NextCursor == "" {
 		t.Fatalf("first page: %+v", first)
 	}
 	// Removing the mutable current selection must not move the cursor's snapshot.
@@ -140,7 +140,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err := json.Unmarshal(get(base+"/agent"+selected, owner, http.StatusOK), &item); err != nil {
 		t.Fatal(err)
 	}
-	if item.ID != "agent" || item.AgentID != f.Agent.String() || item.DeploymentID != first.DeploymentID || item.TemplateID != "fixture-computer" {
+	if item.ID != "agent" || item.DeploymentID != first.DeploymentID || item.TemplateID != "fixture-computer" {
 		t.Fatalf("item: %+v", item)
 	}
 	get(base, owner, http.StatusNotFound)
@@ -234,7 +234,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := json.Marshal(map[string]string{"url": sdkServer.URL, "apiKey": sdkKey.Raw, "deploymentId": f.Deployment.String(), "agentId": f.Agent.String()})
+	input, err := json.Marshal(map[string]string{"url": sdkServer.URL, "apiKey": sdkKey.Raw, "deploymentId": f.Deployment.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,5 +243,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("Computer SDK HTTP: %v\n%s", err, output)
 	}
+
+	assertRetainedAgentCatalog(t, h, org, project, f.Environment, f.Deployment, owner)
 
 }

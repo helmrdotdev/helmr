@@ -68,11 +68,11 @@ that resolved `deployment_id`; list envelopes are `agents` and `templates`.
 
 | Resource | Identifier and inspection fields |
 | --- | --- |
-| Agent | `agent`, stable UUID `agent_id`, default `template`, `deployment_id` |
+| Agent | `agent`, default `template`, `deployment_id` |
 | Template | `template`, `resources`, `deployment_id` |
-| Session | `agent`, `agent_id`, `template` (the pinned Agent default), `deployment_id`, optional `computer_id` |
+| Session | `agent`, `template` (the pinned Agent default), `deployment_id`, optional `computer_id` |
 | Computer | `template`, `deployment_id` (its actual creation origin), optional instance `key` |
-| Schedule | `agent`, `agent_id`, `deployment_id` |
+| Schedule | `agent`, `deployment_id` |
 
 Template resources use `milliCpu`, `memoryMiB` and optional `diskMiB`. The local
 `agent({ id })` / `template({ id })` declaration value is called `agent` /
@@ -85,7 +85,7 @@ Deployment returns `deployment_not_found`. A missing Agent/Template in a resolve
 authorized Deployment returns `not_found` with `error.details.deployment_id`;
 it does not fall back to another Deployment or claim the stable identity was deleted.
 
-Session and Schedule lists accept either `agent` or `agent_id`, never both.
+Session and Schedule lists accept the declared `agent` identifier.
 `agent` resolves stable identity independently of current membership, so retained
 history remains searchable after an Agent is removed from current.
 

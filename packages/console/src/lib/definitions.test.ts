@@ -36,7 +36,7 @@ test("definition detail links preserve the Session's exact scope and Deployment"
   const calls = capture({ id: "worker", deployment_id: "old/version" });
   const options = { ...scope, deploymentID: "old/version" };
   const href = definitionHref("agents", "worker/key", options);
-  expect(href).toBe("/agents/worker%2Fkey?project_id=project%2F1&environment_id=env%2F1&deployment_id=old%2Fversion");
+  expect(href).toBe("/deployments/old%2Fversion/agents/worker%2Fkey?project_id=project%2F1&environment_id=env%2F1");
   await getAgentDefinition("worker/key", options);
   await getTemplateDefinition("image/key", options);
   expect(calls.map(call => call.url)).toEqual([

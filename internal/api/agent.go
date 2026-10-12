@@ -8,7 +8,6 @@ import (
 
 type AgentDefinition struct {
 	TemplateID   string `json:"template"`
-	AgentID      string `json:"agent_id"`
 	ID           string `json:"agent"`
 	DeploymentID string `json:"deployment_id"`
 }
@@ -16,7 +15,6 @@ type AgentDefinition struct {
 type AgentDefinitionListItem struct {
 	TemplateID string `json:"template"`
 	ID         string `json:"agent"`
-	AgentID    string `json:"agent_id"`
 }
 
 type ListAgentDefinitionsResponse struct {
@@ -61,7 +59,6 @@ type AgentSession struct {
 	CloseAfterIdleMs     *int64                   `json:"close_after_idle_ms"`
 	IdleSince            *time.Time               `json:"idle_since"`
 	ID                   string                   `json:"id"`
-	AgentID              string                   `json:"agent_id"`
 	DeploymentID         string                   `json:"deployment_id"`
 	ComputerID           *string                  `json:"computer_id"`
 	RootSessionID        string                   `json:"root_session_id"`

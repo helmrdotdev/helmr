@@ -13,7 +13,6 @@ export type Session = {
   };
   slack_channel_id?: string | null;
   id: string;
-  agent_id: string;
   deployment_id: string;
   computer_id: string | null;
   root_session_id: string;
@@ -95,7 +94,7 @@ export type ListSessionsResponse = {
 export async function listSessions(options: {
   projectID: string;
   environmentID: string;
-  agentID?: string | undefined;
+  agent?: string | undefined;
   statuses?: SessionStatus[] | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
@@ -104,7 +103,7 @@ export async function listSessions(options: {
     throw new Error("Session project and environment are required");
   }
   const params = new URLSearchParams();
-  if (options.agentID) params.set("agent_id", options.agentID);
+  if (options.agent) params.set("agent", options.agent);
   for (const status of options.statuses ?? []) params.append("status", status);
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));

@@ -62,17 +62,15 @@ SELECT s.environment_id, s.id, s.agent_id, s.deployment_id, s.trigger_key, s.cro
 JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
 JOIN environments e ON e.id=s.environment_id
 WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3
-AND ($4::uuid IS NULL OR s.agent_id=$4)
-AND ($5::text IS NULL OR a.key=$5)
-AND ($6::uuid IS NULL OR (s.agent_id,s.id)>($7::uuid,$6::uuid))
-ORDER BY s.agent_id,s.id LIMIT $8
+AND ($4::text IS NULL OR a.key=$4)
+AND ($5::uuid IS NULL OR (s.agent_id,s.id)>($6::uuid,$5::uuid))
+ORDER BY s.agent_id,s.id LIMIT $7
 `
 
 type ListSchedulesParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	AgentID       pgtype.UUID `json:"agent_id"`
 	Agent         pgtype.Text `json:"agent"`
 	AfterID       pgtype.UUID `json:"after_id"`
 	AfterAgentID  pgtype.UUID `json:"after_agent_id"`
@@ -89,7 +87,6 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.AgentID,
 		arg.Agent,
 		arg.AfterID,
 		arg.AfterAgentID,

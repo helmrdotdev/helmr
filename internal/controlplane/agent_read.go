@@ -45,14 +45,6 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
 		return
 	}
-	var agentID uuid.UUID
-	if value := r.URL.Query().Get("agent_id"); value != "" {
-		agentID, err = ids.Parse(value)
-		if err != nil {
-			s.writeAgentHTTPError(w, agent.ErrInvalidInput)
-			return
-		}
-	}
 	var key *string
 	if r.URL.Query().Has("key") {
 		value := r.URL.Query().Get("key")
@@ -68,7 +60,7 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	result, err := agent.ListSessions(r.Context(), s.tx, caller, agent.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, AgentID: agentID, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
+	result, err := agent.ListSessions(r.Context(), s.tx, caller, agent.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
@@ -178,7 +170,7 @@ func agentOptionalID(id *uuid.UUID) *string {
 	return &value
 }
 func agentSessionResponse(v agent.SessionView) api.AgentSession {
-	result := api.AgentSession{AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), AgentID: v.AgentID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
 	result.Activity = agentActivityResponse(v.Activity)
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {
@@ -279,7 +271,7 @@ func parseSessionListCursor(r *http.Request, env uuid.UUID) (uuid.UUID, string, 
 	filters := url.Values{}
 	for name, entries := range values {
 		switch name {
-		case "cursor", "limit", "agent", "agent_id", "key", "status", "parent_session_id", "requester_session_id":
+		case "cursor", "limit", "agent", "key", "status", "parent_session_id", "requester_session_id":
 		default:
 			return uuid.Nil(), "", agent.ErrInvalidInput
 		}
@@ -295,9 +287,6 @@ func parseSessionListCursor(r *http.Request, env uuid.UUID) (uuid.UUID, string, 
 			filters[name] = append([]string(nil), entries...)
 			sort.Strings(filters[name])
 		}
-	}
-	if values.Has("agent") && values.Has("agent_id") {
-		return uuid.Nil(), "", agent.ErrInvalidInput
 	}
 	filter := filters.Encode()
 	if !values.Has("cursor") {

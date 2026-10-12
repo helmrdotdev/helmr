@@ -17,7 +17,7 @@ test("loads a Session from the scoped read API", async () => {
     requestedURL = String(input);
     return Response.json({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      agent_id: "operator",
+      agent: "operator",
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "open",
       created_at: "2026-07-25T00:00:00Z",
@@ -117,6 +117,6 @@ test("question CLI instructions bind origin, scope and exact question without in
 test("Agent navigation filters Sessions by stable Agent identity without a Deployment filter", async () => {
   let url = "";
   globalThis.fetch = (async (input: RequestInfo | URL) => { url = String(input); return Response.json({ sessions: [] }); }) as typeof fetch;
-  await listSessions({ projectID: "p", environmentID: "e", agentID: "stable-agent", limit: 100 });
-  expect(url).toBe("/api/projects/p/environments/e/sessions?agent_id=stable-agent&limit=100");
+  await listSessions({ projectID: "p", environmentID: "e", agent: "stable-agent", limit: 100 });
+  expect(url).toBe("/api/projects/p/environments/e/sessions?agent=stable-agent&limit=100");
 });

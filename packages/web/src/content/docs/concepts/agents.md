@@ -176,6 +176,19 @@ restart or upgrade either resource. An Agent can remain visible in the resource
 catalog while having no definition in the current Deployment; it cannot create a
 new Session until a Deployment containing that definition is promoted.
 
+The identifier declared as `agent({ id: "support" })` is the public Agent
+identifier within its Environment. Use `support` in the CLI, REST API and SDK
+to inspect definitions or find Sessions and Schedules across Deployments.
+
+In the Console, open **Agents** to manage Slack Connections and inspect Sessions
+and Schedule activations. The list initially shows current Agents; choose
+**All Agents** to include identities absent from the current Deployment, even
+when the Environment has no current Deployment. Registration alone does not mean
+an Agent has ever been active. Existing connections remain manageable by an
+organization owner or admin.
+
+Deployment details are read-only snapshots. Follow an Agent or Template link
+there to inspect that exact definition; Session and Computer links also preserve
+their original Deployment. Promote from the Deployment list to change current.
 Read access to definitions and history does not grant permission to create or
-control work. The Console exposes creation and management actions only when the
-selected definition is available and the caller has the required permission.
+control work.

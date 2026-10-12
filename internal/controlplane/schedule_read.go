@@ -26,7 +26,6 @@ const (
 
 type scheduleListCursor struct {
 	FilterAgent   string `json:"filter_agent,omitempty"`
-	FilterAgentID string `json:"filter_agent_id,omitempty"`
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id"`
 	AgentID       string `json:"agent_id"`
@@ -44,7 +43,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	limit, cursor, exactAgentID, err := parseScheduleListQuery(
+	limit, cursor, err := parseScheduleListQuery(
 		r,
 		scope.ProjectID,
 		scope.EnvironmentID,
@@ -65,16 +64,10 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		}
 		afterID = pgvalue.UUID(id)
 	}
-	agentID := pgtype.UUID{}
-	if exactAgentID != nil {
-		id, _ := ids.Parse(*exactAgentID)
-		agentID = pgvalue.UUID(id)
-	}
 	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		AgentID:       agentID,
 		Agent:         pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
 		AfterAgentID:  afterAgent,
 		AfterID:       afterID,
@@ -104,7 +97,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeScheduleListCursor(scheduleListCursor{
-			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgentID: r.URL.Query().Get("agent_id"), FilterAgent: r.URL.Query().Get("agent"),
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgent: r.URL.Query().Get("agent"),
 			AgentID: pgvalue.UUIDString(last.AgentSchedule.AgentID), ScheduleID: pgvalue.UUIDString(last.AgentSchedule.ID),
 		})
 		if err != nil {
@@ -120,36 +113,26 @@ func parseScheduleListQuery(
 	r *http.Request,
 	projectID string,
 	environmentID string,
-) (int32, *scheduleListCursor, *string, error) {
+) (int32, *scheduleListCursor, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "agent" && name != "agent_id" && name != "cursor" && name != "limit" {
-			return 0, nil, nil, fmt.Errorf("query parameter %q is not supported", name)
+		if name != "agent" && name != "cursor" && name != "limit" {
+			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
-			return 0, nil, nil, fmt.Errorf("query parameter %q must appear once", name)
+			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
 		}
 	}
 	if values.Has("agent") {
-		if values.Has("agent_id") {
-			return 0, nil, nil, errors.New("agent and agent_id are mutually exclusive")
-		}
 		if err := api.ValidateDefinitionID(values.Get("agent")); err != nil {
-			return 0, nil, nil, err
+			return 0, nil, err
 		}
-	}
-	var filter *string
-	if raw := values.Get("agent_id"); raw != "" {
-		if ids.Validate(raw) != nil {
-			return 0, nil, nil, errors.New("invalid agent ID")
-		}
-		filter = &raw
 	}
 	limit := scheduleListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || parsed < 1 || parsed > int64(scheduleListMaxLimit) {
-			return 0, nil, nil, fmt.Errorf(
+			return 0, nil, fmt.Errorf(
 				"limit must be an integer in [1,%d]",
 				scheduleListMaxLimit,
 			)
@@ -158,25 +141,25 @@ func parseScheduleListQuery(
 	}
 	rawCursor := values.Get("cursor")
 	if rawCursor == "" {
-		return limit, nil, filter, nil
+		return limit, nil, nil
 	}
 	cursor, err := decodeScheduleListCursor(rawCursor)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, err
 	}
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
-		return 0, nil, nil, errors.New("schedule cursor belongs to another scope")
+		return 0, nil, errors.New("schedule cursor belongs to another scope")
 	}
 	if err := ids.Validate(cursor.AgentID); err != nil {
-		return 0, nil, nil, errors.New("schedule cursor is invalid")
+		return 0, nil, errors.New("schedule cursor is invalid")
 	}
 	if ids.Validate(cursor.ScheduleID) != nil {
-		return 0, nil, nil, errors.New("schedule cursor is invalid")
+		return 0, nil, errors.New("schedule cursor is invalid")
 	}
-	if cursor.FilterAgentID != values.Get("agent_id") || cursor.FilterAgent != values.Get("agent") {
-		return 0, nil, nil, errors.New("schedule cursor belongs to another filter")
+	if cursor.FilterAgent != values.Get("agent") {
+		return 0, nil, errors.New("schedule cursor belongs to another filter")
 	}
-	return limit, &cursor, filter, nil
+	return limit, &cursor, nil
 }
 
 func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {
@@ -248,8 +231,8 @@ func scheduleResponse(row db.AgentSchedule, name string) (api.ScheduleResponse, 
 		return api.ScheduleResponse{}, errors.New("schedule identity or interval is invalid")
 	}
 	result := api.ScheduleResponse{
-		Agent: name,
-		ID:    pgvalue.UUIDString(row.ID), AgentID: pgvalue.UUIDString(row.AgentID),
+		Agent:        name,
+		ID:           pgvalue.UUIDString(row.ID),
 		DeploymentID: pgvalue.UUIDString(row.DeploymentID), TriggerKey: row.TriggerKey,
 		Cron: api.ScheduleCron{Pattern: row.Cron, Timezone: row.Timezone}, Input: row.Input,
 		ActiveFrom: row.ActiveFrom.Time.UTC(), ActiveUntil: pgvalue.TimePtr(row.ActiveUntil),

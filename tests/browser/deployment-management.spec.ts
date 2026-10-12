@@ -20,7 +20,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
     else if (path === `${base}/deployments`) json = { deployments: [deployment] };
     else if (path === `${base}/deployments/${deploymentID}`) json = deployment;
     else if (path === `${base}/deployments/current`) json = { ...deployment, id: current };
-    else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: [{ agent: "assistant", template: "browser", agent_id: "00000000-0000-7000-8000-000000000601" }] };
+    else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: [{ agent: "assistant", template: "browser" }] };
     else if (path.endsWith("/turns")) json = { turns: [] };
     else if (path.endsWith("/events")) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
@@ -29,7 +29,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
 }
 
 
-for (const view of ["list", "detail"] as const) {
+for (const view of ["list"] as const) {
   test(`Deployment ${view} preserves promotion with confirmation and scope`, async ({ page }) => {
     await catalog(page, undefined, "another-deployment");
     const requests: string[] = [];
@@ -38,8 +38,8 @@ for (const view of ["list", "detail"] as const) {
       await route.fulfill({ json: { id: deploymentID, version: "test-version", created_at: now, bundle_digest: `sha256:${"b".repeat(64)}` } });
       await page.route(`**${base}/deployments/current`, route => route.fulfill({ json: { id: deploymentID, version: "test-version", created_at: now, bundle_digest: `sha256:${"b".repeat(64)}` } }));
     });
-    await page.goto(view === "list" ? "/deployments" : `/deployments/${deploymentID}`);
-    if (view === "list") await page.getByRole("button", { name: "Actions for test-version" }).click();
+    await page.goto("/deployments");
+    await page.getByRole("button", { name: "Actions for test-version" }).click();
     await page.getByRole("button", { name: "Promote", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Promote Deployment" });
     await expect(dialog).toContainText("Existing Sessions keep their pinned Deployment");
@@ -86,7 +86,7 @@ test("Computer exposes independently paged Sessions and Commands with pinned Tem
   await expect(page.getByText("unreconciled", { exact: true })).toBeVisible();
   await expect(page.getByText("running", { exact: true })).toBeVisible();
   const templateLink = page.getByRole("link", { name: "browser", exact: true });
-  await expect(templateLink).toHaveAttribute("href", new RegExp(`/templates/browser\\?.*deployment_id=${deploymentID}`));
+  await expect(templateLink).toHaveAttribute("href", new RegExp(`/deployments/${deploymentID}/templates/browser\\?`));
   await page.getByRole("button", { name: "Load more sessions", exact: true }).click();
   await expect(page.getByRole("button", { name: "Load more sessions", exact: true })).toHaveCount(0);
   expect(requestPaths.some(path => path.endsWith("/sessions?cursor=sessions-page-2"))).toBe(true);

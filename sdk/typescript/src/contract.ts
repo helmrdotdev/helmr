@@ -55,7 +55,6 @@ export interface Session {
   readonly closeAfterIdle: Duration
   readonly idleSince: string | null
   readonly id: string
-  readonly agentId: string
   readonly deploymentId: string
   readonly computerId: string | null
   readonly rootSessionId: string

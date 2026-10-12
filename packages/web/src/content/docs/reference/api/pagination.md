@@ -35,7 +35,7 @@ Agent and Template pages also return `deployment_id`. A resource cursor keeps th
 Deployment its first page selected, even if a newer Deployment is promoted.
 
 Exact lookups are not paged: `key` on `/v1/computers`, `name` on
-`/v1/secrets`, and `agent` or `agent_id` with `key` on `/v1/sessions`. Do not send
+`/v1/secrets`, and `agent` with `key` on `/v1/sessions`. Do not send
 `cursor` or `limit` with them; the SDK rejects the combination.
 
 In the SDK, list methods return `{ items, nextCursor? }`; Agent/Template pages also

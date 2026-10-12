@@ -10,8 +10,8 @@ async function openAgent(page: Page) {
   const demo = page.getByRole("row").filter({ hasText: "Demo" });
   await demo.getByRole("button", { name: "Use", exact: true }).click();
   await expect(demo.getByText("Current", { exact: true })).toBeVisible();
-  await page.goto("/deployments/00000000-0000-7000-8000-000000000501");
-  await page.getByRole("button", { name: "Slack connection", exact: true }).click();
+  await page.goto("/agents/demo-agent");
+  await page.getByRole("button", { name: "Manage Slack connection", exact: true }).click();
 }
 const publication = (status: string, configured = true) => ({
   id: "publication-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
@@ -51,7 +51,7 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
   expect(writes).toEqual([
     { path: endpoint, body: {} },
     { path: `${endpoint}/publication-A/credentials`, body: { client_id: "client-A", client_secret: "synthetic-client-secret", signing_secret: "synthetic-signing-secret" } },
-    { path: `${endpoint}/publication-A/authorize`, body: { return_to: "/deployments/00000000-0000-7000-8000-000000000501" } },
+    { path: `${endpoint}/publication-A/authorize`, body: { return_to: "/agents/demo-agent" } },
   ]);
 });
 
@@ -89,7 +89,7 @@ test("Agent reauthorization keeps its app and workspace identity", async ({ page
   await expect(dialog.getByLabel("Client ID", { exact: true })).toHaveAttribute("readonly", "");
   await dialog.getByRole("button", { name: "Reauthorize in Slack" }).click();
   await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=repair");
-  expect(starts).toEqual([{ path: `${endpoint}/publication-A/authorize`, body: { return_to: "/deployments/00000000-0000-7000-8000-000000000501" } }]);
+  expect(starts).toEqual([{ path: `${endpoint}/publication-A/authorize`, body: { return_to: "/agents/demo-agent" } }]);
 });
 
 test("Slack callback removes credentials from the URL and reports a changed account", async ({ page }) => {

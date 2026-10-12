@@ -9,7 +9,7 @@ sidebarLabel: session
 ```text
 helmr session create AGENT [--text TEXT | --input-json JSON | --input-file FILE]
     [--computer COMPUTER_ID] [--key KEY] [--idempotency-key KEY] [--slack-channel CHANNEL_ID] [--json]
-helmr session list [--agent AGENT | --agent-id UUID] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
+helmr session list [--agent AGENT] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
     [--status STATUS] [--limit N] [--cursor CURSOR] [--json]
 helmr session get SESSION_ID [--json]
 helmr session enqueue SESSION_ID (--text TEXT | --input-json JSON | --input-file FILE) [--idempotency-key KEY] [--json]
@@ -72,7 +72,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 
 | Command | Description |
 | --- | --- |
-| `list` | One page of Sessions. Text output: `ID AGENT_UUID STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
+| `list` | One page of Sessions. Text output: `ID AGENT STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
 | `get` | Session state, including the Computer and current holds. Text output includes `hold_id`, `hold_session_id` (the Session that owns the hold), `hold_scope` and `hold_reason` for each hold. |
 | `enqueue` | Always admits a new Turn. Prints `session_id`, `turn_id` and `sequence`. |
 
@@ -81,8 +81,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 | Flag | Description |
 | --- | --- |
 | `--agent AGENT` | Filter by the identifier declared in code, even if absent from current. |
-| `--agent-id UUID` | Filter by stable Agent UUID; mutually exclusive with `--agent`. |
-| `--key KEY` | Filter by Session key. Requires `--agent` or `--agent-id`. |
+| `--key KEY` | Filter by Session key. Requires `--agent`. |
 | `--parent-session SESSION_ID` | Sessions owned by this parent. |
 | `--requester-session SESSION_ID` | Sessions requested by this Session. |
 | `--status STATUS` | `open`, `closing`, `closed` or `cancelled`. Repeat the flag or separate values with commas. |

@@ -2,7 +2,7 @@ import { request } from "./api";
 
 export type Schedule = {
   id: string;
-  agent_id: string;
+  agent: string;
   deployment_id: string;
   trigger_key: string;
   input: unknown;
@@ -22,8 +22,11 @@ export type ScheduleScope = {
   environmentID: string;
 };
 
-export async function listSchedules(scope: ScheduleScope, cursor?: string): Promise<ListSchedulesResponse> {
-  const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+export async function listSchedules(scope: ScheduleScope, cursor?: string, agent?: string): Promise<ListSchedulesResponse> {
+  const query = new URLSearchParams();
+  if (cursor) query.set("cursor", cursor);
+  if (agent) query.set("agent", agent);
+  const suffix = query.size ? `?${query}` : "";
   return request<ListSchedulesResponse>(schedulePath(scope) + suffix);
 }
 

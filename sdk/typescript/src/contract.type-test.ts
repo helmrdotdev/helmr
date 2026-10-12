@@ -69,6 +69,7 @@ export function assertGreenfieldTypes(): void {
   const client = null as unknown as HelmrClient
   client.agents.get("operator").then((info) => {
     info.agent satisfies string
+    // @ts-expect-error Agent UUID is not a public identifier.
     info.agentId satisfies string
     info.deploymentId satisfies string
   })
@@ -153,8 +154,8 @@ function sessionLookupTypes(client: HelmrClient) {
   // @ts-expect-error Exact key lookup cannot page.
   client.sessions.list({ agent: "worker", key: "thread", cursor: "next" })
   // @ts-expect-error Exact key lookup cannot add lifecycle filters.
-  client.sessions.list({ agentId: "id", key: "thread", status: "open" })
-  // @ts-expect-error Authored and UUID Agent selectors are mutually exclusive.
+  client.sessions.list({ agent: "worker", key: "thread", status: "open" })
+  // @ts-expect-error Agent UUID selector is not supported.
   client.sessions.list({ agent: "worker", agentId: "id" })
 }
 void sessionLookupTypes

@@ -12,7 +12,7 @@ helmr agent get AGENT [--deployment DEPLOYMENT_ID] [--json]
 ```
 
 `AGENT` is the `id` declared in `agent({ id: "support", ... })`. The response
-calls this value `agent`; `agent_id` is its stable server-assigned UUID.
+calls this value `agent`. It is the only public Agent identifier.
 Agent reads also include the default `template` and resolved `deployment_id`.
 Use `helmr session create support` to create a Session.
 

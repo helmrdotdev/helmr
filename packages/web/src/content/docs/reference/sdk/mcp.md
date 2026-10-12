@@ -213,7 +213,7 @@ Result: `{ "id", "sessionId", "status": "accepted", "holdId" }`.
 | --- | --- | --- |
 | `sessionId` | string | Required. |
 
-Result: one Session with `id`, `agent`, `template`, `agent_id`, `deployment_id`, `computer_id`,
+Result: one Session with `id`, `agent`, `template`, `deployment_id`, `computer_id`,
 `root_session_id`, `parent_session_id`, `requester_session_id`, `initial_turn`
 (`{ id, status }` or `null`), `key?`, `slack_channel_id?`, `status`,
 `close_after_idle_ms`, `idle_since`, `holds` and `created_at`. Inspection does

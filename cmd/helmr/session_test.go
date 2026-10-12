@@ -23,7 +23,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/"+testSessionID:
 			_ = json.NewEncoder(w).Encode(api.AgentSession{
-				ID: testSessionID, AgentID: testSessionID, DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Status: "closing",
+				ID: testSessionID, AgentDefinitionID: "worker", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Status: "closing",
 				Holds: []api.AgentSessionHold{{ID: holdID, Scope: "session", Reason: "interrupted"}},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/turns/"+testSessionID+"/messages":
@@ -64,7 +64,8 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "session_status: closing") ||
-		!strings.Contains(out.String(), "agent_id: "+testSessionID) ||
+		strings.Contains(out.String(), "agent_id:") ||
+		!strings.Contains(out.String(), "agent: worker") ||
 		!strings.Contains(out.String(), "hold_scope: session") ||
 		!strings.Contains(out.String(), "hold_id: "+holdID) ||
 		!strings.Contains(out.String(), "hold_reason: interrupted") {

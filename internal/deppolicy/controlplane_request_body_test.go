@@ -49,6 +49,7 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"decodeDeploymentListCursor":         "opaque cursor, fixed message",
 	"decodeInvitationListCursor":         "opaque cursor, fixed message",
 	"decodeProjectListCursor":            "opaque cursor, fixed message",
+	"decodeRetainedAgentCursor":          "opaque cursor, fixed message",
 	"decodeScheduleListCursor":           "opaque cursor, fixed message",
 	"decodeSecretListCursor":             "opaque cursor, fixed message",
 	"parseSessionListCursor":             "opaque cursor, fixed message",

@@ -29,7 +29,6 @@ export function parseSession(value: unknown): Session {
   return Object.freeze({
     activity: parseSessionActivity(v["activity"]),
     id: resourceID(v["id"], "Session.id"),
-    agentId: resourceID(v["agent_id"], "Session.agent_id"),
     agent: parseAuthoredIdentifier(v["agent"], "Session.agent"),
     template: parseAuthoredIdentifier(v["template"], "Session.template"),
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),

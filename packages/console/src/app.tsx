@@ -19,7 +19,8 @@ import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { SlackSettings } from "./routes/slack-settings";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
-import { Agents, Templates, AgentDetail, TemplateDetail } from "./routes/definitions";
+import { Templates, AgentDefinitionDetail, TemplateDetail } from "./routes/definitions";
+import { Agents, AgentDetail } from "./routes/agents";
 import { Sessions } from "./routes/sessions";
 import { Computers } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
@@ -285,6 +286,8 @@ export function App() {
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
       <Route path="/agents" component={wrap(Agents)} />
+      <Route path="/deployments/:deployment_id/agents/:agent" component={wrap(AgentDefinitionDetail)} />
+      <Route path="/deployments/:deployment_id/templates/:template" component={wrap(TemplateDetail)} />
       <Route path="/agents/:agent" component={wrap(AgentDetail)} />
       <Route path="/templates" component={wrap(Templates)} />
       <Route path="/templates/:template" component={wrap(TemplateDetail)} />

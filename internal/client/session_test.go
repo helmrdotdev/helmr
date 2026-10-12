@@ -127,7 +127,7 @@ func TestSessionReads(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case prefix + "/sessions/" + testSessionID:
-					_, _ = io.WriteString(w, `{"id":"`+testSessionID+`","status":"closing","agent_id":"`+testTurnID+`","holds":[{"id":"`+testHoldID+`","scope":"session","reason":"interrupted"}]}`)
+					_, _ = io.WriteString(w, `{"id":"`+testSessionID+`","status":"closing","agent":"`+testTurnID+`","holds":[{"id":"`+testHoldID+`","scope":"session","reason":"interrupted"}]}`)
 				case prefix + "/sessions/" + testSessionID + "/turns/" + testTurnID:
 					result := ""
 					if explicitResult {
@@ -149,7 +149,7 @@ func TestSessionReads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if session.Status != "closing" || session.AgentID != testTurnID || len(session.Holds) != 1 || session.Holds[0].ID != testHoldID || session.Holds[0].Reason != "interrupted" {
+			if session.Status != "closing" || session.AgentDefinitionID != testTurnID || len(session.Holds) != 1 || session.Holds[0].ID != testHoldID || session.Holds[0].Reason != "interrupted" {
 				t.Fatalf("session = %+v", session)
 			}
 			for _, explicit := range []bool{false, true} {
@@ -266,7 +266,7 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 			return err
 		},
 		func() error {
-			_, err := c.ListSessions(ctx, SessionListOptions{AgentID: "invalid", Statuses: []string{"open"}})
+			_, err := c.ListSessions(ctx, SessionListOptions{Agent: "bad/id", Statuses: []string{"open"}})
 			return err
 		},
 	} {

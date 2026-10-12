@@ -382,20 +382,20 @@ describe("HelmrClient Deployments", () => {
 
 describe("HelmrClient Schedules", () => {
   const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-  const schedule = { id, agent:"reporter", agent_id:id, deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
+  const schedule = { id, agent:"reporter", deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
   test("retrieves pinned activations and pages Agent-filtered triggers", async () => {
     const requests:string[]=[]
     const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
       requests.push(String(input)); return String(input).includes("?") ? Response.json({schedules:[schedule],next_cursor:"next"}) : Response.json(schedule)
     }) as typeof fetch})
-    expect(await client.schedules.get(id)).toMatchObject({id,agentId:id,deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
-    const page = await client.schedules.list({agentId:id,limit:2,cursor:"previous"})
+    expect(await client.schedules.get(id)).toMatchObject({id,agent:"reporter",deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
+    const page = await client.schedules.list({agent:"reporter",limit:2,cursor:"previous"})
     expect(page.items).toHaveLength(1)
     expect(page.nextCursor).toBe("next")
-    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent_id=${id}&cursor=previous&limit=2`)
+    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent=reporter&cursor=previous&limit=2`)
   })
   test("requires the pinned Agent and Deployment identities",async()=>{
-    for (const field of ["id","agent_id","deployment_id"] as const) {
+    for (const field of ["id","deployment_id"] as const) {
       const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...schedule,[field]:"invalid"})) as typeof fetch})
       await expect(client.schedules.get(id)).rejects.toThrow("ID")
     }
@@ -406,7 +406,6 @@ describe("HelmrClient Sessions", () => {
   const session = {
     agent: "worker", template: "machine",
     id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    agent_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
     deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
     root_session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     initial_turn: null, activity: { process: null },
@@ -455,7 +454,7 @@ describe("HelmrClient Sessions", () => {
       status: "unknown",
     })).rejects.toThrow("Session list status is invalid")
     await expect(client.sessions.list({
-      agentId: session.agent_id,
+      agent: "worker",
       key: "thread:1",
       // @ts-expect-error the exact key lookup does not filter by status.
       status: "open",
@@ -480,4 +479,12 @@ describe("HelmrClient Sessions", () => {
     )
   })
 
+})
+
+test("removed Agent UUID selectors fail before transport instead of widening a list", async () => {
+  let calls = 0
+  const client = new HelmrClient({ apiKey: "key", fetch: (async () => { calls++; throw new Error("unexpected request") }) as typeof fetch })
+  await expect(client.sessions.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Session list query")
+  await expect(client.schedules.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Schedule list query")
+  expect(calls).toBe(0)
 })

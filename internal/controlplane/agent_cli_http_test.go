@@ -36,10 +36,10 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 			t.Fatal(err)
 		}
 		session, err := cp.RetrieveSession(t.Context(), first.SessionID, scope)
-		if err != nil || session.AgentID == "" || session.ComputerID == nil || session.InitialTurn == nil || session.InitialTurn.ID != first.Turn.TurnID {
+		if err != nil || session.AgentDefinitionID == "" || session.ComputerID == nil || session.InitialTurn == nil || session.InitialTurn.ID != first.Turn.TurnID {
 			t.Fatalf("session=%+v err=%v", session, err)
 		}
-		page, err := cp.ListSessions(t.Context(), client.SessionListOptions{AgentID: session.AgentID, Key: &sessionKey, Statuses: []string{"open"}, Limit: 1, EnvironmentScopeOptions: scope})
+		page, err := cp.ListSessions(t.Context(), client.SessionListOptions{Agent: session.AgentDefinitionID, Key: &sessionKey, Statuses: []string{"open"}, Limit: 1, EnvironmentScopeOptions: scope})
 		if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != session.ID {
 			t.Fatalf("sessions=%+v err=%v", page, err)
 		}

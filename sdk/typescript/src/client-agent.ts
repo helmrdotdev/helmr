@@ -19,7 +19,6 @@ export interface AgentListQuery extends AgentGetQuery {
 
 export interface AgentListItem {
   readonly agent: string
-  readonly agentId: string
   readonly template: string
 }
 
@@ -82,7 +81,6 @@ function parseAgentInfo(value: unknown): AgentInfo {
   validateDefinitionId(id)
   return Object.freeze({
     agent: id,
-    agentId: resourceID(input["agent_id"], "Agent response.agent_id"),
     template: parseTemplate(input["template"]),
     deploymentId: resourceID(input["deployment_id"], "Agent response.deployment_id"),
   })
@@ -93,7 +91,7 @@ function parseAgentListItem(value: unknown): AgentListItem {
   const id = input["agent"]
   if (typeof id !== "string") throw new Error("Agent list item.agent must be a string")
   validateDefinitionId(id)
-  return Object.freeze({ agent: id, agentId: resourceID(input["agent_id"], "Agent list item.agent_id"), template: parseTemplate(input["template"]) })
+  return Object.freeze({ agent: id, template: parseTemplate(input["template"]) })
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {

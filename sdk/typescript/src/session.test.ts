@@ -171,7 +171,7 @@ describe("Session lifecycle client", () => {
     const { client } = transport([
       {
         id: sessionId,
-        agent_id: holdId, agent: "worker", template: "machine",
+        agent: "worker", template: "machine",
         root_session_id: sessionId,
         requester_session_id: null,
         initial_turn: { id: turnId, status: "queued" },
