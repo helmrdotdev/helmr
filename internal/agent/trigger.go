@@ -19,7 +19,7 @@ import (
 // occurrence within this window of its scheduled time starts.
 const TriggerLateness = 5 * time.Minute
 
-type scheduleActivation struct {
+type triggerActivation struct {
 	slackChannelID                     *uuid.UUID
 	slackRouteActive                   bool
 	environment, id, agent, deployment uuid.UUID
@@ -29,24 +29,24 @@ type scheduleActivation struct {
 	until                              *time.Time
 }
 
-// scheduleEvaluation selects only the latest due instant inside the activation
+// triggerEvaluation selects only the latest due instant inside the activation
 // and recovery grace. At most the stored cursor and that instant are evaluated;
 // outages never expand into an unbounded sequence of admissions.
-type scheduleEvaluation struct {
+type triggerEvaluation struct {
 	latest *time.Time
 	missed *time.Time
 	next   time.Time
 }
 
-func evaluateSchedule(s scheduleActivation, now time.Time) (scheduleEvaluation, error) {
+func evaluateTrigger(s triggerActivation, now time.Time) (triggerEvaluation, error) {
 	end := now
 	if s.until != nil && !end.Before(*s.until) {
 		end = s.until.Add(-time.Microsecond)
 	}
 	if s.next.After(end) {
-		return scheduleEvaluation{}, nil
+		return triggerEvaluation{}, nil
 	}
-	result := scheduleEvaluation{}
+	result := triggerEvaluation{}
 	lower := now.Add(-TriggerLateness)
 	if lower.Before(s.next) {
 		lower = s.next
@@ -76,10 +76,10 @@ func evaluateSchedule(s scheduleActivation, now time.Time) (scheduleEvaluation, 
 	return result, nil
 }
 
-// EvaluateSchedule serializes with Environment promotion. Occurrence identity,
+// EvaluateTrigger serializes with Environment promotion. Occurrence identity,
 // admission (or its rejected/missed disposition), and the next cursor commit
 // together. The activation's pinned definition is never replaced by current defaults.
-func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, env, id uuid.UUID) error {
+func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, env, id uuid.UUID) error {
 	if env == uuid.Nil() || id == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -106,7 +106,7 @@ func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTru
 		if err != nil {
 			return err
 		}
-		s := scheduleActivation{environment: env, id: id, slackChannelID: route, slackRouteActive: routeActive}
+		s := triggerActivation{environment: env, id: id, slackChannelID: route, slackRouteActive: routeActive}
 		err = tx.QueryRow(ctx, `SELECT a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,a.active_from,a.active_until,a.next_fire_at FROM trigger_activations a
  JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
  WHERE a.environment_id=$1 AND a.id=$2 FOR NO KEY UPDATE OF a`, env, id).Scan(&s.agent, &s.deployment, &s.trigger, &s.cron, &s.timezone, &s.input, &s.from, &s.until, &s.next)
@@ -120,7 +120,7 @@ func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTru
 		if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 			return err
 		}
-		evaluation, err := evaluateSchedule(s, now)
+		evaluation, err := evaluateTrigger(s, now)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTru
 			if evaluation.latest == nil {
 				reason = "lateness_exceeded"
 			}
-			if err = recordScheduleOccurrence(ctx, tx, s, *evaluation.missed, Admission{}, "missed", reason, now); err != nil {
+			if err = recordTriggerOccurrence(ctx, tx, s, *evaluation.missed, Admission{}, "missed", reason, now); err != nil {
 				return err
 			}
 		}
@@ -169,7 +169,7 @@ func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTru
 				} else if err = admissionTX.Commit(ctx); err != nil {
 					return err
 				}
-				if err = recordScheduleOccurrence(ctx, tx, s, *evaluation.latest, receipt, disposition, reason, now); err != nil {
+				if err = recordTriggerOccurrence(ctx, tx, s, *evaluation.latest, receipt, disposition, reason, now); err != nil {
 					return err
 				}
 			}
@@ -179,7 +179,7 @@ func EvaluateSchedule(ctx context.Context, pool db.TxBeginner, trust ComputerTru
 	})
 }
 
-func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, s scheduleActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
+func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return Admission{}, ErrSlackChannelUnavailable
 	}
@@ -218,7 +218,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	}
 	digest, err := digestJSON(s.input)
 	if err != nil {
-		return Admission{}, fmt.Errorf("schedule input: %w", err)
+		return Admission{}, fmt.Errorf("trigger input: %w", err)
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computer, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
 		return Admission{}, err
@@ -246,7 +246,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	}
 	return receipt, nil
 }
-func recordScheduleOccurrence(ctx context.Context, tx pgx.Tx, s scheduleActivation, at time.Time, a Admission, disposition, reason string, now time.Time) error {
+func recordTriggerOccurrence(ctx context.Context, tx pgx.Tx, s triggerActivation, at time.Time, a Admission, disposition, reason string, now time.Time) error {
 	_, err := tx.Exec(ctx, `INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,session_id,turn_id,disposition,reason,evaluated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10) ON CONFLICT(environment_id,agent_id,trigger_key,scheduled_at) DO NOTHING`, s.environment, s.id, s.agent, s.trigger, at, nullableID(a.SessionID), nullableID(a.TurnID), disposition, reason, now)
 	return err
 }

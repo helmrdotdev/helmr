@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-type Schedule = {
+type Trigger = {
   id: string;
   agent: string;
   deployment_id: string;
@@ -12,24 +12,24 @@ type Schedule = {
   next_fire_at?: string;
 };
 
-type ListSchedulesResponse = {
-  schedules: Schedule[];
+type ListTriggersResponse = {
+  triggers: Trigger[];
   next_cursor?: string;
 };
 
-type ScheduleScope = {
+type TriggerScope = {
   projectID: string;
   environmentID: string;
 };
 
-export async function listSchedules(scope: ScheduleScope, cursor?: string, agent?: string): Promise<ListSchedulesResponse> {
+export async function listTriggers(scope: TriggerScope, cursor?: string, agent?: string): Promise<ListTriggersResponse> {
   const query = new URLSearchParams();
   if (cursor) query.set("cursor", cursor);
   if (agent) query.set("agent", agent);
   const suffix = query.size ? `?${query}` : "";
-  return request<ListSchedulesResponse>(schedulePath(scope) + suffix);
+  return request<ListTriggersResponse>(triggerPath(scope) + suffix);
 }
 
-function schedulePath(scope: ScheduleScope): string {
-  return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}/schedules`;
+function triggerPath(scope: TriggerScope): string {
+  return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}/triggers`;
 }

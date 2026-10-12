@@ -178,10 +178,10 @@ new Session until a Deployment containing that definition is promoted.
 
 The identifier declared as `agent({ id: "support" })` is the public Agent
 identifier within its Environment. Use `support` in the CLI, REST API and SDK
-to inspect definitions or find Sessions and Schedules across Deployments.
+to inspect definitions or find Sessions and Triggers across Deployments.
 
 In the Console, open **Agents** to manage Slack Connections and inspect Sessions
-and Schedule activations. The list initially shows current Agents; choose
+and Trigger activations. The list initially shows current Agents; choose
 **All Agents** to include identities absent from the current Deployment, even
 when the Environment has no current Deployment. Registration alone does not mean
 an Agent has ever been active. Existing connections remain manageable by an

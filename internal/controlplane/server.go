@@ -486,8 +486,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/close", s.closeSessionHTTP)
 		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
 		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.Get("/projects/{project}/environments/{environment}/schedules", s.listSchedules)
-		r.Get("/projects/{project}/environments/{environment}/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/projects/{project}/environments/{environment}/triggers", s.listTriggers)
+		r.Get("/projects/{project}/environments/{environment}/triggers/{triggerID}", s.getTrigger)
 		r.Get("/projects/{project}/environments/{environment}/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{project}/environments/{environment}/secrets", s.createSecret)
@@ -552,8 +552,8 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
 		r.Post("/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
 		r.Post("/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.Get("/schedules", s.listSchedules)
-		r.Get("/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/triggers", s.listTriggers)
+		r.Get("/triggers/{triggerID}", s.getTrigger)
 		r.Get("/templates", s.listTemplateDefinitions)
 		r.Get("/templates/{template}", s.getTemplateDefinition)
 

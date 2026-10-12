@@ -1,8 +1,8 @@
-# Schedule fixture
+# Scheduled fixture
 
-This isolated deployment tests declarative Schedule admission, firing and archival.
-Promote it only for the Schedule case, then restore the exact prior ordinary bundle
-and archive the omitted Schedule. Do not leave background work in a retained host.
+This isolated deployment tests declarative trigger admission, firing and archival.
+Promote it only for the trigger case, then restore the exact prior ordinary bundle
+and let the omitted trigger's activation close. Do not leave background work in a retained host.
 
 Use `tests/e2e/prepare_project.py OUTPUT --fixtures fixtures/schedule/agents` from
 the Product root to prepare local SDK archives without publication. Managed release

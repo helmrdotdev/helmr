@@ -94,7 +94,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
                 <p class={ui.muted}>Managed in code. Deploy a new version to change this definition.</p>
                 <Show when={"agent" in item() ? item() as AgentDefinition : undefined}>{agent => <>
                   <p>Template: <A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", agent().template, { ...scope(), deploymentID: item().deployment_id })}>{agent().template}</A></p>
-                  <p><A class="text-console-accent hover:text-console-accent-hover" href={agentHref(agent().agent, scope())}>Manage Agent connections, Sessions and schedules</A></p>
+                  <p><A class="text-console-accent hover:text-console-accent-hover" href={agentHref(agent().agent, scope())}>Manage Agent connections, Sessions and triggers</A></p>
                 </>}</Show>
                 <Show when={"resources" in item() ? item() as TemplateDefinition : undefined}>{template => <>
                   <p><Resources item={template()} /></p>

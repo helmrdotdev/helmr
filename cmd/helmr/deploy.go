@@ -342,7 +342,7 @@ func (r cliDeployReporter) DeploymentResult(value api.DeploymentResponse, phase 
 	return err
 }
 
-const promotionEffects = "New Sessions and future schedules now use this Deployment. Agents absent from it no longer accept new independent Sessions or Slack conversations; retained identities, connections and pinned Sessions are unchanged. Inactive schedule intervals are not replayed."
+const promotionEffects = "New Sessions and future triggers now use this Deployment. Agents absent from it no longer accept new independent Sessions or Slack conversations; retained identities, connections and pinned Sessions are unchanged. Inactive trigger intervals are not replayed."
 
 func promoteCommand() *cobra.Command {
 	var projectID string

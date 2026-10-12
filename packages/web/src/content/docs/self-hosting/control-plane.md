@@ -69,6 +69,6 @@ curl -fsS "$CONTROL_PLANE_URL/healthz"
 curl -fsS "$CONTROL_PLANE_URL/readyz"
 ```
 
-`/healthz` reports process liveness. `/readyz` is the traffic-readiness check after the database and schema are ready. Keep at least one dispatcher task when Agents or schedules are used.
+`/healthz` reports process liveness. `/readyz` is the traffic-readiness check after the database and schema are ready. Keep at least one dispatcher task when Agents or triggers are used.
 
 After readiness passes, sign in and finish first-organization setup using the setup token. Then add [workers](/docs/self-hosting/workers) for Agent and Computer execution.

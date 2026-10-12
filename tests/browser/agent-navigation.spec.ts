@@ -31,7 +31,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     else if (path === `${base}/agents/support`) json = { agent: "support", template: "browser", deployment_id: url.searchParams.get("deployment_id") ?? deployment };
     else if (path === `${base}/templates/browser`) json = { template: "browser", resources: { milliCpu: 1000, memoryMiB: 512 }, deployment_id: url.searchParams.get("deployment_id") ?? deployment };
     else if (path === `${base}/agents/support/slack`) json = { publication: null };
-    else if (path === `${base}/schedules`) json = url.searchParams.has("cursor") ? { schedules: [] } : { schedules: [{ id: historical, agent: "support", deployment_id: historical, trigger_key: "daily", cron: { pattern: "0 9 * * *", timezone: "UTC" }, input: [], active_from: now, active_until: now }], next_cursor: "older" };
+    else if (path === `${base}/triggers`) json = url.searchParams.has("cursor") ? { triggers: [] } : { triggers: [{ id: historical, agent: "support", deployment_id: historical, trigger_key: "daily", cron: { pattern: "0 9 * * *", timezone: "UTC" }, input: [], active_from: now, active_until: now }], next_cursor: "older" };
     else if (path === `${base}/sessions`) json = { sessions: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
@@ -39,18 +39,18 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
   return paths;
 }
 
-test("current Agent navigation owns connections and filters schedules and Sessions by authored ID", async ({ page }) => {
+test("current Agent navigation owns connections and filters triggers and Sessions by authored ID", async ({ page }) => {
   const paths = await catalog(page);
   await page.goto(`/agents?${scope}`);
   await expect(page.getByRole("combobox", { name: "Show Agents" })).toHaveValue("current");
   await page.getByRole("link", { name: "support", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/agents/support\\?`));
-  await expect(page.getByRole("heading", { name: "Schedules", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible();
   await expect(page.getByText("daily", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Load more schedules" }).click();
-  await expect(page.getByRole("button", { name: "Load more schedules" })).toHaveCount(0);
-  expect(paths.some(path => path.endsWith("/schedules?agent=support"))).toBe(true);
-  expect(paths.some(path => path.endsWith("/schedules?cursor=older&agent=support"))).toBe(true);
+  await page.getByRole("button", { name: "Load more triggers" }).click();
+  await expect(page.getByRole("button", { name: "Load more triggers" })).toHaveCount(0);
+  expect(paths.some(path => path.endsWith("/triggers?agent=support"))).toBe(true);
+  expect(paths.some(path => path.endsWith("/triggers?cursor=older&agent=support"))).toBe(true);
   await page.getByRole("button", { name: "Manage Slack connection" }).click();
   await expect(page.getByRole("dialog", { name: "Slack · support" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
@@ -104,7 +104,7 @@ test("Deployment details are read-only and historical definition links keep exac
   expect(paths.some(path => path.endsWith(`/templates/browser?deployment_id=${historical}`))).toBe(true);
   await page.goto(`/deployments/${historical}?${scope}`);
   await expect(page.getByRole("button", { name: "Events", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Promote|Slack connection|Schedules/ })).toHaveCount(0);
-  expect(paths.some(path => path.includes("/schedules"))).toBe(false);
+  await expect(page.getByRole("button", { name: /Promote|Slack connection|Triggers/ })).toHaveCount(0);
+  expect(paths.some(path => path.includes("/triggers"))).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("deployment-read-only.png"), fullPage: true });
 });

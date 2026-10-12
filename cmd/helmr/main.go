@@ -40,7 +40,7 @@ func newRootCommand() *cobra.Command {
 		agentCommand(),
 		templateCommand(),
 		sessionCommand(),
-		scheduleCommand(),
+		triggerCommand(),
 		computerCommand(),
 		commandCommand(),
 		projectCommand(),

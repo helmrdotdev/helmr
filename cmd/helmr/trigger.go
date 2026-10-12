@@ -8,16 +8,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func scheduleCommand() *cobra.Command {
+func triggerCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "schedule",
-		Short: "Inspect Schedules.",
+		Use:   "trigger",
+		Short: "Inspect Triggers.",
 	}
-	cmd.AddCommand(scheduleListCommand(), scheduleGetCommand())
+	cmd.AddCommand(triggerListCommand(), triggerGetCommand())
 	return cmd
 }
 
-func scheduleListCommand() *cobra.Command {
+func triggerListCommand() *cobra.Command {
 	var agent string
 	var projectID string
 	var environmentID string
@@ -27,7 +27,7 @@ func scheduleListCommand() *cobra.Command {
 	var jsonLines bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List Schedules.",
+		Short: "List Triggers.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if cmd.Flags().Changed("limit") && limit < 1 {
@@ -41,7 +41,7 @@ func scheduleListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
+			response, err := controlPlane.ListTriggers(cmd.Context(), client.ListTriggersOptions{
 				Cursor: cursor, Limit: limit, Agent: agent, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
@@ -51,10 +51,10 @@ func scheduleListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			if jsonLines {
-				return writeJSONLines(cmd.OutOrStdout(), response.Schedules)
+				return writeJSONLines(cmd.OutOrStdout(), response.Triggers)
 			}
-			for _, schedule := range response.Schedules {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.Agent, schedule.TriggerKey)
+			for _, trigger := range response.Triggers {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", trigger.ID, trigger.Agent, trigger.TriggerKey)
 			}
 			if response.NextCursor != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", response.NextCursor)
@@ -63,22 +63,22 @@ func scheduleListCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue a prior Schedule page.")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue a prior Trigger page.")
 	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
-	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Schedules (default 50, maximum 100).")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Triggers (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON Schedule per line.")
+	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON Trigger per line.")
 	cmd.MarkFlagsMutuallyExclusive("json", "jsonl")
 	return cmd
 }
 
-func scheduleGetCommand() *cobra.Command {
+func triggerGetCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "get SCHEDULE",
-		Short: "Show Schedule status.",
+		Short: "Show Trigger status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			controlPlane, err := controlPlaneClient(cmd)
@@ -89,18 +89,18 @@ func scheduleGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			schedule, err := controlPlane.GetSchedule(cmd.Context(), args[0], scope)
+			trigger, err := controlPlane.GetTrigger(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), schedule)
+				return writeJSON(cmd.OutOrStdout(), trigger)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "schedule_id: %s\n", schedule.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", schedule.Agent)
-			fmt.Fprintf(cmd.OutOrStdout(), "trigger: %s\n", schedule.TriggerKey)
-			if schedule.NextFireAt != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "next_fire_at: %s\n", schedule.NextFireAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))
+			fmt.Fprintf(cmd.OutOrStdout(), "trigger_id: %s\n", trigger.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", trigger.Agent)
+			fmt.Fprintf(cmd.OutOrStdout(), "trigger: %s\n", trigger.TriggerKey)
+			if trigger.NextFireAt != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "next_fire_at: %s\n", trigger.NextFireAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))
 			}
 			return nil
 		},

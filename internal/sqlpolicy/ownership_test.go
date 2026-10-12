@@ -114,7 +114,7 @@ var queryFileOwners = map[string]string{
 	"platform_retry_keys.sql":   "internal/idempotency",
 	"projects.sql":              "internal/org",
 	"regions.sql":               "internal/region",
-	"schedule_reads.sql":        "internal/controlplane",
+	"trigger_reads.sql":         "internal/controlplane",
 	"secrets.sql":               "internal/secret",
 	"worker_capacity_hosts.sql": "internal/workergroup",
 	"worker_drain.sql":          "internal/workergroup",

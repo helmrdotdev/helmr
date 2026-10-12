@@ -93,7 +93,7 @@ func TestCommandSurface(t *testing.T) {
 		{"session", "turn", "ask", "get"},
 		{"session", "turn", "ask", "respond"},
 		{"session"},
-		{"schedule"},
+		{"trigger"},
 		{"deployment"},
 		{"session", "get"},
 		{"session", "turn", "send"},
@@ -102,8 +102,8 @@ func TestCommandSurface(t *testing.T) {
 		{"session", "cancel"},
 		{"session", "resume"},
 		{"session", "turn"},
-		{"schedule", "list"},
-		{"schedule", "get"},
+		{"trigger", "list"},
+		{"trigger", "get"},
 	} {
 		if commandByPath(root, path...) == nil {
 			t.Fatalf("command %q is not registered", strings.Join(path, " "))

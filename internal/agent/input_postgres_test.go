@@ -53,10 +53,10 @@ func TestUniformTextInputAdmission(t *testing.T) {
 
 func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	f := newAdmissionFixture(t)
-	id := seedSchedule(t, f, time.Now().UTC().Truncate(time.Minute))
+	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	input := json.RawMessage(`[{"type":"text","text":"scheduled\u0000"}]`)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, input)
-	if err := EvaluateSchedule(t.Context(), f.pool, nil, f.env, id); err != nil {
+	if err := EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte
@@ -65,6 +65,6 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	}
 	canonical, _ := conversation.Input(input)
 	if string(got) != string(canonical) {
-		t.Fatalf("schedule input changed %s", got)
+		t.Fatalf("trigger input changed %s", got)
 	}
 }

@@ -379,24 +379,24 @@ describe("HelmrClient Deployments", () => {
   })
 })
 
-describe("HelmrClient Schedules", () => {
+describe("HelmrClient Triggers", () => {
   const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-  const schedule = { id, agent:"reporter", deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
+  const trigger = { id, agent:"reporter", deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
   test("retrieves pinned activations and pages Agent-filtered triggers", async () => {
     const requests:string[]=[]
     const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
-      requests.push(String(input)); return String(input).includes("?") ? Response.json({schedules:[schedule],next_cursor:"next"}) : Response.json(schedule)
+      requests.push(String(input)); return String(input).includes("?") ? Response.json({triggers:[trigger],next_cursor:"next"}) : Response.json(trigger)
     }) as typeof fetch})
-    expect(await client.schedules.get(id)).toMatchObject({id,agent:"reporter",deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
-    const page = await client.schedules.list({agent:"reporter",limit:2,cursor:"previous"})
+    expect(await client.triggers.get(id)).toMatchObject({id,agent:"reporter",deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:trigger.active_from})
+    const page = await client.triggers.list({agent:"reporter",limit:2,cursor:"previous"})
     expect(page.items).toHaveLength(1)
     expect(page.nextCursor).toBe("next")
-    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent=reporter&cursor=previous&limit=2`)
+    expect(requests[1]).toBe(`https://api.example.test/v1/triggers?agent=reporter&cursor=previous&limit=2`)
   })
   test("requires the pinned Agent and Deployment identities",async()=>{
     for (const field of ["id","deployment_id"] as const) {
-      const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...schedule,[field]:"invalid"})) as typeof fetch})
-      await expect(client.schedules.get(id)).rejects.toThrow("ID")
+      const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...trigger,[field]:"invalid"})) as typeof fetch})
+      await expect(client.triggers.get(id)).rejects.toThrow("ID")
     }
   })
 })
@@ -484,6 +484,6 @@ test("unsupported list query keys fail before transport instead of widening a li
   let calls = 0
   const client = new HelmrClient({ apiKey: "key", fetch: (async () => { calls++; throw new Error("unexpected request") }) as typeof fetch })
   await expect(client.sessions.list({ owner: "someone" } as never)).rejects.toThrow("Unsupported Session list query")
-  await expect(client.schedules.list({ owner: "someone" } as never)).rejects.toThrow("Unsupported Schedule list query")
+  await expect(client.triggers.list({ owner: "someone" } as never)).rejects.toThrow("Unsupported Trigger list query")
   expect(calls).toBe(0)
 })

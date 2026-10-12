@@ -1,14 +1,14 @@
 ---
 title: Triggers
-description: triggers.cron() and the read-only client Schedule methods.
+description: triggers.cron() and the read-only client Trigger methods.
 sidebarLabel: Triggers
 ---
 
 # Triggers
 
 This page lists the trigger declaration API and the client methods that read
-the resulting Schedules. For how triggers fire and how Schedules follow
-Deployments, see [Triggers](/docs/concepts/triggers).
+the Trigger resource. A Trigger is one activation of a declared trigger: each
+promotion starts a new one. For how triggers fire and follow Deployments, see [Triggers](/docs/concepts/triggers).
 
 ## `triggers.cron()`
 
@@ -66,30 +66,30 @@ export const dailyReport = agent({
 Each fire starts an independent Session on a new Computer. The handler receives
 the declared `input`; there is no separate schedule payload.
 
-## Client: Schedules
+## Client: Triggers
 
 ```ts
-client.schedules.get(scheduleId: string, options?): Promise<Schedule>
-client.schedules.list(query?: { agent?: string; cursor?: string; limit?: number }, options?): Promise<CursorPage<Schedule>>
+client.triggers.get(triggerId: string, options?): Promise<Trigger>
+client.triggers.list(query?: { agent?: string; cursor?: string; limit?: number }, options?): Promise<CursorPage<Trigger>>
 ```
 
 `agent` is the identifier declared in code.
-This filter searches retained Schedules even when the
+This filter searches retained Triggers even when the
 Agent is absent from the current Deployment. An unknown `agent` returns an empty
 page. See [Agents](/docs/reference/sdk/agent#client-agents).
 `limit` is 1–100.
 
-| `Schedule` field | Type | Description |
+| `Trigger` field | Type | Description |
 | --- | --- | --- |
-| `id` | `string` | Schedule ID. |
+| `id` | `string` | ID of this activation. A new promotion creates a new ID. |
 | `agent` | `string` | Agent identifier declared in code. |
 | `deploymentId` | `string` | Deployment that declared the trigger. |
 | `triggerKey` | `string` | The trigger `id`. |
 | `input` | `InputContent` | Declared input. |
 | `cron` | `{ pattern, timezone }` | Declared expression and timezone. |
-| `activeFrom` | `string` | When this Schedule became active. |
+| `activeFrom` | `string` | When this Trigger became active. |
 | `activeUntil` | `string`, optional | When it stopped being active. |
 | `nextFireAt` | `string`, optional | Next planned fire time. |
 
-Schedules are read-only. Change triggers by editing the Agent definition and
+Triggers are read-only. Change triggers by editing the Agent definition and
 deploying.

@@ -67,7 +67,7 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Dedicated Agent");
   await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
-  await expect(dialog).toContainText("existing threads stay disconnected and schedules require re-promotion");
+  await expect(dialog).toContainText("existing threads stay disconnected and triggers require re-promotion");
   expect(deletions).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("agent-slack-disconnect-mobile.png"), fullPage: true });

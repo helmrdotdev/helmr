@@ -26,7 +26,7 @@ does not execute real workloads.
   behavior. Related cases may use an existing fixture with a relative import.
 - `support/`: bounded waits and evidence/cleanup mechanics shared by actual callers.
 - `fixtures/schedule/`: intentionally separate scheduled deployment. Promote it
-  only for Schedule validation; restore the ordinary bundle afterward.
+  only for trigger validation; restore the ordinary bundle afterward.
 - `prepare_project.py`: isolate selected fixtures and locally packed SDK dependencies.
 
 Keep assertions next to their stimulus. Split by a separately meaningful claim,
@@ -57,7 +57,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `secrets`, `deployment` | None (already initialized scope) | Focused management API contracts |
 
 `computer-durability`, `computer-restore`, `fault-probe`, and `datapath-network`
-contain guest fixtures for provider-owned assertions. The Schedule fixture is
+contain guest fixtures for provider-owned assertions. The scheduled fixture is
 likewise consumed by provider validation. Fixture imports are part of the selected
 source closure; for example `sessions` and `persistence` import the shared
 Computer from `agent`.

@@ -90,7 +90,7 @@ ID. Promotion checks that the Agent's Slack app is connected and can use the
 channel, then pins that connection for the trigger. If the connection is later
 replaced, promote again. See [Slack](/docs/concepts/slack).
 
-## Changing schedules
+## Changing triggers
 
 Triggers are defined only in source. To add, change or remove a trigger, edit
 the Agent and deploy a new Deployment, then promote it (`helmr deploy`
@@ -99,21 +99,22 @@ and starts a new one for the triggers in the promoted Deployment. Removing a
 trigger stops future fires. Sessions already started keep running on the
 Deployment they were started with.
 
-## Reading schedules
+## Reading triggers
 
-Each promoted trigger appears as a read-only Schedule with its cron pattern,
-timezone, input, active interval and next fire time:
+Each promotion activates the triggers it declares. The read-only Trigger
+resource reports each activation with its cron pattern, timezone, input,
+active interval and next fire time:
 
 ```sh
-helmr schedule list --json
-helmr schedule get SCHEDULE_ID --json
+helmr trigger list --json
+helmr trigger get TRIGGER_ID --json
 ```
 
-In the Console, open the Agent page to inspect its Schedule activations across
+In the Console, open the Agent page to inspect its Trigger activations across
 Deployments. Each activation links to the Deployment that declared it.
 
-Use `helmr schedule list --agent AGENT` or `client.schedules.list({ agent: "support" })`
+Use `helmr trigger list --agent AGENT` or `client.triggers.list({ agent: "support" })`
 to filter by the identifier declared in code. In TypeScript, retrieve one activation
-with `client.schedules.get(id)`.
+with `client.triggers.get(id)`.
 See the [triggers reference](/docs/reference/sdk/triggers) and
-[`helmr schedule`](/docs/reference/cli/schedule).
+[`helmr trigger`](/docs/reference/cli/trigger).

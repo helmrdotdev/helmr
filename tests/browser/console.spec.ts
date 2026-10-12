@@ -16,7 +16,7 @@ test("local developer can enter the console and sees the four sections", async (
     await expect(navigation.getByRole("link", { name, exact: true })).toBeVisible();
   }
   await expect(navigation.getByRole("link", { name: "Tasks", exact: true })).toHaveCount(0);
-  await expect(navigation.getByRole("link", { name: "Schedules", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("link", { name: "Triggers", exact: true })).toHaveCount(0);
   await expect(navigation.getByRole("link", { name: "Dashboard", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings/projects");
 });

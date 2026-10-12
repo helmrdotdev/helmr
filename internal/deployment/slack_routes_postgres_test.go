@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type schedulePreflightFunc func(context.Context, agent.SlackStartContext) (json.RawMessage, error)
+type triggerPreflightFunc func(context.Context, agent.SlackStartContext) (json.RawMessage, error)
 
-func (f schedulePreflightFunc) PrepareStart(ctx context.Context, v agent.SlackStartContext) (json.RawMessage, error) {
+func (f triggerPreflightFunc) PrepareStart(ctx context.Context, v agent.SlackStartContext) (json.RawMessage, error) {
 	return f(ctx, v)
 }
 
@@ -32,7 +32,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), registered.ID, nil); !errors.Is(err, agent.ErrTargetNotPublished) {
-				t.Fatal("unpublished schedule promoted", err)
+				t.Fatal("unpublished trigger promoted", err)
 			}
 			installation, registration, publication, user := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
@@ -40,7 +40,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
  INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $5,$6,id,$2,$4,$1 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, publication, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
 			calls := 0
-			preflight := schedulePreflightFunc(func(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
+			preflight := triggerPreflightFunc(func(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
 				calls++
 				if value.Route.Target.InstallationID != installation || value.Route.Target.ChannelID != "C1" || value.Route.Source != nil {
 					t.Fatal("wrong scheduled preflight", value)
