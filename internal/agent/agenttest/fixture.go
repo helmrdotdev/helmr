@@ -46,7 +46,7 @@ func New(t *testing.T) Fixture {
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
       INSERT INTO templates(environment_id,id,key) VALUES($4,$5,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($4,$5,$5,$5,'{}');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($4,$5,$5,$5,1000,536870912,NULL);
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($4,$7,$5,$5,false,'{}');
       INSERT INTO computer_data_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));
@@ -54,8 +54,8 @@ func New(t *testing.T) Fixture {
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$16,$17,'application/octet-stream');
       INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) VALUES($4,$16,$1,$3,$17,'application/octet-stream','root',$18,$19,clock_timestamp());
       INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);
-      INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($4,$20,$21);
-      INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,'{}',34359738368);
+      `+DiskRootInsert("$4", "$20", "$21")+`;
+      INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,1000,536870912,NULL,34359738368);
       INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$4,$9,$7,$5,$8,$9,0);
       INSERT INTO worker_group_tokens(id,token_hash) VALUES($10,decode(repeat('00',32),'hex'));
       INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($11,$10,'test','group');

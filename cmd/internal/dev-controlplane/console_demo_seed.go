@@ -30,15 +30,15 @@ UPDATE environments SET current_deployment_id=$2::uuid WHERE id=$1::uuid;
 INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed,created_at)
 VALUES($1::uuid,$3::uuid,$9::text,'{}','{}',now()-interval '3 days');
 INSERT INTO templates(environment_id,id,key) VALUES($1::uuid,$3::uuid,'demo-computer');
-INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources)
-VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,'{"milliCpu":1000,"memoryMiB":512}');
+INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes)
+VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912);
 INSERT INTO agents(environment_id,id,key) VALUES($1::uuid,$4::uuid,'demo-agent');
 INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)
 VALUES($1::uuid,$4::uuid,$2::uuid,$3::uuid,false,'{}');
 INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,active_until,next_fire_at,lateness_tolerance_ms)
 VALUES($1::uuid,$5::uuid,$4::uuid,$2::uuid,'daily','0 9 * * 1-5','UTC','[{"type":"text","text":"Demo input"}]',now()-interval '2 days',now()-interval '1 day',now(),60000);
-INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes,preparation_spec_id,preparation_deadline_at,preparation_failed_at)
-VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,'{"milliCpu":1000,"memoryMiB":512}',34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
+INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes,preparation_spec_id,preparation_deadline_at,preparation_failed_at)
+VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,1000,536870912,34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
 INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at)
 VALUES('until_environment_deletion',$1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours');
 INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,processing_closed_at,terminal_at)

@@ -630,7 +630,7 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 }
 
 func plannerFreshComputer(seed byte) db.ListAllocationPlanningDemandRow {
-	return db.ListAllocationPlanningDemandRow{RemainingCpuMillis: 100000000, RemainingMemoryBytes: 100000000000000, RemainingResidents: 100000, EnvironmentID: plannerTestUUID(1), OwnerID: plannerTestUUID(seed), Kind: "computer", Resources: []byte(`{"milliCpu":1000,"memoryMiB":1024}`)}
+	return db.ListAllocationPlanningDemandRow{RemainingCpuMillis: 100000000, RemainingMemoryBytes: 100000000000000, RemainingResidents: 100000, EnvironmentID: plannerTestUUID(1), OwnerID: plannerTestUUID(seed), Kind: "computer", CpuMillis: 1000, MemoryBytes: 1024 << 20}
 }
 func plannerRestoreComputer(seed byte, requirements RestoreRequirements) db.ListAllocationPlanningDemandRow {
 	row := plannerFreshComputer(seed)

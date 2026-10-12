@@ -46,17 +46,17 @@ WITH RECURSIVE held AS (
  UNION
  SELECT s.environment_id,s.id,'subtree'::text FROM sessions s JOIN held h ON h.environment_id=s.environment_id AND h.session_id=s.parent_session_id AND h.scope='subtree'
 ), demand AS (
- SELECT p.environment_id,p.id owner_id,'preparation'::text kind,d.resources,
+ SELECT p.environment_id,p.id owner_id,'preparation'::text kind,d.cpu_millis,d.memory_bytes,
  NULL::uuid required_worker_group_id,''::text required_vm_platform_id,0::integer required_vm_vcpu_count,
  ''::text required_cpu_config_digest,0::bigint required_cpu_millis,0::bigint required_memory_bytes,
  0::bigint required_scratch_bytes
  FROM computer_preparations p
- JOIN LATERAL (SELECT resources FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.preparation_spec_id=p.preparation_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
+ JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.preparation_spec_id=p.preparation_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
  WHERE binding.environment_id=p.environment_id AND binding.preparation_spec_id=p.preparation_spec_id AND secret.status='revoked')
  UNION ALL
- SELECT c.environment_id,c.id,'computer',c.resources,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
+ SELECT c.environment_id,c.id,'computer',c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
  COALESCE(source.vm_vcpu_count,0),COALESCE(source.cpu_config_digest,''),COALESCE(source.reserved_cpu_millis,0),
  COALESCE(source.reserved_memory_bytes,0),COALESCE(source.reserved_scratch_bytes,0)
  FROM computers c
@@ -86,7 +86,7 @@ WITH RECURSIVE held AS (
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )
-SELECT d.environment_id, d.owner_id, d.kind, d.resources, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
+SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
  (e.max_memory_bytes-usage.memory)::bigint remaining_memory_bytes,
  (e.max_resident_computers-usage.residents)::bigint remaining_residents
 FROM demand d JOIN environments e ON e.id=d.environment_id AND e.retired_at IS NULL
@@ -97,8 +97,8 @@ CROSS JOIN LATERAL (
   UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM computer_preparations WHERE environment_id=e.id AND worker_host_id IS NOT NULL AND fenced_at IS NULL
  ) physical
 ) usage
-WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE ((d.resources->>'milliCpu')::bigint+999)/1000*1000 END
- AND e.max_memory_bytes-usage.memory >= CASE WHEN d.required_memory_bytes>0 THEN d.required_memory_bytes ELSE (d.resources->>'memoryMiB')::bigint*1048576 END
+WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE (d.cpu_millis+999)/1000*1000 END
+ AND e.max_memory_bytes-usage.memory >= CASE WHEN d.required_memory_bytes>0 THEN d.required_memory_bytes ELSE d.memory_bytes END
  AND (d.kind='preparation' OR e.max_resident_computers-usage.residents>=1)
  AND EXISTS (
   SELECT 1 FROM worker_groups target_group
@@ -111,9 +111,9 @@ WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.req
     AND pool.per_vm_cpu_millis>=d.required_cpu_millis AND pool.per_vm_memory_bytes>=d.required_memory_bytes
     AND pool.per_vm_guest_ephemeral_disk_bytes>=d.required_scratch_bytes
    ELSE
-    pool.id=target_group.primary_pool_id AND shape.vcpu_count=((d.resources->>'milliCpu')::bigint+999)/1000
-    AND pool.per_vm_cpu_millis>=((d.resources->>'milliCpu')::bigint+999)/1000*1000
-    AND pool.per_vm_memory_bytes>=(d.resources->>'memoryMiB')::bigint*1048576
+    pool.id=target_group.primary_pool_id AND shape.vcpu_count=(d.cpu_millis+999)/1000
+    AND pool.per_vm_cpu_millis>=(d.cpu_millis+999)/1000*1000
+    AND pool.per_vm_memory_bytes>=d.memory_bytes
    END
  )
 ORDER BY d.environment_id,d.kind,d.owner_id LIMIT $3
@@ -129,7 +129,8 @@ type ListAllocationPlanningDemandRow struct {
 	EnvironmentID           pgtype.UUID `json:"environment_id"`
 	OwnerID                 pgtype.UUID `json:"owner_id"`
 	Kind                    string      `json:"kind"`
-	Resources               []byte      `json:"resources"`
+	CpuMillis               int64       `json:"cpu_millis"`
+	MemoryBytes             int64       `json:"memory_bytes"`
 	RequiredWorkerGroupID   pgtype.UUID `json:"required_worker_group_id"`
 	RequiredVMPlatformID    string      `json:"required_vm_platform_id"`
 	RequiredVMVCPUCount     int32       `json:"required_vm_vcpu_count"`
@@ -157,7 +158,8 @@ func (q *Queries) ListAllocationPlanningDemand(ctx context.Context, arg ListAllo
 			&i.EnvironmentID,
 			&i.OwnerID,
 			&i.Kind,
-			&i.Resources,
+			&i.CpuMillis,
+			&i.MemoryBytes,
 			&i.RequiredWorkerGroupID,
 			&i.RequiredVMPlatformID,
 			&i.RequiredVMVCPUCount,

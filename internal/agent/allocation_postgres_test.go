@@ -21,7 +21,7 @@ func preparationAllocationFixture(t *testing.T) (preparationFixture, Preparation
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1;
  UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3;
- UPDATE template_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
+ UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
 	a, err := NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -483,7 +483,7 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	}
 	var root, key uuid.UUID
 	var pack string
-	if err := f.pool.QueryRow(t.Context(), `SELECT r.id,r.root_page_key_id,r.root_pack_digest FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&root, &key, &pack); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT r.id,r.page_key_id,r.pack_digest FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&root, &key, &pack); err != nil {
 		t.Fatal(err)
 	}
 	// Fixture the retention owner's completed physical-stop/deletion transition.

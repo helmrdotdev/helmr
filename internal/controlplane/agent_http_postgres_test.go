@@ -29,7 +29,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
- UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE org_members SET role='owner' WHERE user_id=$3;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.User)
 	var orgID, projectID uuid.UUID

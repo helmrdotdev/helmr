@@ -75,7 +75,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,$7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);
- INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($1,$9,$10);
+ `+agenttest.DiskRootInsert("$1", "$9", "$10")+`;
  UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),preparation_spec_id=$12 WHERE environment_id=$1 AND id=$2;
  UPDATE computer_preparation_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
  UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1;

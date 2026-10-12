@@ -12,22 +12,57 @@ import (
 )
 
 const retainComputerDiskRoot = `-- name: RetainComputerDiskRoot :one
-INSERT INTO computer_disk_roots(id,environment_id,locator)
-VALUES($1,$2,$3)
-ON CONFLICT (environment_id,root_pack_digest,root_page_offset) DO UPDATE
- SET locator=EXCLUDED.locator
- WHERE computer_disk_roots.locator=EXCLUDED.locator
+INSERT INTO computer_disk_roots(id,environment_id,format_version,logical_bytes,pack_digest,pack_size_bytes,pack_rank,
+    page_digest,page_salt,page_key_id,page_kind,page_count,page_size_bytes,page_offset)
+VALUES($1,$2,$3,$4,$5,
+    $6,$7,$8,$9,$10,
+    $11,$12,$13,$14)
+ON CONFLICT (environment_id,pack_digest,page_offset) DO UPDATE
+ SET pack_digest=EXCLUDED.pack_digest
+ WHERE (computer_disk_roots.format_version,computer_disk_roots.logical_bytes,computer_disk_roots.pack_size_bytes,
+        computer_disk_roots.pack_rank,computer_disk_roots.page_digest,computer_disk_roots.page_salt,
+        computer_disk_roots.page_key_id,computer_disk_roots.page_kind,computer_disk_roots.page_count,
+        computer_disk_roots.page_size_bytes)
+     = (EXCLUDED.format_version,EXCLUDED.logical_bytes,EXCLUDED.pack_size_bytes,EXCLUDED.pack_rank,
+        EXCLUDED.page_digest,EXCLUDED.page_salt,EXCLUDED.page_key_id,EXCLUDED.page_kind,EXCLUDED.page_count,
+        EXCLUDED.page_size_bytes)
 RETURNING id
 `
 
 type RetainComputerDiskRootParams struct {
 	ID            pgtype.UUID `json:"id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Locator       []byte      `json:"locator"`
+	FormatVersion int32       `json:"format_version"`
+	LogicalBytes  int64       `json:"logical_bytes"`
+	PackDigest    string      `json:"pack_digest"`
+	PackSizeBytes int64       `json:"pack_size_bytes"`
+	PackRank      int32       `json:"pack_rank"`
+	PageDigest    string      `json:"page_digest"`
+	PageSalt      string      `json:"page_salt"`
+	PageKeyID     pgtype.UUID `json:"page_key_id"`
+	PageKind      int32       `json:"page_kind"`
+	PageCount     int32       `json:"page_count"`
+	PageSizeBytes int64       `json:"page_size_bytes"`
+	PageOffset    int64       `json:"page_offset"`
 }
 
 func (q *Queries) RetainComputerDiskRoot(ctx context.Context, arg RetainComputerDiskRootParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, retainComputerDiskRoot, arg.ID, arg.EnvironmentID, arg.Locator)
+	row := q.db.QueryRow(ctx, retainComputerDiskRoot,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.FormatVersion,
+		arg.LogicalBytes,
+		arg.PackDigest,
+		arg.PackSizeBytes,
+		arg.PackRank,
+		arg.PageDigest,
+		arg.PageSalt,
+		arg.PageKeyID,
+		arg.PageKind,
+		arg.PageCount,
+		arg.PageSizeBytes,
+		arg.PageOffset,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err

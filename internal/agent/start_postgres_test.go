@@ -21,8 +21,8 @@ func newAdmissionFixture(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
- UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}',max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
+ UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	return f
 }
 func (f fixture) startRequest(key string) StartRequest {
@@ -31,7 +31,7 @@ func (f fixture) startRequest(key string) StartRequest {
 
 func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$1;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$1;
  UPDATE environments SET max_cpu_millis=999 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("admitted a whole vCPU below physical bound: %v", err)
@@ -42,7 +42,7 @@ func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	var declared int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT (c.resources->>'milliCpu')::bigint FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.id=$1`, admitted.SessionID).Scan(&declared); err != nil || declared != 500 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT c.cpu_millis FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.id=$1`, admitted.SessionID).Scan(&declared); err != nil || declared != 500 {
 		t.Fatalf("declared CPU changed: %d %v", declared, err)
 	}
 }
@@ -127,7 +127,7 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 	caller := Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) SELECT environment_id,$3,template_id,preparation_spec_id,resources FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) SELECT environment_id,agent_id,$3,template_id,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
 	for _, method := range []string{"create", "spawn"} {
@@ -397,7 +397,7 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 
 func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=resources||'{"diskMiB":102400}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET disk_bytes=107374182400 WHERE environment_id=$1`, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("unsupported disk admitted: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computers WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("disk rejection leaked reservation: %d %v", count, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=resources||'{"diskMiB":32768}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET disk_bytes=34359738368 WHERE environment_id=$1`, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("supported-disk")); err != nil {
 		t.Fatal(err)
 	}

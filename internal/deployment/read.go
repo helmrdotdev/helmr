@@ -113,7 +113,7 @@ type DefinitionPage struct {
 // package sends is a constant.
 const (
 	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
-	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,d.resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,jsonb_strip_nulls(jsonb_build_object('milliCpu',d.cpu_millis,'memoryMiB',d.memory_bytes/1048576,'diskMiB',d.disk_bytes/1048576)) AS resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
 	definitionListClause         = " WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4"
 	definitionGetClause          = " WHERE environment_id=$1 AND deployment_id=$2 AND key=$3"
 )

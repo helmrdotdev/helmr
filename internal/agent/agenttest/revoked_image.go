@@ -52,7 +52,7 @@ func (f Fixture) PinRevokedImage(t *testing.T, computer uuid.UUID) {
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$4,$5,'application/octet-stream' FROM environments WHERE id=$2;
  INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,'{}',clock_timestamp() FROM environments WHERE id=$2;
  INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
- INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($2,$7,$8);
+ `+DiskRootInsert("$2", "$7", "$8")+`;
  UPDATE computer_preparations SET status='succeeded',write_key_id=$1,logical_bytes=1048576,capture_root=$9,capture_evidence='fixture publication' WHERE environment_id=$2 AND id=$3;
  INSERT INTO computer_images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence) VALUES($2,$3,$10,$3,1,$7,'fixture publication');
  UPDATE computers SET initial_root_id=$7,initial_root_digest=decode(substring($9::text from 8),'hex'),image_id=$3 WHERE environment_id=$2 AND id=$11;

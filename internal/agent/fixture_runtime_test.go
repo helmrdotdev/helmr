@@ -172,18 +172,14 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return err
 		}
 		var rootID uuid.UUID
-		var raw []byte
 		if restored == nil {
-			if err := tx.QueryRow(ctx, `SELECT r.id,r.locator FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computer).Scan(&rootID, &raw); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computer).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
 				return err
 			}
 		} else {
-			if err := tx.QueryRow(ctx, `SELECT r.id,r.locator FROM computer_saves v JOIN computer_disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computer, *restored).Scan(&rootID, &raw); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves v JOIN computer_disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computer, *restored).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
 				return err
 			}
-		}
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return err
 		}
 		identity, err := result.Digest()
 		if err != nil {

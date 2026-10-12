@@ -3,16 +3,13 @@ package workergroup
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -442,17 +439,12 @@ func discoverItems(ctx context.Context, store PlanStore, group db.WorkerGroup) (
 
 func allocationItem(row db.ListAllocationPlanningDemandRow) item {
 	result := item{environment: row.EnvironmentID.Bytes, computer: row.Kind == "computer", budget: environmentBudget{cpu: row.RemainingCpuMillis, memory: row.RemainingMemoryBytes, residents: row.RemainingResidents}, key: fmt.Sprintf("%s:%x:%x", row.Kind, row.EnvironmentID.Bytes, row.OwnerID.Bytes)}
-	var declared definition.ResourcesManifest
-	if json.Unmarshal(row.Resources, &declared) != nil || definition.ValidateResourcesManifest(declared) != nil || declared.MemoryMiB > math.MaxInt64/mebibyte {
+	cpu, err := vm.ReservedCPUMillis(row.CpuMillis)
+	if err != nil || row.MemoryBytes <= 0 {
 		result.reason = reasonInvalidWorkload
 		return result
 	}
-	cpu, err := vm.ReservedCPUMillis(declared.MilliCPU)
-	if err != nil {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	result.resources = ResourceVector{CPUMillis: cpu, MemoryBytes: declared.MemoryMiB * mebibyte, VMSlots: 1}
+	result.resources = ResourceVector{CPUMillis: cpu, MemoryBytes: row.MemoryBytes, VMSlots: 1}
 	if row.RequiredVMPlatformID != "" {
 		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 || row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 || row.RequiredMemoryBytes <= 0 || row.RequiredScratchBytes <= 0 {
 			result.reason = reasonInvalidWorkload
