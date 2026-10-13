@@ -17,12 +17,13 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -30,7 +31,7 @@ import (
 )
 
 type snapshotFixture struct {
-	fixture            agenttest.Fixture
+	fixture            sessiontest.Fixture
 	q                  *db.Queries
 	store              *secret.Store
 	server             *Server
@@ -42,7 +43,7 @@ type snapshotFixture struct {
 
 func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	t.Helper()
-	f := &snapshotFixture{fixture: agenttest.New(t)}
+	f := &snapshotFixture{fixture: sessiontest.New(t)}
 	f.q = db.New(f.fixture.Pool)
 	var err error
 	f.store, err = secret.New(f.q, f.fixture.Pool, bytes.Repeat([]byte{71}, 32))
@@ -72,7 +73,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	return f
 }
 func (f *snapshotFixture) capture(ctx context.Context, database db.DBTX) ([]secret.ProtectedCapture, error) {
-	return agent.CaptureComputerProtectedSecrets(ctx, database, f.worker, f.instance, "https://example.com", f.markers)
+	return computer.CaptureProtectedSecrets(ctx, database, f.worker, f.instance, "https://example.com", f.markers)
 }
 func (f *snapshotFixture) invoke(ctx context.Context, resolve bool) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(workerapi.SecretProxyRequest{AllocationID: f.instance.String()})
@@ -180,17 +181,17 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 	f := newSnapshotFixture(t, 2, true)
 	for _, markers := range [][]string{nil, {f.markers[0], f.markers[0]}, {f.markers[0], "hlmr_protected_" + strings.Repeat("c", 64)}, {"forged"}} {
-		rows, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, f.instance, "https://example.com", markers)
+		rows, err := computer.CaptureProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, f.instance, "https://example.com", markers)
 		if err == nil {
 			if _, err = f.store.OpenProtectedCapture(rows, markers); err == nil {
 				t.Fatal("incomplete coverage accepted")
 			}
 		}
 	}
-	if _, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, f.instance, "https://other.example.com", f.markers); err == nil {
+	if _, err := computer.CaptureProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, f.instance, "https://other.example.com", f.markers); err == nil {
 		t.Fatal("wrong origin accepted")
 	}
-	if _, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, uuid.NewV7(), "https://example.com", f.markers); err == nil {
+	if _, err := computer.CaptureProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, uuid.NewV7(), "https://example.com", f.markers); err == nil {
 		t.Fatal("wrong instance accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET expires_at=clock_timestamp()+interval '150 milliseconds' WHERE allocation_id=$1", f.instance)

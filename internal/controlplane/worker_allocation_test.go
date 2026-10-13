@@ -2,22 +2,23 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerComputerProcessListingRequiresExactAllocation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -47,7 +48,7 @@ func TestWorkerComputerProcessListingRequiresExactAllocation(t *testing.T) {
 }
 
 func TestWorkerAllocationListingAndPhysicalStop(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -74,7 +75,7 @@ func TestWorkerAllocationListingAndPhysicalStop(t *testing.T) {
 }
 
 func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	worker := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -88,15 +89,15 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 		t.Fatalf("live member deletion: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.Pool, host, execution)
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.Pool, host, execution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.ObserveSessionStopped(t.Context(), f.Pool, host, execution, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionStopped(t.Context(), f.Pool, host, execution, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); err != nil {

@@ -5,27 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
-	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type CAIssuer interface {
-	GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error)
-}
-type Creator struct{ ca CAIssuer }
+type Creator struct{ ca TrustIssuer }
 
-func NewCreator(ca CAIssuer) Creator { return Creator{ca: ca} }
+func NewCreator(ca TrustIssuer) Creator { return Creator{ca: ca} }
 
 type Request struct {
 	DeleteAfterUnused lifetime.Policy
@@ -101,7 +96,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			if !live {
 				return idempotency.Completion{}, ErrNotDeployed
 			}
-			id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
+			id, err := CreateStandalone(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
@@ -127,9 +122,6 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil
 		})
 	})
-	if errors.Is(err, agent.ErrSecretUnavailable) {
-		return Created{}, ErrSecretUnavailable
-	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Created{}, ErrNotDeployed
 	}

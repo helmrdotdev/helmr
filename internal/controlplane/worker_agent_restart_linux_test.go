@@ -26,7 +26,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -35,6 +38,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,7 +78,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator, err := agent.NewAllocator(pool, input.Key, secrets)
+	allocator, err := dispatch.NewAllocator(pool, input.Key, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +118,13 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	}
 	server := &http.Server{Handler: nativeStorageFaultHandler(handler), ReadHeaderTimeout: 10 * time.Second}
 	var jobs sync.WaitGroup
-	reclaimer, err := agent.NewCASReclaimer(pool, store, log)
+	reclaimer, err := computer.NewCASReclaimer(pool, store, log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Complete a real retention/reclamation pass before readiness on every
 	// incarnation, and continue the normal loops while requests execute.
-	if err := agent.ReconcileComputerDiskRetention(ctx, pool); err != nil {
+	if err := computer.ReconcileDiskRetention(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	if err := reclaimer.Reconcile(ctx); err != nil {
@@ -129,11 +133,11 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	failures := make(chan error, 8)
 	for _, run := range []func(context.Context) error{
 		reclaimer.Run,
-		func(ctx context.Context) error { return agent.RunComputerDiskRetention(ctx, pool, log) },
+		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return allocator.Run(ctx, log) },
-		func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
 		func(context.Context) error { return server.Serve(listener) },
 	} {

@@ -8,17 +8,17 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
-func runtimeDiscoveryEnvironment(t *testing.T, original agenttest.Fixture) agenttest.Fixture {
+func runtimeDiscoveryEnvironment(t *testing.T, original sessiontest.Fixture) sessiontest.Fixture {
 	t.Helper()
-	f := agenttest.Fixture{Pool: original.Pool, Environment: uuid.NewV7(), Deployment: uuid.NewV7(), Agent: uuid.NewV7(), Computer: uuid.NewV7()}
+	f := sessiontest.Fixture{Pool: original.Pool, Environment: uuid.NewV7(), Deployment: uuid.NewV7(), Agent: uuid.NewV7(), Computer: uuid.NewV7()}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
       INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
         SELECT history_retention_mode,$2,org_id,project_id,$2::text,'Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
@@ -43,7 +43,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP)}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()
 		request.Payload, _ = json.Marshal(map[string]any{"tool": "list_computers", "arguments": map[string]string{"cursor": cursor}})
@@ -105,7 +105,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	f, origin, execution := runtimeAdmissionOrigin(t)
 	foreign := runtimeDiscoveryEnvironment(t, f)
-	addDefinition := func(f agenttest.Fixture, key string) {
+	addDefinition := func(f sessiontest.Fixture, key string) {
 		t.Helper()
 		id := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,$3)`, f.Environment, id, key)
@@ -129,7 +129,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP)}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	operation := "spawn"
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()

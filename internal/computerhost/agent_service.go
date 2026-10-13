@@ -31,7 +31,7 @@ func (connection *AgentSessionConnection) runtimeSession(environmentID string, l
 }
 func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, environmentID string, client AgentRuntimeClient, event *agentv1.GuestSessionMessage) error {
 	operation := event.GetEvent().GetOperation()
-	request := workerapi.AgentOperationRequest{Session: connection.runtimeSession(environmentID, event.GetOperationLeaseEpoch()), RequestID: operation.GetRequestId(), AuthorityGeneration: event.GetOperationAuthorityGeneration(), TurnID: operation.GetTurnId(), Method: int32(operation.GetMethod()), Payload: append(json.RawMessage(nil), operation.GetPayloadJson()...), DrainEvidence: event.GetDrainEvidence()}
+	request := workerapi.AgentOperationRequest{Session: connection.runtimeSession(environmentID, event.GetOperationLeaseEpoch()), RequestID: operation.GetRequestId(), AuthorityGeneration: event.GetOperationAuthorityGeneration(), TurnID: operation.GetTurnId(), Method: agentOperationMethod(operation.GetMethod()), Payload: append(json.RawMessage(nil), operation.GetPayloadJson()...), DrainEvidence: event.GetDrainEvidence()}
 	var response workerapi.AgentOperationResponse
 	if len(request.RequestID) > 512 || !json.Valid(request.Payload) {
 		// Invalid authored bytes cannot enter HTTP JSON encoding. Settle this exact

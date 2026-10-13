@@ -1,9 +1,11 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"net/http"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (server *Server) workerRegisterAgentCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -14,7 +16,7 @@ func (server *Server) workerRegisterAgentCheckpoint(w http.ResponseWriter, r *ht
 	}
 	env, err := agentComputerID(request.EnvironmentID)
 	if err == nil {
-		err = server.savePublisher.RegisterCheckpoint(r.Context(), agent.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
+		err = server.checkpointPublisher.RegisterCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
 		server.writeAgentSaveError(w, err)
@@ -30,7 +32,7 @@ func (server *Server) workerCompleteAgentCheckpoint(w http.ResponseWriter, r *ht
 	}
 	env, err := agentComputerID(request.EnvironmentID)
 	if err == nil {
-		err = server.savePublisher.CompleteCheckpoint(r.Context(), agent.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
+		err = server.checkpointPublisher.CompleteCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
 		server.writeAgentSaveError(w, err)
@@ -44,7 +46,7 @@ func (server *Server) workerReadAgentCheckpoint(w http.ResponseWriter, r *http.R
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := agent.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), agent.ComputerLeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
+	result, err := session.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

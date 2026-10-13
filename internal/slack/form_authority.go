@@ -6,7 +6,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -15,8 +17,8 @@ var errFormIdentityUnlinked = errors.New("the Slack answer opener requires ident
 // readFormQuestion is called only after transport and control-signature checks.
 // Current link/membership and binding locks span the read and any receipt write;
 // opening a modal happens after this transaction has released all locks.
-func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, control controlEnvelope, source time.Time) (agent.AskView, int64, error) {
-	var empty agent.AskView
+func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, control controlEnvelope, source time.Time) (session.AskView, int64, error) {
+	var empty session.AskView
 	if !validControl(control) || (control.Action != "open_answer" && control.Action != "answer") || actor == "" || (control.Action == "answer" && control.Actor != actor) {
 		return empty, 0, errControlInvalid
 	}
@@ -36,7 +38,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 	if err != nil {
 		return empty, 0, err
 	}
-	active, err := agent.LockSlackChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
+	active, err := slackroute.LockChannels(ctx, tx, target.Environment, []uuid.UUID{channel})
 	if err != nil {
 		return empty, 0, err
 	}
@@ -66,7 +68,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 		}
 		return empty, 0, errControlInvalid
 	}
-	var view agent.AskView
+	var view session.AskView
 	err = tx.QueryRow(ctx, `SELECT id,status,question FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, target.Environment, target.Session, target.Turn, target.Ask).Scan(&view.ID, &view.Status, &view.Question)
 	if err != nil {
 		return empty, 0, err

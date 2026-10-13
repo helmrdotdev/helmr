@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
-	fixture := agenttest.New(t)
+	fixture := sessiontest.New(t)
 	if _, err := fixture.Pool.Exec(t.Context(),
 		`UPDATE worker_hosts SET observed_at = now() - interval '10 minutes' WHERE id = $1`,
 		fixture.Worker,
@@ -93,7 +93,7 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	}
 }
 
-func assertHostStatus(t *testing.T, fixture agenttest.Fixture, want db.WorkerHostStatus) {
+func assertHostStatus(t *testing.T, fixture sessiontest.Fixture, want db.WorkerHostStatus) {
 	t.Helper()
 	var status db.WorkerHostStatus
 	if err := fixture.Pool.QueryRow(t.Context(),
@@ -129,7 +129,7 @@ func (q expiringFenceQueries) RecheckAndFenceStaleWorkerHost(ctx context.Context
 }
 
 func TestExpiredServingEvidenceRollsBackHostFence(t *testing.T) {
-	fixture := agenttest.New(t)
+	fixture := sessiontest.New(t)
 	if _, err := fixture.Pool.Exec(t.Context(), `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.Worker); err != nil {
 		t.Fatal(err)
 	}

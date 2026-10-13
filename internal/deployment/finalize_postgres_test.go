@@ -9,11 +9,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -229,7 +229,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		}
 		request.idempotencyKey = "new-bundle"
 		request.bundle.root.Digest = artifacttest.Digest("new bundle")
-		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, agent.ErrSecretUnavailable) {
+		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, computer.ErrSecretUnavailable) {
 			t.Fatalf("new Deployment accepted revoked Secret: %v", err)
 		}
 		var deployments, retained int
@@ -295,7 +295,7 @@ func TestRegisterRechecksSecretAfterConcurrentRevocation(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !errors.Is(err, agent.ErrSecretUnavailable) {
+	if err = <-done; !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("concurrent revocation bypassed admission: %v", err)
 	}
 	var count int

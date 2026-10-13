@@ -14,9 +14,10 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -29,6 +30,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -57,12 +59,13 @@ type Server struct {
 	slackConfig                *SlackConfig
 	diagnosticDB               db.TxDB
 	diagnosticBounds           diagnostic.Bounds
-	allocator                  *agent.Allocator
+	allocator                  *dispatch.Allocator
 	environmentExecutionLimits org.ExecutionLimits
-	allocationKeys             *agent.ComputerKeyBroker
-	preparationKeys            *agent.PreparationKeyBroker
-	preparationPublisher       *agent.PreparationPublisher
-	savePublisher              *agent.SavePublisher
+	allocationKeys             *computer.KeyBroker
+	preparationKeys            *computer.ImageBuildKeyBroker
+	preparationPublisher       *computer.ImageBuildPublisher
+	savePublisher              *computer.SavePublisher
+	checkpointPublisher        *session.CheckpointPublisher
 	log                        *slog.Logger
 	deploymentMode             string
 	db                         db.Querier
@@ -100,9 +103,9 @@ type ServerConfig struct {
 	Slack                      *SlackConfig
 	DiagnosticDB               db.TxDB
 	DiagnosticBounds           diagnostic.Bounds
-	Allocator                  *agent.Allocator
+	Allocator                  *dispatch.Allocator
 	EnvironmentExecutionLimits org.ExecutionLimits
-	ComputerKeys               agent.DataKeyWrapper
+	ComputerKeys               computer.DataKeyWrapper
 	Log                        *slog.Logger
 	DeploymentMode             string
 
@@ -209,19 +212,23 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
 		return nil, errors.New("magic link delivery worker is required")
 	}
-	allocationKeys, err := agent.NewComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	allocationKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationKeys, err := agent.NewPreparationKeyBroker(cfg.TX, cfg.ComputerKeys)
+	preparationKeys, err := computer.NewImageBuildKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationPublisher, err := agent.NewPreparationPublisher(cfg.TX, cfg.CAS)
+	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
-	savePublisher, err := agent.NewSavePublisher(cfg.TX, cfg.CAS)
+	savePublisher, err := computer.NewSavePublisher(cfg.TX, cfg.CAS)
+	if err != nil {
+		return nil, err
+	}
+	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +243,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		preparationKeys:            preparationKeys,
 		preparationPublisher:       preparationPublisher,
 		savePublisher:              savePublisher,
+		checkpointPublisher:        checkpointPublisher,
 		log:                        log,
 		deploymentMode:             deploymentMode,
 		db:                         cfg.DB,

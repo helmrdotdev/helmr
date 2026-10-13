@@ -11,7 +11,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -172,13 +174,13 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	var preflight agent.SlackStartPreflight
+	var preflight slackroute.StartPreflight
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
 	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID, preflight)
 	if err != nil {
-		if errors.Is(err, agent.ErrTargetNotPublished) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrConversationChanged) {
+		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
 			s.writeAgentHTTPError(w, err)
 		} else {
 			s.writeDeploymentError(w, err)
@@ -207,7 +209,7 @@ func deploymentError(err error) error {
 		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
-	case errors.Is(err, agent.ErrSecretUnavailable):
+	case errors.Is(err, computer.ErrSecretUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
 	case errors.Is(err, deployment.ErrFinalizationConflict):
 		return conflict(err)

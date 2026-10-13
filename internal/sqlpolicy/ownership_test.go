@@ -22,8 +22,8 @@ import (
 var dynamicStatementSites = map[string]string{
 	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
-	"internal/agent:reclaimComputerGraphRow":        "statement is a constant at each caller, which the preparation test covers",
-	"internal/agent:lockSlackConnections":           "two constant lock statements selected by lock strength",
+	"internal/computer:reclaimComputerGraphRow":     "statement is a constant at each caller, which the preparation test covers",
+	"internal/slackroute:lockConnections":           "two constant lock statements selected by lock strength",
 	"internal/telemetry:BeginDiagnosticAdmission":   "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 	"internal/telemetry:DiagnosticAdmission.Append": "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 }
@@ -40,27 +40,30 @@ var tableOwners = map[string]string{
 	"regions": "internal/region",
 	// deployments and definitions
 	"agent_definitions": "internal/deployment", "agent_triggers": "internal/deployment", "agents": "internal/deployment",
-	"trigger_activations": "internal/deployment",
-	"image_specs":         "internal/deployment", "deployment_objects": "internal/deployment", "deployments": "internal/deployment",
+	"trigger_activations": "internal/agent",
+	"image_specs":         "internal/computer", "deployment_objects": "internal/deployment", "deployments": "internal/deployment",
 	"template_definitions": "internal/deployment", "templates": "internal/deployment",
-	// agent runtime: sessions, turns, computers and their storage
-	"trigger_occurrences": "internal/agent", "cas_blobs": "internal/agent", "cas_objects": "internal/agent",
-	"cas_upload_reclaims": "internal/agent", "checkpoint_processes": "internal/agent", "checkpoint_objects": "internal/agent",
-	"checkpoints": "internal/agent", "disk_encryption_keys": "internal/agent", "disk_roots": "internal/agent",
-	"images": "internal/agent", "computer_leases": "internal/agent", "disk_object_edges": "internal/agent",
-	"disk_object_keys": "internal/agent", "disk_object_pins": "internal/agent", "disk_objects": "internal/agent",
-	"image_builds": "internal/agent", "computer_saves": "internal/agent", "secret_bindings": "internal/agent",
-	"computers": "internal/agent", "secret_exposures": "internal/agent", "session_controls": "internal/agent",
-	"session_events": "internal/agent", "session_holds": "internal/agent", "session_processes": "internal/agent",
-	"sessions": "internal/agent", "turn_asks": "internal/agent", "turn_messages": "internal/agent", "turns": "internal/agent",
+	// Computers, their allocations, images and storage
+	"cas_blobs": "internal/computer", "cas_objects": "internal/computer", "cas_upload_reclaims": "internal/computer",
+	"checkpoint_processes": "internal/computer", "checkpoint_objects": "internal/computer", "checkpoints": "internal/computer",
+	"disk_encryption_keys": "internal/computer", "disk_roots": "internal/computer", "images": "internal/computer",
+	"computer_leases": "internal/computer", "disk_object_edges": "internal/computer", "disk_object_keys": "internal/computer",
+	"disk_object_pins": "internal/computer", "disk_objects": "internal/computer", "image_builds": "internal/computer",
+	"computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
+	"secret_exposures": "internal/computer",
+	// Sessions and Turns
+	"trigger_occurrences": "internal/agent", "session_controls": "internal/session",
+	"session_events": "internal/session", "session_holds": "internal/session", "session_processes": "internal/session",
+	"sessions": "internal/session", "turn_asks": "internal/session", "turn_messages": "internal/session", "turns": "internal/session",
 	// commands
 	"commands": "internal/command", "idempotency_receipts": "internal/idempotency",
 	// secrets
 	"secrets": "internal/secret", "secret_versions": "internal/secret",
 	// Slack
-	"slack_connections": "internal/slack", "slack_app_registrations": "internal/slack", "slack_channel_bindings": "internal/slack",
-	"slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_requests": "internal/slack",
-	"slack_thread_sources": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
+	"slack_app_registrations": "internal/slack", "slack_installations": "internal/slack", "slack_posts": "internal/slack",
+	"slack_requests": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
+	// Slack route authority
+	"slack_connections": "internal/slackroute", "slack_channel_bindings": "internal/slackroute", "slack_thread_sources": "internal/slackroute",
 	// telemetry
 	"diagnostic_chunks": "internal/telemetry", "deployment_events": "internal/deployment",
 	// worker supply
@@ -70,30 +73,6 @@ var tableOwners = map[string]string{
 	"schema_migrations": "cmd/internal/dev-controlplane",
 }
 
-// coWriters are packages that still write another owner's table. Each entry
-// names the slice that retires it; the owner split (B1) is the default.
-var coWriters = map[string]map[string]string{
-	"agent_definitions":      {"internal/agent": "owner split"},
-	"agent_triggers":         {"internal/agent": "owner split"},
-	"trigger_activations":    {"internal/agent": "owner split"},
-	"agents":                 {"internal/agent": "owner split"},
-	"image_specs":            {"internal/agent": "owner split"},
-	"template_definitions":   {"internal/agent": "owner split"},
-	"templates":              {"internal/agent": "owner split"},
-	"environments":           {"internal/agent": "owner split", "internal/deployment": "owner split"},
-	"checkpoints":            {"internal/computer": "owner split"},
-	"computer_leases":        {"internal/computer": "owner split"},
-	"computers":              {"internal/computer": "owner split", "internal/command": "owner split"},
-	"secret_exposures":       {"internal/command": "owner split"},
-	"slack_channel_bindings": {"internal/agent": "owner split"},
-	"slack_posts":            {"internal/agent": "owner split"},
-	"slack_requests":         {"internal/agent": "owner split"},
-	"slack_thread_sources":   {"internal/agent": "owner split"},
-	"slack_threads":          {"internal/agent": "owner split"},
-	"login_sessions":         {"internal/org": "member disablement revokes sessions"},
-	"users":                  {"internal/org": "organization creation records the owner"},
-}
-
 // queryFileOwners maps each sqlc query file to the owner whose writes it
 // performs; a file consumed by several packages is owned by the writer.
 var queryFileOwners = map[string]string{
@@ -101,11 +80,11 @@ var queryFileOwners = map[string]string{
 	"api_keys.sql":              "internal/identity",
 	"auth_identities.sql":       "internal/identity",
 	"login_sessions.sql":        "internal/identity",
-	"cas_objects.sql":           "internal/agent",
-	"cas_reclamation.sql":       "internal/agent",
+	"cas_objects.sql":           "internal/computer",
+	"cas_reclamation.sql":       "internal/computer",
 	"commands.sql":              "internal/command",
-	"disk_roots.sql":            "internal/agent",
-	"disk_objects.sql":          "internal/agent",
+	"disk_roots.sql":            "internal/computer",
+	"disk_objects.sql":          "internal/computer",
 	"device_codes.sql":          "internal/identity",
 	"invitations.sql":           "internal/org",
 	"magic_links.sql":           "internal/identity",
@@ -135,8 +114,7 @@ func allowedWriter(table, pkg string) bool {
 	if owner, ok := tableOwners[table]; ok && owner == pkg {
 		return true
 	}
-	_, ok := coWriters[table][pkg]
-	return ok
+	return false
 }
 
 // TestStatementsAreConstantOrDocumented fails on a statement the preparation
@@ -161,18 +139,12 @@ func TestStatementsAreConstantOrDocumented(t *testing.T) {
 }
 
 // TestTableWritesStayWithOwners checks handwritten and generated writes
-// against the ownership table and keeps the co-writer list exact.
+// against the ownership table.
 func TestTableWritesStayWithOwners(t *testing.T) {
-	used := map[string]map[string]bool{}
-	note := func(table, pkg string) {
-		if used[table] == nil {
-			used[table] = map[string]bool{}
-		}
-		used[table][pkg] = true
-	}
+	used := map[string]bool{}
 	for _, s := range collectStatements(t) {
 		for _, table := range writtenTables(s.sql) {
-			note(table, s.pkg)
+			used[table] = true
 			if !allowedWriter(table, s.pkg) {
 				t.Errorf("%s: %s writes %s owned by %q", s.position, s.pkg, table, tableOwners[table])
 			}
@@ -194,7 +166,7 @@ func TestTableWritesStayWithOwners(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, table := range writtenTables(string(content)) {
-			note(table, owner)
+			used[table] = true
 			if !allowedWriter(table, owner) {
 				t.Errorf("query/%s (%s) writes %s owned by %q", entry.Name(), owner, table, tableOwners[table])
 			}
@@ -205,15 +177,8 @@ func TestTableWritesStayWithOwners(t *testing.T) {
 			t.Errorf("query file owner entry %s has no file", file)
 		}
 	}
-	for table, writers := range coWriters {
-		for pkg := range writers {
-			if !used[table][pkg] {
-				t.Errorf("co-writer %s of %s no longer writes it", pkg, table)
-			}
-		}
-	}
 	for table := range tableOwners {
-		if len(used[table]) == 0 {
+		if !used[table] {
 			t.Errorf("owned table %s is written by no statement", table)
 		}
 	}

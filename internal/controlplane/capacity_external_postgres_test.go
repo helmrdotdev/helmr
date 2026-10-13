@@ -9,8 +9,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 // External consumers run their own executable against the real HTTP router and
@@ -20,7 +20,7 @@ func TestCapacityExternalConsumer(t *testing.T) {
 	if executable == "" {
 		t.Skip("set HELMR_CAPACITY_CONSUMER_TEST to a consumer contract executable")
 	}
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var poolID uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), "SELECT worker_pool_id FROM worker_hosts WHERE id=$1", f.Worker).Scan(&poolID); err != nil {
 		t.Fatal(err)

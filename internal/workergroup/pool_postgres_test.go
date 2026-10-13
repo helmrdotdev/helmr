@@ -3,11 +3,12 @@ package workergroup
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"sync"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"

@@ -14,19 +14,19 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestAgentHTTPAdmission(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
@@ -354,7 +354,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -371,7 +371,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 				t.Fatalf("queued rejection details: %s %v", raw, err)
 			}
 		}
-		e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 		if _, err := dispatchRuntimeTurn(t, f.Pool, e); err != nil {
 			t.Fatal(err)
 		}

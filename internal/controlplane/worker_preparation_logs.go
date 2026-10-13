@@ -4,7 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -24,7 +25,7 @@ func (server *Server) workerPreparationLog(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	record := diagnostic.Record{Stream: request.Stream, Kind: request.Kind, Sequence: request.Sequence, ThroughSequence: request.ThroughSequence, ObservedAtUnixNano: request.ObservedAtUnixNano, Data: request.Data, DroppedBytes: request.DroppedBytes, Complete: request.Complete}
-	receipt, err := agent.AppendPreparationLog(r.Context(), server.diagnosticDB, host, executor, record, server.diagnosticBounds)
+	receipt, err := computer.AppendImageBuildLog(r.Context(), server.diagnosticDB, host, executor, record, server.diagnosticBounds)
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, workerapi.DiagnosticLogReceipt{Expired: receipt.Expired, ThroughSequence: receipt.ThroughSequence, AcceptedAt: receipt.AcceptedAt, ExpiresAt: receipt.ExpiresAt})

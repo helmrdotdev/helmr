@@ -16,7 +16,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -48,7 +49,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator, err := agent.NewAllocator(panicDatabase{}, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(panicDatabase{}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

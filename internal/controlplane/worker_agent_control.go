@@ -4,7 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,8 +21,8 @@ func (server *Server) workerAgentReady(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid Session readiness identity")))
 		return
 	}
-	if err := agent.ObserveSessionReady(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
-		if errors.Is(err, agent.ErrConflict) {
+	if err := session.ObserveSessionReady(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
+		if errors.Is(err, session.ErrConflict) || errors.Is(err, computer.ErrConflict) {
 			writeJSON(w, http.StatusOK, struct{}{})
 			return
 		}
@@ -43,7 +44,7 @@ func (server *Server) workerAgentControl(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("invalid Session control identity")))
 		return
 	}
-	control, err := agent.PrepareSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence)
+	control, err := session.PrepareSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -68,8 +69,8 @@ func (server *Server) workerAgentControlReceipt(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(errors.New("invalid Session control receipt")))
 		return
 	}
-	if err := agent.AcknowledgeSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence, request.Sequence, request.AuthorityGeneration, request.Kind, request.Error, request.StopSequence); err != nil {
-		if errors.Is(err, agent.ErrConflict) {
+	if err := session.AcknowledgeSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence, request.Sequence, request.AuthorityGeneration, request.Kind, request.Error, request.StopSequence); err != nil {
+		if errors.Is(err, session.ErrConflict) || errors.Is(err, computer.ErrConflict) {
 			// Current authority accepted the receipt, but a newer desired control
 			// has superseded it. Retire the old guest event and keep converging.
 			writeJSON(w, http.StatusOK, struct {
@@ -95,7 +96,7 @@ func (server *Server) workerAgentStopped(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("invalid Session stop identity")))
 		return
 	}
-	if err := agent.ObserveSessionStopped(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
+	if err := session.ObserveSessionStopped(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
 	}
@@ -114,7 +115,7 @@ func (server *Server) workerAgentFailure(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("invalid Session failure identity")))
 		return
 	}
-	if err := agent.ObserveSessionFailure(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
+	if err := session.ObserveSessionFailure(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
 	}

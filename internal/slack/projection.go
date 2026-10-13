@@ -9,7 +9,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -50,7 +51,7 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 		if err != nil {
 			return err
 		}
-		active, err := agent.LockSlackChannels(ctx, tx, o.environment, []uuid.UUID{o.channel})
+		active, err := slackroute.LockChannels(ctx, tx, o.environment, []uuid.UUID{o.channel})
 		if err != nil {
 			return err
 		}
@@ -90,7 +91,7 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 		}
 		// Ineligible events receive an explicit non-publication disposition through
 		// this cursor; they cannot be reconsidered after a route or authority edit.
-		_, err = tx.Exec(ctx, `UPDATE slack_thread_sources SET projected_event_seq=$2 WHERE id=$1`, participant, e.sequence)
+		err = slackroute.AdvanceProjection(ctx, tx, participant, e.sequence)
 		progressed = err == nil
 		return err
 	})

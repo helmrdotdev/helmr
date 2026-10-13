@@ -8,8 +8,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -17,19 +15,21 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 type fixture struct {
-	agenttest.Fixture
+	sessiontest.Fixture
 	OrgID, ProjectID uuid.UUID
 }
 
 func commandFixture(t *testing.T) fixture {
 	t.Helper()
-	f := fixture{Fixture: agenttest.New(t)}
+	f := fixture{Fixture: sessiontest.New(t)}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&f.OrgID, &f.ProjectID); err != nil {
 		t.Fatal(err)
 	}
@@ -422,22 +422,22 @@ func TestCommandCaptureWaitsForPhysicalReconciliation(t *testing.T) {
 	f := commandFixture(t)
 	start := f.start(t, "capture")
 	id := uuid.UUID(start.Command.ID.Bytes)
-	request := agent.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
-	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); !errors.Is(err, agent.ErrNotReady) {
+	request := session.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("running capture: %v", err)
 	}
 	report := f.report(id, "exited")
 	if err := Complete(t.Context(), f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unreconciled capture: %v", err)
 	}
 	f.acceptEmptyOutput(t, id)
 	if err := Reconcile(t.Context(), f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); err != nil {
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); err != nil {
 		t.Fatalf("reconciled capture: %v", err)
 	}
 	f.create(t, "after-seal")
@@ -449,19 +449,19 @@ func TestCommandCaptureWaitsForPhysicalReconciliation(t *testing.T) {
 func TestCommandClaimRacesCaptureUnderComputerLock(t *testing.T) {
 	f := commandFixture(t)
 	f.create(t, "race")
-	request := agent.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
+	request := session.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
 	var claim ClaimResult
 	var claimErr, captureErr error
 	var wg sync.WaitGroup
 	gate := make(chan struct{})
 	wg.Go(func() { <-gate; claim, claimErr = Claim(t.Context(), f.Pool, f.host(), f.claim()) })
-	wg.Go(func() { <-gate; _, captureErr = agent.BeginComputerCapture(t.Context(), f.Pool, f.host(), request) })
+	wg.Go(func() { <-gate; _, captureErr = session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request) })
 	close(gate)
 	wg.Wait()
 	if claimErr != nil {
 		t.Fatal(claimErr)
 	}
-	if claim.Start != nil && !errors.Is(captureErr, agent.ErrNotReady) {
+	if claim.Start != nil && !errors.Is(captureErr, session.ErrNotReady) {
 		t.Fatalf("execution and capture admitted together: %v", captureErr)
 	}
 	if claim.Start == nil && captureErr != nil {
@@ -530,7 +530,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	}
 	// Deletion acceptance does not release the retained root or reservation.
 	// Complete the normal collector pass before expecting a deleted tombstone.
-	if err := agent.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err = computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
@@ -580,7 +580,7 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if selector == "" || selector == marker || !bytes.Equal(first.ProxyCA, trust.Certificate) {
 		t.Fatal("missing logical owner selector")
 	}
-	values, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
+	values, err := computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
 	if err != nil || len(values) != 1 {
 		t.Fatalf("resolve: %d %v", len(values), err)
 	}
@@ -591,17 +591,17 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if err != nil || retry.Start == nil || retry.Start.ProtectedEnv["PROTECTED_TOKEN"] != selector {
 		t.Fatalf("selector changed: %+v %v", retry, err)
 	}
-	current, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
+	current, err := computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
 	if err != nil || len(current) != 1 || current[0].VersionID != values[0].VersionID {
 		t.Fatalf("pin changed %+v %v", current, err)
 	}
-	if _, err = agent.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
 		t.Fatal("wrong origin resolved")
 	}
 	if _, err = Cancel(t.Context(), f.Pool, f.ref(id)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = agent.CaptureComputerProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err == nil {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err == nil {
 		t.Fatal("stopping owner resolved")
 	}
 }

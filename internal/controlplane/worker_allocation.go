@@ -4,26 +4,30 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func allocationIdentity(in workerapi.AllocationIdentity) (agent.HostAllocation, error) {
+func allocationIdentity(in workerapi.AllocationIdentity) (dispatch.HostAllocation, error) {
 	env, e1 := agentComputerID(in.EnvironmentID)
 	owner, e2 := agentComputerID(in.OwnerID)
 	instance, e3 := agentComputerID(in.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation") {
-		return agent.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, session.ErrInvalidInput
 	}
-	return agent.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
+	return dispatch.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
 }
-func allocationWireIdentity(in agent.HostAllocation) workerapi.AllocationIdentity {
+func allocationWireIdentity(in dispatch.HostAllocation) workerapi.AllocationIdentity {
 	return workerapi.AllocationIdentity{Kind: in.Kind, EnvironmentID: in.EnvironmentID.String(), OwnerID: in.OwnerID.String(), AllocationID: in.InstanceID.String(), Epoch: in.Epoch}
 }
-func allocationWireReceipt(kind string, in agent.Allocation) workerapi.AllocationIdentity {
-	return allocationWireIdentity(agent.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})
+func allocationWireReceipt(kind string, in computer.Allocation) workerapi.AllocationIdentity {
+	return allocationWireIdentity(dispatch.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})
 }
-func allocationWireShape(in agent.AllocationShape) workerapi.AllocationShape {
+func allocationWireShape(in computer.AllocationShape) workerapi.AllocationShape {
 	return workerapi.AllocationShape{CPUMillis: in.CPUMillis, MemoryBytes: in.MemoryBytes, ScratchBytes: in.ScratchBytes, VMPlatformID: in.VMPlatformID, VCPUCount: in.VCPUCount, CPUConfigDigest: in.CPUConfigDigest}
 }
 func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
@@ -32,7 +36,7 @@ func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
 		writeError(w, err)
 		return
 	}
-	if errors.Is(err, agent.ErrAllocationClosed) {
+	if errors.Is(err, dispatch.ErrAllocationClosed) {
 		writeError(w, conflict(codedError{code: workerapi.AllocationClosed, message: "allocation requires physical stop confirmation"}))
 		return
 	}
@@ -44,7 +48,7 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 		server.writeAllocationError(w, err)
 		return
 	}
-	var after *agent.HostAllocation
+	var after *dispatch.HostAllocation
 	if request.After != nil {
 		parsed, err := allocationIdentity(*request.After)
 		if err != nil {
@@ -53,7 +57,7 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 		}
 		after = &parsed
 	}
-	records, err := agent.ListHostAllocations(r.Context(), server.tx, workerFromContext(r.Context()), after)
+	records, err := dispatch.ListHostAllocations(r.Context(), server.tx, workerFromContext(r.Context()), after)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -64,13 +68,13 @@ func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-func decodeAllocationIdentity(r *http.Request, kind string) (agent.HostAllocation, error) {
+func decodeAllocationIdentity(r *http.Request, kind string) (dispatch.HostAllocation, error) {
 	var request workerapi.AllocationIdentity
 	if err := decodeRequestJSON(r, &request); err != nil {
-		return agent.HostAllocation{}, err
+		return dispatch.HostAllocation{}, err
 	}
 	if request.Kind != kind {
-		return agent.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, session.ErrInvalidInput
 	}
 	return allocationIdentity(request)
 }
@@ -80,15 +84,15 @@ func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, 
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := server.allocator.DeliverPreparation(r.Context(), workerFromContext(r.Context()), agent.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
+	result, err := server.allocator.DeliverImageBuild(r.Context(), workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationAllocationDelivery{Identity: allocationWireReceipt("preparation", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.Executor.ChannelCredential})
 }
-func computerAllocationIdentity(in agent.HostAllocation) agent.ComputerLeaseIdentity {
-	return agent.ComputerLeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
+func computerAllocationIdentity(in dispatch.HostAllocation) computer.LeaseIdentity {
+	return computer.LeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
 }
 func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
@@ -96,7 +100,7 @@ func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := server.allocator.DeliverComputer(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	result, err := server.allocator.DeliverLease(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -114,7 +118,7 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if request.Identity.Kind != "computer" {
-		server.writeAllocationError(w, agent.ErrInvalidInput)
+		server.writeAllocationError(w, session.ErrInvalidInput)
 		return
 	}
 	identity, err := allocationIdentity(request.Identity)
@@ -122,8 +126,8 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	shape := agent.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
-	if err := agent.ObserveFreshComputerReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
+	shape := computer.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
+	if err := dispatch.ObserveFreshLeaseReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -135,7 +139,7 @@ func (server *Server) workerPreparationStopped(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	if err := agent.ObservePreparationStopped(r.Context(), server.tx, workerFromContext(r.Context()), agent.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}); err != nil {
+	if err := computer.ObserveImageBuildStopped(r.Context(), server.tx, workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -150,19 +154,19 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 	}
 	identity, err := allocationIdentity(request.Identity)
 	if err != nil || identity.Kind != "computer" {
-		server.writeAllocationError(w, agent.ErrInvalidInput)
+		server.writeAllocationError(w, session.ErrInvalidInput)
 		return
 	}
-	var after *agent.ProcessIdentity
+	var after *dispatch.ProcessIdentity
 	if request.After != nil {
 		id, err := agentComputerID(request.After.SessionID)
 		if err != nil || request.After.Epoch <= 0 {
-			server.writeAllocationError(w, agent.ErrInvalidInput)
+			server.writeAllocationError(w, session.ErrInvalidInput)
 			return
 		}
-		after = &agent.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
+		after = &dispatch.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
 	}
-	processes, err := agent.ListComputerProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
+	processes, err := dispatch.ListHostProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -186,7 +190,7 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 		return
 	}
 	defer source.Clear()
-	boot, err := agent.ReadComputerBoot(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	boot, err := computer.ReadBoot(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

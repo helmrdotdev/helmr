@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -22,7 +22,7 @@ func (server *Server) workerAgentTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.AuthorityGeneration = request.AuthorityGeneration
-	dispatch, err := agent.DispatchRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence)
+	dispatch, err := session.DispatchRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -47,7 +47,7 @@ func (server *Server) workerAgentTurnReceipt(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(errors.New("invalid Turn receipt identity")))
 		return
 	}
-	sequence, err := agent.ObserveRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, request.Outcome)
+	sequence, err := session.ObserveRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, request.Outcome)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -55,7 +55,7 @@ func (server *Server) workerAgentTurnReceipt(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, workerapi.AgentTurnAcknowledgment{Sequence: sequence})
 }
 
-func agentInputSource(source agent.TurnSource) workerapi.AgentTurnSource {
+func agentInputSource(source session.TurnSource) workerapi.AgentTurnSource {
 	result := workerapi.AgentTurnSource{Kind: source.Kind}
 	if source.RequesterSessionID != nil {
 		result.RequesterSessionID = source.RequesterSessionID.String()

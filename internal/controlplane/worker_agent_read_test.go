@@ -11,25 +11,24 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/runtimemcp"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentTurnObservation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
 	client := secret.client(t, server.URL)
-	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[]`)})
+	origin, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
 	if _, err := dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +44,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"tool": "inspect_turn", "arguments": map[string]string{"sessionId": f.Session.String(), "turnId": receipt.TurnID}})
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: body}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
 	observed, err := client.AgentOperation(t.Context(), request)
 	if err != nil || observed.Error != nil {
 		t.Fatalf("observe %+v %v", observed, err)
@@ -63,7 +62,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		payload, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 		req := request
 		req.TurnID = ""
-		req.Method = int32(agentv1.Operation_METHOD_RUNTIME_MCP)
+		req.Method = workerapi.AgentMethodRuntimeMCP
 		req.Payload = payload
 		req.RequestID = uuid.NewV7().String()
 		response, err := client.AgentOperation(ctx, req)

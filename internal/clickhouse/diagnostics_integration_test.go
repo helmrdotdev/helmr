@@ -8,9 +8,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/jackc/pgx/v5"
@@ -70,7 +70,7 @@ func TestDiagnosticHistoriesFromPostgresAcceptance(t *testing.T) {
 	bounds := diagnostic.Bounds{ChunkBytes: 5, SourceBytes: 10, SourceRecords: 4, EnvironmentBytes: 20, EnvironmentRecords: 8, QueueBytes: 40, QueueRecords: 16}
 	for _, kind := range []string{"session", "image_build", "computer_command"} {
 		t.Run(kind, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			source := telemetry.DiagnosticSource{EnvironmentID: f.Environment, Kind: kind, ID: f.Session, ProducerEpoch: 1}
 			switch kind {
 			case "image_build":

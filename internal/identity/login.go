@@ -156,7 +156,7 @@ func startLoginSession(ctx context.Context, q db.Querier, cfg Config, user signe
 		if err != nil {
 			return "", fmt.Errorf("user id: %w", err)
 		}
-		if err := org.AcceptInvitation(ctx, q, *invitation, userID, displayName); err != nil {
+		if err := AcceptInvitation(ctx, q, *invitation, userID, displayName); err != nil {
 			return "", acceptanceError(err)
 		}
 		orgID = pgvalue.UUID(invitation.OrgID)

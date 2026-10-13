@@ -140,6 +140,23 @@ func (q *Queries) RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash [
 	return result.RowsAffected(), nil
 }
 
+const revokeLoginSessionsForMembership = `-- name: RevokeLoginSessionsForMembership :exec
+UPDATE login_sessions SET revoked_at = now()
+WHERE user_id = $1
+  AND (org_id = $2 OR org_id IS NULL)
+  AND revoked_at IS NULL
+`
+
+type RevokeLoginSessionsForMembershipParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error {
+	_, err := q.db.Exec(ctx, revokeLoginSessionsForMembership, arg.UserID, arg.OrgID)
+	return err
+}
+
 const revokeLoginSessionsForUser = `-- name: RevokeLoginSessionsForUser :execrows
 UPDATE login_sessions
    SET revoked_at = now()

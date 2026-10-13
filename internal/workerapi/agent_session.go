@@ -51,13 +51,13 @@ type AgentControlReceipt struct {
 }
 
 type AgentOperationRequest struct {
-	Session             RuntimeSession  `json:"session"`
-	RequestID           string          `json:"request_id"`
-	AuthorityGeneration int64           `json:"authority_generation"`
-	TurnID              string          `json:"turn_id,omitempty"`
-	Method              int32           `json:"method"`
-	Payload             json.RawMessage `json:"payload"`
-	DrainEvidence       string          `json:"drain_evidence,omitempty"`
+	Session             RuntimeSession       `json:"session"`
+	RequestID           string               `json:"request_id"`
+	AuthorityGeneration int64                `json:"authority_generation"`
+	TurnID              string               `json:"turn_id,omitempty"`
+	Method              AgentOperationMethod `json:"method"`
+	Payload             json.RawMessage      `json:"payload"`
+	DrainEvidence       string               `json:"drain_evidence,omitempty"`
 }
 type AgentOperationError struct {
 	Code    string `json:"code"`

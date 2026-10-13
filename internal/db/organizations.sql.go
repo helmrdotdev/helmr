@@ -96,15 +96,6 @@ func (q *Queries) GetUserOnboardingState(ctx context.Context, arg GetUserOnboard
 	return i, err
 }
 
-const grantUserAdmin = `-- name: GrantUserAdmin :exec
-UPDATE users SET admin = true, updated_at = now() WHERE id = $1
-`
-
-func (q *Queries) GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, grantUserAdmin, userID)
-	return err
-}
-
 const listOrganizationIDs = `-- name: ListOrganizationIDs :many
 SELECT id
   FROM organizations

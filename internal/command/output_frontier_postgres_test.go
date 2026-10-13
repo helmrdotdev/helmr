@@ -3,11 +3,12 @@ package command
 import (
 	"bytes"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 )
 
 func TestCommandTerminalAndTailResumeUnderDiagnosticPressure(t *testing.T) {

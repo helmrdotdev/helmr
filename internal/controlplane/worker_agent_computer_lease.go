@@ -1,28 +1,32 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"net/http"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func decodeAgentComputerLease(r *http.Request) (agent.ComputerLeaseIdentity, error) {
+func decodeAgentComputerLease(r *http.Request) (computer.LeaseIdentity, error) {
 	var request workerapi.AgentComputerLeaseRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		return agent.ComputerLeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, session.ErrInvalidInput
 	}
 	return agentComputerLeaseIdentity(request)
 }
 
-func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (agent.ComputerLeaseIdentity, error) {
+func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (computer.LeaseIdentity, error) {
 	env, e1 := agentComputerID(request.EnvironmentID)
-	computer, e2 := agentComputerID(request.ComputerID)
+	computerID, e2 := agentComputerID(request.ComputerID)
 	instance, e3 := agentComputerID(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || request.LeaseEpoch <= 0 {
-		return agent.ComputerLeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, session.ErrInvalidInput
 	}
-	return agent.ComputerLeaseIdentity{EnvironmentID: env, ComputerID: computer, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
+	return computer.LeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
 }
 func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAgentComputerLease(r)
@@ -30,7 +34,7 @@ func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *ht
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	expires, err := agent.RenewComputerLease(r.Context(), server.tx, workerFromContext(r.Context()), identity)
+	expires, err := computer.RenewLease(r.Context(), server.tx, workerFromContext(r.Context()), identity)
 	if err != nil {
 		server.writeAgentComputerError(w, err)
 		return
@@ -40,7 +44,7 @@ func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *ht
 func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentComputerStoppedRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAgentComputerError(w, agent.ErrInvalidInput)
+		server.writeAgentComputerError(w, session.ErrInvalidInput)
 		return
 	}
 	identity, err := agentComputerLeaseIdentity(request.AgentComputerLeaseRequest)
@@ -56,7 +60,7 @@ func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if err = agent.ObserveComputerStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint); err != nil {
+	if err = dispatch.ObserveLeaseStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -406,31 +406,31 @@ func TestSlackDeliveryAbandonmentLeavesUnprojectedQuestionsAndResponseIndependen
 			if err := f.Pool.QueryRow(t.Context(), `SELECT turn_id FROM slack_posts WHERE id=$1`, post).Scan(&turn); err != nil {
 				t.Fatal(err)
 			}
-			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			role := "question"
 			if kind == "response" {
 				role = "response"
-				if err := agent.RuntimeRespond(t.Context(), f.Pool, host, execution, turn, uuid.NewV7(), json.RawMessage(`"independent response"`)); err != nil {
+				if err := session.RuntimeRespond(t.Context(), f.Pool, host, execution, turn, uuid.NewV7(), json.RawMessage(`"independent response"`)); err != nil {
 					t.Fatal(err)
 				}
-				if err := agent.RuntimeCloseProcessing(t.Context(), f.Pool, host, execution, turn); err != nil {
+				if err := session.RuntimeCloseProcessing(t.Context(), f.Pool, host, execution, turn); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := agent.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`null`), "callbacks drained"); err != nil {
+				if _, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`null`), "callbacks drained"); err != nil {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_saves s SET status='published',flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),captured_root_digest=c.initial_root_digest,root_id=c.initial_root_id,capture_evidence='fixture cut',publication_evidence='fixture publication' FROM computers c WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.turn_id=$1`, turn)
-				if err := agent.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
+				if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				ask := uuid.NewV7()
-				if err := agent.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
+				if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "answered" {
-					if _, err := agent.RespondAsk(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
+					if _, err := session.RespondAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
 						t.Fatal(err)
 					}
 				}

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/identity"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -30,7 +32,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("invalid setup token")))
 		return
 	}
-	created, err := org.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
+	created, err := identity.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
 		Slug:         request.Slug,
 		Name:         request.Name,
 		OwnerUserID:  principal.UserID,

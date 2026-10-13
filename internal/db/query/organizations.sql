@@ -35,9 +35,6 @@ SELECT
  WHERE users.id = sqlc.arg(user_id)
    AND users.disabled_at IS NULL;
 
--- name: GrantUserAdmin :exec
-UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id);
-
 -- name: ListOrganizationIDs :many
 SELECT id
   FROM organizations

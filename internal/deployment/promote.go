@@ -2,13 +2,17 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/org"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
+
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -19,7 +23,7 @@ import (
 // Promote atomically switches the current Deployment, closes prior trigger
 // intervals and recomputes background preparation cadence. Existing Sessions keep
 // their deployment pins. Re-promotion starts new intervals, never reopens old ones.
-func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight agent.SlackStartPreflight) (Record, error) {
+func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
 	if err := authorizeDeploy(principal, scope); err != nil {
 		return Record{}, err
 	}
@@ -62,10 +66,10 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if err := reconcileTriggers(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover, pins); err != nil {
 			return err
 		}
-		if err := reconcilePreparationRefresh(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
+		if err := reconcileImageRefresh(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE environments SET current_deployment_id=$2,updated_at=$3 WHERE id=$1`, env, id, cutover); err != nil {
+		if err := org.SetCurrentDeployment(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
 			return err
 		}
 		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
@@ -81,13 +85,6 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 }
 
 func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) error {
-	type entry struct {
-		SlackChannelID *uuid.UUID `json:"slack_channel_id"`
-		Agent          uuid.UUID  `json:"agent"`
-		Key            string     `json:"key"`
-		Next           time.Time  `json:"next"`
-		ID             uuid.UUID  `json:"id"`
-	}
 	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
 	if err != nil {
 		return err
@@ -105,7 +102,7 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 	if err != nil {
 		return err
 	}
-	entries := make([]entry, 0, len(declarations))
+	entries := make([]agent.Activation, 0, len(declarations))
 	for _, d := range declarations {
 		next, err := definition.NextCronTime(d.cron, d.timezone, cutover.Add(-time.Nanosecond))
 		if err != nil {
@@ -119,27 +116,12 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 			}
 			pin = &value
 		}
-		entries = append(entries, entry{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
+		entries = append(entries, agent.Activation{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
 	}
-	if _, err := tx.Exec(ctx, `UPDATE trigger_activations SET active_until=$2 WHERE environment_id=$1 AND active_until IS NULL`, env, cutover); err != nil {
-		return err
-	}
-	if len(entries) > 0 {
-		raw, err := json.Marshal(entries)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at,slack_channel_id)
- SELECT $1,v.id,v.agent,$2,v.key,$3,v.next,v.slack_channel_id
- FROM jsonb_to_recordset($4::jsonb) AS v(id uuid,agent uuid,key text,next timestamptz,slack_channel_id uuid)`, env, deployment, cutover, raw)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return agent.ReplaceActivations(ctx, tx, env, deployment, cutover, entries)
 }
 
-func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
+func reconcileImageRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
 	// Lock in stable order. Refresh workers use the same Environment -> spec order.
 	rows, err := tx.Query(ctx, `WITH affected AS (SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL UNION SELECT image_spec_id FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL) SELECT s.id FROM image_specs s JOIN affected a ON a.id=s.id WHERE s.environment_id=$1 ORDER BY s.id FOR NO KEY UPDATE OF s`, env, deployment)
 	if err != nil {
@@ -157,18 +139,5 @@ func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `WITH requested AS (
- SELECT image_spec_id,min(refresh_every_ms) AS every_ms FROM template_definitions
- WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL GROUP BY image_spec_id
- ) , affected AS (
- SELECT id FROM image_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL
- UNION SELECT image_spec_id FROM requested
- ), policy AS (
- SELECT a.id,r.every_ms FROM affected a LEFT JOIN requested r ON r.image_spec_id=a.id
- ) UPDATE image_specs s SET refresh_every_ms=p.every_ms,
- next_refresh_at=CASE WHEN p.every_ms IS NULL THEN NULL
- WHEN s.refresh_every_ms=p.every_ms THEN s.next_refresh_at
- ELSE LEAST(s.next_refresh_at,$3::timestamptz+p.every_ms*interval '1 millisecond') END
- FROM policy p WHERE s.environment_id=$1 AND s.id=p.id AND s.refresh_every_ms IS DISTINCT FROM p.every_ms`, env, deployment, cutover)
-	return err
+	return computer.ApplyImageRefreshPolicy(ctx, tx, env, deployment, cutover)
 }

@@ -7,10 +7,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -73,7 +73,7 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
 			case "closed":
-				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -314,7 +314,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), first); err != nil {
 		t.Fatal(err)
 	}
-	e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	turn, err := dispatchRuntimeTurn(ctx, f.Pool, e)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 		t.Fatalf("wrong Turn source: %+v", turn.Source)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err = agent.RuntimeRegisterMessages(ctx, f.Pool, host, e, turn.TurnID); err != nil {
+	if err = session.RuntimeRegisterMessages(ctx, f.Pool, host, e, turn.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	user := uuid.NewV7()
@@ -337,18 +337,18 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err = admitMessage(ctx, f.Pool, nil, f.admissionClient(t), second.ID); err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := agent.AcquireRuntimeAttachment(ctx, f.Pool, host, e)
+	attachment, err := session.AcquireRuntimeAttachment(ctx, f.Pool, host, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := agent.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	message, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
 	if err != nil || message == nil {
 		t.Fatalf("message: %+v %v", message, err)
 	}
 	if message.Source.Kind != "user" || message.Source.Slack == nil || message.Source.Slack.UserID != "second-human" || message.Source.Slack.MessageTS == turn.Source.Slack.MessageTS {
 		t.Fatalf("message reused Turn author: %+v", message.Source)
 	}
-	repeated, err := agent.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	repeated, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
 	if err != nil || repeated == nil || repeated.ID != message.ID || *repeated.Source.Slack != *message.Source.Slack {
 		t.Fatalf("replay lost attribution: %+v %v", repeated, err)
 	}

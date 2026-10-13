@@ -8,13 +8,13 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
 	hostCredential := issueWorkerHostCredential(t, handler, hostSecret.hostID.String(), hostSecret.secret, hostSecret.serviceID.String())

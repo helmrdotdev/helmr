@@ -16,40 +16,39 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var cfg ServerConfig
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}; cfg = *c })
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	caller := agent.Caller{Kind: "user", ID: f.User}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	caller := session.Caller{Kind: "user", ID: f.User}
+	admission, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: session, RequestID: "ask", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: admission.TurnID.String()}
-	operation := func(method agentv1.Operation_Method, payload any) workerapi.AgentOperationResponse {
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "ask", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: admission.TurnID.String()}
+	operation := func(method workerapi.AgentOperationMethod, payload any) workerapi.AgentOperationResponse {
 		t.Helper()
-		request.Method = int32(method)
+		request.Method = method
 		request.Payload, _ = json.Marshal(payload)
 		result, err := client.AgentOperation(t.Context(), request)
 		if err != nil {
@@ -60,7 +59,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	q := json.RawMessage(`{"prompt":[{"type":"text","text":"keep\u0000雪"}],"answer":{"type":"text"}}`)
 	ids := []uuid.UUID{uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()}
 	for _, id := range ids {
-		result := operation(agentv1.Operation_METHOD_ASK, map[string]any{"creationId": id, "question": q})
+		result := operation(workerapi.AgentMethodAsk, map[string]any{"creationId": id, "question": q})
 		if result.Error != nil {
 			t.Fatal(result.Error)
 		}
@@ -122,7 +121,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	}
 	choiceID := uuid.NewV7()
 	choiceQuestion := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a value"}],"answer":{"type":"choice","options":[{"id":"one","label":"One","value":{"same":2}}]}}`)
-	if result := operation(agentv1.Operation_METHOD_ASK, map[string]any{"creationId": choiceID, "question": choiceQuestion}); result.Error != nil {
+	if result := operation(workerapi.AgentMethodAsk, map[string]any{"creationId": choiceID, "question": choiceQuestion}); result.Error != nil {
 		t.Fatal(result.Error)
 	}
 	choicePath := base + "/" + choiceID.String()
@@ -143,7 +142,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	if receipt["prompt"] != nil || receipt["answer_control"] != nil || string(receipt["answer"]) != `""` || string(receipt["responded_by_api_key_id"]) != `"`+responderID.String()+`"` {
 		t.Fatalf("answer receipt %v", receipt)
 	}
-	observed := operation(agentv1.Operation_METHOD_WAIT_ASK, map[string]any{"askId": ids[0]})
+	observed := operation(workerapi.AgentMethodWaitAsk, map[string]any{"askId": ids[0]})
 	var resolved struct {
 		Answer      json.RawMessage           `json:"answer"`
 		RespondedBy struct{ Kind, ID string } `json:"respondedBy"`
@@ -151,7 +150,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	if err := json.Unmarshal(observed.Value, &resolved); err != nil || observed.Error != nil || string(resolved.Answer) != `""` || resolved.RespondedBy.Kind != "api_key" || resolved.RespondedBy.ID != responderID.String() {
 		t.Fatalf("runtime answer %+v %v", observed, err)
 	}
-	if result := operation(agentv1.Operation_METHOD_WITHDRAW_ASK, map[string]any{"askId": ids[0]}); result.Error != nil {
+	if result := operation(workerapi.AgentMethodWithdrawAsk, map[string]any{"askId": ids[0]}); result.Error != nil {
 		t.Fatal(result.Error)
 	}
 	// Human Viewer answers use membership, independently of service role rules.
@@ -189,31 +188,31 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 }
 
 func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "many asks", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "many asks", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	ids := make([]uuid.UUID, 65)
-	req := workerapi.AgentOperationRequest{Session: session, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
+	req := workerapi.AgentOperationRequest{Session: sessionID, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
 	for i := range ids {
 		ids[i] = uuid.NewV7()
 		req.RequestID = fmt.Sprintf("create-%d", i)
-		req.Method = int32(agentv1.Operation_METHOD_ASK)
+		req.Method = workerapi.AgentMethodAsk
 		req.Payload, _ = json.Marshal(map[string]any{"creationId": ids[i], "question": json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)})
 		result, err := client.AgentOperation(ctx, req)
 		if err != nil || result.Error != nil {
@@ -226,7 +225,7 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 		wg.Go(func() {
 			r := req
 			r.RequestID = fmt.Sprintf("observe-%d", i)
-			r.Method = int32(agentv1.Operation_METHOD_WAIT_ASK)
+			r.Method = workerapi.AgentMethodWaitAsk
 			r.Payload, _ = json.Marshal(map[string]any{"askId": id})
 			result, err := client.AgentOperation(ctx, r)
 			if err == nil && (result.Error != nil || string(result.Value) != "null") {
@@ -243,13 +242,13 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 		}
 	}
 	req.RequestID = "withdraw"
-	req.Method = int32(agentv1.Operation_METHOD_WITHDRAW_ASK)
+	req.Method = workerapi.AgentMethodWithdrawAsk
 	req.Payload, _ = json.Marshal(map[string]any{"askId": ids[0]})
 	if result, err := client.AgentOperation(ctx, req); err != nil || result.Error != nil {
 		t.Fatalf("withdraw %+v %v", result, err)
 	}
 	req.RequestID = "observe-cancelled"
-	req.Method = int32(agentv1.Operation_METHOD_WAIT_ASK)
+	req.Method = workerapi.AgentMethodWaitAsk
 	if result, err := client.AgentOperation(ctx, req); err != nil || result.Error == nil || result.Error.Code != "ask_cancelled" {
 		t.Fatalf("cancel observation %+v %v", result, err)
 	}

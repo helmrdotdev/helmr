@@ -16,12 +16,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
@@ -30,7 +30,7 @@ type slackRoundTripper func(*http.Request) (*http.Response, error)
 func (f slackRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -24,15 +23,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 // The executor reservation is fixture state. Requests use real authenticated
 // worker transport and the same domain transactions as production allocations.
-func preparationTransportFixture(t *testing.T) (agenttest.Fixture, workerapi.PreparationExecutor) {
+func preparationTransportFixture(t *testing.T) (sessiontest.Fixture, workerapi.PreparationExecutor) {
 	t.Helper()
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	request := workerapi.PreparationExecutor{Identity: workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: f.Environment.String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: bytes.Repeat([]byte{21}, 32)}
 	digest := sha256.Sum256(request.ChannelCredential)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)

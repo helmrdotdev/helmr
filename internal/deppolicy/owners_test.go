@@ -1,0 +1,72 @@
+package deppolicy
+
+import (
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// Owner edges express transaction orchestration. Reads of another owner's
+// tables do not justify a reverse edge or a second writer.
+var ownerImports = map[string][]string{
+	"agent":       {"session", "slack", "slackroute", "computer", "org"},
+	"computer":    {"secret", "workergroup"},
+	"session":     {"computer", "slackroute", "secret", "org", "workergroup"},
+	"dispatch":    {"session", "computer", "secret", "org", "workergroup"},
+	"slack":       {"session", "slackroute", "computer"},
+	"slackroute":  {},
+	"deployment":  {"agent", "computer", "slackroute", "org"},
+	"command":     {"computer", "secret", "workergroup"},
+	"identity":    {"org"},
+	"org":         {},
+	"secret":      {},
+	"workergroup": {},
+}
+
+func TestDurableOwnerDependencies(t *testing.T) {
+	root := filepath.Join(repositoryRoot(t), "internal")
+	graph, err := internalPackageDependencyGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for owner, allowed := range ownerImports {
+		for _, dependency := range graph[owner] {
+			if _, isOwner := ownerImports[dependency]; isOwner && !slices.Contains(allowed, dependency) {
+				t.Errorf("%s must not import owner %s", owner, dependency)
+			}
+		}
+		files, err := os.ReadDir(filepath.Join(root, owner))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".go") || strings.HasSuffix(file.Name(), "_test.go") {
+				continue
+			}
+			syntax, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, owner, file.Name()), nil, parser.ImportsOnly)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, imported := range syntax.Imports {
+				path, err := strconv.Unquote(imported.Path.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(path, moduleImportPrefix+"cmd/") || path == internalImportPrefix+"controlplane" {
+					t.Errorf("durable owner %s/%s imports transport %s", owner, file.Name(), path)
+				}
+				if strings.HasPrefix(path, internalImportPrefix+"proto/") && (owner != "session" || !slices.Contains([]string{
+					"computer_capture.go", "computer_capture_state.go", "computer_restore.go",
+					"computer_source_abort.go", "computer_source_prepare.go", "computer_continuation_controls.go",
+				}, file.Name())) {
+					t.Errorf("durable owner %s/%s imports protobuf outside capture or continuation: %s", owner, file.Name(), path)
+				}
+			}
+		}
+	}
+}

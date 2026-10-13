@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerDrainReauthenticatesDuringActiveWork(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
 	httpServer := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer httpServer.Close()

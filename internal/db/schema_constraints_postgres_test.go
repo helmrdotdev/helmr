@@ -5,8 +5,8 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -25,7 +25,7 @@ func rejectSchemaRow(t *testing.T, tx pgx.Tx, code, statement string, args ...an
 	dbtest.MustExec(t, t.Context(), tx, "RELEASE SAVEPOINT invalid_row")
 }
 
-func schemaTurn(t *testing.T, f agenttest.Fixture, tx pgx.Tx) uuid.UUID {
+func schemaTurn(t *testing.T, f sessiontest.Fixture, tx pgx.Tx) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input) VALUES($1,$2,$3,$4,1,'user',$5,'enqueue',$3,decode(repeat('01',32),'hex'),'null')`, f.Environment, id, f.Session, f.Computer, f.User)
@@ -33,7 +33,7 @@ func schemaTurn(t *testing.T, f agenttest.Fixture, tx pgx.Tx) uuid.UUID {
 }
 
 func TestSchemaTurnCompletionRequiresRecordedResultAndPublishedSave(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestSchemaTurnCompletionRequiresRecordedResultAndPublishedSave(t *testing.T
 }
 
 func TestSchemaPhysicalStopAndCheckpointRejectPartialEvidence(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

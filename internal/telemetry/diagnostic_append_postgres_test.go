@@ -7,9 +7,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +17,7 @@ import (
 
 func diagnosticDatabase(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	return agenttest.New(t).Pool
+	return sessiontest.New(t).Pool
 }
 func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uuid.UUID) DiagnosticSource {
 	t.Helper()

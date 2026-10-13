@@ -9,8 +9,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -53,7 +54,7 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	cfg.DB = queries
 	cfg.TX = pool
 	cfg.DiagnosticDB = pool
-	allocator, err := agent.NewAllocator(pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(pool, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

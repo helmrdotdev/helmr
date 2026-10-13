@@ -7,28 +7,28 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	sessionID := runtimeTestSession(f)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}
+	request := workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("empty queue: %+v %v", next, err)
 	}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
+	admission, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("unacknowledged control dispatched: %+v %v", next, err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
 	first, err := client.NextAgentTurn(t.Context(), request)
 	if err != nil || first == nil {
 		t.Fatalf("dispatch: %+v %v", first, err)
@@ -72,7 +72,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(first, second) {
 		t.Fatalf("replay: %+v %v", second, err)
 	}
-	newAttachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	newAttachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,16 +80,16 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 		t.Fatalf("retired attachment: %v", err)
 	}
 	request.AttachmentSequence = newAttachment.AttachmentSequence
-	acknowledgeTestAgentControl(t, client, session, newAttachment.AttachmentSequence)
+	acknowledgeTestAgentControl(t, client, sessionID, newAttachment.AttachmentSequence)
 	second, err = client.NextAgentTurn(t.Context(), request)
 	if err != nil || !reflect.DeepEqual(first, second) {
 		t.Fatalf("reattachment: %+v %v", second, err)
 	}
-	receipt := workerapi.AgentTurnReceipt{Session: session, AttachmentSequence: request.AttachmentSequence, TurnID: first.TurnID, Outcome: json.RawMessage(`{"status":"cancelled"}`)}
+	receipt := workerapi.AgentTurnReceipt{Session: sessionID, AttachmentSequence: request.AttachmentSequence, TurnID: first.TurnID, Outcome: json.RawMessage(`{"status":"cancelled"}`)}
 	if _, err := client.ObserveAgentTurn(t.Context(), receipt); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("nonterminal Turn acknowledged: %v", err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

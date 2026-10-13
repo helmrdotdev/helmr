@@ -15,13 +15,13 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/jackc/pgx/v5"
 )
@@ -33,7 +33,7 @@ func (slackHTTPTestCredentials) BotToken(context.Context, uuid.UUID, int64) (str
 }
 
 func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	channel := "C1"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;

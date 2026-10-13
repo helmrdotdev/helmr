@@ -5,16 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"uuid"
 )
 
 type commandRouteFixture struct {
-	agenttest.Fixture
+	sessiontest.Fixture
 	OrgID, EnvironmentID, WorkerID uuid.UUID
 }
 type commandRouteTarget struct {
@@ -25,7 +26,7 @@ type commandRouteTarget struct {
 // The ordinary Command uses the current Computer lease with no customer bundle.
 func commandHTTPFixture(t *testing.T) (commandRouteFixture, workerHTTPClient, commandRouteTarget) {
 	t.Helper()
-	base := agenttest.New(t)
+	base := sessiontest.New(t)
 	f := commandRouteFixture{Fixture: base, EnvironmentID: base.Environment, WorkerID: base.Worker}
 	var org, project uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {

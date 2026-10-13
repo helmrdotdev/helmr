@@ -8,18 +8,18 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	t.Helper()
-	receipt, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
+	receipt, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	if _, err = dispatchRuntimeTurn(t.Context(), f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	return func(value string) int64 {
 		t.Helper()
 		raw, _ := json.Marshal(value)
-		seq, err := agent.RuntimeOutput(t.Context(), f.Pool, host, execution, receipt.TurnID, uuid.NewV7(), raw)
+		seq, err := session.RuntimeOutput(t.Context(), f.Pool, host, execution, receipt.TurnID, uuid.NewV7(), raw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,11 +188,11 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
 		t.Fatal(err)
 	}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	ask := uuid.NewV7()
 	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a path"}],"answer":{"type":"choice","options":[{"id":"a","label":"Display label","description":"Why this choice","value":"PRIVATE_MACHINE_VALUE"}]}}`)
-	if err := agent.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, question); err != nil {
+	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, question); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)
@@ -209,7 +209,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	if err := FinishPost(t.Context(), f.Pool, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.RespondAsk(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`{"selected":[{"id":"a","value":"PRIVATE_MACHINE_VALUE"}]}`)}); err != nil {
+	if _, err := session.RespondAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`{"selected":[{"id":"a","value":"PRIVATE_MACHINE_VALUE"}]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)

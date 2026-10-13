@@ -13,9 +13,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -460,7 +460,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_payload IS NULL AND inflight_attempt_id IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
 				t.Fatal("confirmed crash left content copy or lost repair", safe, err)
 			}
-			if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
 				t.Fatal(err)
 			}
 			// The fixture supplies physical fencing and consumed lifecycle events; the
@@ -472,7 +472,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			done := make(chan error, 1)
 			go func() {
-				done <- agent.RunSessionHistoryRetention(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				done <- RunHistoryRetention(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			}()
 			expired := false
 			for ctx.Err() == nil {

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 )
@@ -24,7 +24,7 @@ func TestTelemetryClaimEnvelopeMeasurement(t *testing.T) {
 	for _, kind := range []string{"logs"} {
 		for _, mib := range []int{8, 16, 32} {
 			t.Run(fmt.Sprintf("%s/mib%d", kind, mib), func(t *testing.T) {
-				f := agenttest.New(t)
+				f := sessiontest.New(t)
 				client, err := clickhouse.New(clickhouse.Config{URL: os.Getenv("HELMR_TEST_CLICKHOUSE_URL")})
 				if err != nil {
 					t.Fatal(err)

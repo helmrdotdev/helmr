@@ -9,14 +9,14 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestCapacityAgentProviderAbsenceRequiresAuthorityAndFencesExactHost(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	otherHost, otherComputer := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::uuid,'resource_id','other-host','current_service_id',$2::uuid))).* FROM worker_hosts h WHERE id=$1;
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$4,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$3;
@@ -76,7 +76,7 @@ func TestCapacityAgentProviderAbsenceRequiresAuthorityAndFencesExactHost(t *test
 }
 
 func TestCapacityAgentProviderAbsenceContentionIsRetryable(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CapacityToken = capacityTestToken() })
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -109,7 +109,7 @@ func TestCapacityAgentProviderAbsenceContentionIsRetryable(t *testing.T) {
 }
 
 func TestCapacityAgentOrdinaryLossNeedsProviderConfirmation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CapacityToken = capacityTestToken() })
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='lost',lost_at=clock_timestamp() WHERE id=$1`, f.Worker)
 	var unfenced bool

@@ -1,16 +1,16 @@
 package idempotency_test
 
 import (
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	retry "github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 )
 
 func TestPlatformCommandCreationAndCancellationRetainReceiptsUntilPhysicalStop(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	command := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,1,'running',ARRAY['true'],'{}',''::bytea,1000,'api_key',uuidv7())`, f.Environment, command, f.Computer)
 	create, _ := retry.NewComputerCommandRequest(f.Environment, f.Computer, "create", retry.ComputerCommandFingerprint{Command: []string{"true"}, TimeoutMS: 1000})

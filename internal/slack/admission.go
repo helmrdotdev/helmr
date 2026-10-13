@@ -7,9 +7,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,7 +22,7 @@ var errAdmissionExpired = errors.New("slack gesture expired during admission")
 // grant. The receipt, connection and human authority are rechecked at commit.
 type messageAdmission struct {
 	installation            uuid.UUID
-	route                   agent.SlackStartRoute
+	route                   slackroute.StartRoute
 	message                 messageGesture
 	root                    string
 	user                    uuid.UUID
@@ -41,7 +44,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	if err != nil || status != "received" {
 		return nil, err
 	}
-	if json.Unmarshal(raw, &p.message) != nil || !agent.ValidSlackChannelID(p.message.Channel) {
+	if json.Unmarshal(raw, &p.message) != nil || !definition.ValidSlackChannelID(p.message.Channel) {
 		return nil, errGestureInvalid
 	}
 	p.root = p.message.Thread
@@ -63,8 +66,8 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	if err != nil {
 		return nil, err
 	}
-	p.route.Target, err = agent.ReadSlackConnection(ctx, tx, env, target, p.message.Channel)
-	if errors.Is(err, agent.ErrTargetNotPublished) {
+	p.route.Target, err = slackroute.ReadConnection(ctx, tx, env, target, p.message.Channel)
+	if errors.Is(err, slackroute.ErrTargetNotPublished) {
 		return reject("binding_unavailable")
 	}
 	if err != nil {
@@ -114,7 +117,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 }
 
 // Admission never holds a SQL transaction across channel or root verification.
-func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerTrustIssuer, client *WebClient, id uuid.UUID) error {
+func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
 	var p *messageAdmission
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error { var err error; p, err = readMessageAdmission(ctx, tx, id); return err })
 	if err != nil || p == nil {
@@ -151,7 +154,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		active, err := agent.LockSlackConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
+		active, err := slackroute.LockConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
 			return err
 		}
@@ -174,17 +177,27 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 			return err
 		}
 		if current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
-			return agent.ErrConversationChanged
+			return slackroute.ErrConversationChanged
 		}
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source
-		var receipt agent.SendReceipt
+		var receipt session.SendReceipt
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
 			if p.thread == uuid.Nil() {
-				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
+				var plan session.StartPlan
+				plan, err = session.PlanStart(session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
+				if err == nil {
+					err = session.LockStartCaller(ctx, core, plan)
+				}
+				if err == nil {
+					// The connection was locked and found active at the start of
+					// this transaction.
+					receipt.Admission, err = admitRoutedRoot(ctx, core, trust, plan, p.route, true)
+				}
+				err = session.StartError(err)
 			} else {
-				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -195,7 +208,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 					return err
 				}
 				if deleted {
-					return agent.ErrNotReady
+					return session.ErrNotReady
 				}
 			}
 			var unexpired bool
@@ -211,11 +224,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 			switch {
 			case errors.Is(err, errAdmissionExpired):
 				return rejectMessage(ctx, tx, id, "gesture_expired")
-			case errors.Is(err, agent.ErrDenied):
+			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return rejectMessage(ctx, tx, id, "permission_denied")
-			case errors.Is(err, agent.ErrNotReady), errors.Is(err, agent.ErrTerminal):
+			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
-			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
+			case (errors.Is(err, session.ErrInvalidInput) || errors.Is(err, computer.ErrInvalidInput)), errors.Is(err, content.ErrUnsupported):
 				return rejectMessage(ctx, tx, id, "content_unsupported")
 			default:
 				return err

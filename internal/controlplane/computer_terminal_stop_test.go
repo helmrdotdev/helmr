@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	// A retained checkpoint has already allowed source physical cleanup without
 	// terminating its logical process. The Agent tests cover that publication path.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE computer_id=$1`, f.Computer)
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	scope := computer.Scope{EnvironmentID: f.Environment}
@@ -32,7 +32,9 @@ func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- agent.RunSessionLifecycle(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	go func() {
+		done <- session.RunSessionLifecycle(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
 	defer func() {
 		cancel()
 		if err := <-done; !errors.Is(err, context.Canceled) {

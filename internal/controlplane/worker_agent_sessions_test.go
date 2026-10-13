@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/runtimemcp"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -27,32 +26,32 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 	f, origin, execution := runtimeAdmissionOrigin(t)
 	apiHandler := newPostgresServer(t, f.Pool)
 	client := newWorkerHTTPClient(t, apiHandler, f.Pool, f.Worker)
-	call := func(method agentv1.Operation_Method, turn string, body any) workerapi.AgentOperationResponse {
+	call := func(method workerapi.AgentOperationMethod, turn string, body any) workerapi.AgentOperationResponse {
 		t.Helper()
 		payload, _ := json.Marshal(body)
-		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: turn, Method: int32(method), Payload: payload}
+		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: turn, Method: method, Payload: payload}
 		var response workerapi.AgentOperationResponse
 		client.post(t, "/worker/v1/sessions/operations", request, 200, &response)
 		return response
 	}
-	create := func(method agentv1.Operation_Method) (session, turn string) {
+	create := func(method workerapi.AgentOperationMethod) (session, turn string) {
 		t.Helper()
-		response := call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": strings.ToLower(strings.TrimPrefix(method.String(), "METHOD_")), "arguments": map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String(), "idempotencyKey": "create-" + method.String()}})
+		response := call(workerapi.AgentMethodRuntimeMCP, "", map[string]any{"tool": strings.ToLower(string(method)), "arguments": map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String(), "idempotencyKey": "create-" + string(method)}})
 		var receipt struct{ SessionID, TurnID string }
 		if response.Error != nil || json.Unmarshal(response.Value, &receipt) != nil || receipt.SessionID == "" || receipt.TurnID == "" {
 			t.Fatalf("creation: %+v", response)
 		}
 		return receipt.SessionID, receipt.TurnID
 	}
-	owned, ownTurn := create(agentv1.Operation_METHOD_SPAWN)
-	independent, initial := create(agentv1.Operation_METHOD_START)
-	response := call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": "list_sessions", "arguments": map[string]any{"relation": "owned"}})
+	owned, ownTurn := create(workerapi.AgentMethodSpawn)
+	independent, initial := create(workerapi.AgentMethodStart)
+	response := call(workerapi.AgentMethodRuntimeMCP, "", map[string]any{"tool": "list_sessions", "arguments": map[string]any{"relation": "owned"}})
 	var page api.AgentSessionsPage
 	if response.Error != nil || json.Unmarshal(response.Value, &page) != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != owned || page.Sessions[0].InitialTurn == nil || page.Sessions[0].InitialTurn.ID != ownTurn {
 		t.Fatalf("SDK discovery: %s %+v", response.Value, response.Error)
 	}
 	for _, body := range []map[string]any{{"relation": "requested", "callerId": f.Session.String()}, {"relation": "all"}, {"relation": "owned", "limit": 0}, {"relation": "owned", "cursor": "invalid"}} {
-		response = call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": "list_sessions", "arguments": body})
+		response = call(workerapi.AgentMethodRuntimeMCP, "", map[string]any{"tool": "list_sessions", "arguments": body})
 		if response.Error == nil || response.Error.Code != "invalid_arguments" {
 			t.Fatalf("invalid discovery: %+v", response)
 		}
@@ -62,7 +61,7 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := runtimemcp.NewHandler(func(_ context.Context, tool string, arguments json.RawMessage) (json.RawMessage, error) {
-		response := call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": tool, "arguments": arguments})
+		response := call(workerapi.AgentMethodRuntimeMCP, "", map[string]any{"tool": tool, "arguments": arguments})
 		if response.Error != nil {
 			return nil, errors.New(response.Error.Code)
 		}

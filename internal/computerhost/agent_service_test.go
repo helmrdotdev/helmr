@@ -59,7 +59,7 @@ func TestAgentServiceForwardsOriginalIdentityAndReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := agentRuntimeTestClient{operation: func(_ context.Context, r workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
-				if r.AuthorityGeneration != 2 || r.Session.ComputerLeaseEpoch != 2 || r.Session.EnvironmentID != "environment" || r.Session.SessionID != "session" || r.Session.ProcessEpoch != 1 || r.TurnID != "" || r.RequestID != "original" {
+				if r.Method != workerapi.AgentMethodRuntimeMCP || r.AuthorityGeneration != 2 || r.Session.ComputerLeaseEpoch != 2 || r.Session.EnvironmentID != "environment" || r.Session.SessionID != "session" || r.Session.ProcessEpoch != 1 || r.TurnID != "" || r.RequestID != "original" {
 					t.Errorf("identity changed: %+v", r)
 				}
 				if failed {

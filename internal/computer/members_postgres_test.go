@@ -4,13 +4,13 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var scope computer.Scope
 	scope.EnvironmentID = f.Environment
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {

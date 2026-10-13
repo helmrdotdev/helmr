@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 )
@@ -196,7 +196,7 @@ func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError 
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with another deployment bundle",
 		}
 	}
-	if errors.Is(err, agent.ErrSecretUnavailable) {
+	if errors.Is(err, computer.ErrSecretUnavailable) {
 		return api.DeploymentBundleFinalizeError{Code: "secret_unavailable", Message: "A declared Secret is missing or revoked in this Environment"}
 	}
 	var invalidObject deployment.InvalidObjectError

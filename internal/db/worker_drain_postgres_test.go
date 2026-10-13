@@ -8,10 +8,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -134,7 +134,7 @@ func TestWorkerDrainCurrentClaimPreservesFences(t *testing.T) {
 }
 
 func TestWorkerDrainPreservesPhysicalStateAndClosesAdmission(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	snapshot := func() []byte {
 		var value []byte
 		if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l) FROM computer_leases l WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&value); err != nil {
@@ -205,7 +205,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 }
 
 func TestWorkerDrainRequiresPriorEpochPhysicalAllocationFenced(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.Worker)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,claim_version,secret_hash) VALUES($1,$2,$3,$4,1,$5)`, uuid.NewV7(), f.Group, f.Worker, uuid.NewV7().String(), []byte("drain-test"))
 	q := db.New(f.Pool)

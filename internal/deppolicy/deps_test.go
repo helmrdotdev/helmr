@@ -24,40 +24,45 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
+		"agent":              {"api", "command", "controlplane", "deployment", "dispatch", "identity", "workerapi"},
 		"api":                {"deployment", "identity", "org", "workerapi"},
 		"artifact":           {"artifact/localcopy", "artifact/verify", "builder", "bundle", "computerhost", "controlplane", "db"},
 		"artifact/localcopy": {"artifact/verify", "builder", "bundle", "db"},
 		"artifact/verify":    {"builder", "bundle", "controlplane", "db"},
-		"agent":              {"api", "command", "computer", "controlplane", "firecracker", "workerapi"},
-		"auth":               {"agent", "db", "deployment", "identity", "org", "workergroup"},
-		"builder":            {"agent", "computerhost", "controlplane", "db", "vm", "wire", "worker"},
-		"command":            {"agent", "api", "controlplane", "deployment", "identity", "org", "workerapi"},
+		"session":            {"api", "command", "controlplane", "dispatch", "firecracker", "workerapi"},
+		"auth":               {"session", "db", "deployment", "identity", "org", "workergroup"},
+		"builder":            {"session", "computerhost", "controlplane", "db", "vm", "wire", "worker"},
+		"command":            {"session", "api", "controlplane", "deployment", "identity", "org", "workerapi"},
 		"bundle":             {"artifact/localcopy", "artifact/verify", "builder", "controlplane", "db", "deployment"},
 		"cas":                {"cas/s3"},
 		"client":             {"workerapi", "workerclient"},
 		"email":              {"email/resend"},
 		"frameio":            {"api", "db", "proto/agent/v1", "proto/computer/v0", "wire"},
 		"httpclient":         {"controlplane", "db", "workerapi"},
-		"deployment":         {"api", "controlplane", "identity", "org", "workerapi"},
-		"identity":           {"agent", "api", "controlplane", "deployment", "workerapi"},
-		"org":                {"agent", "api", "controlplane", "deployment", "identity", "workerapi"},
+		"deployment":         {"api", "controlplane", "dispatch", "identity", "workerapi"},
+		"dispatch":           {"api", "command", "controlplane", "deployment", "identity", "slack", "slackroute", "workerapi"},
+		"identity":           {"session", "api", "controlplane", "deployment", "workerapi"},
+		"org":                {"session", "api", "computer", "controlplane", "deployment", "dispatch", "identity", "workerapi"},
 		"wire":               {"api", "computerhost", "controlplane", "db", "disk", "guestd"},
-		"definition":         {"agent", "api", "artifact", "artifact/localcopy", "artifact/verify", "builder", "bundle", "computerhost", "controlplane", "db", "deployment", "disk", "frameio", "guestd", "nbd", "vm", "wire"},
+		"definition":         {"session", "api", "artifact", "artifact/localcopy", "artifact/verify", "builder", "bundle", "computerhost", "controlplane", "db", "deployment", "disk", "frameio", "guestd", "nbd", "vm", "wire"},
 		"guestd":             {"artifact/verify", "bundle", "computerhost", "controlplane", "db", "vm"},
 		"disk":               {"api", "computerhost", "controlplane", "db", "guestd", "pgvalue", "wire"},
-		"computer":           {"api", "command", "controlplane", "deployment", "identity", "org", "workerapi"},
+		"computer":           {"session", "api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "slack", "slackroute", "workerapi"},
 		"computerhost":       {"controlplane", "db", "guestd", "worker"},
 		"controlplane":       {"computerhost", "firecracker", "guestd", "pglock"},
 		"region":             {"controlplane", "org", "workergroup"},
-		"secret":             {"agent", "command", "computer"},
+		"secret":             {"session", "command", "computer"},
 		"secretbinding":      {"api", "db", "definition", "deployment", "disk"},
-		"telemetry":          {"clickhouse"},
-		"workerapi":          {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
-		"workerclient":       {"client"},
+		// The Slack route authority sits beneath every owner that admits or
+		// delivers through a route.
+		"slackroute":   {"session", "api", "command", "computer", "controlplane", "deployment", "identity", "org", "secret", "slack", "workerapi", "workergroup"},
+		"telemetry":    {"clickhouse"},
+		"workerapi":    {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
+		"workerclient": {"client"},
 		// Worker supply sits beneath the Agent and Computer owners.
 		// TestWorkerSupplyDoesNotReachWireContracts also
 		// forbids api and workerapi across the transitive closure.
-		"workergroup": {"agent", "api", "command", "computer", "controlplane", "deployment", "identity", "org", "workerapi"},
+		"workergroup": {"session", "api", "command", "computer", "controlplane", "deployment", "identity", "org", "workerapi"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)

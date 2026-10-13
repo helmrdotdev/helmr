@@ -10,11 +10,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,20 +37,20 @@ type uploadCandidate struct {
 	MediaType string
 }
 
-func registeredUpload(t *testing.T, f agenttest.Fixture) uploadCandidate {
+func registeredUpload(t *testing.T, f sessiontest.Fixture) uploadCandidate {
 	t.Helper()
 	p := uploadCandidate{ID: uuid.NewV7(), Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, MediaType: "application/octet-stream"}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, p.Digest, p.SizeBytes)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
 	return p
 }
-func abandonUpload(t *testing.T, f agenttest.Fixture, p uploadCandidate) {
+func abandonUpload(t *testing.T, f sessiontest.Fixture, p uploadCandidate) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.Environment, p.Digest)
 }
 
 func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	q := db.New(f.Pool)
 	p := registeredUpload(t, f)
 	// A direct physical-key mutation cannot bypass a registered upload pin.
@@ -88,7 +89,7 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 			name = "retirement-first"
 		}
 		t.Run(name, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			p := registeredUpload(t, f)
 			abandonUpload(t, f, p)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -201,11 +202,11 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 	return nil
 }
 func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	p := registeredUpload(t, f)
 	abandonUpload(t, f, p)
 	store := &reclaimProbe{t: t, pool: f.Pool, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
-	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 		t.Fatalf("forgot multipart ID: %d aborts", store.aborts)
 	}
 	// Recreating the process after a claim/connection loss needs no local state.
-	r, err = agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err = computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,14 +251,14 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 }
 
 func TestCasReclamationFairMultipartProgress(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	p := registeredUpload(t, f)
 	abandonUpload(t, f, p)
 	store := &reclaimProbe{t: t, pool: f.Pool, slowID: "00", attempted: make(map[string]bool), versions: 1}
 	for i := range 25 {
 		store.uploads = append(store.uploads, fmt.Sprintf("%02d", i))
 	}
-	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

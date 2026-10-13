@@ -10,17 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	var prepares atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 			if err := frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: attach.AttachmentSequence, Message: &agentv1.GuestSessionMessage_Attached{Attached: &agentv1.SessionAttached{Ready: true}}}); err != nil {
 				return err
 			}
-			var hold agent.SessionControlReceipt
+			var hold session.SessionControlReceipt
 			for index, kind := range []string{"resume", "suspend", "resume", "shutdown"} {
 				var command *agentv1.GuestCommand
 				for command == nil {
@@ -63,7 +63,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 					}
 					command = message.GetCommand()
 				}
-				if command.ControlSequence != agenttest.SeededAttachment+int64(index+1) || (kind == "resume" && command.GetControl().GetDesired() != "run") || (kind == "suspend" && command.GetControl().GetDesired() != "hold") || (kind == "shutdown" && command.GetControl().GetDesired() != "shutdown") {
+				if command.ControlSequence != sessiontest.SeededAttachment+int64(index+1) || (kind == "resume" && command.GetControl().GetDesired() != "run") || (kind == "suspend" && command.GetControl().GetDesired() != "hold") || (kind == "shutdown" && command.GetControl().GetDesired() != "shutdown") {
 					return errors.New("wrong durable control")
 				}
 				result := &agentv1.DeliveryResult{DeliveryId: command.DeliveryId, Outcome: &agentv1.DeliveryResult_ValueJson{ValueJson: []byte(`null`)}}
@@ -87,25 +87,25 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 				if !acknowledged {
 					return errors.New("guest receipt retired before durable acknowledgment")
 				}
-				caller := agent.Caller{Kind: "user", ID: f.User}
-				req := agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: kind}
+				caller := session.Caller{Kind: "user", ID: f.User}
+				req := session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: kind}
 				switch index {
 				case 0:
 					req.Kind = "interrupt"
 					var err error
-					hold, err = agent.ControlSession(t.Context(), f.Pool, caller, req)
+					hold, err = session.ControlSession(t.Context(), f.Pool, caller, req)
 					if err != nil {
 						return err
 					}
 				case 1:
 					req.Kind = "resume"
 					req.HoldID = hold.HoldID
-					if _, err := agent.ControlSession(t.Context(), f.Pool, caller, req); err != nil {
+					if _, err := session.ControlSession(t.Context(), f.Pool, caller, req); err != nil {
 						return err
 					}
 				case 2:
 					req.Kind = "cancel"
-					if _, err := agent.ControlSession(t.Context(), f.Pool, caller, req); err != nil {
+					if _, err := session.ControlSession(t.Context(), f.Pool, caller, req); err != nil {
 						return err
 					}
 				}
@@ -147,7 +147,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 }
 
 func TestWorkerAgentSupersededControlReceiptKeepsCurrentAttachment(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -160,7 +160,7 @@ func TestWorkerAgentSupersededControlReceiptKeepsCurrentAttachment(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: request.Session, AttachmentSequence: request.AttachmentSequence, Sequence: first.Sequence, AuthorityGeneration: first.AuthorityGeneration, Kind: first.Kind}); err != nil {

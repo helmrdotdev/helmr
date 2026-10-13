@@ -5,7 +5,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -19,9 +19,9 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
 				t.Fatal(err)
 			}
-			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-			if err := agent.RuntimeRegisterMessages(t.Context(), f.Pool, host, execution, turn); err != nil {
+			if err := session.RuntimeRegisterMessages(t.Context(), f.Pool, host, execution, turn); err != nil {
 				t.Fatal(err)
 			}
 			request := f.reply(t, "steer", false)
@@ -32,23 +32,23 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT message_id FROM slack_requests WHERE id=$1 AND status='accepted' AND operation='slack_route' AND turn_id=$2`, request, turn).Scan(&message); err != nil {
 				t.Fatal(err)
 			}
-			attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.Pool, host, execution)
+			attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.Pool, host, execution)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if kind != "not-started" {
-				m, err := agent.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn)
+				m, err := session.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn)
 				if err != nil || m == nil || m.ID != message {
 					t.Fatal(m, err)
 				}
 			}
 			if kind == "not-started" || kind == "started-then-stopped" {
-				if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				reason := map[string]string{"callback-failed": "callback_failed", "explicit-rejection": "message_rejected", "delivered": ""}[kind]
-				if err = agent.CompleteRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn, message, reason); err != nil {
+				if err = session.CompleteRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn, message, reason); err != nil {
 					t.Fatal(err)
 				}
 			}

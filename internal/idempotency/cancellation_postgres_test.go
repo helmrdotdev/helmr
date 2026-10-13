@@ -2,16 +2,16 @@ package idempotency_test
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	retry "github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"testing"
 )
 
 func TestPlatformUnkeyedCancellationCannotCommit(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var innerErr error
 	err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -46,7 +46,7 @@ func (tr *releaseCancelTracer) TraceQueryEnd(_ context.Context, _ *pgx.Conn, dat
 }
 
 func TestPlatformPublicSecretCancellationCannotCommit(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	config := f.Pool.Config().ConnConfig.Copy()

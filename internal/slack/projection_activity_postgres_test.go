@@ -9,26 +9,26 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func activityExecution(f statusFixture) agent.Execution {
-	return agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+func activityExecution(f statusFixture) session.Execution {
+	return session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 }
 func activityHost(f statusFixture) workergroup.HostPrincipal {
 	return workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 }
-func activityChild(t *testing.T, f statusFixture, running bool) (statusFixture, agent.Admission) {
+func activityChild(t *testing.T, f statusFixture, running bool) (statusFixture, session.Admission) {
 	t.Helper()
 	var parentTurn uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&parentTurn); err != nil {
 		t.Fatal(err)
 	}
 	host := activityHost(f)
-	caller := agent.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
-	receipt, err := agent.Spawn(t.Context(), f.Pool, nil, caller, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
+	caller := session.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
+	receipt, err := session.Spawn(t.Context(), f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,16 +93,16 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	f.link(t)
 	f.outputWriter(t)
 	child, turn := activityChild(t, f, true)
-	attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.Pool, activityHost(child), activityExecution(child))
+	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.Pool, activityHost(child), activityExecution(child))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = agent.RuntimeAsk(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"answer":{"type":"text"}}`)); !errors.Is(err, agent.ErrRootSessionRequired) {
+	if err = session.RuntimeAsk(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"answer":{"type":"text"}}`)); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatal(err)
 	}
 	authored := strings.Repeat("child progress 😀 ", 400)
 	content, _ := json.Marshal([]map[string]any{{"type": "text", "text": authored}, {"type": "json", "value": map[string]string{"public": "explicit output"}}})
-	if _, err = agent.RuntimeOutput(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), content); err != nil {
+	if _, err = session.RuntimeOutput(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), content); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
@@ -176,7 +176,7 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	if afterID != id || next <= revision || stopping.Blocks[1].Status != "in_progress" || !strings.Contains(stopping.Text, "Stopping") || stopping.Blocks[1].TaskID != before.Blocks[1].TaskID || stopping.Blocks[1].BlockID == before.Blocks[1].BlockID {
 		t.Fatal("stop claim overstated cessation", stopping)
 	}
-	if err = agent.ObserveSessionStopped(t.Context(), f.Pool, activityHost(child), activityExecution(child), attachment.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), f.Pool, activityHost(child), activityExecution(child), attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)

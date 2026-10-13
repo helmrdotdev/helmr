@@ -2,9 +2,34 @@
 // dedicated pooled connection (TryAcquire) and the Key derivation shared by
 // session-level and transaction-level advisory locks.
 //
-// Operation owners define their row/advisory lock order beside the code that
-// acquires those locks. This package does not impose an order on unrelated
-// Session, Computer, worker-supply or idempotency operations.
+// # Global lock order
+//
+// Every transaction takes exclusive row locks (FOR UPDATE, FOR NO KEY UPDATE)
+// and advisory locks in this order; share locks are listed where they gate.
+// Multi-row steps lock in key order, and operations spanning Environments use
+// the Environment ID as the outer key. Owners name the step they take beside
+// the code that takes it.
+//
+//  1. Advisory gates, except idempotency and Slack-root admission gates that
+//     follow the row locks shared by all holders of that key.
+//  2. Worker supply: group, pool, host (share for runtime callers; host
+//     FOR UPDATE when allocating). Runtime-caller operations take this first.
+//  3. Slack: registration, installation, connection, channel binding.
+//  4. Environment.
+//  5. Deployment (share) and trigger activations. Enqueue takes the Deployment
+//     share lock after its Secret share, image spec and Session locks; no
+//     transaction takes deployments exclusively while holding those locks.
+//  6. Image spec, then image build. Secrets are taken FOR SHARE here; the only
+//     exclusive Secret locks are rotate and revoke, which take nothing
+//     exclusive afterwards.
+//  7. Session roots, then Computers, then member Sessions.
+//  8. Rows owned under those: processes, checkpoints, leases, saves, commands,
+//     posts.
+//
+// Rows inserted by the same transaction take no position. Implicit foreign-key
+// and unique waits follow the parent's step. Lease and checkpoint rows are
+// taken in either order under the same Computer lock. Computer-only operations
+// enter at step 7 with the Computer.
 package pglock
 
 import (

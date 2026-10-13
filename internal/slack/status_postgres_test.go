@@ -6,20 +6,20 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
 type statusFixture struct {
-	agenttest.Fixture
+	sessiontest.Fixture
 	installation, registration, publication, channel, thread, participant uuid.UUID
 }
 
 func newStatusFixture(t *testing.T) statusFixture {
 	t.Helper()
-	f := statusFixture{Fixture: agenttest.New(t), installation: uuid.NewV7(), registration: uuid.NewV7(), publication: uuid.NewV7(), channel: uuid.NewV7(), thread: uuid.NewV7(), participant: uuid.NewV7()}
+	f := statusFixture{Fixture: sessiontest.New(t), installation: uuid.NewV7(), registration: uuid.NewV7(), publication: uuid.NewV7(), channel: uuid.NewV7(), thread: uuid.NewV7(), participant: uuid.NewV7()}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $10,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$3 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
@@ -57,7 +57,7 @@ func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
+	queued, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,18 +167,18 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
-	caller := agent.Caller{Kind: "user", ID: f.User}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
+	caller := session.Caller{Kind: "user", ID: f.User}
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
 		t.Fatal(err)
 	}
 	suspended := f.claim(t, "suspended")
 	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)

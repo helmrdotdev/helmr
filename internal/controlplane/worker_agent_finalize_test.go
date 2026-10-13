@@ -8,37 +8,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentFinalizeRetainsPendingSaveAcrossLostReply(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "finalize", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "finalize", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: session, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_CLOSE_PROCESSING), Payload: json.RawMessage(`null`)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: workerapi.AgentMethodCloseProcessing, Payload: json.RawMessage(`null`)}
 	closed, err := client.AgentOperation(t.Context(), request)
 	if err != nil || closed.Error != nil || string(closed.Value) != "null" {
 		t.Fatalf("close processing: %+v %v", closed, err)
 	}
-	request.RequestID, request.Method, request.Payload, request.DrainEvidence = "finalize", int32(agentv1.Operation_METHOD_FINALIZE), json.RawMessage(`{"result":{"saved":true}}`), "native scopes joined"
+	request.RequestID, request.Method, request.Payload, request.DrainEvidence = "finalize", workerapi.AgentMethodFinalize, json.RawMessage(`{"result":{"saved":true}}`), "native scopes joined"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -66,7 +65,7 @@ func TestWorkerAgentFinalizeRetainsPendingSaveAcrossLostReply(t *testing.T) {
 	if err := <-done; err == nil {
 		t.Fatal("lost reply was reported as a final outcome")
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := client.AgentOperation(t.Context(), request)

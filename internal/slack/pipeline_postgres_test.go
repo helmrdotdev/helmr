@@ -13,7 +13,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -91,16 +91,16 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT turn_id FROM slack_requests WHERE id=$1`, receipt).Scan(&turn); err != nil {
 		t.Fatal(err)
 	}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	if _, err := dispatchRuntimeTurn(ctx, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.RuntimeOutput(ctx, f.Pool, host, execution, turn, uuid.NewV7(), json.RawMessage(`"runner progress"`)); err != nil {
+	if _, err := session.RuntimeOutput(ctx, f.Pool, host, execution, turn, uuid.NewV7(), json.RawMessage(`"runner progress"`)); err != nil {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
-	if err := agent.RuntimeAsk(ctx, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(ctx, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	wait("question delivered", `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE ask_id=$1 AND status='posted')`, ask)

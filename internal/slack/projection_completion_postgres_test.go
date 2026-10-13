@@ -10,8 +10,8 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -29,14 +29,14 @@ func TestSlackCommittedResponseWaitsForCoreCompletionAndIntermediateDrain(t *tes
 			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
 				t.Fatal(err)
 			}
-			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			response := json.RawMessage(`"committed answer"`)
 			if kind == "empty" {
 				response = json.RawMessage(`[]`)
 			}
 			if kind != "quiet" {
-				if err := agent.RuntimeRespond(t.Context(), f.Pool, host, execution, turn, uuid.NewV7(), response); err != nil {
+				if err := session.RuntimeRespond(t.Context(), f.Pool, host, execution, turn, uuid.NewV7(), response); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -49,25 +49,25 @@ func TestSlackCommittedResponseWaitsForCoreCompletionAndIntermediateDrain(t *tes
 			}
 			f.projectAll(t)
 			assertResponses(0)
-			if err := agent.RuntimeCloseProcessing(t.Context(), f.Pool, host, execution, turn); err != nil {
+			if err := session.RuntimeCloseProcessing(t.Context(), f.Pool, host, execution, turn); err != nil {
 				t.Fatal(err)
 			}
 			if kind != "failed" {
-				if outcome, err := agent.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome != nil {
+				if outcome, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome != nil {
 					t.Fatalf("finalize: %s %v", outcome, err)
 				}
-				if err := agent.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); !errors.Is(err, agent.ErrNotReady) {
+				if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); !errors.Is(err, session.ErrNotReady) {
 					t.Fatalf("unpublished completion=%v", err)
 				}
 				f.projectAll(t)
 				assertResponses(0)
 			}
 			if kind == "failed" {
-				if _, err := agent.RuntimeFail(t.Context(), f.Pool, host, execution, turn, agent.TurnError{Code: "application_failure", Message: "PRIVATE_FAILURE"}, "callbacks drained"); err != nil {
+				if _, err := session.RuntimeFail(t.Context(), f.Pool, host, execution, turn, session.TurnError{Code: "application_failure", Message: "PRIVATE_FAILURE"}, "callbacks drained"); err != nil {
 					t.Fatal(err)
 				}
 			} else if kind == "cancelled" {
-				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -75,7 +75,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletionAndIntermediateDrain(t *tes
 				// responsible for the own-save gate, event and publication transaction.
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_saves s SET status='published',flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),captured_root_digest=c.initial_root_digest,root_id=c.initial_root_id,capture_evidence='fixture cut',publication_evidence='fixture publication' FROM computers c WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.turn_id=$1`, turn)
 				for range 2 {
-					if err := agent.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
+					if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
 						t.Fatal(err)
 					}
 				}

@@ -66,3 +66,6 @@ selected_user AS (
      WHERE NOT EXISTS (SELECT 1 FROM updated_existing_user)
 )
 SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user;
+
+-- name: GrantUserAdmin :exec
+UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id);

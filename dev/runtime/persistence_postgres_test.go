@@ -8,13 +8,13 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 // These observations verify recorded ownership through the real psql syntax.
 // They do not replace VM capture, source shutdown, or guest activation evidence.
-func persistenceObservation(t *testing.T, f agenttest.Fixture, name string, session uuid.UUID) map[string]any {
+func persistenceObservation(t *testing.T, f sessiontest.Fixture, name string, session uuid.UUID) map[string]any {
 	t.Helper()
 	query, err := os.ReadFile(name)
 	if err != nil {
@@ -38,7 +38,7 @@ func persistenceObservation(t *testing.T, f agenttest.Fixture, name string, sess
 }
 
 func TestPersistenceObservationQuery(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	for _, name := range []string{"persistence.sql", "capture_abort.sql"} {
 		if got := persistenceObservation(t, f, name, uuid.NewV7()); got != nil {
 			t.Fatalf("absent Session produced evidence: %v", got)
@@ -83,7 +83,7 @@ func TestPersistenceObservationQuery(t *testing.T) {
 }
 
 func TestSourceAbortObservationQuery(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	save, cp := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_expires_at,capture_digest,abort_identity,controls_reconciled_at) VALUES($1,$2,$3,1,1,$4,'consumed',now()+interval '1 hour',decode(repeat('01',32),'hex'),decode(repeat('02',32),'hex'),now())`, f.Environment, cp, f.Computer, save)
