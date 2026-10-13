@@ -104,7 +104,7 @@ func TestCreateProjectSelectsFirstRegionWhenDefaultIsOmitted(t *testing.T) {
 	if _, err := fixture.queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "project-list-z", DisplayName: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
+	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
 	})
@@ -130,7 +130,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := CreateProject(t.Context(), database.Pool, orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
+	_, _, err := CreateProject(t.Context(), database.Pool, orgID, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
 	})
@@ -141,7 +141,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 
 func TestCreateProjectRejectsUnknownDefaultRegion(t *testing.T) {
 	fixture := newProjectFixture(t, 0, 0)
-	_, _, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
+	_, _, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project"},
 		DefaultRegionID: "missing-region",
@@ -162,7 +162,7 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			_, _, err := CreateProject(context.Background(), fixture.pool, fixture.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"},
+			_, _, err := CreateProject(context.Background(), fixture.pool, fixture.orgID, ProjectInput{
 				ExecutionLimits: testExecutionLimits(),
 				ProjectDetails:  ProjectDetails{Slug: slug, Name: slug},
 			})
@@ -192,7 +192,7 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 
 func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, environments, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
+	project, environments, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,18 +201,18 @@ func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
 	if err != nil || updated.Slug != "project" || updated.Name != "New display name" {
 		t.Fatalf("project identity changed: %+v %v", updated, err)
 	}
-	preview, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
+	preview, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	environments = append(environments, preview)
 	for _, environment := range environments {
-		updated, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
+		updated, err := UpdateEnvironment(t.Context(), f.queries, f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
 		if err != nil || updated.Slug != environment.Slug || updated.Name != "New display name" {
 			t.Fatalf("environment identity changed: %+v %v", updated, err)
 		}
 	}
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
 		t.Fatalf("duplicate ID: %v", err)
 	}
 	if _, err := GetProject(t.Context(), f.queries, f.orgID, projectID.String()); !errors.Is(err, ErrProjectNotFound) {
@@ -351,7 +351,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 				uuid.NewV7(), orgID, projectID,
 				fmt.Sprintf("environment-%02d", environmentIndex+1),
 				fmt.Sprintf("Environment %02d", environmentIndex+1),
-				"#315FCE", environmentIndex == 0, "until_environment_deletion",
+				"#315FCE", environmentIndex == 0,
 				limits.MaxOutstandingAdmissions, int32(limits.MaxCausalDepth), limits.MaxResidentComputers, limits.MaxCPUMillis, limits.MaxMemoryBytes, limits.MaxReservedStorageBytes,
 				limits.PreparationTimeoutMS, limits.AdmissionRatePerSecond, limits.AdmissionBurst, pgtype.Numeric{Int: big.NewInt(limits.AdmissionBurst), Valid: true}, time.Now(),
 			})
@@ -363,7 +363,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode",
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default",
 			"max_outstanding_admissions", "max_causal_depth", "max_resident_computers", "max_cpu_millis", "max_memory_bytes", "max_reserved_storage_bytes",
 			"preparation_timeout_ms", "admission_rate_per_second", "admission_burst", "admission_tokens", "admission_refilled_at"},
 		pgx.CopyFromRows(environmentRows)); err != nil {
@@ -478,7 +478,7 @@ func testExecutionLimits() ExecutionLimits {
 
 func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	input := ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ProjectDetails: ProjectDetails{Slug: "configured", Name: "Configured"}}
+	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "configured", Name: "Configured"}}
 	if _, _, err := CreateProject(t.Context(), f.pool, f.orgID, input); err == nil {
 		t.Fatal("missing operating limits accepted")
 	}
@@ -504,13 +504,13 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 
 func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
+	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 {
 		t.Fatalf("create project: %d %v", len(envs), err)
 	}
 	partial := testExecutionLimits()
 	partial.AdmissionBurst = 0
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456", HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}}, partial); err == nil {
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456"}, partial); err == nil {
 		t.Fatal("Environment created without a complete limit set")
 	}
 	var count int
@@ -519,58 +519,36 @@ func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	}
 }
 
-func TestHistoryRetentionPolicyRequiredAndAtomic(t *testing.T) {
+func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
+	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()})
+	if err != nil || len(envs) != 2 || !project.HistoryRetentionSeconds.Valid || project.HistoryRetentionSeconds.Int64 != 2592000 {
+		t.Fatalf("default: %+v %v", project, err)
+	}
+	id := pgvalue.MustUUIDValue(project.ID)
 	zero, positive := int64(0), int64(3600)
-	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()}
-	for _, policy := range []HistoryRetentionPolicy{{}, {Mode: "duration"}, {Mode: "duration", Seconds: &zero}, {Mode: "until_environment_deletion", Seconds: &positive}, {Mode: "unknown"}} {
-		input.HistoryRetention = policy
-		if _, _, err := CreateProject(t.Context(), f.pool, f.orgID, input); err == nil {
-			t.Fatalf("invalid policy accepted: %+v", policy)
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, &zero); err == nil {
+		t.Fatal("accepted zero")
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), uuid.NewV7(), id, nil); !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("cross-organization: %v", err)
+	}
+	for range 2 {
+		if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, nil); err != nil {
+			t.Fatal(err)
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM projects WHERE org_id=$1`, f.orgID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("invalid policy leaked project: %d %v", count, err)
-	}
-	input.HistoryRetention = HistoryRetentionPolicy{Mode: "duration", Seconds: &positive}
-	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(envs) != 2 {
-		t.Fatalf("initial Environments=%d", len(envs))
-	}
-	for _, env := range envs {
-		if env.HistoryRetentionMode != "duration" || !env.HistoryRetentionSeconds.Valid || env.HistoryRetentionSeconds.Int64 != positive {
-			t.Fatalf("policy not applied atomically: %+v", env)
-		}
-	}
-	env := envs[0]
-	updated, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex})
-	if err != nil || updated.HistoryRetentionMode != "duration" || updated.HistoryRetentionSeconds.Int64 != positive {
-		t.Fatalf("rename changed policy: %+v %v", updated, err)
-	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("metadata-only update audited: %d %v", count, err)
-	}
-	updated, err = UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex, HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}})
-	if err != nil || updated.HistoryRetentionMode != "until_environment_deletion" || updated.HistoryRetentionSeconds.Valid {
-		t.Fatalf("explicit policy update failed: %+v %v", updated, err)
-	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='environment.retention_changed' AND target_id=$1 AND details->>'old_retention_mode'='duration' AND (details->>'old_retention_seconds')::bigint=$2 AND details->>'new_retention_mode'='until_environment_deletion' AND details->'new_retention_seconds'='null'::jsonb`, env.ID, positive).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("retention facts: %d %v", count, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='project.retention_changed' AND target_id=$1 AND project_id=$1 AND environment_id IS NULL AND details->>'old_retention_seconds'='2592000' AND details->'new_retention_seconds'='null'::jsonb`, id).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("audit/no-op: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_retention_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_retention_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_retention_audit()`)
-	if _, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Name: env.Name, ColorHex: env.ColorHex, HistoryRetention: HistoryRetentionPolicy{Mode: "duration", Seconds: &positive}}); err == nil {
-		t.Fatal("audit failure allowed retention update")
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, &positive); err == nil {
+		t.Fatal("audit failure committed policy")
 	}
-	var retained string
-	if err := f.pool.QueryRow(t.Context(), `SELECT history_retention_mode FROM environments WHERE id=$1`, env.ID).Scan(&retained); err != nil || retained != "until_environment_deletion" {
-		t.Fatalf("retention rollback: %s %v", retained, err)
-	}
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "missing", ColorHex: "#123456"}, testExecutionLimits()); err == nil {
-		t.Fatal("new Environment accepted no policy")
+	var kept bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT history_retention_seconds IS NULL FROM projects WHERE id=$1`, id).Scan(&kept); err != nil || !kept {
+		t.Fatalf("rollback: %v %v", kept, err)
 	}
 }

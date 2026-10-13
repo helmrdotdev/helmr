@@ -1,8 +1,11 @@
 package session_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"testing"
 	"time"
 	"uuid"
@@ -33,7 +36,7 @@ func fenceHistoryProcess(t *testing.T, f fixture) {
 }
 func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=60 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "answer", Answer: json.RawMessage(`""`)}
 	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
@@ -67,7 +70,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if err != nil || view.Input == nil || view.PayloadExpiredAt != nil {
 		t.Fatalf("premature expiry: %+v %v", view, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM statement_timestamp()-interval '2 minutes')+history_retention_seconds WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes' WHERE id=$1`, f.session)
 	reconcileHistory(t, f)
 	reconcileHistory(t, f)
 	view, err = session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
@@ -99,8 +102,9 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 		t.Fatalf("lost identities: %v %v", retained, err)
 	}
 }
-func TestHistoryRetentionPendingSaveAndUntilDeletion(t *testing.T) {
+func TestHistoryRetentionPendingSaveAndNever(t *testing.T) {
 	f := newFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
 	_, save := f.finalize(t, "save")
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
@@ -113,11 +117,11 @@ func TestHistoryRetentionPendingSaveAndUntilDeletion(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='confirmed no publication' WHERE id=$1`, save.ID)
 	reconcileHistory(t, f)
 	if historyClock(t, f) == nil {
-		t.Fatal("released until-deletion owner has no eligibility")
+		t.Fatal("released never-expire owner has no eligibility")
 	}
 	var kept bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT history_expires_at IS NULL AND history_expired_at IS NULL AND EXISTS(SELECT 1 FROM turns WHERE session_id=$1 AND input IS NOT NULL) FROM sessions WHERE id=$1`, f.session).Scan(&kept); err != nil || !kept {
-		t.Fatalf("until-deletion content lost: %v %v", kept, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT history_expired_at IS NULL AND EXISTS(SELECT 1 FROM turns WHERE session_id=$1 AND input IS NOT NULL) FROM sessions WHERE id=$1`, f.session).Scan(&kept); err != nil || !kept {
+		t.Fatalf("never-expire content lost: %v %v", kept, err)
 	}
 }
 func TestHistoryRetentionCheckpointObligation(t *testing.T) {
@@ -169,10 +173,10 @@ func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=9223372036854775807 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=9223372036854775807 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
 	reconcileHistory(t, f)
 	var exact bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT history_expires_at-EXTRACT(epoch FROM history_eligible_at)=9223372036854775807 AND history_expired_at IS NULL FROM sessions WHERE id=$1`, f.session).Scan(&exact); err != nil || !exact {
+	if err := f.pool.QueryRow(t.Context(), `SELECT history_eligible_at IS NOT NULL AND history_expired_at IS NULL FROM sessions WHERE id=$1`, f.session).Scan(&exact); err != nil || !exact {
 		t.Fatalf("maximum duration changed: %v %v", exact, err)
 	}
 	reconcileHistory(t, f)
@@ -188,7 +192,8 @@ func TestHistoryRetentionRollsBackWhenSlackPurgeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=1,history_eligible_at=statement_timestamp()-interval '2 seconds',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-1 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=1 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 seconds' WHERE id=$1`, f.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_slack_history_purge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Slack history purge failure'; END $$;
  CREATE TRIGGER reject_slack_history_purge BEFORE UPDATE ON slack_requests FOR EACH STATEMENT EXECUTE FUNCTION reject_slack_history_purge()`)
 	if err := slack.RetainSessionHistory(t.Context(), f.pool, f.env, f.session); err == nil {
@@ -203,5 +208,103 @@ func TestHistoryRetentionRollsBackWhenSlackPurgeFails(t *testing.T) {
 	var expired bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT s.history_expired_at IS NOT NULL AND t.input IS NULL AND t.payload_expired_at IS NOT NULL FROM sessions s JOIN turns t ON t.environment_id=s.environment_id AND t.session_id=s.id WHERE t.id=$1`, turn.TurnID).Scan(&expired); err != nil || !expired {
 		t.Fatalf("retry did not expire Session content: %v %v", expired, err)
+	}
+}
+
+// Changing a Project policy re-evaluates previously eligible Sessions without
+// moving their clocks, including Sessions admitted while expiry was disabled.
+func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
+	f := newFixture(t)
+	turn := f.enqueue(t, "current-policy")
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
+	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+		t.Fatal(err)
+	}
+	fenceHistoryProcess(t, f)
+	reconcileHistory(t, f)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=clock_timestamp()-interval '2 days' WHERE id=$1`, f.session)
+	clock := historyClock(t, f)
+	var orgID, projectID uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&orgID, &projectID); err != nil {
+		t.Fatal(err)
+	}
+	for _, seconds := range []*int64{nil, ptrInt64(3 * 86400), nil, ptrInt64(86400)} {
+		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), orgID, projectID, seconds); err != nil {
+			t.Fatal(err)
+		}
+		// Exercise discovery as well as the locked final check.
+		if _, _, err := slack.ReconcileHistory(t.Context(), f.pool, slack.HistoryPosition{}); err != nil {
+			t.Fatal(err)
+		}
+		var expired bool
+		if err := f.pool.QueryRow(t.Context(), `SELECT payload_expired_at IS NOT NULL FROM turns WHERE id=$1`, turn.TurnID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if want := seconds != nil && *seconds == 86400; expired != want {
+			t.Fatalf("policy %v expired=%v", seconds, expired)
+		}
+		if got := historyClock(t, f); got == nil || !got.Equal(*clock) {
+			t.Fatal("policy edit moved clock")
+		}
+	}
+	if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), orgID, projectID, nil); err != nil {
+		t.Fatal(err)
+	}
+	reconcileHistory(t, f)
+	var stillExpired bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT payload_expired_at IS NOT NULL AND input IS NULL FROM turns WHERE id=$1`, turn.TurnID).Scan(&stillExpired); err != nil || !stillExpired {
+		t.Fatalf("expired content restored: %v", err)
+	}
+}
+
+func ptrInt64(value int64) *int64 { return &value }
+
+func TestHistoryRetentionWaitsForProtectivePolicyUpdate(t *testing.T) {
+	for _, value := range []string{"NULL", "2592000"} {
+		t.Run(value, func(t *testing.T) {
+			f := newFixture(t)
+			turn := f.enqueue(t, "policy-race")
+			if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+				t.Fatal(err)
+			}
+			fenceHistoryProcess(t, f)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=1 WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			tx, err := f.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			if _, err = tx.Exec(ctx, `UPDATE projects SET history_retention_seconds=`+value+` WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- slack.RetainSessionHistory(ctx, f.pool, f.env, f.session) }()
+			waiting := false
+			for ctx.Err() == nil {
+				if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR SHARE OF p%')`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if !waiting {
+				t.Fatal("cleanup did not serialize with policy update")
+			}
+			if err = tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; err != nil {
+				t.Fatal(err)
+			}
+			var kept bool
+			if err = f.pool.QueryRow(ctx, `SELECT input IS NOT NULL AND payload_expired_at IS NULL FROM turns WHERE id=$1`, turn.TurnID).Scan(&kept); err != nil || !kept {
+				t.Fatalf("stale policy deleted content: %v %v", kept, err)
+			}
+		})
 	}
 }

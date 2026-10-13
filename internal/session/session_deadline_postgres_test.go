@@ -389,8 +389,8 @@ func TestSessionLifecycleClosesLargeOwnedTree(t *testing.T) {
 	f := newFixture(t)
 	active, save := f.finalize(t, "parent")
 	const children = 5000
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
- SELECT 'until_environment_deletion',$1,gen_random_uuid(),$2,$3,$4,$5,$5,$5,1 FROM generate_series(1,$6)`, f.env, f.agent, f.deployment, f.computer, f.session, children)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
+ SELECT $1,gen_random_uuid(),$2,$3,$4,$5,$5,$5,1 FROM generate_series(1,$6)`, f.env, f.agent, f.deployment, f.computer, f.session, children)
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "large-close")); err != nil {
 		t.Fatal(err)
 	}

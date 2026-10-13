@@ -31,14 +31,14 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 	}
 	s := DiagnosticSource{EnvironmentID: env, Kind: kind, ID: uuid.NewV7(), ProducerEpoch: 1}
 	if env != baseEnv {
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
 	}
 	switch kind {
 	case "session":
 		if env != baseEnv {
 			t.Fatal("Session test source requires fixture Environment")
 		}
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT 'until_environment_deletion',environment_id,$1,agent_id,deployment_id,computer_id,$1,0 FROM sessions WHERE environment_id=$2 LIMIT 1`, s.ID, env)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT environment_id,$1,agent_id,deployment_id,computer_id,$1,0 FROM sessions WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) SELECT environment_id,$1,1,computer_id,computer_lease_epoch,'ready' FROM session_processes WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 	case "image_build":
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')`, env, s.ID)

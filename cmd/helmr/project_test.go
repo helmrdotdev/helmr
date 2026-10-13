@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/spf13/cobra"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,11 +37,11 @@ func TestProjectCreateCommandUsesExplicitIdentifier(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"project", "create", "production-app", "--name", "Production App!", "--history-retention-mode", "until_environment_deletion"})
+	cmd.SetArgs([]string{"project", "create", "production-app", "--name", "Production App!"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Name != "Production App!" || request.Project != "production-app" || request.HistoryRetentionMode != "until_environment_deletion" || request.HistoryRetentionSeconds != nil {
+	if request.Name != "Production App!" || request.Project != "production-app" {
 		t.Fatalf("request = %+v", request)
 	}
 	if !strings.Contains(out.String(), projectID+"\tProduction App!") {
@@ -250,7 +251,7 @@ func TestEnvCreateCommandUsesExplicitIdentifier(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"env", "create", "qa-environment", "--name", "QA Environment", "--project", "prod", "--history-retention-mode", "duration", "--history-retention-seconds", "86400"})
+	cmd.SetArgs([]string{"env", "create", "qa-environment", "--name", "QA Environment", "--project", "prod"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -452,14 +453,70 @@ func TestDefaultEnvironmentColorHexUsesSemanticAndCustomPalette(t *testing.T) {
 	}
 }
 
-func TestHistoryRetentionFlagsRequireExplicitPolicy(t *testing.T) {
-	for _, args := range [][]string{{}, {"--history-retention-mode", "duration"}, {"--history-retention-mode", "duration", "--history-retention-seconds", "0"}, {"--history-retention-mode", "until_environment_deletion", "--history-retention-seconds", "1"}} {
-		cmd := projectCreateCommand()
-		if err := cmd.ParseFlags(args); err != nil {
+func TestHistoryRetentionRemovedFromCreationAndEnvironment(t *testing.T) {
+	for _, cmd := range []*cobra.Command{projectCreateCommand(), envCreateCommand(), envUpdateCommand()} {
+		if err := cmd.ParseFlags([]string{"--history-retention-mode", "duration"}); err == nil {
+			t.Fatal("old retention flag accepted")
+		}
+	}
+}
+
+func TestProjectSettingsCommands(t *testing.T) {
+	state := installTestCLIConfig(t)
+	policy := "30d"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/projects/example/settings" || r.Header.Get("Authorization") != "Bearer session_test" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(400)
+			return
+		}
+		requests++
+		if r.Method == http.MethodPatch {
+			var input api.ProjectSettings
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+			policy = input.HistoryRetention
+		} else if r.Method != http.MethodGet {
+			t.Errorf("method %s", r.Method)
+		}
+		_ = json.NewEncoder(w).Encode(api.ProjectSettings{HistoryRetention: policy})
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"get", "example", "--json"}, `"history_retention":"30d"`},
+		{[]string{"update", "example", "--history-retention", "48h", "--json"}, `"history_retention":"2d"`},
+		{[]string{"update", "example", "--history-retention", "never"}, "History retention: never"},
+	} {
+		var out bytes.Buffer
+		cmd := newRootCommand()
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(append([]string{"project", "settings"}, tc.args...))
+		if err := cmd.Execute(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := historyRetentionFlags(cmd, true); err == nil {
-			t.Fatalf("invalid history flags accepted: %v", args)
+		if !strings.Contains(out.String(), tc.want) {
+			t.Fatalf("output=%s want=%s", out.String(), tc.want)
 		}
+	}
+	for _, args := range [][]string{{"update", "example"}, {"update", "example", "--history-retention", "0d"}, {"update", "example", "--history-retention", ""}} {
+		cmd := newRootCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(append([]string{"project", "settings"}, args...))
+		if err := cmd.Execute(); err == nil {
+			t.Fatalf("invalid accepted %v", args)
+		}
+	}
+	if requests != 3 {
+		t.Fatalf("invalid flags reached server: %d requests", requests)
 	}
 }

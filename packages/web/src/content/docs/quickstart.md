@@ -76,13 +76,12 @@ The rest of the documentation assumes the CLI is configured as described here.
 ## Create a Project
 
 ```sh
-helmr project create hello --name "Hello Helmr" \
-  --history-retention-mode duration --history-retention-seconds 2592000
+helmr project create hello --name "Hello Helmr"
 ```
 
 A new Project has two Environments, `staging` and `production`. This page uses
-`staging`. The retention flags choose how long Session history is kept after a
-Session ends; see [Projects](/docs/concepts/projects).
+`staging`. Session history is retained for 30 days by default across every
+Environment. Change this in Project settings; see [Projects](/docs/concepts/projects).
 
 ## Create the starter project
 

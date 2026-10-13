@@ -43,7 +43,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO users(id,display_name) VALUES($2,'Developer');
       INSERT INTO org_members(org_id,user_id,role) VALUES($1,$2,'developer');
       INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'test','project','Project');
-      INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$4,$1,$3,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
+      INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($4,$5,$6);
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
@@ -58,7 +58,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);
       `+DiskRootInsert("$4", "$20", "$21")+`;
       INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,1000,536870912,NULL,34359738368);
-      INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$4,$9,$7,$5,$8,$9,0);
+      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($4,$9,$7,$5,$8,$9,0);
       INSERT INTO worker_group_tokens(id,token_hash) VALUES($10,decode(repeat('00',32),'hex'));
       INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($11,$10,'test','group');
       INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest) VALUES($6,$6,$6,'1.16.1','6.0.0','test',$6,$6,$6);

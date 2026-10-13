@@ -28,9 +28,9 @@ WITH project AS (
     RETURNING *
 ),
 environment AS (
-    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds,
+    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,
         max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
-    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default, sqlc.arg(history_retention_mode), sqlc.narg(history_retention_seconds),
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default,
         sqlc.arg(max_outstanding_admissions), sqlc.arg(max_causal_depth), sqlc.arg(max_resident_computers), sqlc.arg(max_cpu_millis), sqlc.arg(max_memory_bytes), sqlc.arg(max_reserved_storage_bytes), sqlc.arg(preparation_timeout_ms), sqlc.arg(admission_rate_per_second), sqlc.arg(admission_burst)::bigint, sqlc.arg(admission_burst)::bigint::numeric, clock_timestamp()
       FROM project
       CROSS JOIN (
@@ -77,7 +77,7 @@ SELECT *
  LIMIT sqlc.arg(row_limit);
 
 -- name: CreateEnvironment :one
-INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds,
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,
     max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
 VALUES (
     sqlc.arg(id),
@@ -87,8 +87,6 @@ VALUES (
     sqlc.arg(name),
     sqlc.arg(color_hex),
     sqlc.arg(is_default),
-    sqlc.arg(history_retention_mode),
-    sqlc.narg(history_retention_seconds),
     sqlc.arg(max_outstanding_admissions), sqlc.arg(max_causal_depth), sqlc.arg(max_resident_computers), sqlc.arg(max_cpu_millis), sqlc.arg(max_memory_bytes), sqlc.arg(max_reserved_storage_bytes), sqlc.arg(preparation_timeout_ms), sqlc.arg(admission_rate_per_second), sqlc.arg(admission_burst)::bigint, sqlc.arg(admission_burst)::bigint::numeric, clock_timestamp()
 )
 RETURNING *;
@@ -97,8 +95,6 @@ RETURNING *;
 UPDATE environments
    SET name = sqlc.arg(name),
        color_hex = sqlc.arg(color_hex),
-       history_retention_mode = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_mode ELSE sqlc.arg(history_retention_mode) END,
-       history_retention_seconds = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_seconds ELSE sqlc.narg(history_retention_seconds)::bigint END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)

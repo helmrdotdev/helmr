@@ -37,8 +37,8 @@ selects the Project and Environment on each command with `--project` and
 `--env`. See [Authentication](/docs/reference/api/authentication).
 
 ```sh
-helmr project create agents --name "Agents" --history-retention-mode until_environment_deletion
-helmr env create development --project agents --history-retention-mode until_environment_deletion
+helmr project create agents --name "Agents"
+helmr env create development --project agents
 ```
 
 ## Deployments
@@ -92,6 +92,29 @@ exists:
   Deployment's Template definitions.
 
 The Deployment itself is never modified.
+
+## Session history retention
+
+New Projects retain Session history for **30 days**. The Project's current policy
+applies to all remaining history in every Environment; there are no Environment
+overrides. Change it in **Settings → Project → Session history**, or use
+`helmr project settings update PROJECT --history-retention 30d`.
+Use `never` to disable automatic expiry.
+
+The clock starts once the Session has ended, its process has stopped, and pending
+save, continuation, answer and delivery obligations have finished. Changing the
+policy does not reset that clock. Shortening the period can permanently delete
+older content on the next cleanup pass. Extending it or choosing `never` preserves
+remaining content but cannot restore content already deleted.
+
+Expiry removes stored inputs, results, messages, questions, answers and event
+payloads, including Helmr's stored Slack copies. It does not delete messages
+already delivered to Slack. Session identities and statuses remain. Computer disk
+retention and administrative audit records are separate. Open Sessions keep their
+history. Very short periods may expire content before a delayed reader fetches it.
+
+All organization members can read the policy; Owners and Admins can change it. Policy
+changes are recorded in the administrative audit trail.
 
 ## Related
 

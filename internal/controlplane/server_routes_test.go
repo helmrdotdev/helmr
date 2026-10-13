@@ -81,6 +81,7 @@ GET /api/projects/{project}/environments/{environment}/templates
 GET /api/projects/{project}/environments/{environment}/templates/{template}
 GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
+GET /api/projects/{project}/settings
 GET /api/regions
 GET /api/slack/link-workspaces
 GET /api/slack/user-links
@@ -125,6 +126,7 @@ PATCH /api/members/{userID}
 PATCH /api/projects/{project}
 PATCH /api/projects/{project}/environments/{environment}
 PATCH /api/projects/{project}/environments/{environment}/computers/{computerID}
+PATCH /api/projects/{project}/settings
 PATCH /v1/computers/{computerID}
 POST /admin/api/v1/regions
 POST /admin/api/v1/worker-groups

@@ -17,7 +17,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			f := newAdmissionFixture(t)
 			_, channel := slackRouteFixture(t, f)
 			bindFixtureSlackRoot(t, f, channel)
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=60 WHERE id=(SELECT project_id FROM environments WHERE id=$1) AND EXISTS(SELECT 1 FROM sessions WHERE id=$2)`, f.env, f.session)
 			turn := f.enqueue(t, "retention")
 			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			}
 			// Recheck obligations at purge too: even an already-established elapsed clock
 			// cannot release a newly observed pending mutation or its unread source.
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-60 WHERE id=$1`, f.session)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes' WHERE id=$1`, f.session)
 			reconcileHistory(t, f)
 			var purged bool
 			if err := f.pool.QueryRow(t.Context(), `SELECT history_expired_at IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&purged); err != nil || purged != released {
@@ -140,7 +140,8 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	fenceHistoryProcess(t, c)
 	// The physical stop can already be known while its event remains unread.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_thread_sources SET projected_event_seq=0 WHERE session_id=$1`, c.session)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60,history_eligible_at=statement_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-60 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=60 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes' WHERE id=$1`, f.session)
 	reconcileHistory(t, f)
 	var expired bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT history_expired_at IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&expired); err != nil || expired {

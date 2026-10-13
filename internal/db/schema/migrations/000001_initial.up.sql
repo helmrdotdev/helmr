@@ -78,6 +78,7 @@ CREATE TABLE projects (
     slug text NOT NULL CHECK (btrim(slug) <> ''),
     name text NOT NULL CHECK (btrim(name) <> ''),
     is_default boolean NOT NULL DEFAULT false,
+    history_retention_seconds bigint DEFAULT 2592000 CHECK (history_retention_seconds > 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
@@ -90,8 +91,6 @@ CREATE UNIQUE INDEX projects_one_default ON projects(org_id) WHERE is_default;
 
 CREATE TABLE environments (
     id uuid PRIMARY KEY,
-    history_retention_mode text NOT NULL CHECK (history_retention_mode IN ('duration', 'until_environment_deletion')),
-    history_retention_seconds bigint,
     org_id uuid NOT NULL,
     project_id uuid NOT NULL,
     slug text NOT NULL CHECK (btrim(slug) <> ''),
@@ -112,8 +111,6 @@ CREATE TABLE environments (
     admission_burst bigint NOT NULL CHECK (admission_burst>0),
     admission_tokens numeric NOT NULL CHECK (admission_tokens>=0),
     admission_refilled_at timestamptz NOT NULL,
-    CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
-        OR (history_retention_mode='until_environment_deletion' AND history_retention_seconds IS NULL)),
     UNIQUE (org_id, project_id, id),
     UNIQUE (org_id, project_id, slug),
     FOREIGN KEY (org_id, project_id)
@@ -1300,11 +1297,7 @@ CREATE TABLE sessions (
     id uuid NOT NULL,
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
-    history_retention_mode text NOT NULL CHECK (history_retention_mode IN ('duration', 'until_environment_deletion')),
-    history_retention_seconds bigint,
     history_eligible_at timestamptz,
-    -- Exact Unix seconds support every positive bigint duration without timestamp overflow.
-    history_expires_at numeric,
     history_expired_at timestamptz,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
@@ -1330,13 +1323,8 @@ CREATE TABLE sessions (
     CHECK (creation_idempotency_key IS NULL OR creation_digest IS NOT NULL),
     CHECK (creation_turn_id IS NULL OR (creation_digest IS NOT NULL AND computer_id IS NOT NULL)),
     UNIQUE (environment_id, creation_caller_kind, creation_caller_id, creation_method, agent_id, creation_idempotency_key),
-    CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
-        OR (history_retention_mode='until_environment_deletion' AND history_retention_seconds IS NULL)),
     CHECK (history_eligible_at IS NULL OR status IN ('closed', 'cancelled')),
-    CHECK ((history_eligible_at IS NULL AND history_expires_at IS NULL)
-        OR (history_eligible_at IS NOT NULL AND ((history_retention_mode='duration' AND history_expires_at IS NOT NULL AND history_expires_at=EXTRACT(epoch FROM history_eligible_at)+history_retention_seconds)
-        OR (history_retention_mode='until_environment_deletion' AND history_expires_at IS NULL)))),
-    CHECK (history_expired_at IS NULL OR (history_eligible_at IS NOT NULL AND history_expires_at IS NOT NULL AND EXTRACT(epoch FROM history_expired_at)>=history_expires_at)),
+    CHECK (history_expired_at IS NULL OR (history_eligible_at IS NOT NULL AND history_expired_at >= history_eligible_at)),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, id, computer_id),
     UNIQUE (environment_id, id, root_session_id),

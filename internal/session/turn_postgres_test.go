@@ -70,7 +70,7 @@ func (f fixture) peer(t *testing.T) fixture {
 	t.Helper()
 	p := f
 	p.session = uuid.New()
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0);
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($1,$2,$3,$4,$5,$2,0);
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$5,1,'ready',1,1,1,'resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, p.session, f.agent, f.deployment, f.computer)
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +470,7 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	f := newFixture(t)
 	otherEnv, otherSession := uuid.New(), uuid.New()
 	_, err := f.pool.Exec(t.Context(), `
-	INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
+	INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
 	INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,id,bundle_digest FROM deployments WHERE environment_id=$1;
 	INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,id,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1;
 	INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
@@ -478,7 +478,7 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	INSERT INTO agents(environment_id,id,key) SELECT $2,id,key FROM agents WHERE environment_id=$1;
 	INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT $2,agent_id,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1;
 	INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT $2,id,$5,clock_timestamp()+interval '5 minutes',origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1;
-	INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT 'until_environment_deletion',$2,$3,agent_id,deployment_id,computer_id,$3,0 FROM sessions WHERE environment_id=$1 AND id=$4;`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, otherSession, f.session, f.deployment)
+	INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT $2,$3,agent_id,deployment_id,computer_id,$3,0 FROM sessions WHERE environment_id=$1 AND id=$4;`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, otherSession, f.session, f.deployment)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,27 +1,38 @@
 package org
 
-import "github.com/jackc/pgx/v5/pgtype"
+import (
+	"context"
+	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"uuid"
+)
 
-// HistoryRetentionPolicy is explicitly selected for each new Environment.
-// Sessions snapshot it at admission; later edits never shorten their policy.
-type HistoryRetentionPolicy struct {
-	Mode    string
-	Seconds *int64
-}
-
-func (p HistoryRetentionPolicy) Validate() error {
-	if p.Mode == "until_environment_deletion" && p.Seconds == nil {
-		return nil
+// UpdateProjectHistoryRetention changes the policy for all remaining history.
+// Cleanup takes a shared lock on the same Project until its deletion commits.
+func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, actor audit.Actor, orgID, projectID uuid.UUID, seconds *int64) error {
+	if seconds != nil && *seconds <= 0 {
+		return invalidInput("history retention must be positive")
 	}
-	if p.Mode == "duration" && p.Seconds != nil && *p.Seconds > 0 {
-		return nil
-	}
-	return invalidInput("history_retention_mode must be duration with positive history_retention_seconds, or until_environment_deletion without seconds")
-}
-
-func (p HistoryRetentionPolicy) seconds() pgtype.Int8 {
-	if p.Seconds == nil {
-		return pgtype.Int8{}
-	}
-	return pgtype.Int8{Int64: *p.Seconds, Valid: true}
+	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var old pgtype.Int8
+		if err := tx.QueryRow(ctx, `SELECT history_retention_seconds FROM projects WHERE org_id=$1 AND id=$2 FOR NO KEY UPDATE`, orgID, projectID).Scan(&old); isNoRows(err) {
+			return ErrProjectNotFound
+		} else if err != nil {
+			return fmt.Errorf("lock project retention: %w", err)
+		}
+		if (seconds == nil && !old.Valid) || (seconds != nil && old.Valid && *seconds == old.Int64) {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE projects SET history_retention_seconds=$3,updated_at=now() WHERE org_id=$1 AND id=$2`, orgID, projectID, seconds); err != nil {
+			return fmt.Errorf("update project retention: %w", err)
+		}
+		var before *int64
+		if old.Valid {
+			before = &old.Int64
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: orgID, ProjectID: projectID, Action: "project.retention_changed", TargetKind: "project", TargetID: projectID, Details: audit.RetentionChangedDetails{OldRetentionSeconds: before, NewRetentionSeconds: seconds}})
+	})
 }

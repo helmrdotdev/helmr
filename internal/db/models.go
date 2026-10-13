@@ -209,8 +209,6 @@ type DiskObject struct {
 
 type Environment struct {
 	ID                       pgtype.UUID        `json:"id"`
-	HistoryRetentionMode     string             `json:"history_retention_mode"`
-	HistoryRetentionSeconds  pgtype.Int8        `json:"history_retention_seconds"`
 	OrgID                    pgtype.UUID        `json:"org_id"`
 	ProjectID                pgtype.UUID        `json:"project_id"`
 	Slug                     string             `json:"slug"`
@@ -317,14 +315,15 @@ type Organization struct {
 }
 
 type Project struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	DefaultRegionID string             `json:"default_region_id"`
-	Slug            string             `json:"slug"`
-	Name            string             `json:"name"`
-	IsDefault       bool               `json:"is_default"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	DefaultRegionID         string             `json:"default_region_id"`
+	Slug                    string             `json:"slug"`
+	Name                    string             `json:"name"`
+	IsDefault               bool               `json:"is_default"`
+	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Region struct {

@@ -70,8 +70,8 @@ func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) 
 		t.Fatal(err)
 	}
 	peer, participant, hold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
- SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
+ SELECT environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2);
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($5,$6,$2,'local','needs attention')`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment, hold)
 	f.due(t)
@@ -164,8 +164,8 @@ func TestSlackStatusRejectsRevokedRouteAndScopesAuthorizationLoss(t *testing.T) 
 func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	f := newStatusFixture(t)
 	peer, participant := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
- SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth)
+ SELECT environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
 	caller := session.Caller{Kind: "user", ID: f.User}
 	if _, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
@@ -189,8 +189,8 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 	f := newStatusFixture(t)
 	claim := f.claim(t, "active")
 	other, peer, participant := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
- SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
+ SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$6,$2,$5,org_id,team_id,slack_channel_id,'789.012','other' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, other, f.channel, f.Environment)
 	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: RateLimited, Code: "ratelimited", RetryAfter: 90 * time.Second}); err != nil {

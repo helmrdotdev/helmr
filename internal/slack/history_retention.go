@@ -49,7 +49,7 @@ func RunHistoryRetention(ctx context.Context, database db.TxDB, log *slog.Logger
 func ReconcileHistory(ctx context.Context, database db.TxDB, after HistoryPosition) (HistoryPosition, bool, error) {
 	scan, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rows, err := database.Query(scan, `SELECT environment_id,id FROM sessions WHERE status IN ('closed','cancelled') AND history_expired_at IS NULL AND (history_eligible_at IS NULL OR history_expires_at<=EXTRACT(epoch FROM clock_timestamp())) AND (environment_id,id)>($1,$2) ORDER BY environment_id,id LIMIT 100`, after.environment, after.session)
+	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM sessions s JOIN environments e ON e.id=s.environment_id JOIN projects p ON p.id=e.project_id WHERE s.status IN ('closed','cancelled') AND s.history_expired_at IS NULL AND (s.history_eligible_at IS NULL OR EXTRACT(epoch FROM s.history_eligible_at)+p.history_retention_seconds<=EXTRACT(epoch FROM clock_timestamp())) AND (s.environment_id,s.id)>($1,$2) ORDER BY s.environment_id,s.id LIMIT 100`, after.environment, after.session)
 	if err != nil {
 		return after, false, err
 	}
