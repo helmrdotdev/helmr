@@ -136,6 +136,52 @@ func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 	}
 }
 
+func TestCancelledProcessAbsentBeforeSetupCanBeReclaimed(t *testing.T) {
+	f, _, e := startingSessionFixture(t)
+	old, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "cancel-before-setup"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil || current.Starting || current.Stopped {
+		t.Fatalf("cancelled attachment: %+v %v", current, err)
+	}
+	if _, err = session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, current.Sequence); err == nil {
+		t.Fatal("cancelled setup authorized")
+	}
+	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, old.Sequence); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("stale absence accepted: %v", err)
+	}
+	var computerID uuid.UUID
+	if err = f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, e.SessionID).Scan(&computerID); err != nil {
+		t.Fatal(err)
+	}
+	scope := computer.Scope{EnvironmentID: f.env}
+	if err = f.pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	deletion := computer.Deletion{Scope: scope, ComputerID: computerID, IdempotencyKey: "delete-cancelled"}
+	if _, err = computer.Delete(t.Context(), f.pool, deletion); !errors.Is(err, computer.ErrBusy) {
+		t.Fatalf("unproved stop permitted deletion: %v", err)
+	}
+	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, current.Sequence)
+	if err != nil || delivery.Kind != "shutdown" {
+		t.Fatalf("cancelled control: %+v %v", delivery, err)
+	}
+	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, current.Sequence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, current.Sequence); err == nil {
+		t.Fatal("stopped setup authorized")
+	}
+	if _, err = computer.Delete(t.Context(), f.pool, deletion); err != nil {
+		t.Fatalf("proved stop prevented deletion: %v", err)
+	}
+}
+
 func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 	r := newComputerRestoreFixture(t)
 	ctx := t.Context()

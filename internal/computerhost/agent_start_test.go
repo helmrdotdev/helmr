@@ -19,6 +19,15 @@ import (
 
 type retainedSessionStartClient struct{ t *testing.T }
 
+func (c retainedSessionStartClient) PrepareAgentControl(context.Context, workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
+	c.t.Fatal("startup unexpectedly prepared control")
+	return workerapi.AgentControlResponse{}, nil
+}
+func (c retainedSessionStartClient) ObserveAgentStopped(context.Context, workerapi.AgentControlRequest) error {
+	c.t.Fatal("startup unexpectedly observed physical stop")
+	return nil
+}
+
 func (c retainedSessionStartClient) AcquireAgentAttachment(context.Context, workerapi.RuntimeSession) (workerapi.AgentAttachmentResponse, error) {
 	return workerapi.AgentAttachmentResponse{Starting: true, AttachmentSequence: 5, AuthorityGeneration: 4, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
@@ -98,4 +107,81 @@ func TestStartAllocatedAgentSessionDoesNotInferAbsenceFromTransportFailure(t *te
 		t.Fatalf("unknown outcome treated as absence: %v", err)
 	}
 	<-done
+}
+
+type absentSessionStartClient struct {
+	retainedSessionStartClient
+	kind                string
+	prepareErr, stopErr error
+	prepared, observed  int
+}
+
+func (c *absentSessionStartClient) AcquireAgentAttachment(context.Context, workerapi.RuntimeSession) (workerapi.AgentAttachmentResponse, error) {
+	return workerapi.AgentAttachmentResponse{AttachmentSequence: 5, AuthorityGeneration: 4, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func (c *absentSessionStartClient) PrepareAgentControl(_ context.Context, request workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
+	c.checkRequest(request)
+	c.prepared++
+	return workerapi.AgentControlResponse{Kind: c.kind}, c.prepareErr
+}
+func (c *absentSessionStartClient) ObserveAgentStopped(_ context.Context, request workerapi.AgentControlRequest) error {
+	c.checkRequest(request)
+	c.observed++
+	return c.stopErr
+}
+func (c *absentSessionStartClient) checkRequest(request workerapi.AgentControlRequest) {
+	c.t.Helper()
+	grant := sessionTransportGrant()
+	if request.AttachmentSequence != 5 || request.Session.EnvironmentID != "env" || request.Session.SessionID != grant.Identity.SessionId || request.Session.ProcessEpoch != grant.Identity.ProcessEpoch || request.Session.ComputerLeaseEpoch != grant.ComputerLeaseEpoch {
+		c.t.Fatalf("wrong stop authority: %+v", request)
+	}
+}
+
+func TestStartAllocatedAgentSessionCancelledBeforeSetup(t *testing.T) {
+	rejected := errors.New("authority rejected")
+	for _, test := range []struct {
+		name, kind, receipt        string
+		prepareErr, stopErr        error
+		wantPrepared, wantObserved int
+		wantErr                    error
+	}{
+		{name: "cancelled", kind: "shutdown", wantPrepared: 1, wantObserved: 1, wantErr: ErrAgentSessionStopped},
+		{name: "held", kind: "suspend", wantPrepared: 1, wantErr: ErrAgentSessionAbsent},
+		{name: "live", kind: "resume", wantPrepared: 1, wantErr: ErrAgentSessionAbsent},
+		{name: "control rejected", kind: "shutdown", prepareErr: rejected, wantPrepared: 1, wantErr: rejected},
+		{name: "stop rejected", kind: "shutdown", stopErr: rejected, wantPrepared: 1, wantObserved: 1, wantErr: rejected},
+		{name: "transport failure", kind: "shutdown", receipt: "eof"},
+		{name: "wrong attachment", kind: "shutdown", receipt: "attachment"},
+		{name: "wrong process", kind: "shutdown", receipt: "process"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			machine, done := programTransferMachine(t, func(stream net.Conn, request *agentv1.SessionAttach) error {
+				if request.Start != nil {
+					t.Error("cancelled process received setup")
+				}
+				if test.receipt == "eof" {
+					return nil
+				}
+				if test.receipt == "attachment" {
+					request.AttachmentSequence++
+				}
+				if test.receipt == "process" {
+					request.Grant.Identity.ProcessEpoch++
+				}
+				return frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: request.Grant.Identity, AttachmentSequence: request.AttachmentSequence, Message: &agentv1.GuestSessionMessage_Absent{Absent: &agentv1.SessionAbsent{}}})
+			})
+			client := &absentSessionStartClient{retainedSessionStartClient: retainedSessionStartClient{t}, kind: test.kind, prepareErr: test.prepareErr, stopErr: test.stopErr}
+			var machines PreparedMachines
+			connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), client)
+			if err == nil || (test.wantErr != nil && !errors.Is(err, test.wantErr)) || connection != nil || attached != nil {
+				t.Fatalf("unexpected attachment result: %v %v %v", connection, attached, err)
+			}
+			if client.prepared != test.wantPrepared || client.observed != test.wantObserved {
+				t.Fatalf("control/stop calls = %d/%d, want %d/%d", client.prepared, client.observed, test.wantPrepared, test.wantObserved)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

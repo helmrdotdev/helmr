@@ -5,7 +5,9 @@ await verify("session-cancel", async ({ client, marker, computer, startAgent, ob
   const { session, turn } = await startAgent("delay-smoke", {
     computer: target, input: { marker, delayMs: 120_000 }, idempotencyKey: `cancel:${marker}`,
   })
-  await waitOutput(session, turn, value => value !== null && typeof value === "object" && "phase" in value && value.phase === "before-delay")
+  // This case cancels executing work; allow the same cold admission budget as
+  // Turn completion before requiring the marker that proves execution started.
+  await waitOutput(session, turn, value => value !== null && typeof value === "object" && "phase" in value && value.phase === "before-delay", 20 * 60_000)
   const queued = await session.enqueue(fixtureInput({ marker: `${marker}:queued`, delayMs: 1 }), { idempotencyKey: `queued:${marker}` })
   objects.turn_ids.push(queued.id)
   await session.cancel({ idempotencyKey: `cancel-session:${marker}` })

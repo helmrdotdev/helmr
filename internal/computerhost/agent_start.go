@@ -22,6 +22,8 @@ type AgentStartClient interface {
 	ReleaseAgentStart(context.Context, workerapi.AgentStartReleaseRequest) (workerapi.AgentAuthorityResponse, error)
 	AcquireAgentAttachment(context.Context, workerapi.RuntimeSession) (workerapi.AgentAttachmentResponse, error)
 	AuthorizeAgentStart(context.Context, workerapi.AgentControlRequest) (workerapi.AgentStartResponse, error)
+	PrepareAgentControl(context.Context, workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error)
+	ObserveAgentStopped(context.Context, workerapi.AgentControlRequest) error
 }
 
 var ErrAgentSessionStopped = errors.New("session process is already stopped")
@@ -52,8 +54,26 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 	if err == nil {
 		return connection, attached, nil
 	}
-	if !errors.Is(err, ErrAgentSessionAbsent) || !attachment.Starting {
+	if !errors.Is(err, ErrAgentSessionAbsent) {
 		return nil, nil, err
+	}
+	if !attachment.Starting {
+		request := workerapi.AgentControlRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence}
+		control, controlErr := client.PrepareAgentControl(ctx, request)
+		if controlErr != nil {
+			return nil, nil, controlErr
+		}
+		if control.Kind != "shutdown" {
+			return nil, nil, err
+		}
+		// Guest absence excludes in-flight setup. Any later initial startup
+		// must obtain release against this attachment and current authority;
+		// shutdown forbids it. The stop observer rechecks physical ownership
+		// and the attachment before recording that this epoch cannot run.
+		if err = client.ObserveAgentStopped(ctx, request); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, ErrAgentSessionStopped
 	}
 	if p.SessionLogLimits.GetChunkBytes() <= 0 || p.SessionLogLimits.GetChunkBytes() > agentTransportFrameLimit-64*1024 || p.SessionLogLimits.GetBufferBytes() < int64(p.SessionLogLimits.GetChunkBytes()) || p.SessionLogLimits.GetBufferRecords() <= 0 {
 		return nil, nil, errors.New("session startup requires configured diagnostic bounds")
