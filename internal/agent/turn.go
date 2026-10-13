@@ -201,6 +201,11 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 		if err != nil {
 			return err
 		}
+		if method != "turn_send" {
+			if err := lockFirstComputerImage(ctx, tx, req.EnvironmentID, req.SessionID); err != nil {
+				return err
+			}
+		}
 		ids := []uuid.UUID{req.SessionID}
 		if caller.Kind == "session" {
 			ids = append(ids, caller.ID)
@@ -557,6 +562,28 @@ func hideMissing(err error) error {
 
 // Worker and Group claims are locked in the same transaction as Session
 // admission. HTTP authentication alone cannot protect a request delayed by locks.
+// lockFirstComputerImage takes the image locks that creating a Session's first
+// Computer needs before the Session rows are locked, keeping the global order
+// image spec before Sessions. The read is stable: every writer of
+// sessions.computer_id holds the Environment lock the caller already holds.
+func lockFirstComputerImage(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) error {
+	var spec uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT td.image_spec_id FROM sessions s
+ JOIN agent_definitions ad ON (ad.environment_id,ad.agent_id,ad.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)
+ JOIN template_definitions td ON (td.environment_id,td.template_id,td.deployment_id)=(ad.environment_id,ad.template_id,ad.deployment_id)
+ WHERE s.environment_id=$1 AND s.id=$2 AND s.computer_id IS NULL`, env, session).Scan(&spec)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err = lockPreparationImageSecrets(ctx, tx, env, spec); err != nil {
+		return err
+	}
+	return lockPreparationSpec(ctx, tx, env, spec)
+}
+
 func lockRuntimeHost(ctx context.Context, tx pgx.Tx, caller Caller) error {
 	if caller.Host == nil || caller.Host.HostID != caller.Execution.WorkerHostID || caller.Host.Epoch != caller.Execution.WorkerEpoch {
 		return ErrDenied
