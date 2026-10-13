@@ -79,7 +79,7 @@ func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate)
 		return ErrChanged
 	}
 	var lost bool
-	if err = tx.QueryRow(ctx, `SELECT status IN ('lost','released') OR fenced_at IS NOT NULL OR expires_at<=clock_timestamp()
+	if err = tx.QueryRow(ctx, `SELECT status='lost' OR fenced_at IS NOT NULL OR expires_at<=clock_timestamp()
  FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, candidate.ComputerID, l.Epoch).Scan(&lost); err != nil {
 		return err
 	}

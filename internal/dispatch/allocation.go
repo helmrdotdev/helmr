@@ -70,7 +70,7 @@ func (a *Allocator) leaseCredential(receipt computer.Allocation) string {
 var errEnvironmentCapacity = fmt.Errorf("%w: environment allocation capacity", ErrNotReady)
 
 type allocationCapacity struct {
-	cpu, memory, scratch, slots int64
+	cpu, memory, scratch, slots, starts int64
 }
 
 type allocationSupply struct {
@@ -105,8 +105,8 @@ func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, p
 		return s, ErrNotReady
 	}
 	err = tx.QueryRow(ctx, `SELECT epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,max_vm_slots,
- per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,per_vm_cpu_millis FROM worker_hosts WHERE id=$1`, host).Scan(
-		&s.capacity.cpu, &s.capacity.memory, &s.capacity.scratch, &s.capacity.slots, &s.maxMemory, &s.shape.ScratchBytes, &s.shape.VMPlatformID, &s.maxCPU)
+ per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,per_vm_cpu_millis,max_vm_starts FROM worker_hosts WHERE id=$1`, host).Scan(
+		&s.capacity.cpu, &s.capacity.memory, &s.capacity.scratch, &s.capacity.slots, &s.maxMemory, &s.shape.ScratchBytes, &s.shape.VMPlatformID, &s.maxCPU, &s.capacity.starts)
 	return s, err
 }
 
@@ -131,14 +131,10 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy org.AdmissionPolicy, shape computer.AllocationShape, computerID bool) error {
 	var environment, host allocationCapacity
 	var computers int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(computers),0) FROM (
- SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,1::bigint computers FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL
- UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL) usage`, env).Scan(&environment.cpu, &environment.memory, &computers); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(reserved_cpu_millis),0),COALESCE(sum(reserved_memory_bytes),0),count(*) FILTER (WHERE kind='computer') FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE environment_id=$1`, env).Scan(&environment.cpu, &environment.memory, &computers); err != nil {
 		return err
 	}
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(scratch),0),count(*) FROM (
- SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,reserved_scratch_bytes scratch FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL
- UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes FROM image_builds WHERE worker_host_id=$1 AND fenced_at IS NULL) usage`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(reserved_cpu_millis),0),COALESCE(sum(reserved_memory_bytes),0),COALESCE(sum(reserved_scratch_bytes),0),count(*),count(*) FILTER (WHERE starting) FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=$1`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots, &host.starts); err != nil {
 		return err
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }
@@ -148,7 +144,7 @@ func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, su
 	}
 	if !fits(host.cpu, shape.CPUMillis, supply.capacity.cpu) ||
 		!fits(host.memory, shape.MemoryBytes, supply.capacity.memory) || !fits(host.scratch, shape.ScratchBytes, supply.capacity.scratch) ||
-		!fits(host.slots, 1, supply.capacity.slots) {
+		!fits(host.slots, 1, supply.capacity.slots) || !fits(host.starts, 1, supply.capacity.starts) {
 		return ErrNotReady
 	}
 	return nil
@@ -169,20 +165,20 @@ func requireAllocationFreshSupply(ctx context.Context, tx pgx.Tx, supply allocat
 func ReadImageBuildAllocation(ctx context.Context, q db.DBTX, env, preparation uuid.UUID) (computer.Allocation, error) {
 	r := computer.Allocation{EnvironmentID: env, OwnerID: preparation}
 	err := q.QueryRow(ctx, `SELECT allocation_id,executor_epoch,worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at FROM image_builds
+ vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at,channel_credential_digest FROM image_builds
  WHERE environment_id=$1 AND id=$2 AND worker_host_id IS NOT NULL`, env, preparation).Scan(&r.InstanceID, &r.Epoch, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
-		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt)
+		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.CredentialDigest)
 	return r, err
 }
 
 func ReadLeaseAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (computer.ComputerAllocation, error) {
 	r := computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}}
 	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
- l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at
+ l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at,l.channel_credential_digest
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computerID, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
-		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.BaseVersion, &r.RestoredFrom, &r.InitializedAt)
+		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.BaseVersion, &r.RestoredFrom, &r.InitializedAt, &r.CredentialDigest)
 	return r, err
 }
 
@@ -244,7 +240,8 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		}
 		result = computer.Allocation{EnvironmentID: env, OwnerID: preparation, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
 		digest := sha256.Sum256(a.imageBuildCredential(result))
-		assigned, err := computer.AssignImageBuild(ctx, tx, result, digest[:], p.SpecID)
+		result.CredentialDigest = digest[:]
+		assigned, err := computer.AssignImageBuild(ctx, tx, result, p.SpecID)
 		if err != nil {
 			return err
 		}
@@ -343,7 +340,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 			return err
 		}
 		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base}
-		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
+		if err := a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}
 		if err := session.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
@@ -360,9 +357,10 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 	return result, nil
 }
 
-func (a *Allocator) insertComputerAllocation(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation) error {
+func (a *Allocator) insertComputerAllocation(ctx context.Context, tx pgx.Tx, r *computer.ComputerAllocation) error {
 	digest := sha256.Sum256([]byte(a.leaseCredential(r.Allocation)))
-	return computer.InsertLease(ctx, tx, r, digest[:])
+	r.CredentialDigest = digest[:]
+	return computer.InsertLease(ctx, tx, *r)
 }
 
 // AllocateRestoredLease reserves the full physical shape before a Host may
@@ -460,7 +458,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 			return err
 		}
 		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: save.String(), RestoredFrom: &save}
-		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
+		if err := a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {

@@ -103,8 +103,8 @@ func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.Host
 		if err := computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
-		var digest []byte
-		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&digest); err != nil {
+		var allocation uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT allocation_id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&allocation); err != nil {
 			return err
 		}
 		r, err := ReadImageBuildAllocation(ctx, tx, env, preparation)
@@ -114,7 +114,7 @@ func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.Host
 		firstDelivery := r.DeliveredAt == nil
 		credential := a.imageBuildCredential(r)
 		expected := sha256.Sum256(credential)
-		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
+		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(r.CredentialDigest, expected[:]) != 1 {
 			return ErrDenied
 		}
 		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverImageBuild(ctx, tx, env, preparation, p.SpecID); err != nil {
@@ -153,8 +153,8 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 		if _, err := session.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
-		var digest []byte
-		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&digest); err != nil {
+		var allocation uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&allocation); err != nil {
 			return err
 		}
 		r, err := ReadLeaseAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
@@ -164,7 +164,7 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 		firstDelivery := r.DeliveredAt == nil
 		credential := a.leaseCredential(r.Allocation)
 		expected := sha256.Sum256([]byte(credential))
-		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
+		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(r.CredentialDigest, expected[:]) != 1 {
 			return ErrDenied
 		}
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {

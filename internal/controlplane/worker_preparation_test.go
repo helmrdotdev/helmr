@@ -341,6 +341,13 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			} else if err == nil || start.Program.Artifact.Digest != "" {
 				t.Fatalf("invalid executable input escaped: %v", err)
 			}
+			var started bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT started_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&started); err != nil {
+				t.Fatal(err)
+			}
+			if started != (mode == "current") {
+				t.Fatalf("start receipt recorded before valid executable delivery: started=%v mode=%s", started, mode)
+			}
 		})
 	}
 }

@@ -495,14 +495,14 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	// Fixture the retention owner's completed physical-stop/deletion transition.
 	// Reclaim real graph/key rows to prove receipt reads do not consult payload.
 	dbtest.MustExec(t, t.Context(), f.pool, `
- UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2;
+ UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computers SET deleted_at=clock_timestamp(),initial_root_id=NULL,initial_payload_retired_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  DELETE FROM disk_roots WHERE environment_id=$1 AND id=$3;
  DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$4;
  UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$5;
  `, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, root, pack, key)
 	after, err := a.AllocateFreshLease(t.Context(), f.env, f.computer, 1, f.worker)
-	if err != nil || after.BaseVersion != before.BaseVersion || after.InstanceID != before.InstanceID || after.Shape != before.Shape || after.Status != "released" {
+	if err != nil || after.BaseVersion != before.BaseVersion || after.InstanceID != before.InstanceID || after.Shape != before.Shape || after.Status != "lost" {
 		t.Fatalf("historical initial allocation changed: before=%+v after=%+v error=%v", before, after, err)
 	}
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, f.computer, 2, f.worker); err == nil {

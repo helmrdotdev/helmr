@@ -69,7 +69,7 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
     captured = await hostObservation("computer-path", { computer_id: shared.id })
     checkpoint = captured.checkpoints.find((p: any) => p.source_lease_epoch === source[0].epoch && p.status === "ready")
     const old = captured.leases.find((lease: any) => lease.epoch === source[0].epoch)
-    if (checkpoint && old?.status === "released" && old.fenced_at !== null) break
+    if (checkpoint && old?.status === "lost" && old.fenced_at !== null) break
     await delay(1000, undefined, { signal: captureDeadline })
   }
   const stillPending = captured.commands.find((c: any) => c.id === pending.id)

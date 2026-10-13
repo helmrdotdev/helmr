@@ -117,7 +117,7 @@ class ProfileTests(unittest.TestCase):
                         source_fenced=False, source_state='active', later_leases=0, lease_on_source=True)
         self.assertTrue(host.persistence_matches(evidence, 'wait-aborted'))
         for key, value in [('acknowledged', False), ('source_fenced', True),
-                           ('source_state', 'released'), ('later_leases', 1),
+                           ('source_state', 'lost'), ('later_leases', 1),
                            ('source_abort', False), ('lease_on_source', False), ('checkpoint_status', 'aborting'), ('checkpoint_id', None)]:
             with self.subTest(key=key):
                 self.assertFalse(host.persistence_matches(evidence | {key: value}, 'wait-aborted'))

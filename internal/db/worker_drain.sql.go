@@ -38,12 +38,15 @@ WITH target AS MATERIALIZED (
               AND worker_host_secrets.revoked_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM computer_leases
-            WHERE computer_leases.worker_host_id=drain_target.id AND computer_leases.fenced_at IS NULL
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM image_builds
-            WHERE image_builds.worker_host_id=drain_target.id AND image_builds.fenced_at IS NULL
+           SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=drain_target.id
        )
 ), completed AS (
     UPDATE worker_hosts

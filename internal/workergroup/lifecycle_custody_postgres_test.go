@@ -27,7 +27,7 @@ func hostSecret(t *testing.T, f sessiontest.Fixture) {
 }
 func fenceFixtureComputer(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
 }
 func fenceFixturePreparation(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()

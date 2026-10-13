@@ -13,10 +13,15 @@ import (
 
 const listAllocationPlanningChargedPools = `-- name: ListAllocationPlanningChargedPools :many
 SELECT DISTINCT h.worker_pool_id FROM worker_hosts h
-WHERE h.worker_group_id=$1 AND (
- EXISTS(SELECT 1 FROM computer_leases l WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM image_builds p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)
-)
+WHERE h.worker_group_id=$1 AND EXISTS(SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id)
 `
 
 // Physical reservations retain their pools independently of the queued demand budget.
@@ -92,10 +97,15 @@ SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.req
 FROM demand d JOIN environments e ON e.id=d.environment_id AND e.retired_at IS NULL
 JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=$1
 CROSS JOIN LATERAL (
- SELECT COALESCE(sum(cpu),0) cpu,COALESCE(sum(memory),0) memory,COALESCE(sum(residents),0) residents FROM (
-  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,1::bigint residents FROM computer_leases WHERE environment_id=e.id AND fenced_at IS NULL
-  UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM image_builds WHERE environment_id=e.id AND worker_host_id IS NOT NULL AND fenced_at IS NULL
- ) physical
+ SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE environment_id=e.id
 ) usage
 WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE (d.cpu_millis+999)/1000*1000 END
  AND e.max_memory_bytes-usage.memory >= CASE WHEN d.required_memory_bytes>0 THEN d.required_memory_bytes ELSE d.memory_bytes END

@@ -25,7 +25,7 @@ func TestCheckpointRetentionRequiresBothPhysicalClosures(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertObjects(4)
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
 	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestCheckpointRetentionKeepsUnreconciledConsumedImage(t *testing.T) {
 	if err := session.CommitComputerRestore(t.Context(), f.f.pool, f.host, f.f.env, installation, restoreReceipt(installation, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
 	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestCheckpointRetentionPreservesConsumedManifestAfterUnpinning(t *testing.T
 	if err := session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
+	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
 	if err := computer.ReconcileDiskRetention(ctx, f.f.pool); err != nil {
 		t.Fatal(err)
 	}

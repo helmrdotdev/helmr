@@ -28,7 +28,7 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 				}
 			}
 			if kind == "preparation" {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture VM physically stopped' WHERE worker_host_id=$1`, f.worker)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture VM physically stopped' WHERE worker_host_id=$1`, f.worker)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='lost',lost_at=clock_timestamp(),claim_version=claim_version+1 WHERE id=$1;
  UPDATE computer_leases SET status='lost' WHERE worker_host_id=$1 AND fenced_at IS NULL;

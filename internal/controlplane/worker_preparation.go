@@ -300,7 +300,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	_, err = computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
+	err = computer.StartImageBuild(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

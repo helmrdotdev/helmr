@@ -97,7 +97,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 
 func TestDiskRetentionKeepsPendingCheckpointSource(t *testing.T) {
 	f := readyCheckpointFixture(t)
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source stopped' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source stopped' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
 	if err := computer.ReconcileDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +110,9 @@ func TestDiskRetentionKeepsPendingCheckpointSource(t *testing.T) {
 func TestDiskRetentionSkipsLockedOwnerBeforeBatchBound(t *testing.T) {
 	f := newFixture(t)
 	newSaveStorageFixture(t, f)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source stopped' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source stopped' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 	const copyLease = `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,base_root_id,write_key_id,fenced_at,fence_evidence)
- SELECT environment_id,$3,$4,worker_host_id,worker_epoch,expires_at,delivered_at,'released',$5,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,base_root_id,COALESCE($6::uuid,write_key_id),fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`
+ SELECT environment_id,$3,$4,worker_host_id,worker_epoch,expires_at,delivered_at,'lost',$5,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,base_root_id,COALESCE($6::uuid,write_key_id),fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`
 	for epoch := 2; epoch <= 101; epoch++ {
 		dbtest.MustExec(t, t.Context(), f.pool, copyLease, f.env, f.computer, f.computer, epoch, uuid.NewV7(), nil)
 	}

@@ -288,18 +288,20 @@ WITH live_workers AS (
      LIMIT sqlc.arg(row_limit)
 ), usage AS (
  SELECT h.worker_host_id,
-   COALESCE(sum(a.cpu),0)::bigint cpu_millis,
-   COALESCE(sum(a.memory),0)::bigint memory_bytes,
-   COALESCE(sum(a.scratch),0)::bigint guest_ephemeral_disk_bytes,
-   count(a.host_id)::bigint vm_slots,
-   count(a.host_id) FILTER (WHERE a.starting)::bigint instance_starts
- FROM live_workers h LEFT JOIN (
-  SELECT worker_host_id host_id,reserved_cpu_millis cpu,reserved_memory_bytes memory,reserved_scratch_bytes scratch,initialized_at IS NULL starting
-  FROM computer_leases WHERE fenced_at IS NULL
-  UNION ALL
-  SELECT worker_host_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,delivered_at IS NULL
-  FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
- ) a ON a.host_id=h.worker_host_id
+   COALESCE(sum(allocation_usage.reserved_cpu_millis),0)::bigint cpu_millis,
+   COALESCE(sum(allocation_usage.reserved_memory_bytes),0)::bigint memory_bytes,
+   COALESCE(sum(allocation_usage.reserved_scratch_bytes),0)::bigint guest_ephemeral_disk_bytes,
+   count(allocation_usage.worker_host_id)::bigint vm_slots,
+   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting)::bigint instance_starts
+ FROM live_workers h LEFT JOIN (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage ON allocation_usage.worker_host_id=h.worker_host_id
  GROUP BY h.worker_host_id
 )
 SELECT live_workers.worker_group_id,
