@@ -13,13 +13,12 @@ Agent, so the model decides when to delegate.
 
 ## The runtime MCP connection
 
-Call `createRuntimeMcpConnection()` from `@helmr/sdk/mcp` in `init`. It returns
+Call `ctx.mcp.getConnectionOptions()` in `init` or `turn`. It returns
 a URL and an `Authorization` header that identify the current Session. Pass
 them to any MCP client or harness that supports MCP over HTTP.
 
 ```ts
 import { agent, template, image } from "@helmr/sdk"
-import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 
@@ -32,8 +31,8 @@ const repoComputer = template({
 export const coordinator = agent({
   id: "coordinator",
   template: repoComputer,
-  async init() {
-    const { url, headers } = await createRuntimeMcpConnection()
+  async init(ctx) {
+    const { url, headers } = await ctx.mcp.getConnectionOptions()
     const mcp = new Client({ name: "coordinator", version: "1.0.0" })
     await mcp.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }))
     return { mcp }

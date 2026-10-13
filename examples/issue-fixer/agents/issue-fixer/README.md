@@ -48,7 +48,7 @@ arrays such as `[{"type":"text","text":"Keep the existing public API"}]`.
 Send follow-ups to the exact Turn; enqueue for a new Turn. Observe retained message
 dispositions when native completion races delivery.
 
-Setup obtains `createRuntimeMcpConnection()` from `@helmr/sdk/mcp` and supplies the
+Setup obtains `context.mcp.getConnectionOptions()` and supplies the
 Session-bound endpoint and headers to the native harness. Runtime owns upstream
 authority renewal. Do not log the descriptor or put its headers into model input.
 Native tool permission policy remains separate from Helmr's runtime authority.

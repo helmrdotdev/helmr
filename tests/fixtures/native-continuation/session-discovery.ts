@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { setTimeout as delay } from "node:timers/promises"
 import type { AgentDefinition, ComputerIdentity, Turn } from "../../../sdk/typescript/src/agent"
-import { createRuntimeMcpConnection, type RuntimeMcpConnection } from "../../../sdk/typescript/src/mcp"
+import type { InitContext, RuntimeMcpConnectionOptions } from "../../../sdk/typescript/src/agent"
 import { callMcp, fixtureInput, waitManagedTurn, type ManagedAdmission } from "../../e2e/support/runtime-mcp"
 import { checkSessionControls } from "./session-controls"
 
@@ -10,7 +10,7 @@ export interface DiscoveryState {
   requested: { id: string }
   ownedTurn: string
   requestedTurn: string
-  mcp: RuntimeMcpConnection
+  mcp: RuntimeMcpConnectionOptions
   checks: number
   controls: Awaited<ReturnType<typeof checkSessionControls>>
 }
@@ -20,20 +20,20 @@ interface SessionPage { sessions: SessionView[]; next_cursor?: string }
 // Only identity and the local MCP descriptor survive in setup state. Every call
 // crosses the current Session authority boundary again after restoration.
 export async function checkSessionDiscovery(turn: Turn, caller: string, computer: ComputerIdentity,
-  definition: AgentDefinition, prior?: DiscoveryState) {
+  definition: AgentDefinition, runtimeMcp: InitContext["mcp"], prior?: DiscoveryState) {
   let state = prior
   if (!state) {
-    const mcp = await createRuntimeMcpConnection()
-    const create = (operation: string) => callMcp<ManagedAdmission>(turn.signal, operation, { agent: definition.id, input: fixtureInput(operation), computerId: computer.id, idempotencyKey: `${turn.id}:${operation}` },mcp)
+    const mcp = await runtimeMcp.getConnectionOptions()
+    const create = (operation: string) => callMcp<ManagedAdmission>(mcp, turn.signal, operation, { agent: definition.id, input: fixtureInput(operation), computerId: computer.id, idempotencyKey: `${turn.id}:${operation}` })
     const owned = await create("spawn"), requested = await create("start")
-    for (const admission of [owned,requested]) assert.equal((await waitManagedTurn(turn.signal,admission.sessionId,admission.turnId)).status,"completed")
-    const controls = await checkSessionControls(turn, computer, definition, {id:owned.sessionId},
-      (sessionId, turnId) => callMcp(turn.signal, "inspect_turn", { sessionId, turnId }, mcp))
-    await callMcp(turn.signal,"close_session",{sessionId:owned.sessionId,idempotencyKey:`${turn.id}:close`},mcp)
+    for (const admission of [owned,requested]) assert.equal((await waitManagedTurn(mcp, turn.signal,admission.sessionId,admission.turnId)).status,"completed")
+    const controls = await checkSessionControls(mcp, turn, computer, definition, {id:owned.sessionId},
+      (sessionId, turnId) => callMcp(mcp, turn.signal, "inspect_turn", { sessionId, turnId }))
+    await callMcp(mcp, turn.signal,"close_session",{sessionId:owned.sessionId,idempotencyKey:`${turn.id}:close`})
     await turn.output.write(JSON.stringify({ discoveryCreated: requested.sessionId }))
     state = { owned:{id:owned.sessionId},requested:{id:requested.sessionId},ownedTurn:owned.turnId,requestedTurn:requested.turnId,mcp,controls,checks:0 }
   }
-  const call = <T>(name:string,args:object) => callMcp<T>(turn.signal,name,args,state.mcp)
+  const call = <T>(name:string,args:object) => callMcp<T>(state.mcp, turn.signal,name,args)
   for (const [ref, initial, parent] of [[state.owned, state.ownedTurn, caller], [state.requested, state.requestedTurn, null]] as const) {
     let view = await call<SessionView>("inspect_session",{sessionId:ref.id})
     while (view.status !== "closed") {

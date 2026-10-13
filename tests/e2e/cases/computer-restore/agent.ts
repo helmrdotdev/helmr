@@ -37,16 +37,16 @@ export const restoreParent = agent({
     if (count === 1) {
       memory.marker = marker
       await writeFile(path, JSON.stringify({ marker, nonce: memory.nonce }), { flag: "wx" })
-      const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
+      const child = await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, "spawn", {
         agent: restoreChild.id, input: fixtureInput({ marker }), computerId: ctx.computer.id, idempotencyKey: `${turn.id}:child`,
       })
       memory.childSessionId = child.sessionId
       childTurn = child.turnId
     } else {
       if (count !== 2 || memory.marker !== marker) throw new Error("Parent memory changed")
-      childTurn = (await callMcp<ManagedAdmission>(turn.signal, "enqueue", { sessionId: memory.childSessionId, input: fixtureInput({ marker }), idempotencyKey: `${turn.id}:child` })).turnId
+      childTurn = (await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, "enqueue", { sessionId: memory.childSessionId, input: fixtureInput({ marker }), idempotencyKey: `${turn.id}:child` })).turnId
     }
-    const outcome = await waitManagedTurn(turn.signal, memory.childSessionId, childTurn)
+    const outcome = await waitManagedTurn(await ctx.mcp.getConnectionOptions(), turn.signal, memory.childSessionId, childTurn)
     if (outcome.status !== "completed") throw new Error(`Helper failed: ${JSON.stringify(outcome)}`)
     const child = z.object({ marker: z.string(), nonce: z.string(), count: z.number(), childSessionId: z.string(), childTurnId: z.string(), computerId: z.string() }).strict().parse(outcome.result)
     if (count === 1) memory.childNonce = child.nonce

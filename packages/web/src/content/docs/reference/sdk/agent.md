@@ -168,6 +168,7 @@ receives its own `InputMessage` with its own `source`.
 
 ```ts
 interface InitContext {
+  readonly mcp: Readonly<{ getConnectionOptions(): Promise<RuntimeMcpConnectionOptions> }>
   readonly session: Readonly<{ id: string; key?: string; parent?: Readonly<{ id: string }> }>
   readonly computer: ComputerIdentity              // { id: string }
   readonly deployment: Readonly<{ id: string }>
@@ -187,6 +188,7 @@ interface AgentContext<S> extends InitContext {
 | `deployment.id` | The Deployment the Session is pinned to. |
 | `recovery.kind` | `"initial"` for a new Session process; `"reconstructed"` when the Session was explicitly reconstructed and `init` runs again. `reason` is optional. |
 | `signal` | Aborts on Session process shutdown, including during `init`. |
+| `mcp.getConnectionOptions()` | Returns the Session process’s local MCP URL and headers. Available in `init` and `turn`, including when `init` is omitted. See [Runtime MCP](/docs/reference/sdk/mcp). |
 | `initResult` | The value returned by `init` (`AgentContext` only). |
 
 `init` does not rerun when an idle Session resumes from hibernation. See

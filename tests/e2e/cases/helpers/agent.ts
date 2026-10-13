@@ -41,10 +41,10 @@ export const helperCaller = agent({
       input: fixtureInput({ marker: input.marker, fail: input.mode === "spawn-failure", waitForAnswer: input.mode === "start-independent", holdSeconds: input.holdSeconds }),
       idempotencyKey: `${turn.id}:${input.mode}`,
     }
-    const child = await callMcp<ManagedAdmission>(turn.signal, input.mode === "start-independent" ? "start" : "spawn", options)
+    const child = await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, input.mode === "start-independent" ? "start" : "spawn", options)
     const identity = { mode: input.mode, marker: input.marker, childTurnId: child.turnId, childSessionId: child.sessionId }
     if (input.mode === "start-independent") return identity
-    const outcome = await waitManagedTurn(turn.signal, child.sessionId, child.turnId)
+    const outcome = await waitManagedTurn(await ctx.mcp.getConnectionOptions(), turn.signal, child.sessionId, child.turnId)
     if (input.mode === "spawn-failure") {
       if (outcome.status !== "failed" || outcome.error?.code !== "handler_failed") throw new Error(`Unexpected helper failure: ${JSON.stringify(outcome)}`)
       return { ...identity, childFailure: outcome.error }
@@ -68,10 +68,10 @@ export const helperContinuity = agent({
   init: () => ({ count: 0 }),
   turn: async (turn, ctx) => {
     const input = continuityInput.parse(fixtureValue(turn.input))
-    const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
+    const child = await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, "spawn", {
       agent: helperChild.id, input: fixtureInput({ marker: input.marker }), computerId: input.childComputerId, idempotencyKey: `${turn.id}:helper`,
     })
-    const outcome = await waitManagedTurn(turn.signal, child.sessionId, child.turnId)
+    const outcome = await waitManagedTurn(await ctx.mcp.getConnectionOptions(), turn.signal, child.sessionId, child.turnId)
     if (outcome.status !== "completed" || !outcome.result) throw new Error(`Helper did not complete: ${JSON.stringify(outcome)}`)
     const result = { marker: (outcome.result as {marker:string}).marker, childTurnId: child.turnId, childSessionId: child.sessionId, turnId: turn.id, count: ++ctx.initResult.count }
     await turn.output.write([{ type: "json", value: result }])

@@ -151,8 +151,8 @@ declared input. See [Triggers](/docs/concepts/triggers).
 ## Calling other Agents
 
 Agent code can start or spawn other Agents' Sessions through the runtime MCP
-tools. Obtain the connection with `createRuntimeMcpConnection` from
-`@helmr/sdk/mcp` and pass it to your harness. See
+tools. Obtain the connection with `ctx.mcp.getConnectionOptions()` in `init` or
+`turn` and pass it to your harness. See
 [Delegation](/docs/concepts/delegation).
 
 ## Related

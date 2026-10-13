@@ -13,7 +13,7 @@ import { parseAsk } from "../../../sdk/typescript/src/internal/asks"
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 const question = (text: string) => ({ prompt: [{ type: "text" as const, text }], answer: { type: "text" as const } })
 const reply = (answer: Json): AskResponse => ({ answer, respondedBy: { kind: "user", id: "answerer" } })
-const context: InitContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, signal: new AbortController().signal }
+const context: InitContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: new AbortController().signal }
 const textInput = (text: string): InputContent => [{ type: "text", text }]
 const request = (sequence = 1) => ({ id: `turn-${sequence}`, sequence, createdAt: "2026-10-04T00:00:00Z", input: textInput(String(sequence)), source: { kind: "api" } })
 function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "init">, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {

@@ -1,5 +1,4 @@
 import { agent } from "@helmr/sdk"
-import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 import { ClaudeHarness } from "./claude-harness"
 import { checkRepository, issuePrompt, repository } from "./checks"
 import { issueFixerComputer } from "./computer"
@@ -9,7 +8,7 @@ export const claudeIssueFixer = agent({
   template: issueFixerComputer,
   async init(context) {
     const cwd = repository()
-    const mcp = await createRuntimeMcpConnection()
+    const mcp = await context.mcp.getConnectionOptions()
     const harness = await ClaudeHarness.open(cwd, context.session.id, process.env, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
     return { cwd, harness }
   },

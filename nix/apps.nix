@@ -131,7 +131,7 @@ let
           trap 'rm -rf "$sdk_packages"' EXIT
           scripts/pack-npm-packages.sh "$sdk_packages"
           scripts/check-e2e.sh --skip-sdk-build
-          (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test tests)
+          (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           scripts/check-packed-sdk-consumer.sh --sdk-packages "$sdk_packages"
           scripts/build-compiler-entry.sh
