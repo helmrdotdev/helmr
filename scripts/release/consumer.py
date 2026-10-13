@@ -180,8 +180,8 @@ if(!called) throw Error("SDK request missing");
         run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle', env=build_env)
         bundle = read(work / 'bundle/bundle.json')
         require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
-        require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('agent', 'preview-hello'), ('computer', 'preview-machine')}, 'compiled fixture definitions differ')
-        require(len(bundle['computerImages']) == 1 and bundle['computerImages'][0]['declaredId'] == 'preview-machine', 'computer OCI stage missing')
+        require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('agent', 'preview-hello'), ('template', 'preview-machine')}, 'compiled fixture definitions differ')
+        require(len(bundle['computerSeeds']) == 1 and bundle['computerSeeds'][0]['declaredId'] == 'preview-machine', 'computer seed missing')
         runtime = read(directory / 'bundle-builder.json')['runtime']
         require(bundle['runtime']['artifact']['digest'] == runtime['digest'], 'bundle did not use canonical Runtime')
         if public:
