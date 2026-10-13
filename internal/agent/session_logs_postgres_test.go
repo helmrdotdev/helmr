@@ -56,7 +56,7 @@ func TestSessionLogAcceptanceBindsPhysicalAttachment(t *testing.T) {
 		t.Fatal("expired physical owner replay accepted")
 	}
 	var rows int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&rows); err != nil || rows != 2 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&rows); err != nil || rows != 2 {
 		t.Fatalf("unexpected records %d %v", rows, err)
 	}
 }
@@ -89,7 +89,7 @@ func TestSessionLogQueueContentionReleasesLifecycleLocks(t *testing.T) {
 		t.Fatalf("lifecycle blocked by unrelated queue: %v", err)
 	}
 	var records int
-	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM telemetry_outbox`).Scan(&records); err != nil || records != 0 {
+	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM diagnostic_chunks`).Scan(&records); err != nil || records != 0 {
 		t.Fatalf("rejected append committed records=%d err=%v", records, err)
 	}
 }
@@ -159,7 +159,7 @@ func TestSessionLogReceiptSurvivesPhysicalHostRestore(t *testing.T) {
 		t.Fatalf("restored producer cannot continue sequence: %v", err)
 	}
 	var count int
-	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM telemetry_outbox`).Scan(&count); err != nil || count != 2 {
+	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM diagnostic_chunks`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("restored logical stream duplicated count=%d err=%v", count, err)
 	}
 }

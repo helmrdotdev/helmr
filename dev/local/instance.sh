@@ -38,7 +38,6 @@ helmr_dev_init() {
   HELMR_DEV_PGSOCKET="${HELMR_DEV_RUNTIME_DIR}/postgres-socket"
 
   HELMR_DEV_OWNED_POSTGRES=0
-  HELMR_DEV_REDIS_PID=""
   HELMR_DEV_CLICKHOUSE_PID=""
   HELMR_DEV_CONTROLPLANE_PID=""
   HELMR_DEV_CONSOLE_PID=""
@@ -177,39 +176,6 @@ helmr_dev_write_runtime_descriptor() {
   export DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH="${runtime_descriptor}"
 }
 
-helmr_dev_start_redis() {
-  if [ -n "${REDIS_URL:-}" ]; then
-    return 0
-  fi
-  if ! command -v redis-server >/dev/null 2>&1 || ! command -v redis-cli >/dev/null 2>&1; then
-    echo "redis-server and redis-cli are required unless REDIS_URL is already set" >&2
-    return 1
-  fi
-
-  local redis_socket="${HELMR_DEV_RUNTIME_DIR}/redis.sock"
-  if [ -S "${redis_socket}" ] && redis-cli -s "${redis_socket}" ping 2>/dev/null | grep -qx PONG; then
-    echo "Owned Redis socket is already active: ${redis_socket}" >&2
-    return 1
-  fi
-  rm -f "${redis_socket}"
-  redis-server --port 0 --unixsocket "${redis_socket}" --unixsocketperm 700 --save '' --appendonly no \
-    >"${HELMR_DEV_DIR}/redis.log" 2>&1 &
-  HELMR_DEV_REDIS_PID=$!
-  for _ in $(seq 1 50); do
-    if redis-cli -s "${redis_socket}" ping 2>/dev/null | grep -qx PONG; then
-      export REDIS_URL="unix://${redis_socket}?db=0"
-      return 0
-    fi
-    if ! kill -0 "${HELMR_DEV_REDIS_PID}" >/dev/null 2>&1; then
-      cat "${HELMR_DEV_DIR}/redis.log" >&2
-      return 1
-    fi
-    sleep 0.1
-  done
-  cat "${HELMR_DEV_DIR}/redis.log" >&2
-  return 1
-}
-
 helmr_dev_start_clickhouse() {
   if [ -n "${CLICKHOUSE_URL:-}" ]; then
     return 0
@@ -343,7 +309,7 @@ helmr_dev_wait_ready() {
 }
 
 helmr_dev_owned_services_running() {
-  local lock_pid redis_socket ping_url
+  local lock_pid ping_url
   if [ "${HELMR_DEV_LOCK_OWNED:-0}" != "1" ]; then
     if [ -d "${HELMR_DEV_LOCK_DIR}" ]; then
       lock_pid="$(helmr_dev_lock_holder_pid 2>/dev/null || true)"
@@ -362,12 +328,6 @@ helmr_dev_owned_services_running() {
     echo "Stop it with: pg_ctl -D ${HELMR_DEV_PGDATA} stop" >&2
     return 0
   fi
-  redis_socket="${HELMR_DEV_RUNTIME_DIR}/redis.sock"
-  if [ -S "${redis_socket}" ] && command -v redis-cli >/dev/null 2>&1 \
-    && redis-cli -s "${redis_socket}" ping 2>/dev/null | grep -qx PONG; then
-    echo "Cannot reset while owned Redis is running (socket ${redis_socket}). Stop the dev stack first." >&2
-    return 0
-  fi
   if [ -d "${HELMR_DEV_DIR}/clickhouse" ] && helmr_dev_port_listening "${HELMR_DEV_CLICKHOUSE_HTTP_PORT}"; then
     echo "Cannot reset while a process is listening on owned ClickHouse HTTP port ${HELMR_DEV_CLICKHOUSE_HTTP_PORT}." >&2
     echo "Stop the dev stack or the conflicting listener first." >&2
@@ -384,10 +344,6 @@ helmr_dev_cleanup() {
   if [ -n "${HELMR_DEV_CONTROLPLANE_PID}" ]; then
     kill "${HELMR_DEV_CONTROLPLANE_PID}" >/dev/null 2>&1 || true
     wait "${HELMR_DEV_CONTROLPLANE_PID}" >/dev/null 2>&1 || true
-  fi
-  if [ -n "${HELMR_DEV_REDIS_PID}" ]; then
-    kill "${HELMR_DEV_REDIS_PID}" >/dev/null 2>&1 || true
-    wait "${HELMR_DEV_REDIS_PID}" >/dev/null 2>&1 || true
   fi
   if [ -n "${HELMR_DEV_CLICKHOUSE_PID}" ]; then
     kill "${HELMR_DEV_CLICKHOUSE_PID}" >/dev/null 2>&1 || true

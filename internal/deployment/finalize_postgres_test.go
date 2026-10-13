@@ -70,7 +70,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			t.Fatal("same bundle created distinct deployments")
 		}
 	}
-	for table, want := range map[string]int{"deployments": 1, "telemetry_outbox": 1, "platform_retry_keys": 2, "computer_preparation_specs": 1, "template_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
+	for table, want := range map[string]int{"deployments": 1, "deployment_events": 1, "platform_retry_keys": 2, "computer_preparation_specs": 1, "template_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
 			t.Fatalf("%s=%d want %d: %v", table, count, want, err)
@@ -90,7 +90,7 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	if _, err := register(t.Context(), f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
-	for _, table := range []string{"deployments", "telemetry_outbox", "platform_retry_keys", "computer_preparation_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
+	for _, table := range []string{"deployments", "deployment_events", "platform_retry_keys", "computer_preparation_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("partial %s=%d: %v", table, count, err)

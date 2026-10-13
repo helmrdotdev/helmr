@@ -83,16 +83,6 @@ output "postgres_endpoint" {
   value       = module.controlplane.postgres_endpoint
 }
 
-output "redis_endpoint" {
-  description = "ElastiCache event stream primary endpoint."
-  value       = module.controlplane.redis_endpoint
-}
-
-output "redis_url" {
-  description = "Redis/Valkey URL used by controlplane."
-  value       = module.controlplane.redis_url
-}
-
 output "database_master_user_secret_arn" {
   description = "RDS-managed master user secret ARN."
   value       = module.controlplane.database_master_user_secret_arn

@@ -5,15 +5,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
-const (
-	runEventsPageSize          = int32(200)
-	runEventsFollowMaxDuration = 30 * time.Minute
-)
+const runEventsPageSize = int32(200)
 
 func eventCursor(r *http.Request) (int64, error) {
 	value := strings.TrimSpace(r.Header.Get("Last-Event-ID"))

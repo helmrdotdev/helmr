@@ -74,7 +74,7 @@ func TestCommandLogProducerFenceReplayAndCompletion(t *testing.T) {
 	}
 	var count int
 	var bytes []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*),min(encode(data,'hex')) FROM telemetry_outbox WHERE command_id=$1`, commandID).Scan(&count, &bytes); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*),min(encode(data,'hex')) FROM diagnostic_chunks WHERE command_id=$1`, commandID).Scan(&count, &bytes); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 || string(bytes) != "00ff80" {

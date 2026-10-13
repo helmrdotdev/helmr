@@ -1,10 +1,11 @@
 # Historical telemetry
 
-The clean schema contains four histories: platform `events`, `session_logs`,
+The clean schema contains three diagnostic histories: `session_logs`,
 `computer_preparation_logs`, and `computer_command_logs`. PostgreSQL owns accepted
-records and durable export claims. ClickHouse stores their historical projection;
-its acknowledgment permits outbox retirement. A failed or ambiguous acknowledgment
-leaves the claim retryable. Redis remains the live event projection.
+chunks and durable export claims. ClickHouse stores their historical projection;
+its acknowledgment permits chunk retirement. A failed or ambiguous acknowledgment
+leaves the claim retryable. Deployment events are retained in PostgreSQL and are
+not projected here.
 
 ## Retention and representation
 
@@ -13,8 +14,7 @@ eligible for deletion 90 days after acceptance. Retries preserve that date and
 cannot extend retention. `ingested_at` versions `ReplacingMergeTree` replacements;
 readers use `FINAL` because physical replacement happens asynchronously.
 
-Events retain UTC millisecond `accepted_at` and `observed_at` values, opaque JSON
-bodies and nullable event references. Diagnostic histories retain microsecond
+Diagnostic histories retain microsecond
 `accepted_at` and `expires_at`, the producer's nanosecond observation timestamp,
 producer epoch, stream sequence and byte offsets. `data` stores arbitrary bytes,
 including NUL and invalid UTF-8. Explicit data, gap and end records preserve stream
@@ -23,17 +23,13 @@ loss and completion information. JSON-looking stdout remains raw stdout.
 Diagnostic sort keys contain Environment, owner, producer epoch, stream and
 sequence. The command reader constrains that prefix and excludes expired records
 at query time. TTL uses whole-part background cleanup: eligibility does not mean
-immediate physical deletion. Event history retains its existing TTL visibility
-semantics; diagnostic API expiry is enforced separately from background deletion.
+immediate physical deletion. Diagnostic API expiry is enforced separately from
+background deletion.
 
 ## Ingestion envelope
 
-The platform event ingester claims at most 10,000 rows or 16 MiB of admitted
-message/JSON payload. Claims, writes and acknowledgments share a 25-second deadline
-inside a 30-second claim. Cycles start at least one second apart; errors retain the
-two-second retry backoff. Diagnostic admission and export use their separately
-configured source, Environment, global queue, record and byte bounds. The event
-budget is not a diagnostic policy or a process-memory ceiling.
+Diagnostic admission and export use their configured source, Environment, global
+queue, record and byte bounds.
 
 Writers send typed Native batches over HTTP with LZ4 and explicit `async_insert=0`.
 Row-local encoding failures rebuild the batch without the rejected row; healthy
@@ -58,7 +54,7 @@ limit alone does not bound scanned data.
 ## Validation and prerelease rollout
 
 `nix run .#ci-clickhouse` starts isolated servers from the pinned package and runs
-uncached race tests for the exact four-table schema, binary records, command stream
+uncached race tests for the exact three-table schema, binary records, command stream
 pagination, repeated delivery, retention, deadlines, access and bootstrap recovery.
 Tests joining PostgreSQL acceptance to ClickHouse require the PostgreSQL test
 configuration as well. `nix run .#ci-postgres` covers PostgreSQL ownership and claim
@@ -66,9 +62,8 @@ fences. Optional `BenchmarkWriterEnvelope` and `TestWriterInsertStrategyMeasurem
 use an explicitly configured isolated ClickHouse server; the latter requires
 `HELMR_TEST_CLICKHOUSE_INSERT_PROBE=1`. They report synthetic measurements, not SLOs.
 `TestTelemetryClaimEnvelopeMeasurement` uses an isolated PostgreSQL URL and
-`HELMR_TEST_TELEMETRY_ENVELOPE=1`; `HELMR_TEST_TELEMETRY_ENTROPY=random` selects
-the large TOAST probe. Those measurements support the event 16 MiB starting budget;
-they do not set diagnostic limits. The canary writes and reads a scoped platform event.
+`HELMR_TEST_TELEMETRY_ENVELOPE=1`. The canary writes and reads a scoped command
+log record.
 
 The initial schemas are greenfield definitions. `CREATE TABLE IF NOT EXISTS` does
 not upgrade an old deployment. Reset/reprovisioning, credential changes and rollout

@@ -48,7 +48,7 @@ func TestWorkerPreparationLogDurableReceiptAndFences(t *testing.T) {
 	var count int
 	var data []byte
 	var accepted time.Time
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM telemetry_outbox),data,accepted_at FROM telemetry_outbox WHERE sequence=1`).Scan(&count, &data, &accepted); err != nil || count != 1 || !bytes.Equal(data, request.Data) || !accepted.Equal(receipt.AcceptedAt) {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM diagnostic_chunks),data,accepted_at FROM diagnostic_chunks WHERE sequence=1`).Scan(&count, &data, &accepted); err != nil || count != 1 || !bytes.Equal(data, request.Data) || !accepted.Equal(receipt.AcceptedAt) {
 		t.Fatalf("durable retry count=%d bytes=%v accepted=%v err=%v", count, data, accepted, err)
 	}
 	changed := request

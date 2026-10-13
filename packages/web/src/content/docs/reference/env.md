@@ -128,10 +128,8 @@ addresses that receive the platform-wide Admin flag when their user record is
 created. Admin differs from organization membership roles and controls the
 `/admin` Console and `/admin/api/v1` API surfaces.
 
-Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `REDIS_URL`, and
-`MAGIC_LINK_DEBUG_URLS`. `PUBLIC_URL` is used for browser-facing links.
-`REDIS_URL` defaults to
-`redis://127.0.0.1:6379/0`.
+Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, and `MAGIC_LINK_DEBUG_URLS`.
+`PUBLIC_URL` is used for browser-facing links.
 
 `CAPACITY_TOKEN` enables and authenticates the capacity API used by trusted
 deployment automation, including an operator-supplied scaler. It must be
@@ -207,9 +205,6 @@ CA signers when it creates protected Computers for scheduled Agent admissions.
 
 The dispatcher uses the same single base64-encoded 32-byte
 `COMPUTER_FENCING_KEY` as the Control Plane service.
-
-The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis for the
-Control Plane event stream and injects `REDIS_URL` into the Control Plane service.
 
 ## Worker
 

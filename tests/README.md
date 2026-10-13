@@ -105,7 +105,7 @@ nix run .#ci-postgres -- '^TestPostgresClaimSlotIsScopedByEnvironment$' ./intern
 ```
 
 This runs the existing `scripts/ci-postgres.sh` with pinned tools. It starts fresh
-temporary PostgreSQL and Redis processes on localhost and stops them on exit;
+temporary PostgreSQL process on localhost and stops it on exit;
 by default it also removes their temporary files. It does not use a developer's
 existing database, shared staging or production. The example proves only the
 selected idempotency scope behavior; choose the cases relevant to the change.
@@ -114,5 +114,5 @@ Selected tests must execute and pass: skips or missing matches fail the command.
 A passing fast PR check, which skips PostgreSQL tests, is not database evidence.
 Record the selected behavior, exact command, tested revision and result in the PR,
 including any database behavior left unproved. See the
-[selection details](e2e/README.md#real-postgresql-and-redis) for supported patterns
+[selection details](e2e/README.md#real-postgresql) for supported patterns
 and the distinction between selected tests and the full database suite.

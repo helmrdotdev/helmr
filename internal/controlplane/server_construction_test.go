@@ -25,7 +25,7 @@ type constructionDB struct{ db.TxDB }
 
 type constructionKeys struct{ agent.DataKeyWrapper }
 
-type constructionTelemetry struct{ telemetry.Reader }
+type constructionTelemetry struct{ telemetry.CommandLogReader }
 
 func completeServerConfig(t *testing.T) ServerConfig {
 	t.Helper()

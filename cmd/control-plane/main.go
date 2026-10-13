@@ -31,9 +31,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
-	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -42,7 +42,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 type backgroundWorkflow struct {
@@ -129,10 +128,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err := clickhouse.ValidateConfig(clickHouseConfig); err != nil {
 		return fmt.Errorf("validate clickhouse config: %w", err)
 	}
-	redisOptions, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		return fmt.Errorf("parse redis url: %w", err)
-	}
 	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
 		return fmt.Errorf("validate platform artifact store: %w", err)
 	}
@@ -185,17 +180,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	defer clickHouseClient.Close()
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
-	redisClient := redis.NewClient(redisOptions)
-	defer redisClient.Close()
 	mailer := configuredEmailSender(log, cfg)
 	shutdownTimeout := 10 * time.Second
 	magicLinkDelivery := controlplane.NewMagicLinkDelivery(log, shutdownTimeout)
-	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
-		TelemetryReader: telemetryReader,
-	})
-	if err != nil {
-		return fmt.Errorf("configure event stream: %w", err)
-	}
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
@@ -251,7 +238,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
-		EventStream:                    eventStream,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,
 		MagicLinkDelivery:              magicLinkDelivery,
@@ -289,7 +275,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
 		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
-		{name: "live telemetry publisher", run: eventStream.RunPublisher},
+		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "operation receipt retention", run: func(ctx context.Context) error {
 			return idempotency.CollectReceipts(ctx, queries, log)
 		}},

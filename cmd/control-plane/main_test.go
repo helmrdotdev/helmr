@@ -16,7 +16,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -257,7 +256,6 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
-	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
 	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(smokeRuntimeDescriptor())
 	if err != nil {
@@ -286,7 +284,6 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("ENVIRONMENT_PREPARATION_TIMEOUT_MS", "600000")
 	t.Setenv("CONTROL_PLANE_ADDR", addr)
 	t.Setenv("DATABASE_URL", databaseURL)
-	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("CAS_URI", "s3://helmr-smoke")
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", runtimeDescriptorPath)
@@ -350,10 +347,6 @@ type emptyStore struct {
 
 type controlplanetestTelemetryReader struct {
 	store *emptyStore
-}
-
-func (r controlplanetestTelemetryReader) ListEvents(context.Context, telemetry.EventQuery) (telemetry.EventPage, error) {
-	return telemetry.EventPage{}, nil
 }
 
 func (r controlplanetestTelemetryReader) ListCommandLogChunks(context.Context, telemetry.CommandLogChunkQuery) (telemetry.CommandLogChunkPage, error) {

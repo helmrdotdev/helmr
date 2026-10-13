@@ -44,7 +44,7 @@ func TestPreparationLogAcceptanceBindsAttemptExecutor(t *testing.T) {
 		t.Fatalf("expired executor: %v", err)
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM telemetry_outbox`).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("rows=%d %v", count, err)
 	}
 }

@@ -222,7 +222,7 @@ class UpdateTests(unittest.TestCase):
             image = base / 'images/rootfs'
             image.parent.mkdir()
             image.write_bytes(b'immutable')
-            for path in [data / n for n in ['postgres', 'redis', 'clickhouse']] + [worker, jailer]:
+            for path in [data / n for n in ['postgres', 'clickhouse']] + [worker, jailer]:
                 path.mkdir(parents=True)
                 (path / 'old').write_text('old fixture')
             with patch.object(host, 'DATA', data), patch.object(host, 'WORKER_DATA', worker), patch.object(host, 'JAILER_DATA', jailer), patch.object(host, 'state', return_value='inactive'), patch.object(Path, 'read_text', return_value=''), patch.object(host.shutil, 'chown'), patch.object(host, 'service_run') as initialize:

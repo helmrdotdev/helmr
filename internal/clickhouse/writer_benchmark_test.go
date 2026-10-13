@@ -22,8 +22,8 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 	if url == "" {
 		b.Skip("HELMR_TEST_CLICKHOUSE_URL is not set")
 	}
-	for _, kind := range []string{"logs", "events"} {
-		for _, size := range []int{512, 4096, map[string]int{"logs": 64 << 10, "events": 64 << 10}[kind]} {
+	for _, kind := range []string{"logs"} {
+		for _, size := range []int{512, 4096, 64 << 10} {
 			for _, random := range []bool{false, true} {
 				for _, budget := range []struct{ rows, mib int }{{250, 8}, {10000, 8}, {10000, 16}, {10000, 32}, {10000, 64}} {
 					b.Run(fmt.Sprintf("%s/bytes%d/random%t/rows%d/mib%d", kind, size, random, budget.rows, budget.mib), func(b *testing.B) {
@@ -40,47 +40,24 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 						count := min(budget.rows, (budget.mib<<20)/size)
 						org, subject := uuid.NewV7(), uuid.NewV7()
 						now := time.Now().UTC().Truncate(time.Microsecond)
-						var logs []telemetry.StoredDiagnostic
-						if kind == "logs" {
-							logs = diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: org, Kind: "session", ID: subject, ProducerEpoch: 1}, count, size, now)
-						}
-						events := make([]telemetry.EventRecord, 0, count)
+						logs := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: org, Kind: "session", ID: subject, ProducerEpoch: 1}, count, size, now)
 						rng := rand.NewChaCha8([32]byte{1})
 						for i := 0; i < count; i++ {
-							var content []byte
-							if kind == "logs" {
-								content = logs[i].Record.Data
-							} else {
-								content = make([]byte, size)
-							}
 							if random {
-								_, _ = rng.Read(content)
-							}
-							if kind != "logs" {
-								for j := range content {
-									content[j] = 'a' + content[j]%26
-								}
-								content[0], content[len(content)-1] = '"', '"'
-								events = append(events, telemetry.EventRecord{OrgID: org, SubjectKind: "deployment", SubjectID: subject, DeploymentID: &subject, EventKind: "benchmark", Seq: uint64(i + 1), Body: string(content), ObservedAt: now, AcceptedAt: now})
+								_, _ = rng.Read(logs[i].Record.Data)
 							}
 						}
 						b.SetBytes(int64(count * size))
 						b.ReportAllocs()
 						b.ResetTimer()
 						for range b.N {
-							var rejected []telemetry.RejectedRow
-							if kind == "logs" {
-								rejected, err = writer.WriteDiagnostics(ctx, "session", logs)
-							} else {
-								rejected, err = writer.WriteEvents(ctx, events)
-							}
+							rejected, err := writer.WriteDiagnostics(ctx, "session", logs)
 							if err != nil || len(rejected) > 0 {
 								b.Fatalf("write: %v %v", rejected, err)
 							}
 						}
 						b.StopTimer()
 						runtime.KeepAlive(logs)
-						runtime.KeepAlive(events)
 						b.ReportMetric(float64(count), "rows/op")
 					})
 				}

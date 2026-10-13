@@ -379,18 +379,6 @@ variable "enable_cloudfront" {
   default     = false
 }
 
-variable "redis_node_type" {
-  description = "ElastiCache node type for the Control Plane event stream."
-  type        = string
-  default     = "cache.t4g.small"
-}
-
-variable "redis_node_count" {
-  description = "Number of ElastiCache nodes for the Control Plane event stream. Values greater than 1 enable automatic failover and Multi-AZ."
-  type        = number
-  default     = 2
-}
-
 variable "github_oauth_client_id" {
   description = "GitHub OAuth application client ID."
   type        = string

@@ -31,7 +31,7 @@ remain available without forcing every source edit through their setup costs.
 ## Development console
 
 `nix run .#dev` (or `make dev`) runs the Vite console with hot reload and a
-managed Postgres, Redis, ClickHouse, and synthetic runtime descriptor when
+managed Postgres, ClickHouse, and synthetic runtime descriptor when
 external URLs are not set. Object storage is S3, as in production: set
 `CAS_URI` and `PLATFORM_STORE_URI` to distinct `s3://bucket[/prefix]` stores
 reachable with your native AWS configuration (append `?endpoint=URL` for an
@@ -42,7 +42,7 @@ ClickHouse only when the stack is stopped and no owned services are still runnin
 It never deletes S3 objects.
 
 If startup or reset reports an existing `.stack.lock`, stop the stack (or any
-orphaned owned Postgres/Redis/ClickHouse under that state directory), then remove
+orphaned owned Postgres/ClickHouse under that state directory), then remove
 `.stack.lock` manually. Locks are never reclaimed automatically.
 
 `HELMR_DEV_CONSOLE_MODE=preview` builds the console once and serves it from the

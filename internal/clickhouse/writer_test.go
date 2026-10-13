@@ -15,49 +15,9 @@ import (
 )
 
 func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
-	deploymentID := uuid.NewV7()
 	observedAt := time.Date(2026, 7, 3, 1, 2, 3, 456000000, time.UTC)
 	client := &fakeBatchClient{}
 	writer := NewWriter(client)
-
-	if _, err := writer.WriteEvents(context.Background(), []telemetry.EventRecord{{
-		OrgID:          uuid.NewV7(),
-		ProjectID:      uuid.NewV7(),
-		EnvironmentID:  uuid.NewV7(),
-		SubjectKind:    "deployment",
-		SubjectID:      deploymentID,
-		EventKind:      "deployment.started",
-		Seq:            7,
-		DeploymentID:   &deploymentID,
-		TraceID:        "trace",
-		SpanID:         "span",
-		ParentSpanID:   "parent",
-		Traceparent:    "traceparent",
-		Category:       "execution",
-		Severity:       "info",
-		Source:         "worker",
-		Message:        "started",
-		Body:           "{}",
-		IdempotencyKey: "event-key",
-		RetentionClass: "standard",
-		RedactionClass: "standard",
-		ObservedAt:     observedAt,
-		AcceptedAt:     observedAt.Add(-time.Hour),
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	eventBatch := client.takeLast(t)
-	assertQueryContains(t, eventBatch.query, "INSERT INTO helmr_telemetry.events", "observed_at")
-	assertRowShape(t, eventBatch.rows, 1, 22)
-	if got := eventBatch.rows[0][21]; got != observedAt.Add(-time.Hour) {
-		t.Fatalf("accepted_at = %v", got)
-	}
-	if got := eventBatch.rows[0][6]; got != uint64(7) {
-		t.Fatalf("event seq = %v, want 7", got)
-	}
-	if got := eventBatch.rows[0][20]; got != observedAt {
-		t.Fatalf("event observed_at = %v, want %v", got, observedAt)
-	}
 
 	source := telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 2}
 	rows := diagnosticRows(source, 1, 5, observedAt)
@@ -75,12 +35,9 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 func TestClickHouseWriterKeepsValidRowsAfterAttributedAppendFailure(t *testing.T) {
 	client := &fakeBatchClient{appendFailures: []int{1, -1}}
 	writer := NewWriter(client)
-	rows := make([]telemetry.EventRecord, 3)
-	for idx := range rows {
-		rows[idx].Body = `{}`
-	}
+	rows := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 1}, 3, 5, time.Now().UTC().Truncate(time.Microsecond))
 
-	result, err := writer.WriteEvents(context.Background(), rows)
+	result, err := writer.WriteDiagnostics(context.Background(), "session", rows)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,12 +59,9 @@ func TestClickHouseWriterKeepsValidRowsAfterAttributedAppendFailure(t *testing.T
 func TestClickHouseWriterKeepsValidRowsAfterRepeatedAppendFailures(t *testing.T) {
 	client := &fakeBatchClient{appendFailures: []int{1, 1, -1}}
 	writer := NewWriter(client)
-	rows := make([]telemetry.EventRecord, 3)
-	for idx := range rows {
-		rows[idx].Body = `{}`
-	}
+	rows := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 1}, 3, 5, time.Now().UTC().Truncate(time.Microsecond))
 
-	result, err := writer.WriteEvents(context.Background(), rows)
+	result, err := writer.WriteDiagnostics(context.Background(), "session", rows)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +110,7 @@ func TestClickHouseWriterReturnsSendFailureAndClosesBatch(t *testing.T) {
 	client := &fakeBatchClient{sendErrors: []error{sendErr}}
 	writer := NewWriter(client)
 
-	_, err := writer.WriteEvents(context.Background(), []telemetry.EventRecord{{Body: `{}`}})
+	_, err := writer.WriteDiagnostics(context.Background(), "session", diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 1}, 1, 5, time.Now().UTC().Truncate(time.Microsecond)))
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("error = %v, want %v", err, sendErr)
 	}

@@ -109,7 +109,6 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("DATABASE_URL", " postgres://example\n")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("DEPLOYMENT_MODE", " managed-cloud ")
-	t.Setenv("REDIS_URL", "\nredis://redis.example.test:6379/0 ")
 	t.Setenv("CLICKHOUSE_URL", " https://clickhouse.example.test ")
 	t.Setenv("CLICKHOUSE_USER", " telemetry ")
 	t.Setenv("CLICKHOUSE_PASSWORD", "clickhouse-password")
@@ -134,7 +133,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
