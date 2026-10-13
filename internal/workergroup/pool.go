@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerpoolname"
@@ -37,7 +38,7 @@ func ListPools(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerG
 
 // CreatePool adds a pending pool to an active or paused worker group fenced by
 // the group's claim version, and returns the group with the new pool.
-func CreatePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, name string, expectedGroupClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
+func CreatePool(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, name string, expectedGroupClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
 	if err := workerpoolname.Validate(name); err != nil {
 		return db.WorkerGroup{}, db.WorkerPool{}, InputError{message: err.Error()}
 	}
@@ -70,6 +71,9 @@ func CreatePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, name 
 		if err != nil {
 			return fmt.Errorf("create worker pool: %w", err)
 		}
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -84,7 +88,7 @@ func CreatePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, name 
 // cannot drift. Selecting the current primary again is a replay that succeeds
 // unless the expected claim version is ahead of the group's. A zero poolID is
 // rejected after the group is locked and found selectable.
-func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelection, error) {
+func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelection, error) {
 	if expectedGroupClaimVersion <= 0 {
 		return PrimarySelection{}, invalidInput("expected_group_claim_version must be positive")
 	}
@@ -151,6 +155,9 @@ func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID
 		}
 		selection.Group = group
 		selection.Applied = true
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: poolID}); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -161,19 +168,19 @@ func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID
 
 // DrainPool starts draining an active pool fenced by its claim version, and
 // returns the group with the pool.
-func DrainPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
-	return transitionPool(ctx, txb, groupID, poolID, expectedPoolClaimVersion, "draining")
+func DrainPool(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
+	return transitionPool(ctx, txb, actor, groupID, poolID, expectedPoolClaimVersion, "draining")
 }
 
 // DisablePool disables an unreferenced pending or drained pool fenced by its
 // claim version, and returns the group with the pool.
-func DisablePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
-	return transitionPool(ctx, txb, groupID, poolID, expectedPoolClaimVersion, "disabled")
+func DisablePool(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
+	return transitionPool(ctx, txb, actor, groupID, poolID, expectedPoolClaimVersion, "disabled")
 }
 
 // transitionPool moves a pool to target. Replaying a transition with the claim
 // version that fenced it succeeds without applying it again.
-func transitionPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64, target string) (db.WorkerGroup, db.WorkerPool, error) {
+func transitionPool(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedPoolClaimVersion int64, target string) (db.WorkerGroup, db.WorkerPool, error) {
 	if expectedPoolClaimVersion <= 0 {
 		return db.WorkerGroup{}, db.WorkerPool{}, invalidInput("expected_pool_claim_version must be positive")
 	}
@@ -211,6 +218,9 @@ func transitionPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, p
 		}
 		if err != nil {
 			return fmt.Errorf("transition worker pool lifecycle: %w", err)
+		}
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_pool." + target, TargetKind: "worker_pool", TargetID: poolID}); err != nil {
+			return err
 		}
 		return nil
 	})

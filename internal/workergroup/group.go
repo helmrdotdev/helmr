@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
@@ -67,7 +68,7 @@ func GetGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerGr
 
 // CreateGroup creates an active worker group with a new enrollment token in an
 // existing region, serialized with other creators in that region.
-func CreateGroup(ctx context.Context, txb db.TxBeginner, input GroupInput) (CreatedGroup, error) {
+func CreateGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, input GroupInput) (CreatedGroup, error) {
 	if err := region.ValidateID(input.RegionID); err != nil {
 		return CreatedGroup{}, InputError{message: err.Error()}
 	}
@@ -98,6 +99,9 @@ func CreateGroup(ctx context.Context, txb db.TxBeginner, input GroupInput) (Crea
 		if err != nil {
 			return fmt.Errorf("create worker group: %w", err)
 		}
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -122,19 +126,27 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 
 // RotateGroupToken replaces a worker group's enrollment token and returns the
 // new raw token.
-func RotateGroupToken(ctx context.Context, q db.Querier, groupID uuid.UUID) (string, error) {
+func RotateGroupToken(ctx context.Context, database db.TxBeginner, actor audit.Actor, groupID uuid.UUID) (string, error) {
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		return "", err
 	}
-	_, err = q.RotateWorkerGroupToken(ctx, db.RotateWorkerGroupTokenParams{
-		WorkerGroupID: pgvalue.UUID(groupID), TokenHash: token.Hash,
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		_, err = q.RotateWorkerGroupToken(ctx, db.RotateWorkerGroupTokenParams{
+			WorkerGroupID: pgvalue.UUID(groupID), TokenHash: token.Hash,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGroupNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("rotate worker group token: %w", err)
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrGroupNotFound
-	}
 	if err != nil {
-		return "", fmt.Errorf("rotate worker group token: %w", err)
+		return "", err
 	}
+
 	return token.Raw, nil
 }

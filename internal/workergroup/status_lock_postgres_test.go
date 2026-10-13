@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 )
 
@@ -16,7 +17,7 @@ func TestStatusMutationsWaitForLifecycleAdvisoryLockPostgres(t *testing.T) {
 	key := pglock.Key("helmr:worker-group-lifecycle:" + f.groupID().String())
 	for name, mutate := range map[string]func() error{
 		"pause group": func() error {
-			_, err := PauseGroup(t.Context(), f.pool, f.groupID(), f.currentGroup(t).ClaimVersion)
+			_, err := PauseGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.currentGroup(t).ClaimVersion)
 			return err
 		},
 		"mark host lost": func() error {
@@ -24,7 +25,7 @@ func TestStatusMutationsWaitForLifecycleAdvisoryLockPostgres(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			_, err = MarkHostLost(t.Context(), f.pool, f.groupID(), "host-1", status.ClaimVersion)
+			_, err = MarkHostLost(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "host-1", status.ClaimVersion)
 			return err
 		},
 	} {

@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -228,7 +229,7 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RotateGroupToken(t.Context(), f.q, f.groupID()); err != nil {
+	if _, err := RotateGroupToken(t.Context(), f.pool, audit.System("test-fixture"), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := EnrollHost(t.Context(), f.pool, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
@@ -240,7 +241,7 @@ func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
 	host := f.start(t, cfg, "default", "i-group", validHostTemplate(t))
-	if _, err := PauseGroup(t.Context(), f.pool, f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
+	if _, err := PauseGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {

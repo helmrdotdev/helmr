@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -21,7 +22,7 @@ import (
 
 func confirmComputerHostAbsent(ctx context.Context, f fixture, host uuid.UUID) error {
 	return db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, host)
+		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, audit.System("test-fixture"), host)
 		if err != nil {
 			return err
 		}
@@ -281,7 +282,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, f.worker)
+	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.System("test-fixture"), f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,5 +291,27 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	}
 	if err = dispatch.ObserveProviderAbsentHost(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
 		t.Fatalf("confirmation escaped its transaction: %v", err)
+	}
+}
+
+func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *testing.T) {
+	f := newFixture(t)
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, audit.System("operator"), f.group, "host", 1); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+			absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.CapacityAuthority(), f.worker)
+			if err != nil {
+				return err
+			}
+			return dispatch.ObserveProviderAbsentHost(t.Context(), absence)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.provider_absence_confirmed' AND actor_kind='capacity' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND target_id=$1 AND org_id IS NULL`, f.worker).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("physical confirmation count=%d err=%v", count, err)
 	}
 }

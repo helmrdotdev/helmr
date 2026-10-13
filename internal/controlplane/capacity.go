@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -146,7 +147,7 @@ func (s *Server) capacitySelectWorkerGroupPrimaryPool(w http.ResponseWriter, r *
 		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
 		return
 	}
-	response, err := workergroup.SelectPrimary(r.Context(), s.tx, workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
+	response, err := workergroup.SelectPrimary(r.Context(), s.tx, audit.CapacityAuthority(), workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -224,7 +225,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		writeError(w, fmt.Errorf("invalid worker drain JSON: %w", err))
 		return
 	}
-	host, err := workergroup.DrainHost(r.Context(), s.tx, id, request)
+	host, err := workergroup.DrainHost(r.Context(), s.tx, audit.CapacityAuthority(), id, request)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -245,7 +246,7 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 	}
 	var host workergroup.WorkerHost
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(r.Context(), tx, id)
+		absence, err := workergroup.ConfirmHostProviderAbsent(r.Context(), tx, audit.CapacityAuthority(), id)
 		if err != nil {
 			return err
 		}

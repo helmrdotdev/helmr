@@ -10,6 +10,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -22,7 +23,7 @@ func TestWorkerStatusCommandsUseWorkerGroupOperationsPostgres(t *testing.T) {
 	}
 	t.Setenv("DATABASE_URL", database.DSN)
 	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO regions (id, display_name) VALUES ('local', 'Local')`)
-	created, err := workergroup.CreateGroup(t.Context(), database.Pool, workergroup.GroupInput{RegionID: "local", Name: "default"})
+	created, err := workergroup.CreateGroup(t.Context(), database.Pool, audit.System("test-fixture"), workergroup.GroupInput{RegionID: "local", Name: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestWorkerStatusCommandsUseWorkerGroupOperationsPostgres(t *testing.T) {
 		t.Fatalf("missing group status error = %v", err)
 	}
 
-	_, pool, err := workergroup.CreatePool(t.Context(), database.Pool, uuid.UUID(created.Group.ID.Bytes), "pending", paused.ClaimVersion)
+	_, pool, err := workergroup.CreatePool(t.Context(), database.Pool, audit.System("test-fixture"), uuid.UUID(created.Group.ID.Bytes), "pending", paused.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}

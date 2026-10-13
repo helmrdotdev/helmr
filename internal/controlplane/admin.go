@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -103,7 +104,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, fmt.Errorf("invalid worker group request JSON: %w", err))
 		return
 	}
-	created, err := workergroup.CreateGroup(r.Context(), s.tx, workergroup.GroupInput{
+	created, err := workergroup.CreateGroup(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), workergroup.GroupInput{
 		RegionID: request.RegionID, Name: request.Name, Description: request.Description,
 	})
 	if err != nil {
@@ -150,7 +151,7 @@ func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request)
 	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup)
 }
 
-type groupTransition func(context.Context, db.TxBeginner, uuid.UUID, int64) (workergroup.GroupStatus, error)
+type groupTransition func(context.Context, db.TxBeginner, audit.Actor, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
 func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
 	groupID, ok := adminGroupID(w, r)
@@ -162,7 +163,7 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 		writeError(w, fmt.Errorf("invalid lifecycle request JSON: %w", err))
 		return
 	}
-	status, err := transition(r.Context(), s.tx, groupID, request.ExpectedClaimVersion)
+	status, err := transition(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), groupID, request.ExpectedClaimVersion)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -175,7 +176,7 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	token, err := workergroup.RotateGroupToken(r.Context(), s.db, groupID)
+	token, err := workergroup.RotateGroupToken(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), groupID)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -211,7 +212,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker pool request JSON: %w", err))
 		return
 	}
-	group, created, err := workergroup.CreatePool(r.Context(), s.tx, groupID, request.Name, request.ExpectedGroupClaimVersion)
+	group, created, err := workergroup.CreatePool(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), groupID, request.Name, request.ExpectedGroupClaimVersion)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -233,7 +234,7 @@ func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(errors.New("pool_id must match the requested pool")))
 		return
 	}
-	selection, err := workergroup.SelectPrimaryPool(r.Context(), s.tx, groupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
+	selection, err := workergroup.SelectPrimaryPool(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), groupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -251,7 +252,7 @@ func (s *Server) adminDisableWorkerPool(w http.ResponseWriter, r *http.Request) 
 	s.adminTransitionWorkerPool(w, r, workergroup.DisablePool)
 }
 
-type poolTransition func(context.Context, db.TxBeginner, uuid.UUID, uuid.UUID, int64) (db.WorkerGroup, db.WorkerPool, error)
+type poolTransition func(context.Context, db.TxBeginner, audit.Actor, uuid.UUID, uuid.UUID, int64) (db.WorkerGroup, db.WorkerPool, error)
 
 func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Request, transition poolTransition) {
 	groupID, poolID, ok := adminWorkerPoolIDs(w, r)
@@ -263,7 +264,7 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 		writeError(w, fmt.Errorf("invalid worker pool lifecycle request JSON: %w", err))
 		return
 	}
-	group, pool, err := transition(r.Context(), s.tx, groupID, poolID, request.ExpectedPoolClaimVersion)
+	group, pool, err := transition(r.Context(), s.tx, audit.FromPrincipal(principalFromContext(r.Context())), groupID, poolID, request.ExpectedPoolClaimVersion)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return

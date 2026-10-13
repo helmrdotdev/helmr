@@ -28,12 +28,12 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/client"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -889,11 +889,11 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := workergroup.CreateGroup(t.Context(), pool, workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
+	group, err := workergroup.CreateGroup(t.Context(), pool, audit.System("test-fixture"), workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.CreatePool(t.Context(), pool, pgvalue.MustUUIDValue(group.Group.ID), "native-proof", group.Group.ClaimVersion); err != nil {
+	if _, _, err := workergroup.CreatePool(t.Context(), pool, audit.System("test-fixture"), pgvalue.MustUUIDValue(group.Group.ID), "native-proof", group.Group.ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	return env, issued.Raw, group.EnrollmentToken
