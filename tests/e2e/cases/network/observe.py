@@ -17,7 +17,7 @@ profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
 cfg = json.loads((profile.CONFIG / 'config.json').read_text())
 query = """SELECT json_build_object('session_id',s.id,'process_epoch',p.epoch,
- 'lease_epoch',l.epoch,'runtime_id',l.computer_instance_id)::text FROM sessions s
+ 'lease_epoch',l.epoch,'runtime_id',l.allocation_id)::text FROM sessions s
  JOIN session_processes p ON p.environment_id=s.environment_id AND p.session_id=s.id
  JOIN computer_leases l ON l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=p.computer_lease_epoch
  JOIN worker_hosts h ON h.id=l.worker_host_id

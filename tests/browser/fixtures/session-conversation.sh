@@ -41,14 +41,14 @@ SELECT :'mode' IN ('text','choice') AS seed, :'mode'='finalizing' AS finalizing,
 INSERT INTO regions(id,display_name) VALUES('browser-'||:'session_id','Browser fixture');
 INSERT INTO worker_group_tokens(id,token_hash) VALUES(:'reference_id',sha256(convert_to(:'reference_id','UTF8')));
 INSERT INTO worker_groups(id,token_id,region_id,name) VALUES(:'reference_id',:'reference_id','browser-'||:'session_id','browser-fixture');
-INSERT INTO vm_platforms(id,arch,contract,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,cpu_template_kind,kernel_digest,initramfs_digest,rootfs_digest)
-VALUES('sha256:'||repeat('c',64),'x86_64','helmr.vm-runtime.v0','sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'1.16.1','6.0.0','fixture','none','sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'sha256:'||repeat('c',64)) ON CONFLICT DO NOTHING;
+INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest)
+VALUES('sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'1.16.1','6.0.0','fixture','sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'sha256:'||repeat('c',64)) ON CONFLICT DO NOTHING;
 INSERT INTO worker_pools(id,worker_group_id,name,status,sealed_at,vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots)
 VALUES(:'reference_id',:'reference_id','browser-fixture','active',clock_timestamp(),'sha256:'||repeat('c',64),1000,1073741824,1073741824,1000,1073741824,1073741824,1);
 INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) VALUES(:'reference_id',1,'sha256:'||repeat('c',64));
 INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,epoch_cpu_millis,epoch_memory_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest)
 VALUES(:'reference_id','browser-'||:'session_id',:'reference_id',:'reference_id','active',1,:'reference_id',clock_timestamp(),clock_timestamp(),1000,1073741824,1000,1073741824,1073741824,'sha256:'||repeat('c',64),1,1,'{}','sha256:'||repeat('c',64));
-INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
 SELECT environment_id,computer_id,1,:'reference_id',1,clock_timestamp()+interval '1 hour','active',computer_id,sha256(convert_to(:'reference_id','UTF8')),1000,536870912,1073741824,'sha256:'||repeat('c',64),1,'sha256:'||repeat('c',64),clock_timestamp(),clock_timestamp() FROM fixture;
 INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
 SELECT environment_id,session_id,1,computer_id,1,'ready' FROM fixture;
@@ -80,8 +80,8 @@ INSERT INTO session_events(environment_id,session_id,turn_id,seq,kind,data)
 SELECT :'environment_id',:'session_id',:'turn_id',seq,'turn.output',convert_to('[{"type":"text","text":"Second visible progress"}]','UTF8') FROM allocated;
 \endif
 \if :expose_secret
-INSERT INTO secret_exposures(environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
-SELECT f.environment_id,f.session_id,t.process_epoch,s.id,s.current_version_id,s.revocation_generation
+INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
+SELECT uuidv7(),f.environment_id,f.session_id,t.process_epoch,s.id,s.current_version_id,s.revocation_generation
 FROM fixture f JOIN turns t ON (t.environment_id,t.id)=(f.environment_id,f.turn_id)
 JOIN secrets s ON s.environment_id=f.environment_id AND s.name=:'reference_id' AND s.status='active'
 WHERE t.status='running' RETURNING secret_id AS exposed_secret_id \gset

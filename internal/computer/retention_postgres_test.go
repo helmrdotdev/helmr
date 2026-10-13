@@ -16,7 +16,7 @@ import (
 func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	f := agenttest.New(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=1,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=3600000,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	if _, err := reconcileUnused(ctx, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
 	}
