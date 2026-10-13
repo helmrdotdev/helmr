@@ -224,35 +224,6 @@ func (r *computerOperationRegistry) release(entry *computerMountEntry) {
 	}
 }
 
-func (r *computerOperationRegistry) retire(computerInstanceID string, entry *computerMountEntry) {
-	entry.lifecycleMu.Lock()
-	defer entry.lifecycleMu.Unlock()
-	entry.finalizationMu.Lock()
-	defer entry.finalizationMu.Unlock()
-	r.retireLocked(computerInstanceID, entry)
-}
-
-// Caller holds the entry lifecycle/finalization locks.
-func (r *computerOperationRegistry) retireLocked(computerInstanceID string, entry *computerMountEntry) {
-	r.mu.Lock()
-	current := r.entries[computerInstanceID]
-	if current != entry {
-		r.mu.Unlock()
-		return
-	}
-	delete(r.entries, computerInstanceID)
-	entry.retired = true
-	var cleanup func()
-	if entry.active == 0 {
-		cleanup = entry.cleanup
-		entry.cleanup = nil
-	}
-	r.mu.Unlock()
-	if cleanup != nil {
-		cleanup()
-	}
-}
-
 func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *computerOperationRegistry) error {
 	if logger == nil {
 		logger = slog.Default()

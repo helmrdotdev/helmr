@@ -6,7 +6,7 @@ export type Organization = {
   name?: string | null;
 };
 
-export type CreateOrganizationInput = {
+type CreateOrganizationInput = {
   slug: string;
   name: string;
   setup_token?: string;

@@ -35,19 +35,6 @@ type computerBasicExecSpec struct {
 	TimeoutMS int64             `json:"timeout_ms"`
 }
 
-func (r *computerOperationRegistry) runComputerBasicExec(ctx context.Context, entry *computerMountEntry, request *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult {
-	execution, code, err := r.startComputerBasicExec(ctx, entry, request)
-	if err != nil {
-		return computerBasicCommandFailure(request.GetEnvelope().GetRequestFingerprint(), code, err)
-	}
-	select {
-	case <-execution.done:
-		return execution.result
-	case <-ctx.Done():
-		return computerBasicCommandFailure(request.GetEnvelope().GetRequestFingerprint(), "computer_command_result_uncertain", ctx.Err())
-	}
-}
-
 // The lifecycle/finalization locks serialize transfer, reservation, Program admission
 // and stop. The registry mutex is never held over journal IO or process execution.
 func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, entry *computerMountEntry, request *computerv0.ComputerBasicExecRequest) (*computerBasicExec, string, error) {

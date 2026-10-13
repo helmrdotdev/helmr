@@ -49,7 +49,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		if admitted.TurnID == uuid.Nil() {
 			t.Fatal("public queue rejected")
 		}
-		if _, err = Dispatch(t.Context(), f.pool, member.execution()); !errors.Is(err, ErrNotReady) {
+		if _, err = dispatchTurnForTest(t.Context(), f.pool, member.execution()); !errors.Is(err, ErrNotReady) {
 			t.Fatalf("dispatch bypassed seal: %v", err)
 		}
 		if _, err = AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), member.execution()); err != nil {
@@ -82,7 +82,7 @@ func TestComputerCaptureRacesDispatch(t *testing.T) {
 			<-start
 			_, captureErr = BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
 		})
-		group.Go(func() { <-start; _, dispatchErr = Dispatch(t.Context(), f.pool, f.execution()) })
+		group.Go(func() { <-start; _, dispatchErr = dispatchTurnForTest(t.Context(), f.pool, f.execution()) })
 		close(start)
 		group.Wait()
 		if (captureErr == nil) == (dispatchErr == nil) {
@@ -151,12 +151,12 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 	req := f.captureRequest()
 	beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, req.CheckpointID); !errors.Is(err, ErrNotReady) {
+	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("bearer expiry treated as physical fence: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited'`)
 	for range 2 {
-		if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
+		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,7 +175,7 @@ func TestComputerCaptureRejectsActivePeerWithoutAllocatingSave(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	peer.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, peer.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, ErrNotReady) {
@@ -209,7 +209,7 @@ func TestComputerCaptureAbsentEvidenceMustFollowExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.enqueue(t, "after-cancel")
-	if _, err = Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatalf("never-sealed source did not resume dispatch: %v", err)
 	}
 }
@@ -254,7 +254,7 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 		t.Fatalf("cancelled source secret retained: %v", err)
 	}
 	f.enqueue(t, "healthy-peer")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatalf("healthy member cannot continue: %v", err)
 	}
 }
@@ -267,12 +267,12 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 			result, _ := beginCapture(t, f, req)
 			root := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 			if recorded {
-				if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "frozen cut"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "frozen cut"}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited'`)
-			if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
+			if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -288,11 +288,11 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 				t.Fatalf("lost source state: save=%s scrubbed=%v", state, scrubbed)
 			}
 			if !recorded {
-				if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "recovered original cut after lost acknowledgement"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "recovered original cut after lost acknowledgement"}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := ReconcileSavePublication(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, ErrNotReady) {
+			if err := savePublicationForTest(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("uncommitted cut became published after source loss: %v", err)
 			}
 			var noHead bool

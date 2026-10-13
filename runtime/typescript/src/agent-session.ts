@@ -18,7 +18,7 @@ export interface AdmittedTurn {
   readonly input: InputContent
   readonly source: Turn["source"]
 }
-export interface AskRegistration {
+interface AskRegistration {
   readonly answer: Promise<AskResponse>
   // Idempotent, including when an answer wins concurrently with withdrawal.
   withdraw(): Promise<void>

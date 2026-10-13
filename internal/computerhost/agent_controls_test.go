@@ -97,7 +97,7 @@ func TestAgentControlsTerminalAttachmentDrainsBeforePhysicalStop(t *testing.T) {
 		accepted := time.Now().UTC()
 		return workerapi.DiagnosticLogReceipt{ThroughSequence: request.ThroughSequence, AcceptedAt: accepted, ExpiresAt: accepted.Add(90 * 24 * time.Hour)}, nil
 	}
-	err = ServeControlledAgentSession(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error {
+	err = serveControlledAgentSessionForTest(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error {
 		return errors.New("unexpected unowned event")
 	})
 	if err != nil {
@@ -184,7 +184,7 @@ func TestAgentControlsRetainedFailureSurvivesExitDuringReport(t *testing.T) {
 				}
 				done := make(chan error, 1)
 				go func() {
-					done <- ServeControlledAgentSession(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
+					done <- serveControlledAgentSessionForTest(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
 				}()
 				<-started
 				if transportExit {

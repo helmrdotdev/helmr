@@ -137,7 +137,7 @@ func TestInspectHostRuntimeVerifiesCustomTemplateForEveryShape(t *testing.T) {
 	firecrackerPath := writeProbeTestFile(t, directory, "firecracker", "firecracker")
 	helperPath := writeProbeTestFile(t, directory, "cpu-template-helper", "helper")
 	templatePath := writeProbeTestFile(t, directory, "template.json", `{"cpuid_modifiers":[]}`)
-	selector, err := CustomCPUTemplateSelector(sha256sum.DigestBytes([]byte(`{"cpuid_modifiers":[]}`)))
+	selector, err := customCPUTemplateSelector(sha256sum.DigestBytes([]byte(`{"cpuid_modifiers":[]}`)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 			helperPath := writeProbeTestFile(t, directory, "cpu-template-helper", "helper")
 			templateBody := `{"cpuid_modifiers":[]}`
 			templatePath := writeProbeTestFile(t, directory, "template.json", templateBody)
-			selector, err := CustomCPUTemplateSelector(sha256sum.DigestBytes([]byte(templateBody)))
+			selector, err := customCPUTemplateSelector(sha256sum.DigestBytes([]byte(templateBody)))
 			if err != nil {
 				t.Fatal(err)
 			}

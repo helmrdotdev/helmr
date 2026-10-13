@@ -359,26 +359,6 @@ func NewImmutable(ctx context.Context, rawURI string, opts ...Option) (*Immutabl
 	return &ImmutableStore{store: store}, nil
 }
 
-func ValidateDisjointS3Stores(firstURI, secondURI string) error {
-	first, err := s3Namespace(firstURI)
-	if err != nil {
-		return err
-	}
-	second, err := s3Namespace(secondURI)
-	if err != nil {
-		return err
-	}
-	if first.authority != second.authority {
-		return nil
-	}
-	if first.key == second.key ||
-		strings.HasPrefix(first.key, second.key+"/") ||
-		strings.HasPrefix(second.key, first.key+"/") {
-		return errors.New("S3 stores have overlapping object namespaces")
-	}
-	return nil
-}
-
 func ValidateDistinctS3Stores(firstURI, secondURI string) error {
 	first, err := s3Namespace(firstURI)
 	if err != nil {

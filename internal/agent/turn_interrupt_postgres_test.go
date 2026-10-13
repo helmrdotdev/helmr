@@ -12,12 +12,12 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	childTurn := child.enqueue(t, "child")
-	if _, err := Dispatch(t.Context(), f.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
 	first := f.enqueue(t, "first")
 	next := f.enqueue(t, "next")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	request := controlRequest(f, "turn_interrupt", "stop")
@@ -41,7 +41,7 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 	}
 	e := f.execution()
 	e.AuthorityGeneration++
-	if _, err := Dispatch(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("premature dispatch: %v", err)
 	}
 	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
@@ -59,7 +59,7 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", control.StopSequence); err != nil {
 		t.Fatal(err)
 	}
-	dispatched, err := Dispatch(t.Context(), f.pool, e)
+	dispatched, err := dispatchTurnForTest(t.Context(), f.pool, e)
 	if err != nil || dispatched.TurnID != next.TurnID {
 		t.Fatalf("next: %+v %v", dispatched, err)
 	}
@@ -78,7 +78,7 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 func TestInterruptStopDeadlineSurvivesResumeAndReattachment(t *testing.T) {
 	f := newFixture(t)
 	f.enqueue(t, "first")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	hold, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
@@ -121,7 +121,7 @@ func TestExactInterruptRejectsStateAndPreservesOwnedChildren(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	childTurn := child.enqueue(t, "child")
-	if _, err := Dispatch(t.Context(), f.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "first")
@@ -132,13 +132,13 @@ func TestExactInterruptRejectsStateAndPreservesOwnedChildren(t *testing.T) {
 	if !errors.As(err, &rejection) || rejection.Status != "queued" || rejection.Reason() != "not_started" {
 		t.Fatalf("queued rejection: %v", err)
 	}
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := CloseProcessing(t.Context(), f.pool, f.execution(), queued.TurnID); err != nil {
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), queued.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RecordResult(t.Context(), f.pool, f.execution(), queued.TurnID, []byte(`null`), "joined"); err != nil {
+	if _, err := recordResultForTest(t.Context(), f.pool, f.execution(), queued.TurnID, []byte(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
 	_, err = ControlSession(t.Context(), f.pool, f.caller(), request)

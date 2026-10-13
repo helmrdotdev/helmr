@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/jackc/pgx/v5"
 )
 
 type errKind int
@@ -28,7 +27,6 @@ const (
 )
 
 var (
-	errRecordNotFound                 = errors.New("record not found")
 	errPermissionRequired             = errors.New("permission is required")
 	errAPIKeyEnvironmentScopeRequired = errors.New("API key is not bound to an environment")
 )
@@ -101,10 +99,6 @@ func gone(err error) error {
 
 func tooLarge(err error) error {
 	return apiError{kind: errTooLarge, err: err}
-}
-
-func badGateway(err error) error {
-	return apiError{kind: errBadGateway, err: err}
 }
 
 func unavailable(err error) error {
@@ -226,8 +220,4 @@ func publicErrorMessage(status int, err error) string {
 	default:
 		return "internal server error"
 	}
-}
-
-func isNoRows(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errRecordNotFound)
 }

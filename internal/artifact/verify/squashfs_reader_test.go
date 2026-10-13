@@ -455,3 +455,24 @@ func (reader *countingSquashFSReader) ReadCount() int {
 	defer reader.mu.Unlock()
 	return reader.reads
 }
+
+// squashFSPhysical validates a complete squashfs image the way the verifier
+// composes its parts: context check, facts, projected filesystem validation.
+func squashFSPhysical(
+	ctx context.Context,
+	source io.ReaderAt,
+	physicalSize int64,
+) error {
+	if err := checkSquashFSContext(ctx); err != nil {
+		return err
+	}
+	facts, err := readSquashFSFacts(source, physicalSize)
+	if err != nil {
+		return err
+	}
+	return artifact.ValidateFilesystem(
+		projectSquashFSFilesystem(facts),
+		physicalSize,
+		false,
+	)
+}

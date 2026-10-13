@@ -3,9 +3,10 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
@@ -15,7 +16,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			installation, channel := slackRouteFixture(t, f)
 			bindFixtureSlackRoot(t, f, channel)
 			parent := f.enqueue(t, "parent")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			if kind == "publication" {
@@ -36,8 +37,8 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			}
 			c := f
 			c.session = child.SessionID
-			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.env, c.session, f.computer)
-			if _, err = Dispatch(t.Context(), f.pool, c.execution()); err != nil {
+			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready',1,1,1,'resume',1,clock_timestamp())`, f.env, c.session, f.computer)
+			if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = RuntimeOutput(t.Context(), f.pool, *c.host(), c.execution(), child.TurnID, uuid.NewV7(), json.RawMessage(`"child output"`)); err != nil {
@@ -60,7 +61,7 @@ func TestSlackRuntimeContentPreservesAdmissionRoute(t *testing.T) {
 				bindFixtureSlackRoot(t, f, channel)
 			}
 			turn := f.enqueue(t, "first")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			for _, raw := range []string{`[]`, `[{"type":"text","text":""}]`, `[{"type":"text","text":"progress"}]`} {
@@ -95,7 +96,7 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 			storage := newSaveStorageFixture(t, f)
 			slackRouteFixture(t, f)
 			a := f.enqueue(t, "response")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			if response {

@@ -3,137 +3,11 @@ package oci
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
-
-func TestApplyLayerTarAppliesExactModesIndependentOfUmask(t *testing.T) {
-	previous := syscall.Umask(0o077)
-	t.Cleanup(func() { syscall.Umask(previous) })
-	var layer bytes.Buffer
-	writer := tar.NewWriter(&layer)
-	if err := writer.WriteHeader(&tar.Header{Name: "app", Typeflag: tar.TypeDir, Mode: 0o751}); err != nil {
-		t.Fatal(err)
-	}
-	body := []byte("hello")
-	if err := writer.WriteHeader(&tar.Header{Name: "app/hello", Typeflag: tar.TypeReg, Mode: 0o640, Size: int64(len(body))}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	if err := ApplyLayerTar(bytes.NewReader(layer.Bytes()), root); err != nil {
-		t.Fatal(err)
-	}
-	for path, want := range map[string]os.FileMode{
-		filepath.Join(root, "app"):          0o751,
-		filepath.Join(root, "app", "hello"): 0o640,
-	} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := info.Mode().Perm(); got != want {
-			t.Fatalf("%s mode = %04o, want %04o", path, got, want)
-		}
-	}
-}
-
-func TestUnpackAppliesLayersAndConfig(t *testing.T) {
-	first := tarBytes(t, map[string]string{
-		"app/keep.txt":   "keep",
-		"app/remove.txt": "remove",
-	})
-	second := tarBytes(t, map[string]string{
-		"app/.wh.remove.txt": "",
-		"app/new.txt":        "new",
-	})
-	image := ociTar(t, []ociTestLayer{
-		{mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", body: gzipBytes(t, first)},
-		{mediaType: "application/vnd.oci.image.layer.v1.tar", body: second},
-	}, []byte(`{"Config":{"Env":["PATH=/bin","FOO=bar"],"WorkingDir":"/workspace","User":"agent"}}`))
-	root := t.TempDir()
-	oci, err := Unpack(bytes.NewReader(image), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := readText(t, filepath.Join(root, "app/keep.txt")); got != "keep" {
-		t.Fatalf("keep.txt = %q", got)
-	}
-	if got := readText(t, filepath.Join(root, "app/new.txt")); got != "new" {
-		t.Fatalf("new.txt = %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(root, "app/remove.txt")); !os.IsNotExist(err) {
-		t.Fatalf("remove.txt exists after whiteout: %v", err)
-	}
-	if oci.Config.WorkingDir != "/workspace" || oci.Config.User != "agent" || len(oci.Config.Env) != 2 {
-		t.Fatalf("Config = %+v", oci.Config)
-	}
-}
-
-func TestInspectVerifiesCompleteImageWithoutExtractingLayers(t *testing.T) {
-	layer := tarBytes(t, map[string]string{"app/file.txt": "content"})
-	image := ociTar(t, []ociTestLayer{{
-		mediaType: "application/vnd.oci.image.layer.v1.tar",
-		body:      layer,
-	}}, []byte(`{"Config":{"WorkingDir":"/workspace"}}`))
-	metadata, err := Inspect(bytes.NewReader(image))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if metadata.ManifestCount != 1 ||
-		metadata.Platform == nil ||
-		metadata.Platform.Architecture != "amd64" ||
-		metadata.Config.WorkingDir != "/workspace" {
-		t.Fatalf("metadata = %#v", metadata)
-	}
-
-	corrupt := append([]byte(nil), image...)
-	offset := bytes.Index(corrupt, layer)
-	if offset < 0 {
-		t.Fatal("layer not found in image")
-	}
-	corrupt[offset] ^= 0xff
-	if _, err := Inspect(bytes.NewReader(corrupt)); err == nil {
-		t.Fatal("Inspect accepted a layer whose bytes do not match its descriptor")
-	}
-}
-
-func TestApplyLayerTarRejectsSymlinkParent(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Symlink(t.TempDir(), filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
-	layer := tarBytes(t, map[string]string{"link/escape.txt": "nope"})
-	if err := ApplyLayerTar(bytes.NewReader(layer), root); err == nil {
-		t.Fatal("expected symlink parent rejection")
-	}
-}
-
-func TestApplyLayerTarRejectsWriteThroughAbsoluteSymlink(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-	layer := tarEntries(t,
-		&tar.Header{Name: "link", Linkname: outside, Mode: 0o777, Typeflag: tar.TypeSymlink},
-		&tar.Header{Name: "link/escape.txt", Mode: 0o644, Size: int64(len("nope")), Typeflag: tar.TypeReg},
-	)
-	if err := ApplyLayerTar(bytes.NewReader(layer), root); err == nil {
-		t.Fatal("expected symlink parent rejection")
-	}
-	if _, err := os.Stat(filepath.Join(outside, "escape.txt")); !os.IsNotExist(err) {
-		t.Fatalf("escape target exists err = %v, want missing", err)
-	}
-}
 
 func TestConfinedLayerPathRejectsEscape(t *testing.T) {
 	if _, err := ConfinedLayerPath(t.TempDir(), "../escape"); err == nil {
@@ -189,52 +63,6 @@ func ociTar(t *testing.T, layers []ociTestLayer, config []byte) []byte {
 	return buf.Bytes()
 }
 
-func tarBytes(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	writer := tar.NewWriter(&buf)
-	for path, body := range files {
-		writeTarFile(t, writer, path, []byte(body))
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func tarEntries(t *testing.T, headers ...*tar.Header) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	writer := tar.NewWriter(&buf)
-	for _, header := range headers {
-		if err := writer.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if header.Typeflag == tar.TypeReg && header.Size > 0 {
-			if _, err := writer.Write(bytes.Repeat([]byte("x"), int(header.Size))); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func gzipBytes(t *testing.T, body []byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	writer := gzip.NewWriter(&buf)
-	if _, err := writer.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
 func writeTarFile(t *testing.T, writer *tar.Writer, name string, body []byte) {
 	t.Helper()
 	header := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
@@ -257,13 +85,4 @@ func mustJSON(t *testing.T, value any) []byte {
 
 func sha256Hex(body []byte) string {
 	return sha256sum.HexBytes(body)
-}
-
-func readText(t *testing.T, path string) string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(body)
 }

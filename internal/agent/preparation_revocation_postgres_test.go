@@ -31,7 +31,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	f := p.f.fixture
 	peer := f.peer(t)
 	running := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued-behind-running")
@@ -48,7 +48,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 		t.Fatal(err)
 	}
 	// These checks run before reconciliation, including the unchanged-control fast path.
-	if _, err = Dispatch(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
 	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {

@@ -63,7 +63,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 					}
 					command = message.GetCommand()
 				}
-				if command.ControlSequence != int64(index+1) || (kind == "resume" && command.GetControl().GetDesired() != "run") || (kind == "suspend" && command.GetControl().GetDesired() != "hold") || (kind == "shutdown" && command.GetControl().GetDesired() != "shutdown") {
+				if command.ControlSequence != agenttest.SeededAttachment+int64(index+1) || (kind == "resume" && command.GetControl().GetDesired() != "run") || (kind == "suspend" && command.GetControl().GetDesired() != "hold") || (kind == "shutdown" && command.GetControl().GetDesired() != "shutdown") {
 					return errors.New("wrong durable control")
 				}
 				result := &agentv1.DeliveryResult{DeliveryId: command.DeliveryId, Outcome: &agentv1.DeliveryResult_ValueJson{ValueJson: []byte(`null`)}}
@@ -133,7 +133,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 	}
 	err = computerhost.ServeControlledAgentSession(ctx, connection, attached, f.Environment.String(), client, func(context.Context, *agentv1.GuestSessionMessage) error {
 		return errors.New("unexpected observer event")
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("clean physical stop: %v", err)
 	}

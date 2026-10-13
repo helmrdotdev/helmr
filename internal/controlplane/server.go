@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -82,7 +81,6 @@ type Server struct {
 	secretDelivery             SecretDeliveryOpener
 	secretProxy                *secret.Store
 	computers                  computer.Creator
-	computerFencingKey         disk.FencingKey
 	eventStream                SubjectEventReader
 	telemetryReader            telemetry.Reader
 	hostAuth                   workergroup.HostAuthConfig
@@ -118,19 +116,18 @@ type ServerConfig struct {
 	TX          db.TxDB
 	ReadinessDB db.DBTX
 
-	Auth               auth.Authenticator
-	CAS                cas.UploadStore
-	BundleAdmission    bundle.Admission
-	PlatformStore      cas.Reader
-	Secrets            SecretManager
-	SecretDelivery     SecretDeliveryOpener
-	SecretProxy        *secret.Store
-	ComputerFencingKey disk.FencingKey
-	EventStream        SubjectEventReader
-	TelemetryReader    telemetry.Reader
-	Mailer             email.Sender
-	MagicLinkDelivery  *MagicLinkDelivery
-	AuthProvider       AuthProvider
+	Auth              auth.Authenticator
+	CAS               cas.UploadStore
+	BundleAdmission   bundle.Admission
+	PlatformStore     cas.Reader
+	Secrets           SecretManager
+	SecretDelivery    SecretDeliveryOpener
+	SecretProxy       *secret.Store
+	EventStream       SubjectEventReader
+	TelemetryReader   telemetry.Reader
+	Mailer            email.Sender
+	MagicLinkDelivery *MagicLinkDelivery
+	AuthProvider      AuthProvider
 
 	WorkerHostCredentialSigningKey []byte
 	WorkerHostCredentialTTL        time.Duration
@@ -189,9 +186,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("secret delivery opener is required")
-	}
-	if !cfg.ComputerFencingKey.Valid() {
-		return nil, errors.New("computer fencing key is required")
 	}
 	authKeys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
@@ -262,7 +256,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secretDelivery:             cfg.SecretDelivery,
 		secretProxy:                cfg.SecretProxy,
 		computers:                  computer.NewCreator(cfg.SecretProxy),
-		computerFencingKey:         cfg.ComputerFencingKey,
 		eventStream:                cfg.EventStream,
 		telemetryReader:            telemetryReader,
 		diagnosticBounds:           cfg.DiagnosticBounds,

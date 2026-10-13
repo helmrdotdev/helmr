@@ -1,19 +1,19 @@
 import { request } from "./api";
 
-export type AgentListItem = { agent: string; template: string };
+type AgentListItem = { agent: string; template: string };
 export type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
 export type DefinitionListItem = AgentListItem | TemplateListItem;
 export function definitionName(item: DefinitionListItem): string { return "agent" in item ? item.agent : item.template; }
 export type AgentDefinition = AgentListItem & { deployment_id: string };
 export type TemplateDefinition = TemplateListItem & { deployment_id: string };
 
-export type ListAgentDefinitionsResponse = {
+type ListAgentDefinitionsResponse = {
   deployment_id: string;
   agents: AgentListItem[];
   next_cursor?: string;
 };
 
-export type ListTemplateDefinitionsResponse = {
+type ListTemplateDefinitionsResponse = {
   deployment_id: string;
   templates: TemplateListItem[];
   next_cursor?: string;
@@ -24,7 +24,7 @@ export type DefinitionScope = {
   environmentID: string;
 };
 
-export type DefinitionListOptions = {
+type DefinitionListOptions = {
   projectID: string;
   environmentID: string;
   deploymentID?: string | undefined;
@@ -71,7 +71,7 @@ export function scopedConsoleHref(path: string, options: DefinitionScope): strin
   return `${path}?${new URLSearchParams({ project: options.projectID, environment: options.environmentID })}`;
 }
 
-export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
+type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
 export function agentHref(agent: string, scope: DefinitionScope): string {
   return scopedConsoleHref(`/agents/${encodeURIComponent(agent)}`, scope);
 }

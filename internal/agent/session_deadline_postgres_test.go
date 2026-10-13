@@ -28,7 +28,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 				active, save = f.finalize(t, "active")
 			} else {
 				active = f.enqueue(t, "active")
-				if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+				if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -36,7 +36,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			childTurn := child.enqueue(t, "child")
 			peerTurn := peer.enqueue(t, "peer")
 			for _, p := range []fixture{child, peer} {
-				if _, err := Dispatch(t.Context(), f.pool, p.execution()); err != nil {
+				if _, err := dispatchTurnForTest(t.Context(), f.pool, p.execution()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -121,7 +121,7 @@ func TestSessionDeadlineDoesNotChangeCompletedOutcome(t *testing.T) {
 func TestSessionLifecycleWorkerExpiresWithoutGuest(t *testing.T) {
 	f := newFixture(t)
 	active := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
@@ -202,7 +202,7 @@ func waitSessionLifecycleLock(t *testing.T, f fixture) {
 func TestSessionDeadlineRechecksTimeAfterOwnerLock(t *testing.T) {
 	f := newFixture(t)
 	active := f.enqueue(t, "deadline")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, active.TurnID)
@@ -243,7 +243,7 @@ func TestSessionLifecycleBatchMovesPastBlockedSession(t *testing.T) {
 	peer := f.peer(t)
 	for _, s := range []fixture{f, peer} {
 		s.enqueue(t, "active")
-		if _, err := Dispatch(t.Context(), f.pool, s.execution()); err != nil {
+		if _, err := dispatchTurnForTest(t.Context(), f.pool, s.execution()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -303,7 +303,7 @@ func TestSessionLifecycleDoesNotLockParkedClosingTree(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	child.enqueue(t, "working")
-	if _, err := Dispatch(t.Context(), f.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
@@ -329,7 +329,7 @@ func TestSessionLifecycleCandidateTimeoutDoesNotStopBatch(t *testing.T) {
 	peer := f.peer(t)
 	for _, s := range []fixture{f, peer} {
 		s.enqueue(t, "active")
-		if _, err := Dispatch(t.Context(), f.pool, s.execution()); err != nil {
+		if _, err := dispatchTurnForTest(t.Context(), f.pool, s.execution()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -361,7 +361,7 @@ func TestSessionLifecycleDeadlineDrainsClosingTree(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	active := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {

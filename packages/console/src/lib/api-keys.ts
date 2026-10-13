@@ -1,6 +1,6 @@
 import { ApiError, del, postJson, request } from "./api";
 
-export type ApiKeyStatus = "active" | "expired" | "revoked";
+type ApiKeyStatus = "active" | "expired" | "revoked";
 
 export type ApiKeyScope =
   | "asks:respond"
@@ -41,9 +41,9 @@ export type ApiKeyIssued = ApiKeySummary & { raw_key: string };
 
 export type ListFilter = "active" | "expired" | "revoked" | "all";
 
-export type ListResponse = { api_keys: ApiKeySummary[]; next_cursor?: string };
+type ListResponse = { api_keys: ApiKeySummary[]; next_cursor?: string };
 
-export type IssueInput = {
+type IssueInput = {
   name: string;
   expires_in_days: number | null;
   permissions: ApiKeyPermissionGrant[];

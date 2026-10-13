@@ -40,14 +40,14 @@ func (f fixture) enqueue(t *testing.T, key string) Admission {
 func (f fixture) finalize(t *testing.T, key string) (Admission, SaveRequest) {
 	t.Helper()
 	a := f.enqueue(t, key)
-	id, err := Dispatch(t.Context(), f.pool, f.execution())
+	id, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
 	if err != nil || id.TurnID != a.TurnID {
 		t.Fatalf("dispatch %v %v", id, err)
 	}
-	if err = CloseProcessing(t.Context(), f.pool, f.execution(), id.TurnID); err != nil {
+	if err = closeProcessingForTest(t.Context(), f.pool, f.execution(), id.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	s, err := RecordResult(t.Context(), f.pool, f.execution(), id.TurnID, json.RawMessage(`{"result":1}`), "native callbacks and operations joined")
+	s, err := recordResultForTest(t.Context(), f.pool, f.execution(), id.TurnID, json.RawMessage(`{"result":1}`), "native callbacks and operations joined")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func (f fixture) finalize(t *testing.T, key string) (Admission, SaveRequest) {
 func (f fixture) capture(t *testing.T, s SaveRequest, root string) {
 	t.Helper()
 
-	if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: s.ID, LeaseEpoch: s.LeaseEpoch, DiskRoot: root, Evidence: "verified flush and ordered cut receipt"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: s.ID, LeaseEpoch: s.LeaseEpoch, DiskRoot: root, Evidence: "verified flush and ordered cut receipt"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -65,7 +65,7 @@ func (f fixture) peer(t *testing.T) fixture {
 	p := f
 	p.session = uuid.New()
 	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0);
-      INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$5,1,'ready','resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, p.session, f.agent, f.deployment, f.computer)
+      INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$5,1,'ready',1,1,1,'resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, p.session, f.agent, f.deployment, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestDispatchSerializesFIFO(t *testing.T) {
 	errs := make(chan error, 2)
 	ids := make(chan TurnDispatch, 2)
 	for range 2 {
-		wg.Go(func() { id, err := Dispatch(t.Context(), f.pool, f.execution()); ids <- id; errs <- err })
+		wg.Go(func() { id, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); ids <- id; errs <- err })
 	}
 	wg.Wait()
 	close(errs)
@@ -172,7 +172,7 @@ func TestCompletionRequiresOwnSaveAndMonotonicHead(t *testing.T) {
 	storage := newSaveStorageFixture(t, f)
 	cut1, root1 := storage.cut(t, 2)
 	cut2, root2 := storage.cut(t, 3)
-	err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
+	err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
 	if !errors.Is(err, ErrNotReady) {
 		t.Fatalf("out of order capture: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	a := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
@@ -308,7 +308,7 @@ func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 	if _, err := Enqueue(t.Context(), f.pool, nil, caller, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := CloseProcessing(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	req.RetryKey = "after-return"
@@ -325,7 +325,7 @@ func TestDirectTurnAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	a := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
@@ -371,11 +371,11 @@ func TestOldTurnCannotBorrowReplacementProcess(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	a := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.pool.Exec(t.Context(), `UPDATE session_processes SET status='lost',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2;
-      INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,2,$3,1,'ready','resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, f.computer)
+      INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,2,$3,1,'ready',1,1,1,'resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,22 +391,24 @@ func TestOldTurnCannotBorrowReplacementProcess(t *testing.T) {
 func TestResultReceiptAndGenerationRevocation(t *testing.T) {
 	f := newFixture(t)
 	a, s := f.finalize(t, "active")
-	again, err := RecordResult(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "verified drain")
+	again, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "verified drain")
 	if err != nil || again.ID != s.ID {
 		t.Fatalf("save receipt %v %v", again, err)
 	}
-	conflict, err := RecordResult(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":2}`), "verified drain")
+	conflict, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":2}`), "verified drain")
 	if !errors.Is(err, ErrConflict) || conflict.ID != uuid.Nil() {
 		t.Fatalf("save conflict %v %v", conflict, err)
 	}
 	if _, err = f.pool.Exec(t.Context(), `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Dispatch(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrDenied) {
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrDenied) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
-	if _, err = RecordResult(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "verified drain"); !errors.Is(err, ErrDenied) {
-		t.Fatalf("revoked result: %v", err)
+	// The recorded outcome stays observable to its physical owner: replaying it
+	// needs no fresh business authority and records nothing new.
+	if retained, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "verified drain"); err != nil || retained.ID != s.ID {
+		t.Fatalf("retained result after revocation: %v %v", retained, err)
 	}
 }
 
@@ -417,8 +419,10 @@ func TestSaveRequiresRecordedResult(t *testing.T) {
 	if err == nil {
 		t.Fatal("save accepted before result boundary")
 	}
-	_, err = RecordResult(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "drained")
-	if !errors.Is(err, ErrNotReady) {
+	// The host was never dispatched the queued Turn, so finalizing it is not
+	// its operation.
+	_, err = recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "drained")
+	if !errors.Is(err, ErrDenied) {
 		t.Fatalf("queued result: %v", err)
 	}
 }
@@ -435,7 +439,7 @@ func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Dispatch(t.Context(), f.pool, peer.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, peer.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("held target dispatch: %v", err)
 	}
 	var status, kind string

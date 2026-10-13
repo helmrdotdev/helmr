@@ -20,16 +20,6 @@ func execCgroupLeafName(commandID string) (string, error) {
 	return "exec-" + hex.EncodeToString(sum[:16]), nil
 }
 
-func programCgroupLeafName(runID string, attemptNumber uint32, runLeaseID string) (string, error) {
-	runID = strings.TrimSpace(runID)
-	runLeaseID = strings.TrimSpace(runLeaseID)
-	if runID == "" || attemptNumber == 0 || runLeaseID == "" {
-		return "", errors.New("program cgroup identity is incomplete")
-	}
-	sum := sha256.Sum256([]byte(runID + "\x00" + strconv.FormatUint(uint64(attemptNumber), 10) + "\x00" + runLeaseID))
-	return programCgroupLeafPrefix + hex.EncodeToString(sum[:16]), nil
-}
-
 func sessionCgroupLeafName(sessionID string, processEpoch int64) (string, error) {
 	if strings.TrimSpace(sessionID) == "" || strings.ContainsRune(sessionID, '\x00') || processEpoch <= 0 {
 		return "", errors.New("session process identity is incomplete")

@@ -74,7 +74,7 @@ func (p *nativeKVMPeer) attach(ctx context.Context, machine vm.GuestControlMachi
 		}
 	}
 	go func() {
-		p.serveErr = computerhost.ServeAgentSession(ctx, connection, "native-kvm", p, p.observe)
+		p.serveErr = computerhost.ServeAgentSession(ctx, connection, "native-kvm", p, p.observe, nil)
 		close(p.done)
 	}()
 	return nil

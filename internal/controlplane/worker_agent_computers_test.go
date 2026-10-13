@@ -82,7 +82,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 		t.Fatalf("invalid cursor: %+v", response)
 	}
 	// Ordinary Turn closure does not revoke the Session-bound connection.
-	if err := agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+	if err := closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if response := call(cursor); response.Error != nil {
@@ -195,7 +195,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	if response := call("invalid cursor"); response.Error == nil || response.Error.Code != "invalid_arguments" {
 		t.Fatalf("invalid cursor: %+v", response)
 	}
-	if err := agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+	if err := closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if response := call(cursor); response.Error != nil {

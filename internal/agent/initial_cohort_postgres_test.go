@@ -64,7 +64,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 			t.Fatal(err)
 		}
 		acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-		if _, err := Dispatch(t.Context(), f.pool, e); err != nil {
+		if _, err := dispatchTurnForTest(t.Context(), f.pool, e); err != nil {
 			t.Fatalf("committed initial work refused on drain: %v", err)
 		}
 	}

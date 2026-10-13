@@ -64,7 +64,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
  FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$3 JOIN turns t ON t.environment_id=c.environment_id AND t.id=s.turn_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer, save.ID).Scan(&retired, &receipt); err != nil || !retired || !receipt {
 		t.Fatalf("roots retired=%v receipt=%v error=%v", retired, receipt, err)
 	}
-	if err := ReconcileSavePublication(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
+	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
 		t.Fatal(err)
 	}
 }

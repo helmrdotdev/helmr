@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/jackc/pgx/v5"
 )
 
 type testDetailedError struct {
@@ -42,7 +41,6 @@ func TestErrorStatus(t *testing.T) {
 		{name: "method not allowed", err: apiError{kind: errMethodNotAllowed, err: baseErr}, want: http.StatusMethodNotAllowed},
 		{name: "conflict", err: conflict(baseErr), want: http.StatusConflict},
 		{name: "too large", err: tooLarge(baseErr), want: http.StatusRequestEntityTooLarge},
-		{name: "bad gateway", err: badGateway(baseErr), want: http.StatusBadGateway},
 		{name: "unavailable", err: unavailable(baseErr), want: http.StatusServiceUnavailable},
 		{name: "unclassified", err: baseErr, want: http.StatusInternalServerError},
 	}
@@ -113,27 +111,6 @@ func TestWriteErrorHidesUnclassifiedUnavailableError(t *testing.T) {
 	}
 	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"service_unavailable\",\"message\":\"service is unavailable\"}}\n"; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
-	}
-}
-
-func TestIsNoRows(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "pgx", err: pgx.ErrNoRows, want: true},
-		{name: "wrapped pgx", err: errors.Join(errors.New("load run"), pgx.ErrNoRows), want: true},
-		{name: "record sentinel", err: errRecordNotFound, want: true},
-		{name: "wrapped record sentinel", err: errors.Join(errors.New("load run"), errRecordNotFound), want: true},
-		{name: "other", err: errors.New("load run"), want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isNoRows(tt.err); got != tt.want {
-				t.Fatalf("isNoRows() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 

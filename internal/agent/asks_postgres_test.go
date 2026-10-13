@@ -3,18 +3,19 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/conversation"
 	"sync"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/conversation"
 )
 
 func askFixture(t *testing.T) (fixture, Admission, uuid.UUID, json.RawMessage) {
 	t.Helper()
 	f := newFixture(t)
 	a := f.enqueue(t, "ask")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.NewV7()
@@ -265,7 +266,7 @@ func TestChildCannotAskHuman(t *testing.T) {
 	root := newFixture(t)
 	child := ownedFixture(t, root)
 	turn := child.enqueue(t, "child")
-	if _, err := Dispatch(t.Context(), child.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), child.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
 	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Approve?"}],"answer":{"type":"text"}}`)

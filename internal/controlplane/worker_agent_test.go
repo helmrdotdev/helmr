@@ -3,13 +3,14 @@ package controlplane
 import (
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -147,7 +148,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
-			if _, err = agent.Dispatch(t.Context(), f.Pool, execution); err != nil {
+			if _, err = dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 				t.Fatal(err)
 			}
 			request := runtimeEnqueue(f, strings.Repeat("x", 512))
@@ -162,7 +163,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			case "generation":
 				dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE sessions SET authority_generation=2")
 			case "origin-ended":
-				if err = agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+				if err = closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			case "deployment-revoked":
@@ -229,7 +230,7 @@ func TestWorkerAgentAttachmentSurvivesClientReplacement(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
-	for sequence := int64(1); sequence <= 2; sequence++ {
+	for sequence := agenttest.SeededAttachment + 1; sequence <= agenttest.SeededAttachment+2; sequence++ {
 		client := secret.client(t, server.URL)
 		result, err := client.AcquireAgentAttachment(t.Context(), runtimeTestSession(f))
 		if err != nil || result.AttachmentSequence != sequence || result.AuthorityGeneration != 1 || !result.ExpiresAt.After(time.Now()) {

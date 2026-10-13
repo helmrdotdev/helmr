@@ -27,7 +27,7 @@ func TestInstalledPAXNamesLinksOrderingAndDeterminism(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := TarOptions{CanonicalMetadata: true, MaxBytes: 1 << 20, MaxEntries: 100, MaxNameBytes: 1 << 20, MaxArchiveBytes: 1 << 20}
-	first, cleanup, err := CreateTarWithOptions(root, t.TempDir(), options)
+	first, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestInstalledPAXNamesLinksOrderingAndDeterminism(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	second, cleanup2, err := CreateTarWithOptions(root, t.TempDir(), options)
+	second, cleanup2, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestInstalledStreamBudgetsIncludePAXAndFinalPadding(t *testing.T) {
 	}
 	temp := t.TempDir()
 	options := TarOptions{CanonicalMetadata: true, MaxBytes: 1, MaxEntries: 32, MaxNameBytes: 128 << 20, MaxArchiveBytes: 1 << 20}
-	result, cleanup, err := CreateTarWithOptions(root, temp, options)
+	result, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, temp, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestInstalledStreamBudgetsIncludePAXAndFinalPadding(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			o := options
 			test.change(&o)
-			if _, cleanup, err := CreateTarWithOptions(root, temp, o); err == nil {
+			if _, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, temp, o); err == nil {
 				cleanup()
 				t.Fatal("accepted over budget")
 			} else if !strings.Contains(err.Error(), test.want) {
@@ -133,7 +133,7 @@ func TestInstalledStreamBudgetsIncludePAXAndFinalPadding(t *testing.T) {
 		})
 	}
 	options.MaxArchiveBytes = size
-	if _, cleanup, err := CreateTarWithOptions(root, temp, options); err != nil {
+	if _, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, temp, options); err != nil {
 		t.Fatal(err)
 	} else {
 		cleanup()

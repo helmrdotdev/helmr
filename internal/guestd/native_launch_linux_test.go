@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"os/exec"
@@ -18,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -405,4 +406,12 @@ func copyNativeTestLibraries(t *testing.T, root string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+const nativeLauncherExecutable = nativeLauncherDirectory + "/launch"
+
+func (launcher *nativeLauncher) verifyConverged(scopes []nativeScopeEvidence) error {
+	launcher.mu.Lock()
+	defer launcher.mu.Unlock()
+	return launcher.verifyConvergedLocked(scopes)
 }

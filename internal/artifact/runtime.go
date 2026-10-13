@@ -12,9 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	productversion "github.com/helmrdotdev/helmr/internal/version"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 const NodeNoStripTypes = "--no-strip-types"
@@ -122,18 +120,6 @@ func NodeProgramFlags(version string) ([]string, error) {
 	return append(flags, "--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"), nil
 }
 
-func RuntimeArchitectureFromGo(value string) (definition.RuntimeArchitecture, error) {
-	architecture, err := vmplatform.ArchitectureFromGo(value)
-	return definition.RuntimeArchitecture(architecture), err
-}
-
-func RuntimeArchitectureGo(value definition.RuntimeArchitecture) (string, error) {
-	if value == definition.ArchitectureX8664 {
-		return "amd64", nil
-	}
-	return "", fmt.Errorf("runtime architecture %q is unsupported", value)
-}
-
 func ValidateRuntimeArchitecture(value definition.RuntimeArchitecture) error {
 	if !validArchitecture(value) {
 		return fmt.Errorf("runtime architecture %q is unsupported", value)
@@ -151,13 +137,6 @@ func RuntimeDigestBytes(value string) ([]byte, error) {
 		return nil, fmt.Errorf("runtime digest is not a lowercase SHA-256 digest")
 	}
 	return digest, nil
-}
-
-func RuntimeDigestString(value []byte) (string, error) {
-	if len(value) != sha256.Size {
-		return "", fmt.Errorf("runtime digest is not %d bytes", sha256.Size)
-	}
-	return sha256sum.FormatDigest(value), nil
 }
 
 func ParseRuntimeIndex(raw []byte) (RuntimeIndex, error) {

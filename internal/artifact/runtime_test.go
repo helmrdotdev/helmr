@@ -78,39 +78,6 @@ func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRuntimeArchitectureGoBoundary(t *testing.T) {
-	tests := map[string]definition.RuntimeArchitecture{
-		"amd64": definition.ArchitectureX8664,
-	}
-	for goArchitecture, architecture := range tests {
-		t.Run(goArchitecture, func(t *testing.T) {
-			parsed, err := RuntimeArchitectureFromGo(goArchitecture)
-			if err != nil {
-				t.Fatalf("RuntimeArchitectureFromGo: %v", err)
-			}
-			if parsed != architecture {
-				t.Fatalf("architecture = %q, want %q", parsed, architecture)
-			}
-			rendered, err := RuntimeArchitectureGo(parsed)
-			if err != nil {
-				t.Fatalf("RuntimeArchitectureGo: %v", err)
-			}
-			if rendered != goArchitecture {
-				t.Fatalf("Go architecture = %q, want %q", rendered, goArchitecture)
-			}
-		})
-	}
-	if _, err := RuntimeArchitectureFromGo("x86_64"); err == nil {
-		t.Fatal("RuntimeArchitectureFromGo accepted a Helmr architecture")
-	}
-	if _, err := RuntimeArchitectureFromGo("arm64"); err == nil {
-		t.Fatal("RuntimeArchitectureFromGo accepted unsupported arm64")
-	}
-	if _, err := RuntimeArchitectureGo("amd64"); err == nil {
-		t.Fatal("RuntimeArchitectureGo accepted a Go architecture")
-	}
-}
-
 func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 	index := RuntimeIndex{
 		Architecture:    definition.ArchitectureX8664,

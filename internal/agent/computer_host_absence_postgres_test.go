@@ -29,7 +29,7 @@ func TestComputerHostAbsencePreservesAcceptedWorkAndFencesAllEpochs(t *testing.T
 	f := newFixture(t)
 	peer := f.peer(t)
 	active := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")

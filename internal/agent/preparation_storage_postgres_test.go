@@ -143,7 +143,7 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
 		t.Fatalf("publication fenced executor: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
@@ -184,7 +184,7 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 		if want == 2 {
 			break
 		}
-		if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+		if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 			t.Fatal(err)
 		}
 		p.ref = p.f.claim(t, p.f.attach(t, p.f.waiter(t)))
@@ -205,7 +205,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 			root := p.capture(t, key)
 			switch change {
 			case "stop":
-				if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+				if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 					t.Fatal(err)
 				}
 			case "expire":

@@ -236,7 +236,7 @@ function computerTimestamp(value: unknown, field: string): string {
   return timestampString(value, `Computer response.${field}`)
 }
 
-export function parseComputerError(value: unknown): NonNullable<Computer["error"]> {
+function parseComputerError(value: unknown): NonNullable<Computer["error"]> {
   const input = computerObject(value, "Computer error")
   if (typeof input["code"] !== "string" || typeof input["message"] !== "string") {
     throw new Error("Computer error requires code and message")

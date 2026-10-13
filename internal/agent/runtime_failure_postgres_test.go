@@ -3,14 +3,15 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 	f := newFixture(t)
 	a := f.enqueue(t, "failure")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	failure := TurnError{Code: "application_error", Message: "bad\x00input"}
@@ -35,7 +36,7 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 		t.Fatalf("outcome %s: %v", first, err)
 	}
 	next := f.enqueue(t, "next")
-	if dispatch, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil || dispatch.TurnID != next.TurnID {
+	if dispatch, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil || dispatch.TurnID != next.TurnID {
 		t.Fatalf("next dispatch: %+v %v", dispatch, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
@@ -56,7 +57,7 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 func TestRuntimeFailureHonorsElapsedDeadline(t *testing.T) {
 	f := newFixture(t)
 	a := f.enqueue(t, "deadline")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {

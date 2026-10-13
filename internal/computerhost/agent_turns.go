@@ -181,7 +181,7 @@ func serveExecutingAgentSession(ctx context.Context, connection *AgentSessionCon
 			}
 		})
 	}
-	err := serveControlledAgentSession(ctx, connection, attached, environment, client, func(ctx context.Context, message *agentv1.GuestSessionMessage) error {
+	err := ServeControlledAgentSession(ctx, connection, attached, environment, client, func(ctx context.Context, message *agentv1.GuestSessionMessage) error {
 		if handled, err := owner.observe(ctx, message); handled {
 			return err
 		}

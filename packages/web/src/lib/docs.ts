@@ -7,7 +7,7 @@ import { docsNav } from "./docs-nav";
 
 export type DocEntry = CollectionEntry<"docs">;
 
-export type ResolvedDocGroup = {
+type ResolvedDocGroup = {
   label?: string;
   docs: DocEntry[];
 };

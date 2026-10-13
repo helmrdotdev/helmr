@@ -34,8 +34,4 @@ func TestUniformTextInput(t *testing.T) {
 	if _, err := Input(tooLarge); !errors.Is(err, ErrLimit) {
 		t.Fatal("oversized input accepted", err)
 	}
-	raw := json.RawMessage(`[{"type":"text","text":"Hello"},{"type":"text","text":" world\n"},{"type":"text","text":"  {\"a\":1}\n"}]`)
-	if text, err := InputText(raw); err != nil || text != "Hello world\n  {\"a\":1}\n" {
-		t.Fatalf("projection changed text %q: %v", text, err)
-	}
 }

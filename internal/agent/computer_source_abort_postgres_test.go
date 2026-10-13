@@ -2,13 +2,14 @@ package agent
 
 import (
 	"errors"
+	"testing"
+	"time"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"google.golang.org/protobuf/proto"
-	"testing"
-	"time"
-	"uuid"
 )
 
 func sourceAbort(t *testing.T, f fixture) (*agentv1.ComputerSessionInstallation, uuid.UUID) {
@@ -74,7 +75,7 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 		t.Fatalf("obsolete RAM accepted: %v", err)
 	}
 	f.enqueue(t, "queued")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("dispatch before controls: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','explicit human hold')`, f.env, uuid.NewV7(), peer.session)
@@ -88,13 +89,13 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatalf("reconciled source dispatch: %v", err)
 	}
 	peer.enqueue(t, "held-peer")
 	currentPeer := peer.execution()
 	currentPeer.AuthorityGeneration++
-	if _, err := Dispatch(t.Context(), f.pool, currentPeer); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, currentPeer); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("source abort released peer hold: %v", err)
 	}
 }
@@ -150,7 +151,7 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='physical owner destroyed' WHERE computer_id=$1`, f.computer)
 	for range 2 {
-		if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
+		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -176,7 +177,7 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	storage := newSaveStorageFixture(t, f)
 	p, save := sourceAbort(t, f)
 	cut, root := storage.cut(t, 4)
-	if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "coherent frozen cut"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "coherent frozen cut"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
@@ -195,7 +196,7 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 		t.Fatal(err)
 	}
 	f.enqueue(t, "healthy-peer")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -269,7 +270,7 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source destroyed' WHERE computer_id=$1`, f.computer)
 	for _, id := range history {
-		if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, id); !errors.Is(err, ErrNotReady) {
+		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, id); !errors.Is(err, ErrNotReady) {
 			t.Fatalf("historical abort owns loss: %v", err)
 		}
 	}
@@ -277,7 +278,7 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("history added holds %d: %v", count, err)
 	}
-	if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
+	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
@@ -299,7 +300,7 @@ func TestSourceAbortSaveAbsenceRacesCapture(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		results <- RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: p.BaseComputerDiskVersionId, Evidence: "original disk cut receipt"})
+		results <- recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: p.BaseComputerDiskVersionId, Evidence: "original disk cut receipt"})
 	}()
 	close(start)
 	a, b := <-results, <-results

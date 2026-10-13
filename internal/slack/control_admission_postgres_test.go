@@ -51,7 +51,7 @@ func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 		t.Fatal(err)
 	}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	if _, err = agent.Dispatch(t.Context(), f.Pool, execution); err != nil {
+	if _, err = dispatchRuntimeTurn(t.Context(), f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()

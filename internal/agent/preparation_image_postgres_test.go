@@ -87,7 +87,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if _, err := EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, original.ID); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("unfenced replacement: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	const clients = 8
@@ -144,7 +144,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if _, err = p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v3"), "rotate-again"); err != nil {
 		t.Fatal(err)
 	}
-	if err = ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+	if err = ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = EnsurePreparationSuccessor(t.Context(), p.f.pool, p.f.env, next.ID); !errors.Is(err, ErrNotReady) {
@@ -186,7 +186,7 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 			} else if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 				t.Fatal(err)
 			}
-			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			if reason != "current" && reason != "age" {
@@ -287,7 +287,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{}); err != nil {

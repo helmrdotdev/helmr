@@ -4,7 +4,7 @@ import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
-export type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
+type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
   agent: string;
   template: string;
@@ -30,7 +30,7 @@ export type Session = {
     created_at: string;
   }[];
 };
-export type SessionTurn = {
+type SessionTurn = {
   stop?: ProcessStop;
   id: string;
   session_id: string;
@@ -52,8 +52,8 @@ export type SessionTurn = {
   terminal_at?: string;
   completion_save_id?: string;
 };
-export type SessionTurnPage = { turns: SessionTurn[]; next_cursor?: string };
-export type SessionEvent = {
+type SessionTurnPage = { turns: SessionTurn[]; next_cursor?: string };
+type SessionEvent = {
   session_id: string;
   turn_id: string | null;
   sequence: number;
@@ -61,13 +61,13 @@ export type SessionEvent = {
   data: JsonValue;
   created_at: string;
 };
-export type SessionEventPage = {
+type SessionEventPage = {
   records: SessionEvent[];
   next_after: number;
   has_more: boolean;
   retained_after: number;
 };
-export type SessionEventPageOptions = {
+type SessionEventPageOptions = {
   after?: number | undefined;
   limit?: number | undefined;
 };
@@ -86,7 +86,7 @@ export type SessionAddress = {
   projectID: string;
   environmentID: string;
 };
-export type ListSessionsResponse = {
+type ListSessionsResponse = {
   sessions: Session[];
   next_cursor?: string;
 };
@@ -122,14 +122,6 @@ export function getSessionEvents(
   options: SessionEventPageOptions = {},
 ): Promise<SessionEventPage> {
   return request(`${sessionAPIPath(address)}/events${eventPageQuery(options)}`);
-}
-export function getSessionTurn(
-  address: SessionAddress,
-  turnID: string,
-): Promise<SessionTurn> {
-  return request(
-    `${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}`,
-  );
 }
 
 export function interruptSession(
@@ -200,7 +192,6 @@ export function questionCLICommands(address: AskAddress, origin: string) {
   };
 }
 
-export type { AskState, AskPage } from "../../../../sdk/typescript/src/contract";
 export function askConsolePath(address: AskAddress): string {
   const query = new URLSearchParams({ project: address.projectID, environment: address.environmentID });
   return `/sessions/${encodeURIComponent(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}?${query}`;

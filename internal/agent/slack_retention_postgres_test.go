@@ -17,7 +17,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			bindFixtureSlackRoot(t, f, channel)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 			turn := f.enqueue(t, "retention")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, uuid.NewV7(), json.RawMessage(`"retained source"`)); err != nil {
@@ -106,7 +106,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	_, channel := slackRouteFixture(t, f)
 	bindFixtureSlackRoot(t, f, channel)
 	parent := f.enqueue(t, "parent")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
@@ -118,8 +118,8 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	}
 	c := f
 	c.session = child.SessionID
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.env, c.session, f.computer)
-	if _, err = Dispatch(t.Context(), f.pool, c.execution()); err != nil {
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready',1,1,1,'resume',1,clock_timestamp())`, f.env, c.session, f.computer)
+	if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "cancel"}); err != nil {

@@ -33,7 +33,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
@@ -75,10 +74,6 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fencing, err := disk.NewFencingKey(input.Key)
-	if err != nil {
-		t.Fatal(err)
-	}
 	allocator, err := agent.NewAllocator(pool, input.Key, secrets)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +98,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	cfg := completeServerConfig(t)
 	cfg.DB, cfg.TX, cfg.DiagnosticDB, cfg.ReadinessDB = q, pool, pool, pool
 	cfg.Auth, cfg.Allocator, cfg.Log = identity.NewAPIKeyAuthenticator(q), allocator, log
-	cfg.ComputerKeys, cfg.ComputerFencingKey = keys, fencing
+	cfg.ComputerKeys = keys
 	cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission = nativeFaultStore{store}, platform, bundle.Admission{Runtime: runtime}
 	cfg.Secrets, cfg.SecretDelivery, cfg.SecretProxy = secrets, secrets, secrets
 	cfg.DiagnosticBounds = diagnostic.Bounds{ChunkBytes: 1 << 20, SourceBytes: 32 << 20, SourceRecords: 32768, EnvironmentBytes: 128 << 20, EnvironmentRecords: 131072, QueueBytes: 128 << 20, QueueRecords: 131072}

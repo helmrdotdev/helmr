@@ -93,7 +93,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if _, err := agent.Dispatch(ctx, f.Pool, execution); err != nil {
+	if _, err := dispatchRuntimeTurn(ctx, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := agent.RuntimeOutput(ctx, f.Pool, host, execution, turn, uuid.NewV7(), json.RawMessage(`"runner progress"`)); err != nil {

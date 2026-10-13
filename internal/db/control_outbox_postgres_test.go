@@ -60,7 +60,7 @@ func TestControlOutboxClaimReclaimAndStaleFence(t *testing.T) {
 		RowLimit:       8,
 	})
 	if err != nil || len(second) != 1 || second[0].Attempts != 2 ||
-		pgvalue.TextValue(second[0].ClaimedBy) != "worker-b" {
+		second[0].ClaimedBy.String != "worker-b" {
 		t.Fatalf("reclaim = %+v, %v", second, err)
 	}
 

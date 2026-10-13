@@ -2,9 +2,10 @@ package agent
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -84,7 +85,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 				if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, queued.TurnID).Scan(&queuedState); err != nil || queuedState != "queued" {
 					t.Fatalf("followup left queue after loss: %s %v", queuedState, err)
 				}
-				if _, err := Dispatch(t.Context(), f.pool, f.execution()); err == nil {
+				if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err == nil {
 					t.Fatal("lost execution dispatched queued followup")
 				}
 				var pinsAfter int
