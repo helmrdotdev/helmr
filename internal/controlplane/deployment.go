@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 const (
@@ -181,7 +180,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID, preflight)
 	if err != nil {
-		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, session.ErrSlackChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
+		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
 			s.writeAgentHTTPError(w, err)
 		} else {
 			s.writeDeploymentError(w, err)

@@ -7,10 +7,11 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -147,7 +148,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 		if response.Error != nil {
 			t.Fatalf("list: %+v", response.Error)
 		}
-		var page session.RuntimeAgentPage
+		var page agent.RuntimeAgentPage
 		if err := json.Unmarshal(response.Value, &page); err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +171,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 		t.Fatalf("mixed operation cursor: %+v", response)
 	}
 	response := call("")
-	var current session.RuntimeAgentPage
+	var current agent.RuntimeAgentPage
 	if response.Error != nil {
 		t.Fatal(response.Error)
 	}
@@ -179,7 +180,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	firstPage := call("")
-	var beforePromotion session.RuntimeAgentPage
+	var beforePromotion agent.RuntimeAgentPage
 	if firstPage.Error != nil || json.Unmarshal(firstPage.Value, &beforePromotion) != nil || beforePromotion.NextCursor == "" {
 		t.Fatalf("start pagination: %+v", firstPage)
 	}

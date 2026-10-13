@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slack"
+
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -67,7 +69,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsCreate)
 	if err != nil {
 		if slackChannelID != nil && errors.Is(err, session.ErrDenied) {
-			err = session.ErrSlackChannelUnavailable
+			err = slackroute.ErrChannelUnavailable
 		}
 		s.writeAgentHTTPError(w, err)
 		return
@@ -84,8 +86,8 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
-	result, err := session.Start(r.Context(), s.tx, s.secretProxy, caller, session.StartRequest{
-		SlackPreflight: preflight, EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
+	result, err := slack.Start(r.Context(), s.tx, s.secretProxy, preflight, caller, session.StartRequest{
+		EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
 		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
@@ -294,21 +296,21 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, badRequest(codedError{code: "invalid_cursor", message: "Session event cursor exceeds the allocated end"}))
 	case errors.Is(err, session.ErrInvalidInput), errors.As(err, &invalidScope):
 		writeError(w, badRequest(errors.New("invalid Agent or Session request")))
-	case errors.Is(err, session.ErrSlackChannelUnavailable):
+	case errors.Is(err, slackroute.ErrChannelUnavailable):
 		writeError(w, notFound(codedError{code: "channel_unavailable", message: err.Error()}))
-	case errors.Is(err, session.ErrSourceConversationPending):
+	case errors.Is(err, slack.ErrSourceConversationPending):
 		writeError(w, conflict(codedError{code: "source_conversation_pending", message: err.Error()}))
-	case errors.Is(err, session.ErrSourceConversationUnavailable):
+	case errors.Is(err, slack.ErrSourceConversationUnavailable):
 		writeError(w, conflict(codedError{code: "source_conversation_unavailable", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		writeError(w, conflict(codedError{code: "target_not_published", message: err.Error()}))
-	case errors.Is(err, session.ErrTargetWorkspaceMismatch):
+	case errors.Is(err, slack.ErrTargetWorkspaceMismatch):
 		writeError(w, conflict(codedError{code: "target_workspace_mismatch", message: err.Error()}))
-	case errors.Is(err, session.ErrStartMessageTooLarge):
+	case errors.Is(err, slack.ErrStartMessageTooLarge):
 		writeError(w, conflict(codedError{code: "start_message_too_large", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrConversationChanged):
 		writeError(w, conflict(codedError{code: "conversation_changed", message: err.Error()}))
-	case errors.Is(err, session.ErrSlackDestinationConflict):
+	case errors.Is(err, slack.ErrSlackDestinationConflict):
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
 	case errors.Is(err, session.ErrDenied):
 		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))

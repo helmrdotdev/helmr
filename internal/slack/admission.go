@@ -187,7 +187,17 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
 			if p.thread == uuid.Nil() {
-				receipt.Admission, err = session.Start(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
+				var plan session.StartPlan
+				plan, err = session.PlanStart(session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
+				if err == nil {
+					err = session.LockStartCaller(ctx, core, plan)
+				}
+				if err == nil {
+					// The connection was locked and found active at the start of
+					// this transaction.
+					receipt.Admission, err = admitRoutedRoot(ctx, core, trust, plan, p.route, true)
+				}
+				err = session.StartError(err)
 			} else {
 				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}

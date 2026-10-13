@@ -2,11 +2,12 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -83,13 +84,6 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 }
 
 func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) error {
-	type entry struct {
-		SlackChannelID *uuid.UUID `json:"slack_channel_id"`
-		Agent          uuid.UUID  `json:"agent"`
-		Key            string     `json:"key"`
-		Next           time.Time  `json:"next"`
-		ID             uuid.UUID  `json:"id"`
-	}
 	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
 	if err != nil {
 		return err
@@ -107,7 +101,7 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 	if err != nil {
 		return err
 	}
-	entries := make([]entry, 0, len(declarations))
+	entries := make([]agent.Activation, 0, len(declarations))
 	for _, d := range declarations {
 		next, err := definition.NextCronTime(d.cron, d.timezone, cutover.Add(-time.Nanosecond))
 		if err != nil {
@@ -121,24 +115,9 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 			}
 			pin = &value
 		}
-		entries = append(entries, entry{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
+		entries = append(entries, agent.Activation{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
 	}
-	if _, err := tx.Exec(ctx, `UPDATE trigger_activations SET active_until=$2 WHERE environment_id=$1 AND active_until IS NULL`, env, cutover); err != nil {
-		return err
-	}
-	if len(entries) > 0 {
-		raw, err := json.Marshal(entries)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at,slack_channel_id)
- SELECT $1,v.id,v.agent,$2,v.key,$3,v.next,v.slack_channel_id
- FROM jsonb_to_recordset($4::jsonb) AS v(id uuid,agent uuid,key text,next timestamptz,slack_channel_id uuid)`, env, deployment, cutover, raw)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return agent.ReplaceActivations(ctx, tx, env, deployment, cutover, entries)
 }
 
 func reconcileImageRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {

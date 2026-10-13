@@ -8,6 +8,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -70,4 +72,13 @@ func New(t *testing.T) Fixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// PrepareAdmission gives the fixture's image spec, template and Computer the
+// seed profile and resources that admitting a new Computer requires.
+func PrepareAdmission(t *testing.T, f Fixture) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
+ UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 }

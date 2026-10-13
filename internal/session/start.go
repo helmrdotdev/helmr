@@ -26,10 +26,9 @@ import (
 
 // StartRequest contains submitted identity, never resolved defaults. Runtime
 // Agent references are definition keys in the caller's pinned Deployment.
+// A start that names a Slack channel is admitted through the Slack owner.
 type StartRequest struct {
 	CloseAfterIdle lifetime.Policy
-	SlackPreflight slackroute.StartPreflight
-	PreparedSlack  *slackroute.StartRoute
 	EnvironmentID  uuid.UUID
 	Agent          string
 	ComputerID     uuid.UUID
@@ -37,6 +36,22 @@ type StartRequest struct {
 	SlackChannelID *string
 	IdempotencyKey string
 	Input          json.RawMessage
+}
+
+// StartPlan is a validated start request and the identity of its receipt.
+type StartPlan struct {
+	Caller   Caller
+	Request  StartRequest
+	Method   string
+	Digest   [32]byte
+	HasInput bool
+}
+
+// StartPin is what a start resolved: the Agent and the Deployment its Session
+// is pinned to. Fresh is false when the start returned a retained receipt.
+type StartPin struct {
+	AgentID, DeploymentID uuid.UUID
+	Fresh                 bool
 }
 
 func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
@@ -49,30 +64,54 @@ func Spawn(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
 func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
-	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
+	if req.SlackChannelID != nil {
 		return Admission{}, ErrInvalidInput
+	}
+	plan, err := PlanStart(caller, req, method)
+	if err != nil {
+		return Admission{}, err
+	}
+	var result Admission
+	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := LockStartCaller(ctx, tx, plan); err != nil {
+			return err
+		}
+		var err error
+		result, _, err = AdmitStart(ctx, tx, trust, plan)
+		return err
+	})
+	if err != nil {
+		return Admission{}, StartError(err)
+	}
+	return result, nil
+}
+
+// PlanStart validates a start request and computes its idempotency digest.
+func PlanStart(caller Caller, req StartRequest, method string) (StartPlan, error) {
+	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
+		return StartPlan{}, ErrInvalidInput
 	}
 	if req.SlackChannelID != nil && (!definition.ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
-		return Admission{}, ErrInvalidInput
+		return StartPlan{}, ErrInvalidInput
 	}
 	if caller.ID == uuid.Nil() || (method == "spawn" && caller.Kind != "session") {
-		return Admission{}, ErrDenied
+		return StartPlan{}, ErrDenied
 	}
 	if caller.Kind == "session" && (caller.Execution.EnvironmentID != req.EnvironmentID || caller.Execution.SessionID != caller.ID || req.SessionKey != nil) {
-		return Admission{}, ErrDenied
+		return StartPlan{}, ErrDenied
 	}
 	if caller.Kind == "session" && req.IdempotencyKey == "" {
-		return Admission{}, ErrInvalidInput
+		return StartPlan{}, ErrInvalidInput
 	}
 	hasInput := req.Input != nil
 	if hasInput || caller.Kind == "session" || method == "spawn" {
 		var err error
 		req.Input, err = content.Input(req.Input)
 		if err != nil {
-			return Admission{}, err
+			return StartPlan{}, err
 		}
 		if bytes.Equal(req.Input, []byte("[]")) {
-			return Admission{}, ErrInvalidInput
+			return StartPlan{}, ErrInvalidInput
 		}
 	}
 	raw, err := json.Marshal(struct {
@@ -84,47 +123,49 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		SlackChannelID *string
 	}{req.CloseAfterIdle, req.Agent, nullableID(req.ComputerID), req.SessionKey, req.Input, req.SlackChannelID})
 	if err != nil {
-		return Admission{}, ErrInvalidInput
+		return StartPlan{}, ErrInvalidInput
 	}
 	digest, err := digestJSON(raw)
 	if err != nil {
-		return Admission{}, ErrInvalidInput
+		return StartPlan{}, ErrInvalidInput
 	}
-	receipt, prepared, err := prepareStart(ctx, pool, caller, req, method, digest)
-	if err != nil {
-		return Admission{}, err
+	return StartPlan{Caller: caller, Request: req, Method: method, Digest: digest, HasInput: hasInput}, nil
+}
+
+// StartError reports a start failure the way transports expect: storage
+// rejects of the input are invalid input, and missing rows are denials.
+func StartError(err error) error {
+	var invalid *pgconn.PgError
+	if errors.As(err, &invalid) && strings.HasPrefix(invalid.Code, "22") {
+		return fmt.Errorf("%w: input cannot be stored", ErrInvalidInput)
 	}
-	if receipt != nil {
-		return *receipt, nil
-	}
-	var result Admission
-	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if caller.Kind == "session" {
-			if err := lockRuntimeHost(ctx, tx, caller); err != nil {
-				return err
-			}
-			if err := requireRootCaller(ctx, tx, caller); err != nil {
-				return err
-			}
-		} else if err := authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
+	return hideMissing(err)
+}
+
+// LockStartCaller takes a runtime caller's worker supply gate (step 2 of the
+// global order) and checks the caller may start Sessions. Slack route locks
+// (step 3) follow it, then AdmitStart.
+func LockStartCaller(ctx context.Context, tx pgx.Tx, p StartPlan) error {
+	if p.Caller.Kind == "session" {
+		if err := lockRuntimeHost(ctx, tx, p.Caller); err != nil {
 			return err
 		}
-		routeActive := true
-		if prepared != nil {
-			pubs := []uuid.UUID{prepared.Target.ConnectionID}
-			if prepared.Source != nil {
-				pubs = append(pubs, prepared.Source.Connection.ConnectionID)
-			}
-			active, err := slackroute.LockConnections(ctx, tx, req.EnvironmentID, pubs)
-			if err != nil {
-				return err
-			}
-			// Exact retries are checked below before fresh connection eligibility.
-			routeActive = active
-		}
+		return RequireRootCaller(ctx, tx, p.Caller)
+	}
+	return authorizeStart(ctx, tx, p.Caller, p.Request.EnvironmentID)
+}
+
+// AdmitStart creates the planned Session, with its first Turn and Computer
+// when the plan has input, or returns the retained receipt of an identical
+// start. The caller holds LockStartCaller and any Slack route locks.
+func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p StartPlan) (Admission, StartPin, error) {
+	caller, req, method, digest, hasInput := p.Caller, p.Request, p.Method, p.Digest, p.HasInput
+	var result Admission
+	var pin StartPin
+	err := func() error {
 		var rootThread uuid.UUID
 		if caller.Kind == "session" && method == "spawn" {
-			sourceRoute, err := slackRouteOf(ctx, tx, req.EnvironmentID, caller.ID)
+			sourceRoute, err := slackroute.ChannelOf(ctx, tx, req.EnvironmentID, caller.ID)
 			if err != nil {
 				return err
 			}
@@ -150,6 +191,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		if err != nil {
 			return err
 		}
+		pin.AgentID = agentID
 		if prior != nil {
 			result = *prior
 			return nil
@@ -190,22 +232,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			}
 			return err
 		}
-		var route *uuid.UUID
-		if prepared != nil {
-			if !routeActive {
-				return slackroute.ErrConversationChanged
-			}
-			if err = validateSlackStart(ctx, tx, req.EnvironmentID, agentID, deployment, caller, prepared); err != nil {
-				return err
-			}
-			routeID, err := slackroute.ResolveChannelBinding(ctx, tx, prepared.Target)
-			if err != nil {
-				return err
-			}
-			route = &routeID
-		} else if req.SlackChannelID != nil {
-			return slackroute.ErrConversationChanged
-		}
+		pin.DeploymentID, pin.Fresh = deployment, true
 		computerID := req.ComputerID
 		if computerID == uuid.Nil() && hasInput {
 			computerID, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, computerLimits(policy))
@@ -297,24 +324,63 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				return err
 			}
 		}
-		if prepared != nil {
-			if err = createSlackRoot(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, *route, *prepared); err != nil {
-				return err
-			}
-		}
 		if hasInput {
 			return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
 		}
 		return nil
+	}()
+	return result, pin, err
+}
+
+// StartReceipt returns the retained receipt of an identical earlier start
+// and, for a fresh start, the Agent it names after the checks a start makes
+// before any remote work: caller authority, the invoking Turn and the
+// Session key.
+func StartReceipt(ctx context.Context, pool db.TxBeginner, p StartPlan) (*Admission, uuid.UUID, error) {
+	caller, req, method := p.Caller, p.Request, p.Method
+	var receipt *Admission
+	var agentID uuid.UUID
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := LockStartCaller(ctx, tx, p); err != nil {
+			return err
+		}
+		var err error
+		if caller.Kind == "session" && method == "spawn" {
+			err = tx.QueryRow(ctx, `SELECT d.agent_id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.deployment_id)=(s.environment_id,s.deployment_id) JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE s.environment_id=$1 AND s.id=$2 AND a.key=$3`, req.EnvironmentID, caller.ID, req.Agent).Scan(&agentID)
+		} else {
+			err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agentID)
+		}
+		if err != nil {
+			return err
+		}
+		receipt, err = sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.IdempotencyKey, p.Digest)
+		if err != nil || receipt != nil {
+			return err
+		}
+		if caller.Kind == "session" {
+			owner, e := lockSession(ctx, tx, req.EnvironmentID, caller.ID)
+			if e != nil {
+				return e
+			}
+			if e = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owner); e != nil {
+				return e
+			}
+		}
+		if req.SessionKey != nil {
+			var occupied bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND key=$3)`, req.EnvironmentID, agentID, *req.SessionKey).Scan(&occupied); err != nil {
+				return err
+			}
+			if occupied {
+				return ErrConflict
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		var invalid *pgconn.PgError
-		if errors.As(err, &invalid) && strings.HasPrefix(invalid.Code, "22") {
-			return Admission{}, fmt.Errorf("%w: input cannot be stored", ErrInvalidInput)
-		}
-		return Admission{}, hideMissing(err)
+		return nil, uuid.Nil(), hideMissing(err)
 	}
-	return result, nil
+	return receipt, agentID, nil
 }
 
 // A creation receipt never depends on a Turn existing or the Agent remaining in

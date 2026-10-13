@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type triggerPosition struct{ environment, id uuid.UUID }
+type TriggerPosition struct{ environment, id uuid.UUID }
 
 func RunTriggers(ctx context.Context, database db.TxDB, trust computer.TrustIssuer, log *slog.Logger) error {
 	if database == nil || log == nil {
@@ -21,9 +21,9 @@ func RunTriggers(ctx context.Context, database db.TxDB, trust computer.TrustIssu
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var after triggerPosition
+	var after TriggerPosition
 	for {
-		next, more, err := reconcileTriggers(ctx, database, trust, after)
+		next, more, err := ReconcileTriggers(ctx, database, trust, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -41,7 +41,7 @@ func RunTriggers(ctx context.Context, database db.TxDB, trust computer.TrustIssu
 		}
 	}
 }
-func reconcileTriggers(ctx context.Context, database db.TxDB, trust computer.TrustIssuer, after triggerPosition) (triggerPosition, bool, error) {
+func ReconcileTriggers(ctx context.Context, database db.TxDB, trust computer.TrustIssuer, after TriggerPosition) (TriggerPosition, bool, error) {
 	scan, stop := context.WithTimeout(ctx, 10*time.Second)
 	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM trigger_activations s JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
  WHERE s.next_fire_at<=statement_timestamp() AND (s.active_until IS NULL OR s.next_fire_at<s.active_until)
@@ -50,8 +50,8 @@ func reconcileTriggers(ctx context.Context, database db.TxDB, trust computer.Tru
 		stop()
 		return after, false, err
 	}
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (triggerPosition, error) {
-		var p triggerPosition
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (TriggerPosition, error) {
+		var p TriggerPosition
 		err := row.Scan(&p.environment, &p.id)
 		return p, err
 	})
@@ -74,7 +74,7 @@ func reconcileTriggers(ctx context.Context, database db.TxDB, trust computer.Tru
 	}
 	more := len(candidates) == 100
 	if !more {
-		after = triggerPosition{}
+		after = TriggerPosition{}
 	}
 	return after, more, errors.Join(failures...)
 }

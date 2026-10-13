@@ -24,6 +24,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
+		"agent":              {"api", "command", "controlplane", "deployment", "dispatch", "identity", "workerapi"},
 		"api":                {"deployment", "identity", "org", "workerapi"},
 		"artifact":           {"artifact/localcopy", "artifact/verify", "builder", "bundle", "computerhost", "controlplane", "db"},
 		"artifact/localcopy": {"artifact/verify", "builder", "bundle", "db"},

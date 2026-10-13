@@ -6,6 +6,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/slack"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -29,7 +31,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			caller := session.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
-			if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrSourceConversationUnavailable) {
+			if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
 				t.Fatal(err)
 			}
 			req.IdempotencyKey = "child"

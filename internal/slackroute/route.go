@@ -15,6 +15,7 @@ import (
 var (
 	ErrTargetNotPublished  = errors.New("target Agent has no connected Slack app")
 	ErrConversationChanged = errors.New("conversation configuration changed during validation; retry the same request")
+	ErrChannelUnavailable  = errors.New("the Slack channel is unavailable; check that both apps can access this channel")
 )
 
 // RequiredScopes returns the bot scopes needed by connected Slack connections.

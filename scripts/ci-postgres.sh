@@ -53,6 +53,7 @@ fi
 CGO_ENABLED=1 go test -race -count=1 \
 	./dev/runtime \
 	./cmd/internal/dev-controlplane \
+	./internal/agent \
 	./internal/session \
 	./internal/command \
 	./internal/computer \

@@ -11,21 +11,21 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/jackc/pgx/v5"
 )
 
 func newAdmissionFixture(t *testing.T) fixture {
 	t.Helper()
-	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
- UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
-	return f
+	base := sessiontest.New(t)
+	sessiontest.PrepareAdmission(t, base)
+	return fixtureOf(base)
 }
 func (f fixture) startRequest(key string) session.StartRequest {
 	return session.StartRequest{EnvironmentID: f.env, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work 1"}]`)}
@@ -451,7 +451,7 @@ func TestOwnedCallerCannotCreateOrDiscoverNewWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, operation := range []string{"spawn", "start"} {
-		if _, err := session.RuntimeListAgents(t.Context(), f.pool, caller, operation, ""); !errors.Is(err, session.ErrRootSessionRequired) {
+		if _, err := agent.RuntimeListAgents(t.Context(), f.pool, caller, operation, ""); !errors.Is(err, session.ErrRootSessionRequired) {
 			t.Fatalf("child discovered %s: %v", operation, err)
 		}
 	}

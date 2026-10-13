@@ -40,7 +40,7 @@ var tableOwners = map[string]string{
 	"regions": "internal/region",
 	// deployments and definitions
 	"agent_definitions": "internal/deployment", "agent_triggers": "internal/deployment", "agents": "internal/deployment",
-	"trigger_activations": "internal/deployment",
+	"trigger_activations": "internal/agent",
 	"image_specs":         "internal/computer", "deployment_objects": "internal/deployment", "deployments": "internal/deployment",
 	"template_definitions": "internal/deployment", "templates": "internal/deployment",
 	// Computers, their allocations, images and storage
@@ -52,7 +52,7 @@ var tableOwners = map[string]string{
 	"computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
 	"secret_exposures": "internal/computer",
 	// Sessions and Turns
-	"trigger_occurrences": "internal/session", "session_controls": "internal/session",
+	"trigger_occurrences": "internal/agent", "session_controls": "internal/session",
 	"session_events": "internal/session", "session_holds": "internal/session", "session_processes": "internal/session",
 	"sessions": "internal/session", "turn_asks": "internal/session", "turn_messages": "internal/session", "turns": "internal/session",
 	// commands
@@ -76,13 +76,11 @@ var tableOwners = map[string]string{
 // coWriters are packages that still write another owner's table. Each entry
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
-	"trigger_activations": {"internal/session": "owner split"},
-	"environments":        {"internal/deployment": "owner split"},
-	"slack_posts":         {"internal/session": "owner split"},
-	"slack_requests":      {"internal/session": "owner split"},
-	"slack_threads":       {"internal/session": "owner split"},
-	"login_sessions":      {"internal/org": "member disablement revokes sessions"},
-	"users":               {"internal/org": "organization creation records the owner"},
+	"environments":   {"internal/deployment": "owner split"},
+	"slack_posts":    {"internal/session": "owner split"},
+	"slack_requests": {"internal/session": "owner split"},
+	"login_sessions": {"internal/org": "member disablement revokes sessions"},
+	"users":          {"internal/org": "organization creation records the owner"},
 }
 
 // queryFileOwners maps each sqlc query file to the owner whose writes it

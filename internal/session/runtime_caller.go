@@ -28,7 +28,7 @@ func LockRuntimeCaller(ctx context.Context, tx pgx.Tx, caller Caller) error {
 var ErrRootSessionRequired = errors.New("this operation requires a root Session; report the request to its owner")
 
 // Parentage is immutable. Creation depth is fixed at one owned child level.
-func requireRootCaller(ctx context.Context, tx pgx.Tx, caller Caller) error {
+func RequireRootCaller(ctx context.Context, tx pgx.Tx, caller Caller) error {
 	var root bool
 	if err := tx.QueryRow(ctx, `SELECT parent_session_id IS NULL FROM sessions WHERE environment_id=$1 AND id=$2`, caller.Execution.EnvironmentID, caller.ID).Scan(&root); err != nil {
 		return hideMissing(err)

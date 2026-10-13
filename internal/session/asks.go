@@ -64,7 +64,7 @@ func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 		if err := lockRuntimeHost(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e, Host: &host}); err != nil {
 			return err
 		}
-		if err := requireRootCaller(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e}); err != nil {
+		if err := RequireRootCaller(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e}); err != nil {
 			return err
 		}
 		publication, err := lockSlackPublication(ctx, tx, e.EnvironmentID, e.SessionID)

@@ -85,10 +85,10 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				input, _ = json.Marshal([]map[string]string{{"type": "text", "text": strings.Repeat("x", contentCharacters+1)}})
 			}
 			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
-			result, err := session.Start(t.Context(), f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input, SlackPreflight: client})
+			result, err := Start(t.Context(), f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
-				want := map[string]error{"pending-source": session.ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": session.ErrTargetWorkspaceMismatch, "target-denied": session.ErrSlackChannelUnavailable, "source-denied": session.ErrSlackChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": session.ErrSourceConversationUnavailable, "too-large": session.ErrStartMessageTooLarge}[kind]
+				want := map[string]error{"pending-source": ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": ErrTargetWorkspaceMismatch, "target-denied": slackroute.ErrChannelUnavailable, "source-denied": slackroute.ErrChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": ErrSourceConversationUnavailable, "too-large": ErrStartMessageTooLarge}[kind]
 				if !errors.Is(err, want) {
 					t.Fatal("wrong rejection", err, want)
 				}

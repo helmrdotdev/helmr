@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/content"
@@ -58,7 +60,7 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	input := json.RawMessage(`[{"type":"text","text":"scheduled\u0000"}]`)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, input)
-	if err := session.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte

@@ -26,7 +26,9 @@ type fixture struct {
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	f := sessiontest.New(t)
+	return fixtureOf(sessiontest.New(t))
+}
+func fixtureOf(f sessiontest.Fixture) fixture {
 	return fixture{pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
 }
 func (f fixture) caller() session.Caller { return session.Caller{Kind: "user", ID: f.user} }

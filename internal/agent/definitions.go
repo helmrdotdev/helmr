@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -24,7 +25,7 @@ type RuntimeAgentPage struct {
 
 // Creation discovery uses one immutable Deployment snapshot. Spawn uses the
 // caller's pin; independent start uses the Environment's current promotion.
-func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller Caller, operation, cursor string) (RuntimeAgentPage, error) {
+func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.Caller, operation, cursor string) (RuntimeAgentPage, error) {
 	result := RuntimeAgentPage{Agents: []RuntimeAgentDefinition{}}
 	if operation != "spawn" && operation != "start" {
 		return result, ErrInvalidInput
@@ -44,10 +45,10 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller Caller, o
 		after = parts[2]
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := LockRuntimeCaller(ctx, tx, caller); err != nil {
+		if err := session.LockRuntimeCaller(ctx, tx, caller); err != nil {
 			return err
 		}
-		if err := requireRootCaller(ctx, tx, caller); err != nil {
+		if err := session.RequireRootCaller(ctx, tx, caller); err != nil {
 			return err
 		}
 		var selected *uuid.UUID

@@ -54,3 +54,17 @@ func SkipInstallationProjection(ctx context.Context, tx pgx.Tx, installation uui
  AND t.id=p.thread_id AND c.id=t.channel_id AND c.installation_id=$1`, installation)
 	return err
 }
+
+// ChannelOf returns the channel binding of the Slack route a root Session
+// owns, or nil when it owns none. The thread row is the route authority.
+func ChannelOf(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (*uuid.UUID, error) {
+	var route uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT channel_id FROM slack_threads WHERE environment_id=$1 AND front_session_id=$2`, env, session).Scan(&route)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &route, nil
+}
