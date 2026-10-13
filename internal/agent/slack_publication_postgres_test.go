@@ -45,7 +45,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			var exact bool
-			if err = f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM slack_threads)=1 AND s.slack_channel_id IS NULL AND source.thread_id=root.id AND EXISTS(SELECT 1 FROM session_events e WHERE e.session_id=s.id AND e.kind='slack.delivery_unavailable') FROM sessions s JOIN slack_thread_sources source ON source.session_id=s.id JOIN slack_threads root ON root.front_session_id=$2 WHERE s.id=$1`, child.SessionID, f.session).Scan(&exact); err != nil || !exact {
+			if err = f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM slack_threads)=1 AND NOT EXISTS(SELECT 1 FROM slack_threads own WHERE own.front_session_id=s.id) AND source.thread_id=root.id AND EXISTS(SELECT 1 FROM session_events e WHERE e.session_id=s.id AND e.kind='slack.delivery_unavailable') FROM sessions s JOIN slack_thread_sources source ON source.session_id=s.id JOIN slack_threads root ON root.front_session_id=$2 WHERE s.id=$1`, child.SessionID, f.session).Scan(&exact); err != nil || !exact {
 				t.Fatal(exact, err)
 			}
 		})

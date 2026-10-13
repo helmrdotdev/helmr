@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type startPreflightFunc func(context.Context, SlackStartContext) (json.RawMessage, error)
@@ -36,9 +37,6 @@ func slackRouteFixture(t *testing.T, f fixture) (uuid.UUID, uuid.UUID) {
 func bindFixtureSlackRoot(t *testing.T, f fixture, channel uuid.UUID) {
 	t.Helper()
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `UPDATE sessions SET slack_channel_id=$3 WHERE environment_id=$1 AND id=$2`, f.env, f.session, channel); err != nil {
-			return err
-		}
 		connection, err := ReadSlackConnection(t.Context(), tx, f.env, f.agent, "C1")
 		if err != nil {
 			return err
@@ -161,8 +159,14 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var exact bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.slack_channel_id IS NULL AND s.parent_session_id=$2 AND src.thread_id=root.id FROM sessions s JOIN slack_thread_sources src ON src.session_id=s.id JOIN slack_threads root ON root.front_session_id=$2 WHERE s.id=$1`, child.SessionID, f.session).Scan(&exact); err != nil || !exact {
+	if err = f.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM slack_threads own WHERE own.front_session_id=s.id) AND s.parent_session_id=$2 AND src.thread_id=root.id FROM sessions s JOIN slack_thread_sources src ON src.session_id=s.id JOIN slack_threads root ON root.front_session_id=$2 WHERE s.id=$1`, child.SessionID, f.session).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
+	}
+	// The route authority is the thread row, and only a root Session may own
+	// one: the schema rejects a thread fronted by the child.
+	var violation *pgconn.PgError
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.organization_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channels c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
+		t.Fatalf("child owned a Slack route: %v", err)
 	}
 	req.RetryKey = "independent"
 	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
