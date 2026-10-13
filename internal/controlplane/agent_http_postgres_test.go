@@ -129,10 +129,10 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: f.Environment.String()}
-	issuer := auth.Principal{OrgID: orgID, UserID: f.User, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
+	issuer := auth.Principal{OrgID: orgID, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: string(permission), Permissions: []auth.Permission{permission}})
+		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: string(permission), Permissions: []auth.Permission{permission}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironment, orgID, projectID)
 	otherScope := scope
 	otherScope.EnvironmentID = otherEnvironment.String()
-	otherKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.PermissionSessionsSend}})
+	otherKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.PermissionSessionsSend}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyInterruptPath := "/v1/sessions/" + toInterrupt.SessionID + "/interrupt"
 	interruptBody := `{"idempotency_key":"interrupt-retained"}`
 	interrupter := issue(auth.PermissionSessionsInterrupt)
-	otherInterrupter, err := identity.IssueAPIKey(t.Context(), queries, issuer, otherScope, identity.APIKeyInput{Name: "other interrupt", Permissions: []auth.Permission{auth.PermissionSessionsInterrupt}})
+	otherInterrupter, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other interrupt", Permissions: []auth.Permission{auth.PermissionSessionsInterrupt}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyClosePath := "/v1/sessions/" + toClose.SessionID + "/close"
 	closeBody := `{"idempotency_key":"close-retained"}`
 	closer := issue(auth.PermissionSessionsClose)
-	otherCloser, err := identity.IssueAPIKey(t.Context(), queries, issuer, otherScope, identity.APIKeyInput{Name: "other close", Permissions: []auth.Permission{auth.PermissionSessionsClose}})
+	otherCloser, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other close", Permissions: []auth.Permission{auth.PermissionSessionsClose}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(closer))
 	call(keyClosePath, closer, closeBody, http.StatusUnauthorized)
 
-	sdkKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume}})
+	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume}})
 	if err != nil {
 		t.Fatal(err)
 	}

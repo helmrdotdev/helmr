@@ -5,6 +5,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -109,7 +110,7 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 
 // DisconnectConnection fences the exact generation, including pending setup.
 // Running work remains available through Console/API and is not cancelled.
-func (s *CredentialStore) DisconnectConnection(ctx context.Context, org, user, environment, connection uuid.UUID) error {
+func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
@@ -133,7 +134,8 @@ func (s *CredentialStore) DisconnectConnection(ctx context.Context, org, user, e
 			}
 		}
 		var current *uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT slack_installation_id FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, connection).Scan(&current); err != nil {
+		var active bool
+		if err = tx.QueryRow(ctx, `SELECT slack_installation_id,revoked_at IS NULL FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, connection).Scan(&current, &active); err != nil {
 			return err
 		}
 		// Setup may have completed since optimistic discovery. Retry from the start
@@ -157,6 +159,9 @@ func (s *CredentialStore) DisconnectConnection(ctx context.Context, org, user, e
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)
-		return err
+		if err != nil || !active {
+			return err
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: connection})
 	})
 }

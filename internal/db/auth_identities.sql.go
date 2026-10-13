@@ -11,13 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const grantUserAdmin = `-- name: GrantUserAdmin :exec
-UPDATE users SET admin = true, updated_at = now() WHERE id = $1
+const grantUserAdmin = `-- name: GrantUserAdmin :execrows
+UPDATE users SET admin = true, updated_at = now() WHERE id = $1 AND NOT admin
 `
 
-func (q *Queries) GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, grantUserAdmin, userID)
-	return err
+func (q *Queries) GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, grantUserAdmin, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertAuthIdentity = `-- name: UpsertAuthIdentity :one

@@ -97,7 +97,7 @@ type Querier interface {
 	GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStatusParams) (GetWorkerHostStatusRow, error)
 	GetWorkerHostStatusByResource(ctx context.Context, arg GetWorkerHostStatusByResourceParams) (GetWorkerHostStatusByResourceRow, error)
 	GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoolByGroupNameParams) (WorkerPool, error)
-	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
+	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
@@ -165,11 +165,12 @@ type Querier interface {
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
-	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) (int64, error)
+	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]RevokeExpiredInvitationsByEmailRow, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error
 	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
+	RevokeNamedAPIKeys(ctx context.Context, arg RevokeNamedAPIKeysParams) ([]pgtype.UUID, error)
 	RevokeOpenMagicLinksForRecipient(ctx context.Context, arg RevokeOpenMagicLinksForRecipientParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)

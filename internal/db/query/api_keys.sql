@@ -1,53 +1,11 @@
+-- name: RevokeNamedAPIKeys :many
+UPDATE api_keys SET revoked_at=now()
+ WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND name=$4 AND revoked_at IS NULL
+ RETURNING id;
+
 -- name: IssueAPIKey :one
-WITH revoked AS (
-    UPDATE api_keys
-       SET revoked_at = now()
-     WHERE api_keys.org_id = sqlc.arg(org_id)
-       AND api_keys.project_id = sqlc.arg(project_id)
-       AND api_keys.environment_id = sqlc.arg(environment_id)
-       AND api_keys.name = sqlc.arg(name)
-       AND api_keys.token_hash <> sqlc.arg(token_hash)
-       AND api_keys.revoked_at IS NULL
-     RETURNING 1
-),
-input AS (
-    SELECT
-        sqlc.arg(id)::uuid AS id,
-        sqlc.arg(org_id)::uuid AS org_id,
-        sqlc.arg(project_id)::uuid AS project_id,
-        sqlc.arg(environment_id)::uuid AS environment_id,
-        sqlc.arg(created_by_user_id)::uuid AS created_by_user_id,
-        sqlc.arg(role)::org_member_role AS role,
-        sqlc.arg(permissions)::text[] AS permissions,
-        sqlc.arg(name)::text AS name,
-        sqlc.arg(key_prefix)::text AS key_prefix,
-        sqlc.arg(token_hash)::bytea AS token_hash,
-        sqlc.arg(expires_at)::timestamptz AS expires_at
-)
-INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, permissions, name, key_prefix, token_hash, expires_at)
-SELECT input.id,
-       input.org_id,
-       input.project_id,
-       input.environment_id,
-       input.created_by_user_id,
-       input.role,
-       input.permissions,
-       input.name,
-       input.key_prefix,
-       input.token_hash,
-       input.expires_at
-  FROM input
- -- Force same-scope revocation before insert so the active-name partial unique index cannot race the replacement key.
- CROSS JOIN (SELECT count(*) FROM revoked) AS revoked_count
-ON CONFLICT (token_hash) DO UPDATE SET
-    role = EXCLUDED.role,
-    permissions = EXCLUDED.permissions,
-    name = EXCLUDED.name,
-    key_prefix = EXCLUDED.key_prefix,
-    project_id = EXCLUDED.project_id,
-    environment_id = EXCLUDED.environment_id,
-    expires_at = EXCLUDED.expires_at,
-    revoked_at = NULL
+INSERT INTO api_keys (id,org_id,project_id,environment_id,created_by_user_id,role,permissions,name,key_prefix,token_hash,expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING *;
 
 -- name: TouchActiveAPIKeyByTokenHash :one

@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -147,7 +148,7 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 		if result.Disposition == Rejected {
 			switch result.Code {
 			case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-				return recordAuthorizationLoss(ctx, tx, installation, claim.CredentialRevision, claim.AuthorizedAt)
+				return recordAuthorizationLoss(ctx, tx, audit.System("slack-provider"), installation, claim.CredentialRevision, claim.AuthorizedAt)
 			}
 		}
 		return nil

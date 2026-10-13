@@ -272,3 +272,32 @@ func TestLoadAccountPostgres(t *testing.T) {
 		t.Fatalf("missing user error = %v", err)
 	}
 }
+
+func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
+	f := newIdentityFixture(t)
+	orgID := f.organization(t, "audit")
+	invitation, raw := f.invitation(t, orgID, "admin@example.test", "developer")
+	_, hash, err := ResolveInvitation(t.Context(), f.queries, f.cfg, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := ExternalIdentity{Provider: "github", Subject: "audit-admin", DisplayName: "Audit admin", Email: "admin@example.test", EmailVerified: true}
+	token, err := SignInWithInvitation(t.Context(), f.pool, f.cfg, hash, external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_kind='verified_login' AND actor_source='github' AND actor_user_id=$1 AND actor_credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND new_role='developer'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("pre-session acceptance actor count=%d err=%v", count, err)
+	}
+	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='installation_admin.granted' AND actor_kind='system' AND actor_source='initial-admin-config' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("initial grant count=%d err=%v", count, err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -78,8 +79,8 @@ func ResolvePool(ctx context.Context, q db.Querier, groupID uuid.UUID, name stri
 // SelectPrimary selects the provider controller's primary pool through
 // SelectPrimaryPool and returns the group's capacity projection. A zero poolID
 // is rejected as SelectPrimaryPool describes.
-func SelectPrimary(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelectionResponse, error) {
-	selection, err := SelectPrimaryPool(ctx, txb, groupID, poolID, expectedGroupClaimVersion, minimumReadyHosts)
+func SelectPrimary(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelectionResponse, error) {
+	selection, err := SelectPrimaryPool(ctx, txb, actor, groupID, poolID, expectedGroupClaimVersion, minimumReadyHosts)
 	if err != nil {
 		return PrimarySelectionResponse{}, err
 	}
@@ -130,7 +131,7 @@ func GetHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (WorkerHost, e
 
 // DrainHost commits a reasoned provider drain under the Group, Pool and Host
 // fences. Idle scale-in checks advisory demand; other planned drains do not.
-func DrainHost(ctx context.Context, txb db.TxBeginner, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
+func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
 		return WorkerHost{}, invalidInput("expected_epoch and expected_claim_version must be positive")
 	}
@@ -173,6 +174,11 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, hostID uuid.UUID, request
 		if err != nil {
 			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
 		}
+		if locked.Host.Status == db.WorkerHostStatusActive {
+			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+				return err
+			}
+		}
 		result, err = GetHost(ctx, q, hostID)
 		return err
 	})
@@ -193,7 +199,7 @@ func (a ConfirmedProviderAbsence) HostID() uuid.UUID   { return a.hostID }
 // ConfirmHostProviderAbsent records verified provider absence under supply locks.
 // The caller owns the transaction and must reconcile physical Computer ownership
 // before committing. Ordinary host expiry or credential revocation is not this proof.
-func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
+func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, actor audit.Actor, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
 	var group uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT worker_group_id FROM worker_hosts WHERE id=$1`, hostID).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -204,12 +210,26 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, hostID uuid.UUID)
 	if _, err := tx.Exec(ctx, `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, group); err != nil {
 		return ConfirmedProviderAbsence{}, err
 	}
+	// An operator may already have marked the host lost while physical
+	// allocations still require this provider confirmation.
+	var changed bool
+	if err := tx.QueryRow(ctx, `SELECT h.status<>'lost'
+ OR EXISTS(SELECT 1 FROM worker_host_secrets k WHERE k.worker_host_id=h.id AND k.revoked_at IS NULL)
+ OR EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) a WHERE a.worker_host_id=h.id)
+ FROM worker_hosts h WHERE h.id=$1 FOR UPDATE OF h`, hostID).Scan(&changed); err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
 	_, err := db.New(tx).ConfirmWorkerHostProviderAbsent(ctx, pgvalue.UUID(hostID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConfirmedProviderAbsence{}, conflict("worker host cannot be marked lost from its current state")
 	}
 	if err != nil {
 		return ConfirmedProviderAbsence{}, fmt.Errorf("confirm worker host %s provider absence: %w", hostID, err)
+	}
+	if changed {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+			return ConfirmedProviderAbsence{}, err
+		}
 	}
 	return ConfirmedProviderAbsence{tx: tx, hostID: hostID}, nil
 }

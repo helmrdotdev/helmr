@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -51,7 +52,10 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 	results := make([]error, 2)
 	var wait sync.WaitGroup
 	for index, id := range []uuid.UUID{f.poolID, alternative} {
-		wait.Go(func() { <-start; _, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, f.Group, id, 1) })
+		wait.Go(func() {
+			<-start
+			_, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, id, 1)
+		})
 	}
 	close(start)
 	wait.Wait()
@@ -93,7 +97,10 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, _, err := workergroup.DrainPool(ctx, f.Pool, f.Group, f.poolID, 1); done <- err }()
+	go func() {
+		_, _, err := workergroup.DrainPool(ctx, f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1)
+		done <- err
+	}()
 	for {
 		var blocked bool
 		if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
@@ -142,18 +149,18 @@ func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || !demand {
 		t.Fatalf("parked Session restore demand=%v: %v", demand, err)
 	}
-	if _, err := workergroup.DrainHost(t.Context(), f.Pool, f.Worker, workergroup.DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: 1, Reason: workergroup.DrainReasonIdleScaleIn}); !errors.Is(err, workergroup.ErrQueuedDemand) {
+	if _, err := workergroup.DrainHost(t.Context(), f.Pool, audit.System("test-fixture"), f.Worker, workergroup.DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: 1, Reason: workergroup.DrainReasonIdleScaleIn}); !errors.Is(err, workergroup.ErrQueuedDemand) {
 		t.Fatalf("idle drain with parked input=%v, want queued demand", err)
 	}
 	var conflict workergroup.ConflictError
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last parked profile retired: %v", err)
 	}
 	alternative := cloneRestorePool(t, f)
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1); err != nil {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, alternative, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, alternative, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last alternative retired: %v", err)
 	}
 	profiles, err := workergroup.ResolvePool(t.Context(), db.New(f.Pool), f.Group, "pool")
@@ -177,20 +184,20 @@ func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
 func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 	f := newRetirementFixture(t)
 	cloneRestorePool(t, f)
-	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, f.Group, "host", 1)
+	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, "host", 1)
 	if err != nil || lost.Status != "lost" {
 		t.Fatalf("mark lost=%+v %v", lost, err)
 	}
-	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1)
+	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var conflict workergroup.ConflictError
-	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion); !errors.As(err, &conflict) {
+	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion); !errors.As(err, &conflict) {
 		t.Fatalf("disabled while VM custody remains: %v", err)
 	}
 	err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, f.Worker)
+		absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.System("test-fixture"), f.Worker)
 		if err != nil {
 			return err
 		}
@@ -199,15 +206,15 @@ func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion)
+	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || receipt.Status != "disabled" {
 		t.Fatalf("disable receipt=%+v: %v", receipt, err)
 	}
-	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion)
+	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || replay.ClaimVersion != receipt.ClaimVersion {
 		t.Fatalf("disable replay=%+v: %v", replay, err)
 	}
-	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
+	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
 		t.Fatalf("disabled pool revived: %v", err)
 	}
 }

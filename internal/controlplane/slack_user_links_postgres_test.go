@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -76,7 +77,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
-			if err = store.StoreAppCredentials(t.Context(), org, f.User, registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
+			if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE org_id=$1 AND user_id=$2`, org, f.User)

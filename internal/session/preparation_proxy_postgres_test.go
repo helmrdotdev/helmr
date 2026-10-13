@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -59,7 +60,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-proxy"); err != nil {
+	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "rotate-proxy"); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
@@ -93,7 +94,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, stale, ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale value claims: %v", err)
 	}
-	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
+	if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke-proxy"); err != nil {
 		t.Fatal(err)
 	}
 	if err := resolve("https://api.example.com", []string{marker}); err == nil {
@@ -152,7 +153,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "revocation":
-				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
+				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke-proxy"); err != nil {
 					t.Fatal(err)
 				}
 				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {

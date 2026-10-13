@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -16,7 +17,7 @@ func TestDedicatedCallbackAuthenticatesSelectedRegistrationBeforeInstallation(t 
 	registration := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) VALUES($1,$2,$3)`, registration, org, f.User)
 	credentials := AppCredentials{ClientID: "client", ClientSecret: "private-client", SigningSecret: "selected-signing-secret"}
-	if err := store.StoreAppCredentials(t.Context(), org, f.User, registration, credentials); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, credentials); err != nil {
 		t.Fatal(err)
 	}
 	handler := store.CallbackHandler(registration, EventHandler{Database: f.Pool}, nil)

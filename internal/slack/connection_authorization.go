@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -47,7 +48,7 @@ func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, org, u
 
 // AuthorizeConnection performs remote exchange outside SQL locks, then verifies
 // the unchanged registration and connection slot before attaching the grant.
-func (s *CredentialStore) AuthorizeConnection(ctx context.Context, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
+func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.Actor, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
 	if code == "" || len(code) > 4096 || redirect == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
@@ -75,10 +76,10 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, org, user, co
 			return uuid.Nil(), ErrOAuthAuthorization
 		}
 	}
-	return s.attachConnectionGrant(ctx, org, user, connection, observed, result.grant)
+	return s.attachConnectionGrant(ctx, actor, org, user, connection, observed, result.grant)
 }
 
-func (s *CredentialStore) attachConnectionGrant(ctx context.Context, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
+func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit.Actor, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
 	installation := uuid.NewV7()
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
@@ -147,7 +148,10 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, org, user, 
 		if _, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET app_id=$2 WHERE id=$1 AND app_id IS NULL`, observed.registration, grant.app); err != nil {
 			return err
 		}
-		return slackroute.AttachInstallation(ctx, tx, connection, installation)
+		if err = slackroute.AttachInstallation(ctx, tx, connection, installation); err != nil {
+			return err
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Permissions: grant.scopes})
 	})
 	if err != nil {
 		return uuid.Nil(), err

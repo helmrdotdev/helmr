@@ -35,14 +35,14 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, environmentID, orgID, projectID)
 	return apiKeyFixture{
 		identityFixture: fixture,
-		owner:           auth.Principal{OrgID: orgID, UserID: userID, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner},
+		owner:           auth.Principal{OrgID: orgID, UserID: userID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner},
 		scope:           auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: environmentID.String()},
 	}
 }
 
 func (f apiKeyFixture) issue(t *testing.T, name string, permissions ...auth.Permission) IssuedAPIKey {
 	t.Helper()
-	issued, err := IssueAPIKey(t.Context(), f.queries, f.owner, f.scope, APIKeyInput{Name: name, Permissions: permissions})
+	issued, err := IssueAPIKey(t.Context(), f.pool, f.owner, f.scope, APIKeyInput{Name: name, Permissions: permissions})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +121,8 @@ func TestAPIKeyPostgresReplacementIsAtomic(t *testing.T) {
 		END
 		$$`)
 	fixture.exec(t, `CREATE TRIGGER reject_replacement_api_key BEFORE INSERT ON api_keys FOR EACH ROW EXECUTE FUNCTION reject_replacement_api_key()`)
-	store := &apiKeyCountingQuerier{Querier: fixture.queries}
-	if _, err := IssueAPIKey(ctx, store, fixture.owner, fixture.scope, APIKeyInput{Name: "replacement", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err == nil || store.reset() != 1 {
-		t.Fatalf("failed replacement error = %v, want an error from one statement", err)
+	if _, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyInput{Name: "replacement", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err == nil {
+		t.Fatalf("failed replacement error = %v, want an error", err)
 	}
 	var activeID uuid.UUID
 	var activePermissions []string
@@ -145,13 +144,13 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherOrg := fixture.organization(t, "other")
-	other := auth.Principal{OrgID: otherOrg, UserID: fixture.user(t, "Other", ""), Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
+	other := auth.Principal{OrgID: otherOrg, UserID: fixture.user(t, "Other", ""), Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
 	fixture.member(t, otherOrg, other.UserID, db.OrgMemberRoleOwner)
 	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)
 	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironmentID, otherOrg, otherProjectID)
 	otherScope := auth.Scope{OrgID: otherOrg, ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String()}
-	if _, err := IssueAPIKey(ctx, fixture.queries, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err != nil {
+	if _, err := IssueAPIKey(ctx, fixture.pool, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err != nil {
 		t.Fatal(err)
 	}
 	if listed, _, err := ListAPIKeys(ctx, fixture.queries, other, fixture.scope, APIKeyFilterAll, 10, nil); err != nil || len(listed) != 0 {
@@ -170,13 +169,13 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	}
 
 	revokedID := pgvalue.MustUUIDValue(second[0].ID)
-	if err := RevokeAPIKey(ctx, fixture.queries, other, fixture.scope, revokedID); !errors.Is(err, ErrAPIKeyNotFound) {
+	if err := RevokeAPIKey(ctx, fixture.pool, other, fixture.scope, revokedID); !errors.Is(err, ErrAPIKeyNotFound) {
 		t.Fatalf("cross-organization revoke error = %v", err)
 	}
-	if err := RevokeAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, revokedID); err != nil {
+	if err := RevokeAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, revokedID); err != nil {
 		t.Fatal(err)
 	}
-	if err := RevokeAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, revokedID); !errors.Is(err, ErrAPIKeyNotFound) {
+	if err := RevokeAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, revokedID); !errors.Is(err, ErrAPIKeyNotFound) {
 		t.Fatalf("repeated revoke error = %v", err)
 	}
 	revoked, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterRevoked, 10, nil)
@@ -217,13 +216,13 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 	for _, role := range []auth.Role{auth.RoleDeveloper, auth.RoleViewer} {
 		principal := fixture.owner
 		principal.Role = role
-		if _, err := IssueAPIKey(ctx, fixture.queries, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
+		if _, err := IssueAPIKey(ctx, fixture.pool, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s issue error = %v", role, err)
 		}
 		if _, _, err := ListAPIKeys(ctx, fixture.queries, principal, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s list error = %v", role, err)
 		}
-		if err := RevokeAPIKey(ctx, fixture.queries, principal, fixture.scope, uuid.NewV7()); !errors.Is(err, ErrAPIKeyManagementRequired) {
+		if err := RevokeAPIKey(ctx, fixture.pool, principal, fixture.scope, uuid.NewV7()); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s revoke error = %v", role, err)
 		}
 	}
@@ -237,11 +236,11 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 		{Name: "expiry", Permissions: []auth.Permission{auth.PermissionSessionsRead}, ExpiresInDays: &invalidDays},
 	} {
 		var inputError InputError
-		if _, err := IssueAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, input); !errors.As(err, &inputError) {
+		if _, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, input); !errors.As(err, &inputError) {
 			t.Fatalf("input %+v error = %v", input, err)
 		}
 	}
-	expiring, err := IssueAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.PermissionSessionsRead}, ExpiresInDays: &days})
+	expiring, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.PermissionSessionsRead}, ExpiresInDays: &days})
 	if err != nil || !expiring.Record.ExpiresAt.Valid || time.Until(expiring.Record.ExpiresAt.Time) < 89*24*time.Hour {
 		t.Fatalf("expiring key = %+v, err = %v", expiring.Record.ExpiresAt, err)
 	}
@@ -290,4 +289,31 @@ func (q *apiKeyCountingQuerier) TouchActiveAPIKeyByTokenHash(ctx context.Context
 func (q *apiKeyCountingQuerier) IssueAPIKey(ctx context.Context, arg db.IssueAPIKeyParams) (db.APIKey, error) {
 	q.statements.Add(1)
 	return q.Querier.IssueAPIKey(ctx, arg)
+}
+
+func TestAPIKeyAuditRecordsReplacementAndRollsBackOnAppendFailure(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	first := f.issue(t, "replace", auth.PermissionSessionsRead)
+	second := f.issue(t, "replace", auth.PermissionSessionsRead, auth.PermissionSessionsCreate)
+	var count int
+	var facts bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='login' AND actor_user_id=$1 AND actor_credential_id=$2 AND environment_id=$3 AND org_id=$4) FROM audit_events`, f.owner.UserID, f.owner.SessionID, uuid.MustParse(f.scope.EnvironmentID), f.owner.OrgID).Scan(&count, &facts); err != nil || count != 3 || !facts {
+		t.Fatalf("audit count=%d facts=%v err=%v", count, facts, err)
+	}
+	var revoked, issued bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.revoked' AND target_id=$1),EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.issued' AND target_id=$2 AND new_role='owner' AND permissions=ARRAY['sessions.read','sessions.create'] AND expires_at IS NULL)`, first.Record.ID, second.Record.ID).Scan(&revoked, &issued); err != nil || !revoked || !issued {
+		t.Fatalf("replacement grants revoked=%v issued=%v err=%v", revoked, issued, err)
+	}
+	f.exec(t, `CREATE FUNCTION reject_key_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='api_key.issued' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`)
+	f.exec(t, `CREATE TRIGGER reject_key_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_key_audit()`)
+	if _, err := IssueAPIKey(t.Context(), f.pool, f.owner, f.scope, APIKeyInput{Name: "replace", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err == nil {
+		t.Fatal("audit failure allowed replacement")
+	}
+	var active uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM api_keys WHERE name='replace' AND revoked_at IS NULL`).Scan(&active); err != nil || active != pgvalue.MustUUIDValue(second.Record.ID) {
+		t.Fatalf("replacement failed to roll back: %s %v", active, err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events`).Scan(&count); err != nil || count != 3 {
+		t.Fatalf("partial audit committed: count=%d err=%v", count, err)
+	}
 }

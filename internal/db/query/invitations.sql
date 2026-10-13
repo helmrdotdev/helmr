@@ -56,14 +56,14 @@ SELECT id, org_id, invitee_email, role
    AND accepted_at IS NULL
    AND revoked_at IS NULL;
 
--- name: RevokeExpiredInvitationsByEmail :execrows
+-- name: RevokeExpiredInvitationsByEmail :many
 UPDATE invitations
    SET revoked_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND invitee_email = sqlc.arg(invitee_email)
    AND accepted_at IS NULL
    AND revoked_at IS NULL
-   AND expires_at <= now();
+   AND expires_at <= now() RETURNING id,role;
 
 -- name: CreateInvitation :one
 WITH active_invitee AS (

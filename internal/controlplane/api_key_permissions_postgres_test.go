@@ -73,16 +73,16 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 	} {
 		fixture.store.reset()
 		response := fixture.issueRecorder(t, test.name, test.grants)
-		if response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
-			t.Fatalf("%q status/statements = %d/%d, want 400/0", test.name, response.Code, fixture.store.statements.Load())
+		if response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 || fixture.store.transactions.Load() != 0 {
+			t.Fatalf("%q status/statements/transactions = %d/%d/%d, want 400/0/0", test.name, response.Code, fixture.store.statements.Load(), fixture.store.transactions.Load())
 		}
 	}
 
 	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeSessionsRead}, allAPIKeyPermissionScopes()...)
 	fixture.store.reset()
 	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead}}})
-	if issuedRecorder.Code != http.StatusCreated || fixture.store.statements.Load() != 1 {
-		t.Fatalf("issue status/statements = %d/%d: %s", issuedRecorder.Code, fixture.store.statements.Load(), issuedRecorder.Body.String())
+	if issuedRecorder.Code != http.StatusCreated || fixture.store.transactions.Load() != 1 {
+		t.Fatalf("issue status/transactions = %d/%d", issuedRecorder.Code, fixture.store.transactions.Load())
 	}
 	var issued api.APIKeyIssued
 	if err := json.Unmarshal(issuedRecorder.Body.Bytes(), &issued); err != nil {
@@ -93,6 +93,10 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		t.Fatalf("issued = %+v", issued.APIKeySummary)
 	}
 
+	var attributed bool
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events a JOIN login_sessions s ON s.id=a.actor_credential_id AND s.user_id=a.actor_user_id WHERE a.action='api_key.issued' AND a.target_id=$1 AND a.actor_kind='login' AND a.project_id=$2 AND a.environment_id=$3)`, issued.ID, fixture.projectID, fixture.environmentID).Scan(&attributed); err != nil || !attributed {
+		t.Fatal("issued key has no fact attributed to its authenticated login", attributed, err)
+	}
 	path := "/api/projects/api-keys/environments/production/api-keys/"
 	if response := fixture.request(t, http.MethodDelete, path+issued.ID, fixture.token, ""); response.Code != http.StatusNoContent {
 		t.Fatalf("revoke status = %d: %s", response.Code, response.Body.String())
@@ -140,8 +144,9 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 	t.Helper()
 	var store *apiKeyCountingStore
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		store = &apiKeyCountingStore{Querier: cfg.DB}
+		store = &apiKeyCountingStore{Querier: cfg.DB, TxDB: cfg.TX}
 		cfg.DB = store
+		cfg.TX = store
 	})
 	orgID, token := fixture.organizationOwner(t, "api-keys")
 	otherOrgID, _ := fixture.organizationOwner(t, "api-keys-other")
@@ -246,11 +251,14 @@ func allAPIKeyInternalPermissions() []string {
 
 type apiKeyCountingStore struct {
 	db.Querier
-	statements atomic.Int64
+	db.TxDB
+	statements   atomic.Int64
+	transactions atomic.Int64
 }
 
 func (s *apiKeyCountingStore) reset() {
 	s.statements.Store(0)
+	s.transactions.Store(0)
 }
 
 func (s *apiKeyCountingStore) ListAPIKeys(ctx context.Context, arg db.ListAPIKeysParams) ([]db.ListAPIKeysRow, error) {
@@ -258,7 +266,7 @@ func (s *apiKeyCountingStore) ListAPIKeys(ctx context.Context, arg db.ListAPIKey
 	return s.Querier.ListAPIKeys(ctx, arg)
 }
 
-func (s *apiKeyCountingStore) IssueAPIKey(ctx context.Context, arg db.IssueAPIKeyParams) (db.APIKey, error) {
-	s.statements.Add(1)
-	return s.Querier.IssueAPIKey(ctx, arg)
+func (s *apiKeyCountingStore) Begin(ctx context.Context) (pgx.Tx, error) {
+	s.transactions.Add(1)
+	return s.TxDB.Begin(ctx)
 }

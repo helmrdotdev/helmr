@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -33,6 +34,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := identity.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
+		Actor:        audit.FromPrincipal(principal),
 		Slug:         request.Slug,
 		Name:         request.Name,
 		OwnerUserID:  principal.UserID,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -55,30 +56,30 @@ func ReadGroupStatus(ctx context.Context, q db.Querier, groupID uuid.UUID) (Grou
 }
 
 // PauseGroup stops new admission onto the worker group's hosts.
-func PauseGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, groupID, expectedClaimVersion, db.WorkerGroupStatusPaused)
+func PauseGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusPaused)
 }
 
 // ActivateGroup resumes admission onto the worker group's hosts.
-func ActivateGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, groupID, expectedClaimVersion, db.WorkerGroupStatusActive)
+func ActivateGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusActive)
 }
 
 // BeginGroupDrain starts draining the worker group and clears its primary
 // pool after all physical custody and retained checkpoints have been resolved.
-func BeginGroupDrain(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, groupID, expectedClaimVersion, db.WorkerGroupStatusDraining)
+func BeginGroupDrain(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusDraining)
 }
 
 // DisableGroup disables the worker group.
-func DisableGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, groupID, expectedClaimVersion, db.WorkerGroupStatusDisabled)
+func DisableGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusDisabled)
 }
 
 // transitionGroup moves a worker group to target under the group's status
 // mutation lock. Replaying a transition with the claim version that fenced it
 // succeeds without applying it again.
-func transitionGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64, target db.WorkerGroupStatus) (GroupStatus, error) {
+func transitionGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, expectedClaimVersion int64, target db.WorkerGroupStatus) (GroupStatus, error) {
 	if expectedClaimVersion <= 0 {
 		return GroupStatus{}, invalidInput("expected_claim_version must be positive")
 	}
@@ -124,6 +125,11 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, 
 			ID: pgvalue.UUIDString(row.ID), Status: row.Status, ClaimVersion: row.ClaimVersion,
 			TransitionApplied: row.TransitionApplied,
 		}
+		if row.TransitionApplied {
+			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_group." + string(target), TargetKind: "worker_group", TargetID: groupID}); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -161,7 +167,7 @@ func ReadHostStatus(ctx context.Context, q db.Querier, groupID uuid.UUID, resour
 // MarkHostLost records an operator's confirmation that the worker group's host
 // with the provider resource ID is gone, under the group's status mutation
 // lock.
-func MarkHostLost(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, resourceID string, expectedClaimVersion int64) (HostStatus, error) {
+func MarkHostLost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID uuid.UUID, resourceID string, expectedClaimVersion int64) (HostStatus, error) {
 	resourceID, err := hostResourceID(resourceID)
 	if err != nil {
 		return HostStatus{}, err
@@ -190,6 +196,11 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, res
 		}
 		if row.CurrentEpoch.Valid {
 			status.CurrentEpoch = &row.CurrentEpoch.Int64
+		}
+		if row.TransitionApplied {
+			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

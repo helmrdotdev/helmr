@@ -5,6 +5,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/jackc/pgx/v5"
@@ -14,13 +15,20 @@ import (
 // transaction. A stale failure must not revoke a newer authorization. Pending
 // content is suppressed atomically; already-issued uncertain sends retain their
 // frozen evidence and are never converted into retryable work.
-func recordAuthorizationLoss(ctx context.Context, tx pgx.Tx, installation uuid.UUID, credential int64, authorized time.Time) error {
+func recordAuthorizationLoss(ctx context.Context, tx pgx.Tx, actor audit.Actor, installation uuid.UUID, credential int64, authorized time.Time) error {
 	tag, err := tx.Exec(ctx, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp()
  WHERE id=$1 AND credential_revision=$2 AND authorized_at=$3 AND authorization_lost_at IS NULL AND disconnected_at IS NULL AND refresh_attempt_id IS NULL`, installation, credential, authorized)
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
-	return suppressInstallationPosts(ctx, tx, installation)
+	if err = suppressInstallationPosts(ctx, tx, installation); err != nil {
+		return err
+	}
+	var org uuid.UUID
+	if err = tx.QueryRow(ctx, `SELECT org_id FROM slack_installations WHERE id=$1`, installation).Scan(&org); err != nil {
+		return err
+	}
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, Action: "slack_installation.authorization_lost", TargetKind: "slack_installation", TargetID: installation})
 }
 
 // Suppress desired-but-unsent content without losing an issued mutation's

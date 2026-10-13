@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -77,8 +78,8 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	t.Helper()
 	owner := f.user(t, "Owner", "")
 	f.member(t, orgID, owner, db.OrgMemberRoleOwner)
-	invitation, rawToken, err := org.CreateInvitation(t.Context(), f.queries, f.keys.Invitation,
-		org.ManagingMember{OrgID: orgID, UserID: owner, Role: auth.RoleOwner}, org.InvitationInput{Email: email, Role: role})
+	invitation, rawToken, err := org.CreateInvitation(t.Context(), f.pool, f.keys.Invitation,
+		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, Role: auth.RoleOwner}, org.InvitationInput{Email: email, Role: role})
 	if err != nil {
 		t.Fatal(err)
 	}

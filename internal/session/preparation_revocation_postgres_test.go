@@ -6,6 +6,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 
@@ -49,7 +50,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err != nil || resume.Kind != "resume" {
 		t.Fatalf("initial delivery: %v %v", resume, err)
 	}
-	if _, err = p.f.secrets.Revoke(t.Context(), f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err = p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	// These checks run before reconciliation, including the unchanged-control fast path.
@@ -116,7 +117,7 @@ func TestPreparationImageRevocationLifecycleAndLease(t *testing.T) {
 	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.f.secrets.Revoke(t.Context(), f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
@@ -169,7 +170,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := secrets.secrets.Revoke(t.Context(), r.f.env, secrets.secretID, "revoke"); err != nil {
+			if _, err := secrets.secrets.Revoke(t.Context(), audit.System("test-fixture"), r.f.env, secrets.secretID, "revoke"); err != nil {
 				t.Fatal(err)
 			}
 			if err := session.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); !errors.Is(err, computer.ErrDenied) {
@@ -213,7 +214,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 func TestPreparationImageRevocationDeniesCheckpointProgress(t *testing.T) {
 	f := newCheckpointStorageFixture(t)
 	secrets := checkpointImageExposure(t, f.f)
-	if _, err := secrets.secrets.Revoke(t.Context(), f.f.env, secrets.secretID, "revoke"); err != nil {
+	if _, err := secrets.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); !errors.Is(err, computer.ErrDenied) {
@@ -227,7 +228,7 @@ func TestPreparationImageRevocationDeniesCaptureReplay(t *testing.T) {
 	if _, err := session.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); !errors.Is(err, computer.ErrDenied) {
@@ -239,7 +240,7 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 	p := preparationResidentImage(t)
 	admission := p.f.enqueue(t, "queued")
 	dbtest.MustExec(t, t.Context(), p.f.pool, `DELETE FROM session_processes WHERE environment_id=$1 AND session_id=$2`, p.f.env, p.f.session)
-	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -280,7 +281,7 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = p.f.secrets.Revoke(t.Context(), f.env, p.f.secretID, "revoke"); err != nil {
+			if _, err = p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
 				t.Fatal(err)
 			}
 			switch observer {
@@ -314,7 +315,7 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 func TestPreparationImageRevocationSettlesHibernatedSource(t *testing.T) {
 	r := newComputerRestoreFixture(t)
 	secrets := checkpointImageExposure(t, r.f)
-	if _, err := secrets.secrets.Revoke(t.Context(), r.f.env, secrets.secretID, "revoke"); err != nil {
+	if _, err := secrets.secrets.Revoke(t.Context(), audit.System("test-fixture"), r.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), r.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {

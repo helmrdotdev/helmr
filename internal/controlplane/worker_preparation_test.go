@@ -14,6 +14,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
@@ -133,7 +134,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				record, err := secrets.Create(t.Context(), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
+				record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -160,7 +161,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 					t.Fatal("file placement lost")
 				}
 				clear(first.Secrets[0].Value)
-				if _, err := secrets.Rotate(t.Context(), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
+				if _, err := secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
 					t.Fatal(err)
 				}
 				replay, err := client.PreparationSecrets(t.Context(), request)
@@ -175,7 +176,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 					case "seal":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 					case "revocation":
-						if _, err := secrets.Revoke(t.Context(), f.Environment, secretID, "revoke"); err != nil {
+						if _, err := secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke"); err != nil {
 							t.Error(err)
 						}
 					}

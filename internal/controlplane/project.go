@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -246,7 +247,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
+	environment, err := org.UpdateEnvironment(r.Context(), s.tx, audit.FromPrincipal(principal), principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
 		Name: request.Name, ColorHex: colorHex,
 		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	})

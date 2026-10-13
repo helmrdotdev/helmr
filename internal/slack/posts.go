@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -308,7 +309,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		}
 		switch result.Code {
 		case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-			return recordAuthorizationLoss(ctx, tx, claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
+			return recordAuthorizationLoss(ctx, tx, audit.System("slack-provider"), claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
 		}
 		return nil
 	default:

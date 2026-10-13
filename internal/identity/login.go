@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -55,12 +56,11 @@ func (i ExternalIdentity) Verifies(email string) bool {
 func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (string, error) {
 	var rawSession string
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		q := db.New(tx)
-		user, err := upsertExternalIdentity(ctx, q, cfg, external)
+		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
 		if err != nil {
 			return err
 		}
-		rawSession, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, nil)
+		rawSession, err = startLoginSession(ctx, tx, cfg, user, external.DisplayName, nil)
 		return err
 	})
 	if err != nil {
@@ -102,11 +102,11 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 		if !external.Verifies(invitation.InviteeEmail) {
 			return ErrWrongAccount
 		}
-		user, err := upsertExternalIdentity(ctx, q, cfg, external)
+		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
 		if err != nil {
 			return err
 		}
-		rawSession, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, &invitation)
+		rawSession, err = startLoginSession(ctx, tx, cfg, user, external.DisplayName, &invitation)
 		return err
 	})
 	if err != nil {
@@ -117,17 +117,20 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 
 // signedInUser is the user an identity upsert selected.
 type signedInUser struct {
+	actor    audit.Actor
 	id       pgtype.UUID
 	disabled bool
 }
 
-func upsertExternalIdentity(ctx context.Context, q db.Querier, cfg Config, external ExternalIdentity) (signedInUser, error) {
+func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
+	q := db.New(tx)
+	proposedUser := uuid.NewV7()
 	email := pgtype.Text{}
 	if external.Email != "" {
 		email = pgtype.Text{String: external.Email, Valid: true}
 	}
 	user, err := q.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.NewV7()),
+		UserID:           pgvalue.UUID(proposedUser),
 		IdentityID:       pgvalue.UUID(uuid.NewV7()),
 		IdentityProvider: external.Provider,
 		IdentitySubject:  external.Subject,
@@ -140,13 +143,19 @@ func upsertExternalIdentity(ctx context.Context, q db.Querier, cfg Config, exter
 	if err != nil {
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
-	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid}, nil
+	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, NewRole: "admin"}); err != nil {
+			return signedInUser{}, err
+		}
+	}
+	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
 }
 
 // startLoginSession issues a login session for an enabled user. With an
 // invitation, the user first joins its organization and the session selects
 // that organization.
-func startLoginSession(ctx context.Context, q db.Querier, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
+func startLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
+	q := db.New(tx)
 	if user.disabled {
 		return "", ErrInactiveMember
 	}
@@ -156,7 +165,7 @@ func startLoginSession(ctx context.Context, q db.Querier, cfg Config, user signe
 		if err != nil {
 			return "", fmt.Errorf("user id: %w", err)
 		}
-		if err := AcceptInvitation(ctx, q, *invitation, userID, displayName); err != nil {
+		if err := AcceptInvitation(ctx, tx, user.actor, *invitation, userID, displayName); err != nil {
 			return "", acceptanceError(err)
 		}
 		orgID = pgvalue.UUID(invitation.OrgID)

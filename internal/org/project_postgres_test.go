@@ -14,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -206,7 +207,7 @@ func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
 	}
 	environments = append(environments, preview)
 	for _, environment := range environments {
-		updated, err := UpdateEnvironment(t.Context(), f.queries, f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
+		updated, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
 		if err != nil || updated.Slug != environment.Slug || updated.Name != "New display name" {
 			t.Fatalf("environment identity changed: %+v %v", updated, err)
 		}
@@ -546,13 +547,28 @@ func TestHistoryRetentionPolicyRequiredAndAtomic(t *testing.T) {
 		}
 	}
 	env := envs[0]
-	updated, err := UpdateEnvironment(t.Context(), db.New(f.pool), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex})
+	updated, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex})
 	if err != nil || updated.HistoryRetentionMode != "duration" || updated.HistoryRetentionSeconds.Int64 != positive {
 		t.Fatalf("rename changed policy: %+v %v", updated, err)
 	}
-	updated, err = UpdateEnvironment(t.Context(), db.New(f.pool), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex, HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}})
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("metadata-only update audited: %d %v", count, err)
+	}
+	updated, err = UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Slug: env.Slug, Name: "Renamed", ColorHex: env.ColorHex, HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}})
 	if err != nil || updated.HistoryRetentionMode != "until_environment_deletion" || updated.HistoryRetentionSeconds.Valid {
 		t.Fatalf("explicit policy update failed: %+v %v", updated, err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='environment.retention_changed' AND target_id=$1 AND old_retention_mode='duration' AND old_retention_seconds=$2 AND new_retention_mode='until_environment_deletion' AND new_retention_seconds IS NULL`, env.ID, positive).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retention facts: %d %v", count, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_retention_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_retention_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_retention_audit()`)
+	if _, err := UpdateEnvironment(t.Context(), f.pool, audit.System("test-fixture"), f.orgID, pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(env.ID), EnvironmentDetails{Name: env.Name, ColorHex: env.ColorHex, HistoryRetention: HistoryRetentionPolicy{Mode: "duration", Seconds: &positive}}); err == nil {
+		t.Fatal("audit failure allowed retention update")
+	}
+	var retained string
+	if err := f.pool.QueryRow(t.Context(), `SELECT history_retention_mode FROM environments WHERE id=$1`, env.ID).Scan(&retained); err != nil || retained != "until_environment_deletion" {
+		t.Fatalf("retention rollback: %s %v", retained, err)
 	}
 	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "missing", ColorHex: "#123456"}, testExecutionLimits()); err == nil {
 		t.Fatal("new Environment accepted no policy")

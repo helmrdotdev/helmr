@@ -2110,3 +2110,42 @@ ALTER TABLE turns
 ALTER TABLE disk_encryption_keys
     ADD FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id, id), 
     ADD FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT;
+
+-- Historical facts deliberately do not reference mutable or prunable authority rows.
+CREATE TABLE audit_events (
+    id uuid PRIMARY KEY,
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    outcome text NOT NULL DEFAULT 'succeeded' CHECK (outcome = 'succeeded'),
+    actor_kind text NOT NULL CHECK (actor_kind IN ('login','api_key','verified_login','capacity','system')),
+    actor_user_id uuid,
+    actor_credential_id uuid,
+    actor_source text NOT NULL DEFAULT '',
+    org_id uuid,
+    project_id uuid,
+    environment_id uuid,
+    action text NOT NULL CHECK (action <> ''),
+    target_kind text NOT NULL CHECK (target_kind <> ''),
+    target_id uuid,
+    target_user_id uuid,
+    slack_team_id text NOT NULL DEFAULT '',
+    slack_user_id text NOT NULL DEFAULT '',
+    old_role text NOT NULL DEFAULT '',
+    new_role text NOT NULL DEFAULT '',
+    permissions text[],
+    expires_at timestamptz,
+    old_retention_seconds bigint,
+    new_retention_seconds bigint,
+    old_retention_mode text NOT NULL DEFAULT '',
+    new_retention_mode text NOT NULL DEFAULT '',
+    CHECK (project_id IS NULL OR org_id IS NOT NULL),
+    CHECK (environment_id IS NULL OR project_id IS NOT NULL),
+    CHECK (
+        (actor_kind = 'login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
+        (actor_kind = 'api_key' AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
+        (actor_kind = 'verified_login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> '') OR
+        (actor_kind = 'capacity' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = '') OR
+        (actor_kind = 'system' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> '')
+    ),
+    CHECK (target_id IS NOT NULL OR (target_kind = 'slack_user_link' AND target_user_id IS NOT NULL AND slack_team_id <> '' AND slack_user_id <> ''))
+);
+CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);

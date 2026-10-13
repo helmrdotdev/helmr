@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -73,6 +74,9 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 			return err
 		}
 		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
+			return err
+		}
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(principal), EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
 			return err
 		}
 		result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)

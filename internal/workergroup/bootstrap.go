@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -60,11 +61,15 @@ func Bootstrap(ctx context.Context, txb db.TxBeginner, cfg BootstrapConfig) erro
 		if err != nil {
 			return err
 		}
-		if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
+		created, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 			ID: pgvalue.UUID(uuid.NewV7()), TokenID: pgvalue.UUID(uuid.NewV7()),
 			TokenHash: tokenHash, RegionID: cfg.RegionID, Name: cfg.GroupName, Description: "",
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("create bootstrap worker group: %w", err)
+		}
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-group-bootstrap"), Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+			return err
 		}
 		return nil
 	})

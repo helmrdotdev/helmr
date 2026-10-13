@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -248,7 +249,7 @@ func TestSecretProxySeparatesStaleClaimsFromRevocation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newSnapshotFixture(t, 1, true)
 			if test.sql == "" {
-				if _, err := f.store.Revoke(t.Context(), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
+				if _, err := f.store.Revoke(t.Context(), audit.System("test-fixture"), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			} else {

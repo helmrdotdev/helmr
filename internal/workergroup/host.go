@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -72,9 +73,10 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			return ErrHostCustody
 		}
 		var err error
+		proposedPool := uuid.NewV7()
 		hostSecret, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
 			TokenHash:        enrollment.TokenHash,
-			WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
+			WorkerPoolID:     pgvalue.UUID(proposedPool),
 			PoolName:         enrollment.PoolName,
 			WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
 			CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
@@ -83,7 +85,13 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			KeyPrefix:        generated.KeyPrefix,
 			SecretHash:       generated.SecretHash,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
+			return audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
+		}
+		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
@@ -166,10 +174,16 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipa
 			if err != nil {
 				return err
 			}
-			if _, err := q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
+			selected, err := q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
 				WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerPoolID: poolID,
-			}); err != nil {
+			})
+			if err != nil {
 				return err
+			}
+			if !group.PrimaryPoolID.Valid && selected.PrimaryPoolID.Valid {
+				if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
+					return err
+				}
 			}
 		case "active", "draining":
 			shapes, err := q.ListWorkerPoolCPUShapes(ctx, poolID)

@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -233,11 +234,11 @@ func CompleteMagicLink(ctx context.Context, txb db.TxBeginner, cfg Config, rawTo
 		default:
 			return errors.New("unknown magic link purpose")
 		}
-		user, err := upsertMagicLinkIdentity(ctx, q, cfg, external)
+		user, err := upsertMagicLinkIdentity(ctx, tx, cfg, external)
 		if err != nil {
 			return err
 		}
-		completed.Session, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, invitation)
+		completed.Session, err = startLoginSession(ctx, tx, cfg, user, external.DisplayName, invitation)
 		if err != nil {
 			return err
 		}
@@ -276,9 +277,11 @@ func magicLinkIdentity(email string) ExternalIdentity {
 // upsertMagicLinkIdentity records a magic link identity. Unlike a provider
 // identity, a delivered link verifies its address, which always becomes the
 // user's primary email.
-func upsertMagicLinkIdentity(ctx context.Context, q db.Querier, cfg Config, external ExternalIdentity) (signedInUser, error) {
+func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
+	q := db.New(tx)
+	proposedUser := uuid.NewV7()
 	user, err := q.UpsertMagicLinkAuthIdentity(ctx, db.UpsertMagicLinkAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.NewV7()),
+		UserID:           pgvalue.UUID(proposedUser),
 		IdentityID:       pgvalue.UUID(uuid.NewV7()),
 		IdentityProvider: external.Provider,
 		IdentitySubject:  external.Subject,
@@ -290,5 +293,10 @@ func upsertMagicLinkIdentity(ctx context.Context, q db.Querier, cfg Config, exte
 	if err != nil {
 		return signedInUser{}, fmt.Errorf("record magic link identity: %w", err)
 	}
-	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid}, nil
+	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, true) {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, NewRole: "admin"}); err != nil {
+			return signedInUser{}, err
+		}
+	}
+	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
 }

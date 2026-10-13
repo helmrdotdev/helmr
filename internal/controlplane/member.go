@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -123,7 +124,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
-	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.db, s.authKeys.Invitation, managingMember(principalFromContext(r.Context())), org.InvitationInput{
+	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.tx, s.authKeys.Invitation, managingMember(principalFromContext(r.Context())), org.InvitationInput{
 		Email:         input.Email,
 		Role:          input.Role,
 		ExpiresInDays: input.ExpiresInDays,
@@ -149,7 +150,7 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(org.ErrInvitationNotFound))
 		return
 	}
-	if err := org.RevokeInvitation(r.Context(), s.db, managingMember(principalFromContext(r.Context())), invitationID); err != nil {
+	if err := org.RevokeInvitation(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), invitationID); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
@@ -167,7 +168,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	updated, err := org.UpdateMemberRole(r.Context(), s.db, managingMember(principalFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
+	updated, err := org.UpdateMemberRole(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -194,7 +195,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func managingMember(principal auth.Principal) org.ManagingMember {
-	return org.ManagingMember{OrgID: principal.OrgID, UserID: principal.UserID, Role: principal.Role}
+	return org.ManagingMember{Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, Role: principal.Role}
 }
 
 func (s *Server) inviteURL(token string) string {

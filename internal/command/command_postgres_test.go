@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -348,7 +349,7 @@ func commandSecrets(t *testing.T, f fixture) (*secret.Store, uuid.UUID) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := store.Create(t.Context(), f.Environment, "COMMAND_TOKEN", []byte("first"), "secret")
+	s, err := store.Create(t.Context(), audit.System("test-fixture"), f.Environment, "COMMAND_TOKEN", []byte("first"), "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,14 +366,14 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND command_id=$2`, f.Environment, id).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("admission selected Secret: %d %v", count, err)
 	}
-	if _, err := store.Rotate(t.Context(), f.Environment, secretID, []byte("second"), "rotate-before-delivery"); err != nil {
+	if _, err := store.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("second"), "rotate-before-delivery"); err != nil {
 		t.Fatal(err)
 	}
 	first, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
 	if err != nil || first.Start == nil || len(first.Start.Secrets) != 1 || first.Start.Secrets[0].Version.Version != 2 {
 		t.Fatalf("first delivery %+v %v", first, err)
 	}
-	if _, err = store.Rotate(t.Context(), f.Environment, secretID, []byte("third"), "rotate-after-delivery"); err != nil {
+	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("third"), "rotate-after-delivery"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
@@ -396,7 +397,7 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err = CheckStart(t.Context(), f.Pool, f.host(), *first.Start); err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.Revoke(t.Context(), f.Environment, secretID, "revoke")
+	_, err = store.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +541,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if _, err = Create(t.Context(), f.Pool, exec); err != nil {
 		t.Fatalf("retained command replay: %v", err)
 	}
-	if _, err = store.Revoke(t.Context(), f.Environment, secretID, "revoke-after-create"); err != nil {
+	if _, err = store.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke-after-create"); err != nil {
 		t.Fatal(err)
 	}
 	replay, err = creator.Create(t.Context(), f.Pool, request)
@@ -584,7 +585,7 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if err != nil || len(values) != 1 {
 		t.Fatalf("resolve: %d %v", len(values), err)
 	}
-	if _, err = store.Rotate(t.Context(), f.Environment, secretID, []byte("next"), "protected-rotate"); err != nil {
+	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("next"), "protected-rotate"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := Claim(t.Context(), f.Pool, f.host(), f.claim())

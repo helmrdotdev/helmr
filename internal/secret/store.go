@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -112,7 +113,7 @@ func mutationKey(raw string, required bool) (string, error) {
 
 // Create serializes Environment-owned name and retry identities. Its first
 // encrypted version is the immutable value receipt, even after rotation/revocation.
-func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -155,6 +156,10 @@ func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
+
+			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.created", TargetKind: "secret", TargetID: pgvalue.MustUUIDValue(record.ID)}); err != nil {
+				return idempotency.Completion{}, err
+			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
 			return idempotency.Completion{Target: idempotency.Target{SecretID: pgvalue.MustUUIDValue(record.ID), SecretVersionID: pgvalue.MustUUIDValue(record.CurrentVersionID)}, Receipt: []byte(`{}`)}, err
 		})
@@ -163,7 +168,7 @@ func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []
 }
 
 // Rotate binds retries to the exact encrypted version and never rewrites pins.
-func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -207,6 +212,9 @@ func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, ide
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
+			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.rotated", TargetKind: "secret", TargetID: id}); err != nil {
+				return idempotency.Completion{}, err
+			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
 			return idempotency.Completion{Target: idempotency.Target{SecretID: id, SecretVersionID: versionID}, Receipt: []byte(`{}`)}, err
 		})
@@ -215,7 +223,7 @@ func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, ide
 }
 
 // Revoke records intent, never a claim that physical execution has stopped.
-func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -240,6 +248,9 @@ func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, idempotencyKey st
 			q := db.New(tx)
 			if record.Status != "revoked" {
 				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID}); err != nil {
+					return idempotency.Completion{}, err
+				}
+				if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.revoked", TargetKind: "secret", TargetID: id}); err != nil {
 					return idempotency.Completion{}, err
 				}
 			}
