@@ -19,11 +19,9 @@ var (
 	ProcessStopTimeout           = processStopTimeout
 	ReconcileProcessStopDeadline = reconcileProcessStopDeadline
 	ReconcileSessionCompletion   = reconcileSessionCompletion
-	ReconcileSessionHistory      = reconcileSessionHistory
 	ReconcileSessionIdle         = reconcileSessionIdle
 	ReconcileSessionLifecycle    = reconcileSessionLifecycle
 	ReconcileTerminalSessionStop = reconcileTerminalSessionStop
-	RetainSessionHistory         = retainSessionHistory
 )
 
 // Session reports the Session a lifecycle scan stopped at.

@@ -77,8 +77,6 @@ var tableOwners = map[string]string{
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
 	"environments":   {"internal/deployment": "owner split"},
-	"slack_posts":    {"internal/session": "owner split"},
-	"slack_requests": {"internal/session": "owner split"},
 	"login_sessions": {"internal/org": "member disablement revokes sessions"},
 	"users":          {"internal/org": "organization creation records the owner"},
 }

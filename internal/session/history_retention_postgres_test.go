@@ -8,13 +8,14 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slack"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func reconcileHistory(t *testing.T, f fixture) {
 	t.Helper()
-	if err := session.RetainSessionHistory(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := slack.RetainSessionHistory(t.Context(), f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -148,14 +149,14 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 	ready := f
 	ready.session = last
 	fenceHistoryProcess(t, ready)
-	next, more, err := session.ReconcileSessionHistory(t.Context(), f.pool, session.SessionLifecyclePosition{})
+	next, more, err := slack.ReconcileHistory(t.Context(), f.pool, slack.HistoryPosition{})
 	if err != nil || !more {
 		t.Fatalf("first page: %v %v", more, err)
 	}
 	if historyClock(t, ready) != nil {
 		t.Fatal("last owner should be on second page")
 	}
-	_, more, err = session.ReconcileSessionHistory(t.Context(), f.pool, next)
+	_, more, err = slack.ReconcileHistory(t.Context(), f.pool, next)
 	if err != nil || more || historyClock(t, ready) == nil {
 		t.Fatalf("blocked prefix starved later owner: %v %v", more, err)
 	}
@@ -177,5 +178,30 @@ func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 	reconcileHistory(t, f)
 	if historyClock(t, f) == nil {
 		t.Fatal("maximum duration clock not recorded")
+	}
+}
+
+func TestHistoryRetentionRollsBackWhenSlackPurgeFails(t *testing.T) {
+	f := newFixture(t)
+	turn := f.enqueue(t, "retention-rollback")
+	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+		t.Fatal(err)
+	}
+	fenceHistoryProcess(t, f)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=1,history_eligible_at=statement_timestamp()-interval '2 seconds',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-1 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_slack_history_purge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Slack history purge failure'; END $$;
+ CREATE TRIGGER reject_slack_history_purge BEFORE UPDATE ON slack_requests FOR EACH STATEMENT EXECUTE FUNCTION reject_slack_history_purge()`)
+	if err := slack.RetainSessionHistory(t.Context(), f.pool, f.env, f.session); err == nil {
+		t.Fatal("Slack purge failure committed Session expiry")
+	}
+	var retained bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.history_expired_at IS NULL AND t.input IS NOT NULL AND t.payload_expired_at IS NULL FROM sessions s JOIN turns t ON t.environment_id=s.environment_id AND t.session_id=s.id WHERE t.id=$1`, turn.TurnID).Scan(&retained); err != nil || !retained {
+		t.Fatalf("Session content did not roll back: %v %v", retained, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_slack_history_purge ON slack_requests; DROP FUNCTION reject_slack_history_purge()`)
+	reconcileHistory(t, f)
+	var expired bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.history_expired_at IS NOT NULL AND t.input IS NULL AND t.payload_expired_at IS NOT NULL FROM sessions s JOIN turns t ON t.environment_id=s.environment_id AND t.session_id=s.id WHERE t.id=$1`, turn.TurnID).Scan(&expired); err != nil || !expired {
+		t.Fatalf("retry did not expire Session content: %v %v", expired, err)
 	}
 }

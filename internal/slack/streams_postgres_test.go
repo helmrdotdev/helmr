@@ -472,7 +472,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			done := make(chan error, 1)
 			go func() {
-				done <- session.RunSessionHistoryRetention(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				done <- RunHistoryRetention(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			}()
 			expired := false
 			for ctx.Err() == nil {

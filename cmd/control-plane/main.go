@@ -272,7 +272,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) }},
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
-		{name: "Session history retention", run: func(ctx context.Context) error { return session.RunSessionHistoryRetention(ctx, pool, log) }},
+		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
