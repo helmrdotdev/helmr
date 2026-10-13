@@ -67,5 +67,5 @@ selected_user AS (
 )
 SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user;
 
--- name: GrantUserAdmin :exec
-UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id);
+-- name: GrantUserAdmin :execrows
+UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id) AND NOT admin;

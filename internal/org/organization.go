@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 
 // OrganizationInput describes an organization to create and the user who owns it.
 type OrganizationInput struct {
+	Actor       audit.Actor
 	Slug        string
 	Name        string
 	OwnerUserID uuid.UUID
@@ -62,6 +64,13 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 		DisplayName: pgtype.Text{},
 	}); err != nil {
 		return db.Organization{}, fmt.Errorf("create organization owner: %w", err)
+	}
+	orgID := pgvalue.MustUUIDValue(organization.ID)
+	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
+		return db.Organization{}, err
+	}
+	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: input.OwnerUserID, NewRole: "owner"}); err != nil {
+		return db.Organization{}, err
 	}
 	return organization, nil
 }

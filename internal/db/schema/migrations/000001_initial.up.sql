@@ -2133,8 +2133,10 @@ CREATE TABLE audit_events (
     new_role text NOT NULL DEFAULT '',
     permissions text[],
     expires_at timestamptz,
-    old_retention_days integer,
-    new_retention_days integer,
+    old_retention_seconds bigint,
+    new_retention_seconds bigint,
+    old_retention_mode text NOT NULL DEFAULT '',
+    new_retention_mode text NOT NULL DEFAULT '',
     CHECK (project_id IS NULL OR org_id IS NOT NULL),
     CHECK (environment_id IS NULL OR project_id IS NOT NULL),
     CHECK (

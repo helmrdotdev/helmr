@@ -273,7 +273,7 @@ func TestImageRefreshYieldsToAttachedRotationSuccessor(t *testing.T) {
 func TestImageRefreshLifecycleSkipsPermanentlyRevokedSecret(t *testing.T) {
 	f := newPreparationFixture(t)
 	due := dueImageRefresh(t, f)
-	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "no-refresh"); err != nil {
+	if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "no-refresh"); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(t.Context())

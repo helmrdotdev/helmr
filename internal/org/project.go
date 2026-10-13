@@ -6,10 +6,12 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ProjectDetails are the editable fields of a project.
@@ -256,7 +258,7 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 }
 
 // UpdateEnvironment changes display settings while preserving the public identifier.
-func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
+func UpdateEnvironment(ctx context.Context, database db.TxBeginner, actor audit.Actor, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
 	if details.HistoryRetention.Mode != "" || details.HistoryRetention.Seconds != nil {
 		if err := details.HistoryRetention.Validate(); err != nil {
 			return db.Environment{}, err
@@ -266,24 +268,50 @@ func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, proje
 	if err != nil {
 		return db.Environment{}, err
 	}
-	environment, err := q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{
-		OrgID:                   pgvalue.UUID(orgID),
-		ProjectID:               pgvalue.UUID(projectID),
-		ID:                      pgvalue.UUID(environmentID),
-		Name:                    name,
-		ColorHex:                details.ColorHex,
-		HistoryRetentionMode:    details.HistoryRetention.Mode,
-		HistoryRetentionSeconds: details.HistoryRetention.seconds(),
+	var environment db.Environment
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var oldMode string
+		var oldSeconds pgtype.Int8
+		if err := tx.QueryRow(ctx, `SELECT history_retention_mode,history_retention_seconds FROM environments WHERE org_id=$1 AND project_id=$2 AND id=$3 FOR NO KEY UPDATE`, orgID, projectID, environmentID).Scan(&oldMode, &oldSeconds); isNoRows(err) {
+			return ErrEnvironmentNotFound
+		} else if err != nil {
+			return err
+		}
+		q := db.New(tx)
+		environment, err = q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{
+			OrgID:                   pgvalue.UUID(orgID),
+			ProjectID:               pgvalue.UUID(projectID),
+			ID:                      pgvalue.UUID(environmentID),
+			Name:                    name,
+			ColorHex:                details.ColorHex,
+			HistoryRetentionMode:    details.HistoryRetention.Mode,
+			HistoryRetentionSeconds: details.HistoryRetention.seconds(),
+		})
+		if isNoRows(err) {
+			return ErrEnvironmentNotFound
+		}
+		if db.IsUniqueViolation(err) {
+			return ErrEnvironmentSlugInUse
+		}
+		if err != nil {
+			return fmt.Errorf("update environment: %w", err)
+		}
+		if oldMode != environment.HistoryRetentionMode || oldSeconds != environment.HistoryRetentionSeconds {
+			var before, after *int64
+			if oldSeconds.Valid {
+				before = &oldSeconds.Int64
+			}
+			if environment.HistoryRetentionSeconds.Valid {
+				after = &environment.HistoryRetentionSeconds.Int64
+			}
+			return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: orgID, EnvironmentID: environmentID, Action: "environment.retention_changed", TargetKind: "environment", TargetID: environmentID, OldRetentionMode: oldMode, NewRetentionMode: environment.HistoryRetentionMode, OldRetentionSeconds: before, NewRetentionSeconds: after})
+		}
+		return nil
 	})
-	if isNoRows(err) {
-		return db.Environment{}, ErrEnvironmentNotFound
-	}
-	if db.IsUniqueViolation(err) {
-		return db.Environment{}, ErrEnvironmentSlugInUse
-	}
 	if err != nil {
-		return db.Environment{}, fmt.Errorf("update environment: %w", err)
+		return db.Environment{}, err
 	}
+
 	return environment, nil
 }
 
