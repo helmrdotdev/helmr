@@ -404,3 +404,38 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 		t.Fatal("incorrect bootstrap primary fact", intact, err)
 	}
 }
+
+func TestEnrolledPoolAuditAtomicityAndSingleCreation(t *testing.T) {
+	f := newSupplyFixture(t)
+	cfg := testHostAuthConfig(t)
+	tokenHash, err := auth.ParseEnrollmentToken(f.enrollmentToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment := Enrollment{TokenHash: tokenHash, PoolName: "new-pool", ResourceID: "i-first-enrollment"}
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_pool_creation_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_pool_creation_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_pool_creation_audit()`)
+	if _, err := EnrollHost(t.Context(), f.pool, cfg, enrollment); err == nil {
+		t.Fatal("audit failure allowed pool bootstrap")
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM worker_pools)+(SELECT count(*) FROM worker_hosts)+(SELECT count(*) FROM worker_host_secrets)`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("pool or host credentials survived rollback", count, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_pool_creation_audit ON audit_events`)
+	first, err := EnrollHost(t.Context(), f.pool, cfg, enrollment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment.ResourceID = "i-second-enrollment"
+	second, err := EnrollHost(t.Context(), f.pool, cfg, enrollment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PoolID != second.PoolID {
+		t.Fatal("existing pool was not reused")
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.created' AND target_id=$1 AND actor_kind='system' AND actor_source='worker-pool-bootstrap'`, first.PoolID).Scan(&count); err != nil || count != 1 {
+		t.Fatal("pool bootstrap fact missing or repeated", count, err)
+	}
+}

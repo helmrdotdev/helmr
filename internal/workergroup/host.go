@@ -73,9 +73,10 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			return ErrHostCustody
 		}
 		var err error
+		proposedPool := uuid.NewV7()
 		hostSecret, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
 			TokenHash:        enrollment.TokenHash,
-			WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
+			WorkerPoolID:     pgvalue.UUID(proposedPool),
 			PoolName:         enrollment.PoolName,
 			WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
 			CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
@@ -84,7 +85,13 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			KeyPrefix:        generated.KeyPrefix,
 			SecretHash:       generated.SecretHash,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
+			return audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
+		}
+		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
