@@ -2,11 +2,6 @@ package controlplane
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,26 +9,33 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
-	raw, err := encodeScheduleListCursor(scheduleListCursor{
+func TestTriggerListCursorRoundTripAndScope(t *testing.T) {
+	raw, err := encodeTriggerListCursor(triggerListCursor{
 		ProjectID:     "project-1",
 		EnvironmentID: "environment-1",
 		AgentID:       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-		ScheduleID:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+		TriggerID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(
 		http.MethodGet,
-		"/v1/schedules?limit=25&cursor="+raw,
+		"/v1/triggers?limit=25&cursor="+raw,
 		nil,
 	)
-	limit, cursor, err := parseScheduleListQuery(
+	limit, cursor, err := parseTriggerListQuery(
 		request,
 		"project-1",
 		"environment-1",
@@ -43,10 +45,10 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	}
 	if limit != 25 || cursor == nil ||
 		cursor.AgentID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" ||
-		cursor.ScheduleID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" {
+		cursor.TriggerID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" {
 		t.Fatalf("limit=%d cursor=%+v", limit, cursor)
 	}
-	if _, _, err := parseScheduleListQuery(
+	if _, _, err := parseTriggerListQuery(
 		request,
 		"project-1",
 		"environment-2",
@@ -55,28 +57,28 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	}
 }
 
-func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
+func TestTriggerListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	for _, target := range []string{
-		"/v1/schedules?task=unexpected",
-		"/v1/schedules?agent_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-		"/v1/schedules?limit=0",
-		"/v1/schedules?limit=101",
-		"/v1/schedules?cursor=invalid",
+		"/v1/triggers?task=unexpected",
+		"/v1/triggers?agent_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+		"/v1/triggers?limit=0",
+		"/v1/triggers?limit=101",
+		"/v1/triggers?cursor=invalid",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
-		if _, _, err := parseScheduleListQuery(
+		if _, _, err := parseTriggerListQuery(
 			request,
 			"project-1",
 			"environment-1",
 		); err == nil {
-			t.Fatalf("parseScheduleListQuery(%q) succeeded", target)
+			t.Fatalf("parseTriggerListQuery(%q) succeeded", target)
 		}
 	}
 }
 
-func TestScheduleListQueryAcceptsAgentFilter(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?agent=worker", nil)
-	limit, cursor, err := parseScheduleListQuery(request, "project-1", "environment-1")
+func TestTriggerListQueryAcceptsAgentFilter(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/triggers?agent=worker", nil)
+	limit, cursor, err := parseTriggerListQuery(request, "project-1", "environment-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,37 +87,37 @@ func TestScheduleListQueryAcceptsAgentFilter(t *testing.T) {
 	}
 }
 
-func TestScheduleResponseProjectsActivationInterval(t *testing.T) {
+func TestTriggerResponseProjectsActivationInterval(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
-	row := db.AgentSchedule{ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
-	response, err := scheduleResponse(row, "worker")
+	row := db.ListTriggersRow{Agent: "worker", ID: pgvalue.UUID(uuid.NewV7()), AgentID: pgvalue.UUID(uuid.NewV7()), DeploymentID: pgvalue.UUID(uuid.NewV7()), TriggerKey: "daily", Cron: "0 9 * * *", Timezone: "UTC", Input: []byte(`[{"type":"text","text":"{\"report\":true}"}]`), ActiveFrom: pgvalue.Timestamptz(now), NextFireAt: pgvalue.Timestamptz(now.Add(time.Hour))}
+	response, err := triggerResponse(row)
 	if err != nil || response.Agent != "worker" || response.TriggerKey != "daily" || response.NextFireAt == nil || response.ActiveUntil != nil || string(response.Input) != string(row.Input) {
 		t.Fatalf("response=%+v error=%v", response, err)
 	}
 	row.ActiveUntil = row.NextFireAt
-	response, err = scheduleResponse(row, "worker")
+	response, err = triggerResponse(row)
 	if err != nil || response.NextFireAt != nil || response.ActiveUntil == nil {
 		t.Fatalf("closed interval=%+v error=%v", response, err)
 	}
 }
 
-func TestScheduleCursorRejectsFilterChange(t *testing.T) {
+func TestTriggerCursorRejectsFilterChange(t *testing.T) {
 	id := uuid.NewV7().String()
-	raw, err := encodeScheduleListCursor(scheduleListCursor{ProjectID: "p", EnvironmentID: "e", AgentID: id, ScheduleID: id, FilterAgent: id})
+	raw, err := encodeTriggerListCursor(triggerListCursor{ProjectID: "p", EnvironmentID: "e", AgentID: id, TriggerID: id, FilterAgent: id})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?cursor="+raw, nil)
-	if _, _, err := parseScheduleListQuery(request, "p", "e"); err == nil {
+	request := httptest.NewRequest(http.MethodGet, "/v1/triggers?cursor="+raw, nil)
+	if _, _, err := parseTriggerListQuery(request, "p", "e"); err == nil {
 		t.Fatal("changed filter accepted")
 	}
-	request = httptest.NewRequest(http.MethodGet, "/v1/schedules?agent="+id+"&cursor="+raw+"&limit=2", nil)
-	if limit, _, err := parseScheduleListQuery(request, "p", "e"); err != nil || limit != 2 {
+	request = httptest.NewRequest(http.MethodGet, "/v1/triggers?agent="+id+"&cursor="+raw+"&limit=2", nil)
+	if limit, _, err := parseTriggerListQuery(request, "p", "e"); err != nil || limit != 2 {
 		t.Fatalf("error=%v", err)
 	}
 }
 
-func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
+func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	f := agenttest.New(t)
 	var org, project uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
@@ -133,7 +135,8 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 			v := at.Add(time.Hour)
 			until = &v
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,active_until,next_fire_at,lateness_tolerance_ms) VALUES($1,$2,$3,$4,$5,'0 * * * *','UTC','{"report":true}',$6,$7,$8,300000)`, f.Environment, id, f.Agent, f.Deployment, trigger, at, until, at.Add(time.Hour))
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) VALUES($1,$3,$4,$5,'0 * * * *','UTC','{"report":true}') ON CONFLICT DO NOTHING;
+ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,active_until,next_fire_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, pgx.QueryExecModeSimpleProtocol, f.Environment, id, f.Agent, f.Deployment, trigger, at, until, at.Add(time.Hour))
 	}
 	q := db.New(f.Pool)
 	cfg := completeServerConfig(t)
@@ -151,7 +154,7 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	}
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: q, handler: handler, keys: keys}
 	token := httpFixture.session(t, f.User, org)
-	base := "/api/projects/project/environments/test/schedules"
+	base := "/api/projects/project/environments/test/triggers"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
 	path := base + "?agent=agent&limit=1"
 	seen := map[string]bool{}
@@ -160,14 +163,14 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 		if response.Code != http.StatusOK {
 			t.Fatalf("list=%d %s", response.Code, response.Body)
 		}
-		var page api.ListSchedulesResponse
+		var page api.ListTriggersResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
 			t.Fatal(err)
 		}
-		if len(page.Schedules) != 1 || seen[page.Schedules[0].ID] {
+		if len(page.Triggers) != 1 || seen[page.Triggers[0].ID] {
 			t.Fatalf("page=%+v", page)
 		}
-		row := page.Schedules[0]
+		row := page.Triggers[0]
 		seen[row.ID] = true
 		var input struct {
 			Report bool `json:"report"`
@@ -198,6 +201,6 @@ func TestScheduleHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	otherToken := httpFixture.session(t, f.User, foreignOrg)
 	denied := httpFixture.request(t, http.MethodGet, base, otherToken, "")
 	if denied.Code == http.StatusOK {
-		t.Fatal("cross-Organization schedule read succeeded")
+		t.Fatal("cross-Organization trigger read succeeded")
 	}
 }

@@ -1,5 +1,5 @@
 // Package deployment owns persisted Deployments of an environment: finalizing
-// an uploaded bundle into a Deployment, promoting its schedules and preparation
+// an uploaded bundle into a Deployment, promoting its triggers and preparation
 // refresh policy, and reading Deployments and their
 // declared definitions. Operations take the calling principal where
 // authorization applies, own their transactions and return the errors declared
@@ -44,7 +44,7 @@ var (
 
 // InputError reports a caller-supplied request or bundle that the Deployment
 // domain rejects: an idempotency key, an uploaded bundle that cannot be
-// admitted, or schedules that cannot be reconciled on promotion.
+// admitted, or triggers that cannot be reconciled on promotion.
 type InputError struct {
 	Err error
 }

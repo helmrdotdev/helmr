@@ -98,7 +98,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 
 	runners := []dispatcherRunner{
 		{name: "stale host fencer", run: staleHostFencer.Run},
-		{name: "Agent schedules", run: func(ctx context.Context) error { return agent.RunSchedules(ctx, pool, secretStore, log) }},
+		{name: "Agent triggers", run: func(ctx context.Context) error { return agent.RunTriggers(ctx, pool, secretStore, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
 	}

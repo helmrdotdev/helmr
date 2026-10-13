@@ -20,19 +20,19 @@ import (
 )
 
 const (
-	scheduleListDefaultLimit = int32(50)
-	scheduleListMaxLimit     = int32(100)
+	triggerListDefaultLimit = int32(50)
+	triggerListMaxLimit     = int32(100)
 )
 
-type scheduleListCursor struct {
+type triggerListCursor struct {
 	FilterAgent   string `json:"filter_agent,omitempty"`
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id"`
 	AgentID       string `json:"agent_id"`
-	ScheduleID    string `json:"schedule_id"`
+	TriggerID     string `json:"trigger_id"`
 }
 
-func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	limit, cursor, err := parseScheduleListQuery(
+	limit, cursor, err := parseTriggerListQuery(
 		r,
 		scope.ProjectID,
 		scope.EnvironmentID,
@@ -57,14 +57,14 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	if cursor != nil {
 		agent, _ := ids.Parse(cursor.AgentID)
 		afterAgent = pgvalue.UUID(agent)
-		id, err := ids.Parse(cursor.ScheduleID)
+		id, err := ids.Parse(cursor.TriggerID)
 		if err != nil {
-			writeError(w, badRequest(errors.New("schedule cursor is invalid")))
+			writeError(w, badRequest(errors.New("trigger cursor is invalid")))
 			return
 		}
 		afterID = pgvalue.UUID(id)
 	}
-	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
+	rows, err := s.db.ListTriggers(r.Context(), db.ListTriggersParams{
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -74,46 +74,46 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		LimitCount:    limit + 1,
 	})
 	if err != nil {
-		s.log.Error("list schedules failed", "error", err)
-		writeError(w, errors.New("list schedules"))
+		s.log.Error("list triggers failed", "error", err)
+		writeError(w, errors.New("list triggers"))
 		return
 	}
 	hasMore := len(rows) > int(limit)
 	if hasMore {
 		rows = rows[:limit]
 	}
-	response := api.ListSchedulesResponse{
-		Schedules: make([]api.ScheduleResponse, 0, len(rows)),
+	response := api.ListTriggersResponse{
+		Triggers: make([]api.TriggerResponse, 0, len(rows)),
 	}
 	for _, row := range rows {
-		item, err := scheduleResponse(row.AgentSchedule, row.Agent)
+		item, err := triggerResponse(row)
 		if err != nil {
-			s.log.Error("project schedule failed", "schedule_id", pgvalue.UUIDString(row.AgentSchedule.ID), "error", err)
-			writeError(w, errors.New("list schedules"))
+			s.log.Error("project trigger failed", "trigger_id", pgvalue.UUIDString(row.ID), "error", err)
+			writeError(w, errors.New("list triggers"))
 			return
 		}
-		response.Schedules = append(response.Schedules, item)
+		response.Triggers = append(response.Triggers, item)
 	}
 	if hasMore {
 		last := rows[len(rows)-1]
-		response.NextCursor, err = encodeScheduleListCursor(scheduleListCursor{
+		response.NextCursor, err = encodeTriggerListCursor(triggerListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgent: r.URL.Query().Get("agent"),
-			AgentID: pgvalue.UUIDString(last.AgentSchedule.AgentID), ScheduleID: pgvalue.UUIDString(last.AgentSchedule.ID),
+			AgentID: pgvalue.UUIDString(last.AgentID), TriggerID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			s.log.Error("encode schedule cursor failed", "error", err)
-			writeError(w, errors.New("list schedules"))
+			s.log.Error("encode trigger cursor failed", "error", err)
+			writeError(w, errors.New("list triggers"))
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func parseScheduleListQuery(
+func parseTriggerListQuery(
 	r *http.Request,
 	projectID string,
 	environmentID string,
-) (int32, *scheduleListCursor, error) {
+) (int32, *triggerListCursor, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
 		if name != "agent" && name != "cursor" && name != "limit" {
@@ -128,13 +128,13 @@ func parseScheduleListQuery(
 			return 0, nil, err
 		}
 	}
-	limit := scheduleListDefaultLimit
+	limit := triggerListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed < 1 || parsed > int64(scheduleListMaxLimit) {
+		if err != nil || parsed < 1 || parsed > int64(triggerListMaxLimit) {
 			return 0, nil, fmt.Errorf(
 				"limit must be an integer in [1,%d]",
-				scheduleListMaxLimit,
+				triggerListMaxLimit,
 			)
 		}
 		limit = int32(parsed)
@@ -143,26 +143,26 @@ func parseScheduleListQuery(
 	if rawCursor == "" {
 		return limit, nil, nil
 	}
-	cursor, err := decodeScheduleListCursor(rawCursor)
+	cursor, err := decodeTriggerListCursor(rawCursor)
 	if err != nil {
 		return 0, nil, err
 	}
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
-		return 0, nil, errors.New("schedule cursor belongs to another scope")
+		return 0, nil, errors.New("trigger cursor belongs to another scope")
 	}
 	if err := ids.Validate(cursor.AgentID); err != nil {
-		return 0, nil, errors.New("schedule cursor is invalid")
+		return 0, nil, errors.New("trigger cursor is invalid")
 	}
-	if ids.Validate(cursor.ScheduleID) != nil {
-		return 0, nil, errors.New("schedule cursor is invalid")
+	if ids.Validate(cursor.TriggerID) != nil {
+		return 0, nil, errors.New("trigger cursor is invalid")
 	}
 	if cursor.FilterAgent != values.Get("agent") {
-		return 0, nil, errors.New("schedule cursor belongs to another filter")
+		return 0, nil, errors.New("trigger cursor belongs to another filter")
 	}
 	return limit, &cursor, nil
 }
 
-func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {
+func encodeTriggerListCursor(cursor triggerListCursor) (string, error) {
 	raw, err := json.Marshal(cursor)
 	if err != nil {
 		return "", err
@@ -170,23 +170,23 @@ func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func decodeScheduleListCursor(raw string) (scheduleListCursor, error) {
+func decodeTriggerListCursor(raw string) (triggerListCursor, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return scheduleListCursor{}, errors.New("schedule cursor is invalid")
+		return triggerListCursor{}, errors.New("trigger cursor is invalid")
 	}
-	var cursor scheduleListCursor
+	var cursor triggerListCursor
 	if json.Unmarshal(decoded, &cursor) != nil ||
 		cursor.ProjectID == "" ||
 		cursor.EnvironmentID == "" ||
 		cursor.AgentID == "" ||
-		cursor.ScheduleID == "" {
-		return scheduleListCursor{}, errors.New("schedule cursor is invalid")
+		cursor.TriggerID == "" {
+		return triggerListCursor{}, errors.New("trigger cursor is invalid")
 	}
 	return cursor, nil
 }
 
-func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
@@ -197,44 +197,44 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	scheduleID, err := ids.Parse(chi.URLParam(r, "scheduleID"))
+	triggerID, err := ids.Parse(chi.URLParam(r, "triggerID"))
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, err := s.db.GetScheduleByID(r.Context(), db.GetScheduleByIDParams{
+	row, err := s.db.GetTriggerByID(r.Context(), db.GetTriggerByIDParams{
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(scheduleID),
+		ID:            pgvalue.UUID(triggerID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("schedule not found")))
+		writeError(w, notFound(errors.New("trigger not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("get schedule failed", "schedule_id", scheduleID.String(), "error", err)
-		writeError(w, errors.New("get schedule"))
+		s.log.Error("get trigger failed", "trigger_id", triggerID.String(), "error", err)
+		writeError(w, errors.New("get trigger"))
 		return
 	}
-	response, err := scheduleResponse(row.AgentSchedule, row.Agent)
+	response, err := triggerResponse(db.ListTriggersRow(row))
 	if err != nil {
-		s.log.Error("project schedule failed", "schedule_id", scheduleID.String(), "error", err)
-		writeError(w, errors.New("get schedule"))
+		s.log.Error("project trigger failed", "trigger_id", triggerID.String(), "error", err)
+		writeError(w, errors.New("get trigger"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func scheduleResponse(row db.AgentSchedule, name string) (api.ScheduleResponse, error) {
+func triggerResponse(row db.ListTriggersRow) (api.TriggerResponse, error) {
 	if !row.ID.Valid || !row.AgentID.Valid || !row.DeploymentID.Valid || !row.ActiveFrom.Valid || !row.NextFireAt.Valid {
-		return api.ScheduleResponse{}, errors.New("schedule identity or interval is invalid")
+		return api.TriggerResponse{}, errors.New("trigger identity or interval is invalid")
 	}
-	result := api.ScheduleResponse{
-		Agent:        name,
+	result := api.TriggerResponse{
+		Agent:        row.Agent,
 		ID:           pgvalue.UUIDString(row.ID),
 		DeploymentID: pgvalue.UUIDString(row.DeploymentID), TriggerKey: row.TriggerKey,
-		Cron: api.ScheduleCron{Pattern: row.Cron, Timezone: row.Timezone}, Input: row.Input,
+		Cron: api.TriggerCron{Pattern: row.Cron, Timezone: row.Timezone}, Input: row.Input,
 		ActiveFrom: row.ActiveFrom.Time.UTC(), ActiveUntil: pgvalue.TimePtr(row.ActiveUntil),
 	}
 	if !row.ActiveUntil.Valid || row.NextFireAt.Time.Before(row.ActiveUntil.Time) {

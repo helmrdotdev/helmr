@@ -67,8 +67,6 @@ GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
-GET /api/projects/{project}/environments/{environment}/schedules
-GET /api/projects/{project}/environments/{environment}/schedules/{scheduleID}
 GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions
@@ -81,6 +79,8 @@ GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turn
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}
 GET /api/projects/{project}/environments/{environment}/templates
 GET /api/projects/{project}/environments/{environment}/templates/{template}
+GET /api/projects/{project}/environments/{environment}/triggers
+GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
 GET /api/regions
 GET /api/slack/link-workspaces
 GET /api/slack/user-links
@@ -105,8 +105,6 @@ GET /v1/deployments
 GET /v1/deployments/current
 GET /v1/deployments/{deploymentID}
 GET /v1/deployments/{deploymentID}/events
-GET /v1/schedules
-GET /v1/schedules/{scheduleID}
 GET /v1/secrets
 GET /v1/secrets/{secret}
 GET /v1/sessions
@@ -118,6 +116,8 @@ GET /v1/sessions/{sessionID}/turns/{turnID}/asks
 GET /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}
 GET /v1/templates
 GET /v1/templates/{template}
+GET /v1/triggers
+GET /v1/triggers/{triggerID}
 GET /worker/v1/instance
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}

@@ -11,23 +11,23 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type schedulePosition struct{ environment, id uuid.UUID }
+type triggerPosition struct{ environment, id uuid.UUID }
 
-func RunSchedules(ctx context.Context, database db.TxDB, trust ComputerTrustIssuer, log *slog.Logger) error {
+func RunTriggers(ctx context.Context, database db.TxDB, trust ComputerTrustIssuer, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return ErrInvalidInput
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var after schedulePosition
+	var after triggerPosition
 	for {
-		next, more, err := reconcileSchedules(ctx, database, trust, after)
+		next, more, err := reconcileTriggers(ctx, database, trust, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			log.ErrorContext(ctx, "schedule reconciliation failed", "error", err)
+			log.ErrorContext(ctx, "trigger reconciliation failed", "error", err)
 		}
 		if more {
 			continue
@@ -39,17 +39,17 @@ func RunSchedules(ctx context.Context, database db.TxDB, trust ComputerTrustIssu
 		}
 	}
 }
-func reconcileSchedules(ctx context.Context, database db.TxDB, trust ComputerTrustIssuer, after schedulePosition) (schedulePosition, bool, error) {
+func reconcileTriggers(ctx context.Context, database db.TxDB, trust ComputerTrustIssuer, after triggerPosition) (triggerPosition, bool, error) {
 	scan, stop := context.WithTimeout(ctx, 10*time.Second)
-	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM agent_schedules s JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
+	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM trigger_activations s JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
  WHERE s.next_fire_at<=statement_timestamp() AND (s.active_until IS NULL OR s.next_fire_at<s.active_until)
  AND (s.environment_id,s.id)>($1,$2) ORDER BY s.environment_id,s.id LIMIT 100`, after.environment, after.id)
 	if err != nil {
 		stop()
 		return after, false, err
 	}
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (schedulePosition, error) {
-		var p schedulePosition
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (triggerPosition, error) {
+		var p triggerPosition
 		err := row.Scan(&p.environment, &p.id)
 		return p, err
 	})
@@ -63,7 +63,7 @@ func reconcileSchedules(ctx context.Context, database db.TxDB, trust ComputerTru
 			return after, false, ctx.Err()
 		}
 		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := EvaluateSchedule(attempt, database, trust, p.environment, p.id)
+		err := EvaluateTrigger(attempt, database, trust, p.environment, p.id)
 		cancel()
 		if err != nil {
 			failures = append(failures, err)
@@ -72,7 +72,7 @@ func reconcileSchedules(ctx context.Context, database db.TxDB, trust ComputerTru
 	}
 	more := len(candidates) == 100
 	if !more {
-		after = schedulePosition{}
+		after = triggerPosition{}
 	}
 	return after, more, errors.Join(failures...)
 }

@@ -101,6 +101,6 @@ credentials, use **Update app credentials**.
 
 **Disconnect Slack** stops Slack input, answers and output in existing threads.
 Sessions continue and remain available through the CLI and API. Reconnecting
-creates a new connection: earlier threads stay disconnected, and schedules that
+creates a new connection: earlier threads stay disconnected, and triggers that
 post to Slack take effect again only after a Deployment is promoted. Disconnecting
 does not delete the app in Slack.

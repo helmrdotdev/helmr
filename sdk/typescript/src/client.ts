@@ -19,9 +19,9 @@ import {
   type ClientDeploymentsApi,
 } from "./client-deployment"
 import {
-  createClientSchedules,
-  type ClientSchedulesApi,
-} from "./client-schedule"
+  createClientTriggers,
+  type ClientTriggersApi,
+} from "./client-trigger"
 import {
   createClientSecrets,
   type ClientSecretsApi,
@@ -38,7 +38,7 @@ export class HelmrClient {
   readonly sessions: ClientSessionsApi
   readonly templates: ClientTemplatesApi
   readonly deployments: ClientDeploymentsApi
-  readonly schedules: ClientSchedulesApi
+  readonly triggers: ClientTriggersApi
   readonly secrets: ClientSecretsApi
   readonly commands: Readonly<{ ref(id: string): CommandRef }>
   readonly computers: ClientComputersApi
@@ -49,7 +49,7 @@ export class HelmrClient {
     this.sessions = createClientSessions(transport)
     this.templates = createClientTemplates(transport)
     this.deployments = createClientDeployments(transport)
-    this.schedules = createClientSchedules(transport)
+    this.triggers = createClientTriggers(transport)
     this.secrets = createClientSecrets(transport)
     this.computers = createClientComputers(transport)
     this.commands = Object.freeze({ ref: (id: string) => createClientCommandRef(id, transport) })

@@ -51,7 +51,7 @@ export function AgentConnectionModal(props: AgentSlackAddress & { onClose: () =>
           <button class={ui.button} disabled={busy()} onClick={() => void authorize(publication.id)}>{publication.installation_id ? "Reauthorize in Slack" : "Install app in Slack"}</button>
         </Show>
         <Show when={confirmDisconnect()} fallback={<button class={ui.dangerOutlineButton} disabled={busy()} onClick={() => setConfirmDisconnect(true)}>{publication.installation_id ? "Disconnect" : "Discard setup"}</button>}>
-          <p>{publication.installation_id ? "Disconnecting stops Slack input, answers and output in existing threads. Work can continue through the CLI or API. Reconnecting creates a new connection; existing threads stay disconnected and schedules require re-promotion." : "Discard this setup to release the Agent’s connection slot. The app in Slack is not deleted."}</p>
+          <p>{publication.installation_id ? "Disconnecting stops Slack input, answers and output in existing threads. Work can continue through the CLI or API. Reconnecting creates a new connection; existing threads stay disconnected and triggers require re-promotion." : "Discard this setup to release the Agent’s connection slot. The app in Slack is not deleted."}</p>
           <div class={ui.modalActions}><button class={ui.secondaryButton} disabled={busy()} onClick={() => setConfirmDisconnect(false)}>Keep connection</button><button class={ui.dangerOutlineButton} disabled={busy()} onClick={() => void run(() => disconnectAgentSlackConnection(address, publication.id))}>{publication.installation_id ? "Disconnect Slack" : "Discard setup"}</button></div>
         </Show>
       </>}</Show>

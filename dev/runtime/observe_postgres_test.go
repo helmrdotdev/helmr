@@ -108,38 +108,40 @@ func TestVerificationObservationCurrentHost(t *testing.T) {
 	}
 }
 
-func TestVerificationScheduleObservation(t *testing.T) {
+func TestVerificationTriggerObservation(t *testing.T) {
 	f := agenttest.New(t)
-	schedule, other, turn := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_schedules(environment_id,id,agent_id,deployment_id,trigger_key,cron,timezone,input,active_from,next_fire_at,lateness_tolerance_ms)
- VALUES($1,$2,$4,$5,'observed','* * * * *','UTC','{}',now(),now(),300000),($1,$3,$4,$5,'other','* * * * *','UTC','{}',now(),now(),300000);
+	trigger, other, turn := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input)
+ VALUES($1,$4,$5,'observed','* * * * *','UTC','{}'),($1,$4,$5,'other','* * * * *','UTC','{}');
+ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at)
+ VALUES($1,$2,$4,$5,'observed',now(),now()),($1,$3,$4,$5,'other',now(),now());
  INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
  VALUES($1,$6,$7,$8,1,'schedule',$2,'schedule',$4,decode(repeat('00',32),'hex'),'{}');
- INSERT INTO agent_schedule_occurrences(environment_id,schedule_id,agent_id,trigger_key,scheduled_at,session_id,turn_id,disposition,evaluated_at)
+ INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,session_id,turn_id,disposition,evaluated_at)
  VALUES($1,$2,$4,'observed',now(),$7,$6,'admitted',now());
- INSERT INTO agent_schedule_occurrences(environment_id,schedule_id,agent_id,trigger_key,scheduled_at,disposition,reason,evaluated_at)
- VALUES($1,$3,$4,'other',now(),'missed','late',now())`, pgx.QueryExecModeSimpleProtocol, f.Environment, schedule, other, f.Agent, f.Deployment, turn, f.Session, f.Computer)
+ INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,disposition,reason,evaluated_at)
+ VALUES($1,$3,$4,'other',now(),'missed','late',now())`, pgx.QueryExecModeSimpleProtocol, f.Environment, trigger, other, f.Agent, f.Deployment, turn, f.Session, f.Computer)
 	read := func() map[string]any {
-		return observe(t, f.Pool, "schedule-path", map[string]any{"schedule_id": schedule.String()}).(map[string]any)
+		return observe(t, f.Pool, "trigger-path", map[string]any{"trigger_id": trigger.String()}).(map[string]any)
 	}
 	path := read()
 	rows := path["occurrences"].([]any)
 	if len(rows) != 1 || path["has_more"] != false {
-		t.Fatalf("schedule path=%v", path)
+		t.Fatalf("trigger path=%v", path)
 	}
 	row := rows[0].(map[string]any)
 	if row["session_id"] != f.Session.String() || row["turn_id"] != turn.String() || row["computer_id"] != f.Computer.String() || row["deployment_id"] != f.Deployment.String() || row["turn_status"] != "queued" {
 		t.Fatalf("occurrence ownership=%v", row)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_schedules SET active_until=now(),next_fire_at=now()+interval '1 minute' WHERE id=$1`, schedule)
-	if read()["schedule"].(map[string]any)["interval_settled"] != true {
-		t.Fatal("closed schedule interval remains pending")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE trigger_activations SET active_until=now(),next_fire_at=now()+interval '1 minute' WHERE id=$1`, trigger)
+	if read()["trigger"].(map[string]any)["interval_settled"] != true {
+		t.Fatal("closed trigger interval remains pending")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_schedule_occurrences(environment_id,schedule_id,agent_id,trigger_key,scheduled_at,disposition,reason,evaluated_at)
- SELECT $1,$2,$3,'observed',now()+n*interval '1 minute','missed','late',now() FROM generate_series(1,256) n`, f.Environment, schedule, f.Agent)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,disposition,reason,evaluated_at)
+ SELECT $1,$2,$3,'observed',now()+n*interval '1 minute','missed','late',now() FROM generate_series(1,256) n`, f.Environment, trigger, f.Agent)
 	path = read()
 	if path["has_more"] != true || len(path["occurrences"].([]any)) != 256 {
-		t.Fatalf("unbounded schedule path=%v", path)
+		t.Fatalf("unbounded trigger path=%v", path)
 	}
 }
 

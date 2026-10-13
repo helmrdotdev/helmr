@@ -47,7 +47,7 @@ their permissions are described in [Authentication](/docs/reference/api/authenti
 | `computers` | `create`, `get`, `list`, `ref` | [Computer](/docs/reference/sdk/computer#client-computers) |
 | `commands` | `ref` | [Computer](/docs/reference/sdk/computer#client-commands) |
 | `deployments` | `list`, `current`, `get` | [Deployments](#deployments) |
-| `schedules` | `get`, `list` | [Triggers](/docs/reference/sdk/triggers#client-schedules) |
+| `triggers` | `get`, `list` | [Triggers](/docs/reference/sdk/triggers#client-triggers) |
 | `secrets` | `create`, `get`, `list`, `ref` | [Secrets](#secrets) |
 
 Every method accepts an optional final `RequestOptions` argument,

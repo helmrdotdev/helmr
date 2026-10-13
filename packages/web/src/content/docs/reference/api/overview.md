@@ -28,8 +28,8 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `GET` | `/v1/deployments/current` |
 | `GET` | `/v1/deployments/{deploymentID}` |
 | `GET` | `/v1/deployments/{deploymentID}/events` |
-| `GET` | `/v1/schedules` |
-| `GET` | `/v1/schedules/{scheduleID}` |
+| `GET` | `/v1/triggers` |
+| `GET` | `/v1/triggers/{triggerID}` |
 | `GET` | `/v1/secrets` |
 | `GET` | `/v1/secrets/{secret}` |
 | `GET` | `/v1/sessions` |
@@ -74,7 +74,7 @@ that resolved `deployment_id`; list envelopes are `agents` and `templates`.
 | Template | `template`, `resources`, `deployment_id` |
 | Session | `agent`, `template` (the pinned Agent default), `deployment_id`, optional `computer_id` |
 | Computer | `template`, `deployment_id` (its actual creation origin), optional instance `key` |
-| Schedule | `agent`, `deployment_id` |
+| Trigger | `agent`, `deployment_id` |
 
 Template resources use `milliCpu`, `memoryMiB` and optional `diskMiB`. The local
 `agent({ id })` / `template({ id })` declaration value is called `agent` /
@@ -87,7 +87,7 @@ Deployment returns `deployment_not_found`. A missing Agent/Template in a resolve
 authorized Deployment returns `not_found` with `error.details.deployment_id`;
 it does not fall back to another Deployment or claim the stable identity was deleted.
 
-Session and Schedule lists accept the declared `agent` identifier.
+Session and Trigger lists accept the declared `agent` identifier.
 `agent` resolves stable identity independently of current membership, so retained
 history remains searchable after an Agent is removed from current.
 

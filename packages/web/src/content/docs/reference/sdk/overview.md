@@ -21,7 +21,7 @@ import { agent, template, image, triggers, defineConfig, HelmrClient } from "@he
 | [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `RuntimeMcpConnectionOptions`, `MessageRejected`, and the client's Session and Turn methods. |
 | [Computer](/docs/reference/sdk/computer) | `template()`, `image()`, `source`, Secret bindings, and the client's Computer, Template definition and Command methods. |
 | [Client](/docs/reference/sdk/client) | `HelmrClient` options and properties, Agent and definition reads, Deployments and Secrets. |
-| [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Schedule methods. |
+| [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Trigger methods. |
 | [Questions](/docs/reference/sdk/questions) | `turn.ask()`, answer controls, answer shapes and limits, and the client's ask methods. |
 | [Runtime MCP](/docs/reference/sdk/mcp) | `ctx.mcp.getConnectionOptions()` and every runtime MCP tool, with inputs and results. |
 
@@ -57,7 +57,7 @@ Types exported from `@helmr/sdk`, grouped by area:
 | Computers | `ClientComputersApi`, `ClientComputerRef`, `ComputerRef`, `Computer`, `ComputerStatus`, `ComputerResidency`, `ComputerListItem`, `ComputerListQuery`, `ComputerCreateRequest`, `ComputerDeleteRequest`, `ComputerDeleteReceipt`, `ComputerCommandRequest`, `ComputerUsageQuery`, `ComputerUsage`, `ClientTemplatesApi`, `TemplateInfo`, `TemplateListItem`, `TemplateListQuery`, `TemplatePage`, `TemplateGetQuery`, `ImageBuilder`, `SourceDirectory`, `SourceFile` |
 | Commands | `CommandRef`, `CommandInfo`, `CommandOutcome`, `CommandWaitOptions`, `TimedCommandWaitResult`, `CancelReceipt`, `CommandLogQuery`, `CommandLogStreamQuery`, `CommandLogRecord`, `CommandLogReadPage` |
 | Deployments | `ClientDeploymentsApi`, `Deployment`, `DeploymentListItem`, `DeploymentListQuery` |
-| Schedules | `ClientSchedulesApi`, `Schedule`, `ScheduleListQuery` |
+| Triggers | `ClientTriggersApi`, `Trigger`, `TriggerListQuery` |
 | Secrets | `ClientSecretsApi`, `SecretRef`, `Secret`, `SecretStatus`, `SecretCreateRequest`, `SecretListQuery`, `SecretRotateRequest`, `SecretRevokeRequest` |
 | Configuration | `HelmrConfig`, `HelmrConfigInput`, `HelmrBuildConfig`, `HelmrBuildInput`, `Builder`, `BuilderStep` |
 

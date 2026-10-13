@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type schedulePreflightFunc func(context.Context, agent.SlackStartContext) (json.RawMessage, error)
+type triggerPreflightFunc func(context.Context, agent.SlackStartContext) (json.RawMessage, error)
 
-func (f schedulePreflightFunc) PrepareStart(ctx context.Context, v agent.SlackStartContext) (json.RawMessage, error) {
+func (f triggerPreflightFunc) PrepareStart(ctx context.Context, v agent.SlackStartContext) (json.RawMessage, error) {
 	return f(ctx, v)
 }
 
@@ -32,7 +32,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), registered.ID, nil); !errors.Is(err, agent.ErrTargetNotPublished) {
-				t.Fatal("unpublished schedule promoted", err)
+				t.Fatal("unpublished trigger promoted", err)
 			}
 			installation, registration, publication, user := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
@@ -40,7 +40,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
  INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $5,$6,id,$2,$4,$1 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, publication, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
 			calls := 0
-			preflight := schedulePreflightFunc(func(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
+			preflight := triggerPreflightFunc(func(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
 				calls++
 				if value.Route.Target.InstallationID != installation || value.Route.Target.ChannelID != "C1" || value.Route.Source != nil {
 					t.Fatal("wrong scheduled preflight", value)
@@ -62,7 +62,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 					t.Fatal(err)
 				}
 				var clean bool
-				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM agent_schedules) AND NOT EXISTS(SELECT 1 FROM slack_channels) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
+				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) AND NOT EXISTS(SELECT 1 FROM slack_channels) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
 					t.Fatal("failed preflight retained activation", clean, err)
 				}
 				return
@@ -71,7 +71,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(calls, err)
 			}
 			var pin uuid.UUID
-			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM agent_schedules s JOIN slack_channels c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.publication_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
+			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channels c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.publication_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
 				t.Fatal("promotion lost destination", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)

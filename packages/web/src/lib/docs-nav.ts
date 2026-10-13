@@ -83,7 +83,7 @@ export const docsNav = [
           "reference/cli/computer",
           "reference/cli/command",
           "reference/cli/secret",
-          "reference/cli/schedule",
+          "reference/cli/trigger",
         ],
       },
       {

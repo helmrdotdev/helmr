@@ -39,11 +39,12 @@ var tableOwners = map[string]string{
 	"organizations": "internal/org", "projects": "internal/org",
 	"regions": "internal/region",
 	// deployments and definitions
-	"agent_definitions": "internal/deployment", "agent_schedules": "internal/deployment", "agents": "internal/deployment",
+	"agent_definitions": "internal/deployment", "agent_triggers": "internal/deployment", "agents": "internal/deployment",
+	"trigger_activations":        "internal/deployment",
 	"computer_preparation_specs": "internal/deployment", "deployment_objects": "internal/deployment", "deployments": "internal/deployment",
 	"template_definitions": "internal/deployment", "templates": "internal/deployment",
 	// agent runtime: sessions, turns, computers and their storage
-	"agent_schedule_occurrences": "internal/agent", "cas_blobs": "internal/agent", "cas_objects": "internal/agent",
+	"trigger_occurrences": "internal/agent", "cas_blobs": "internal/agent", "cas_objects": "internal/agent",
 	"cas_upload_reclaims": "internal/agent", "computer_checkpoint_members": "internal/agent", "computer_checkpoint_objects": "internal/agent",
 	"computer_checkpoints": "internal/agent", "computer_data_keys": "internal/agent", "computer_disk_roots": "internal/agent",
 	"computer_images": "internal/agent", "computer_leases": "internal/agent", "computer_object_edges": "internal/agent",
@@ -73,7 +74,8 @@ var tableOwners = map[string]string{
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
 	"agent_definitions":          {"internal/agent": "owner split"},
-	"agent_schedules":            {"internal/agent": "owner split"},
+	"agent_triggers":             {"internal/agent": "owner split"},
+	"trigger_activations":        {"internal/agent": "owner split"},
 	"agents":                     {"internal/agent": "owner split"},
 	"computer_preparation_specs": {"internal/agent": "owner split"},
 	"template_definitions":       {"internal/agent": "owner split"},
@@ -112,7 +114,7 @@ var queryFileOwners = map[string]string{
 	"platform_retry_keys.sql":   "internal/idempotency",
 	"projects.sql":              "internal/org",
 	"regions.sql":               "internal/region",
-	"schedule_reads.sql":        "internal/controlplane",
+	"trigger_reads.sql":         "internal/controlplane",
 	"secrets.sql":               "internal/secret",
 	"worker_capacity_hosts.sql": "internal/workergroup",
 	"worker_drain.sql":          "internal/workergroup",
