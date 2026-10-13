@@ -54,6 +54,14 @@ authority renewal. Do not log the descriptor or put its headers into model input
 Native tool permission policy remains separate from Helmr's runtime authority.
 Unsupported native interactive request forms are rejected.
 
+The MCP server advertises a `skills` tool. The model can list the available
+skills and read `helmr-runtime` for delegation and Session control workflows;
+no `SKILL.md` needs to be installed in the native harness's working directory.
+The local `bun run test:runtime-skills` probe uses the real Go MCP handler,
+pinned Codex and Claude processes, and synthetic model responses to verify
+that the complete skill reaches the model through each harness. Run it from
+`examples/issue-fixer` in the repository's Nix development shell.
+
 Questions use the ordinary exact-Turn ask list/get/respond workflow. They carry
 question controls and authenticated responder attribution. This application maps
 an approval answer to one displayed native operation; an answer never grants

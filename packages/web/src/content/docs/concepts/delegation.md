@@ -11,6 +11,11 @@ Sessions, send them input, observe their Turns and control the work they own.
 The usual pattern is to give the MCP connection to the harness inside your
 Agent, so the model decides when to delegate.
 
+Your harness can read the built-in `helmr-runtime` skill for these workflows:
+call `skills({})` to discover it, then `skills({ name: "helmr-runtime" })` to
+read its full instructions over MCP. The skill needs no local installation
+and does not change the Session's authority. See [Runtime MCP](/docs/reference/sdk/mcp#skills).
+
 ## The runtime MCP connection
 
 Call `ctx.mcp.getConnectionOptions()` in `init` or `turn`. It returns

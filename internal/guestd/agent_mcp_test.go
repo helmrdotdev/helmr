@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -424,6 +425,72 @@ func TestAgentMCPWaitDeadlineSurvivesHTTPAdmissionContext(t *testing.T) {
 				defer relay.session.mu.Unlock()
 				return len(relay.session.pending) == 0
 			})
+		})
+	}
+}
+
+func TestAgentMCPSkillsUseLocalAdmissionWithoutUpstream(t *testing.T) {
+	const list = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"skills","arguments":{}}}`
+	const read = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"skills","arguments":{"name":"helmr-runtime"}}}`
+	for _, child := range []bool{false, true} {
+		t.Run(fmt.Sprintf("child=%t", child), func(t *testing.T) {
+			relay, descriptor := mcpFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			// No host transport is attached: skill reads must not need one.
+			if child {
+				relay.session.mu.Lock()
+				relay.session.start.ParentSessionId = new("parent")
+				relay.session.mu.Unlock()
+			}
+			for _, body := range []string{list, read} {
+				got := mcpPost(ctx, descriptor, body)
+				if got.err != nil || got.status != http.StatusOK || !strings.Contains(got.body, "helmr-runtime") || strings.Contains(got.body, `"isError":true`) {
+					t.Fatalf("skill read: %+v", got)
+				}
+			}
+			wrong := descriptor
+			wrong.Headers = map[string]string{"Authorization": "Bearer wrong"}
+			if got := mcpPost(ctx, wrong, read); got.status != http.StatusForbidden {
+				t.Fatalf("unauthenticated skill read: %+v", got)
+			}
+			for _, block := range []string{"hold", "checkpoint", "capture", "expiry", "shutdown"} {
+				relay.mu.Lock()
+				relay.session.mu.Lock()
+				switch block {
+				case "hold":
+					relay.session.held = true
+				case "checkpoint":
+					relay.session.checkpointID = "capture"
+				case "capture":
+					relay.captureFrozen = true
+				case "expiry":
+					relay.expiryFrozen = true
+				case "shutdown":
+					relay.shuttingDown = true
+				}
+				relay.session.mu.Unlock()
+				relay.mu.Unlock()
+				if got := mcpPost(ctx, descriptor, read); got.status != http.StatusServiceUnavailable {
+					t.Fatalf("%s admitted skill read: %+v", block, got)
+				}
+				relay.mu.Lock()
+				relay.session.mu.Lock()
+				relay.session.held = false
+				relay.session.checkpointID = ""
+				relay.captureFrozen = false
+				relay.expiryFrozen = false
+				relay.shuttingDown = false
+				relay.session.mu.Unlock()
+				relay.mu.Unlock()
+			}
+			relay.mu.Lock()
+			defer relay.mu.Unlock()
+			relay.session.mu.Lock()
+			defer relay.session.mu.Unlock()
+			if len(relay.outbox) != 0 || len(relay.session.pending) != 0 {
+				t.Fatal("skill reads or rejected calls reached upstream")
+			}
 		})
 	}
 }

@@ -77,10 +77,25 @@ Successful tool results are a single text content item containing a JSON
 object. Failed calls return an error whose text is `code: message` (see
 [Errors](#errors)).
 
+## Runtime skill
+
+The server's initialization instructions point to `helmr-runtime`, a skill
+that explains how to delegate work, observe outcomes, and control Sessions.
+Agents can discover and read it with the `skills` tool over the same MCP
+connection. There is no file to install in the harness's working directory.
+Clients decide whether to show server instructions to the model; the `skills`
+tool description also explains how to retrieve the guidance.
+
+The skill is bundled with the MCP server and describes that server's tools.
+It explains workflows without granting permissions or replacing the user's
+instructions. Reading it is subject to the same authentication and Session
+admission checks as other MCP requests, including holds and shutdown.
+
 ## Authority
 
 | Rule | Tools |
 | --- | --- |
+| Any admitted Session, including children | `skills` |
 | Root Sessions only | `list_agents`, `spawn`, `start` |
 | Owned descendants only | `send_turn`, `interrupt_session`, `resume_session`, `close_session`, `cancel_session` |
 | Any Session in this Environment | `enqueue` |
@@ -94,6 +109,40 @@ they report those needs to their owner.
 Text-part arrays (`input`, `message`) are `[{ "type": "text", "text": "..." }]`
 with at most 64 parts. Mutating tools require an `idempotencyKey`; reuse the
 same key with identical arguments when an outcome is uncertain.
+
+### `skills`
+
+List the available runtime skills or read one in full. This read-only tool
+runs no Session operation and needs no active Turn or idempotency key.
+
+| Input | Type | Description |
+| --- | --- | --- |
+| `name` | string | Optional. Omit to list skills; provide an exact listed name to read its `SKILL.md`. |
+
+`skills({})` returns:
+
+```json
+{
+  "skills": [
+    { "name": "helmr-runtime", "description": "…" }
+  ]
+}
+```
+
+`skills({ "name": "helmr-runtime" })` returns:
+
+```json
+{
+  "name": "helmr-runtime",
+  "description": "…",
+  "content": "---\nname: helmr-runtime\n…"
+}
+```
+
+`content` contains the entire Markdown document, including its frontmatter.
+An unknown name returns `isError: true` with an `unknown_skill` error. Names
+are catalog identifiers, not paths or URLs. The catalog currently has one
+skill; listing and reading do not require pagination or additional resources.
 
 ### `list_agents`
 
