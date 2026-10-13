@@ -79,7 +79,7 @@ UPDATE org_members
    )
 RETURNING *;
 
--- name: DisableOrgMemberAndRevokeOrgSessions :one
+-- name: DisableOrgMember :one
 WITH locked_active_owners AS (
     SELECT org_members.user_id
       FROM org_members
@@ -89,37 +89,23 @@ WITH locked_active_owners AS (
        AND org_members.disabled_at IS NULL
        AND users.disabled_at IS NULL
      FOR UPDATE OF org_members
-),
-disabled_member AS (
-    UPDATE org_members
-       SET disabled_at = now(),
-           updated_at = now()
-     WHERE org_members.org_id = sqlc.arg(org_id)
-       AND org_members.user_id = sqlc.arg(user_id)
-       AND org_members.role = sqlc.arg(expected_role)::org_member_role
-       AND org_members.disabled_at IS NULL
-       AND (
-           sqlc.arg(actor_is_owner)::boolean
-           OR org_members.role <> 'owner'
-       )
-       AND (
-           org_members.role <> 'owner'
-           OR EXISTS (
-               SELECT 1 FROM locked_active_owners
-                WHERE locked_active_owners.user_id <> org_members.user_id
-           )
-       )
-    RETURNING *
-),
-revoked_sessions AS (
-    UPDATE login_sessions
-       SET revoked_at = now()
-      FROM disabled_member
-     WHERE login_sessions.user_id = disabled_member.user_id
-       AND (login_sessions.org_id = disabled_member.org_id OR login_sessions.org_id IS NULL)
-       AND login_sessions.revoked_at IS NULL
-    RETURNING login_sessions.id
 )
-SELECT disabled_member.*,
-       (SELECT count(*)::int FROM revoked_sessions) AS revoked_session_count
-  FROM disabled_member;
+UPDATE org_members
+   SET disabled_at = now(),
+       updated_at = now()
+ WHERE org_members.org_id = sqlc.arg(org_id)
+   AND org_members.user_id = sqlc.arg(user_id)
+   AND org_members.role = sqlc.arg(expected_role)::org_member_role
+   AND org_members.disabled_at IS NULL
+   AND (
+       sqlc.arg(actor_is_owner)::boolean
+       OR org_members.role <> 'owner'
+   )
+   AND (
+       org_members.role <> 'owner'
+       OR EXISTS (
+           SELECT 1 FROM locked_active_owners
+            WHERE locked_active_owners.user_id <> org_members.user_id
+       )
+   )
+RETURNING *;

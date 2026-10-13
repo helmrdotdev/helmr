@@ -51,3 +51,9 @@ UPDATE login_sessions
    SET revoked_at = now()
  WHERE user_id = sqlc.arg(user_id)
    AND revoked_at IS NULL;
+
+-- name: RevokeLoginSessionsForMembership :exec
+UPDATE login_sessions SET revoked_at = now()
+WHERE user_id = sqlc.arg(user_id)
+  AND (org_id = sqlc.arg(org_id) OR org_id IS NULL)
+  AND revoked_at IS NULL;

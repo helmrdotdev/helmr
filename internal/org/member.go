@@ -266,10 +266,10 @@ func UpdateMemberRole(ctx context.Context, q db.Querier, manager ManagingMember,
 	return UpdatedMember{Member: updated, DisplayName: target.DisplayName, PrimaryEmail: target.PrimaryEmail}, nil
 }
 
-// RemoveMember disables an active member and revokes the member's sessions for
-// the organization in one statement. Managers cannot remove themselves, only
+// DisableMember disables an active member in the caller's transaction.
+// The caller revokes the member's login sessions before committing. Managers cannot remove themselves, only
 // owners remove owners, and the last active owner cannot be removed.
-func RemoveMember(ctx context.Context, q db.Querier, manager ManagingMember, targetUserID uuid.UUID) error {
+func DisableMember(ctx context.Context, q db.Querier, manager ManagingMember, targetUserID uuid.UUID) error {
 	if err := manager.authorize(); err != nil {
 		return err
 	}
@@ -283,7 +283,7 @@ func RemoveMember(ctx context.Context, q db.Querier, manager ManagingMember, tar
 	if target.Role == db.OrgMemberRoleOwner && !manager.isOwner() {
 		return ErrOwnerRoleRequired
 	}
-	_, err = q.DisableOrgMemberAndRevokeOrgSessions(ctx, db.DisableOrgMemberAndRevokeOrgSessionsParams{
+	_, err = q.DisableOrgMember(ctx, db.DisableOrgMemberParams{
 		OrgID:        pgvalue.UUID(manager.OrgID),
 		UserID:       pgvalue.UUID(targetUserID),
 		ExpectedRole: target.Role,
@@ -393,7 +393,7 @@ func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail st
 // the accepted invitation references the membership written after it, which
 // the database checks at commit. It rejects a user who is already an active
 // member, marks the invitation accepted, writes the membership, re-enabling a
-// disabled one, and then revokes the user's existing login sessions. An
+// disabled one. The caller revokes existing login sessions before committing. An
 // invitation accepted, revoked or expired since it was loaded is
 // ErrInvitationNotFound.
 //
@@ -433,8 +433,6 @@ func AcceptInvitation(ctx context.Context, q db.Querier, invitation PendingInvit
 	}); err != nil {
 		return fmt.Errorf("add member: %w", err)
 	}
-	if _, err := q.RevokeLoginSessionsForUser(ctx, pgvalue.UUID(userID)); err != nil {
-		return fmt.Errorf("revoke login sessions: %w", err)
-	}
+
 	return nil
 }

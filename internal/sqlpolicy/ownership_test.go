@@ -76,9 +76,7 @@ var tableOwners = map[string]string{
 // coWriters are packages that still write another owner's table. Each entry
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
-	"environments":   {"internal/deployment": "owner split"},
-	"login_sessions": {"internal/org": "member disablement revokes sessions"},
-	"users":          {"internal/org": "organization creation records the owner"},
+	"environments": {"internal/deployment": "owner split"},
 }
 
 // queryFileOwners maps each sqlc query file to the owner whose writes it

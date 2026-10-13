@@ -10,6 +10,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/identity"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -184,7 +186,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(org.ErrMemberNotFound))
 		return
 	}
-	if err := org.RemoveMember(r.Context(), s.db, managingMember(principalFromContext(r.Context())), targetUserID); err != nil {
+	if err := identity.RemoveMember(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID); err != nil {
 		writeError(w, orgError(err))
 		return
 	}

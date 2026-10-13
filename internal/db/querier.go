@@ -56,7 +56,7 @@ type Querier interface {
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
-	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
+	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
 	// EnrollHost owns the deciding authority locks and physical-custody exclusion.
 	EnrollWorkerHost(ctx context.Context, arg EnrollWorkerHostParams) (EnrollWorkerHostRow, error)
@@ -168,6 +168,7 @@ type Querier interface {
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) (int64, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
+	RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error
 	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
 	RevokeOpenMagicLinksForRecipient(ctx context.Context, arg RevokeOpenMagicLinksForRecipientParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
