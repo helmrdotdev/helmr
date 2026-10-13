@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { HelmrClient } from "./client"
-import { installRuntimeMcp } from "./internal/mcp"
 import { parseCancelReceipt, parseCommandInfo, waitForCommand, type CommandInfo } from "./command"
 
 const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
@@ -67,8 +66,7 @@ test("client cancellation addresses one Command and returns a receipt, not an ou
   expect(calls).toEqual([{ method: "POST", path: `/v1/commands/${id}/cancel`, options: { signal } }])
 })
 
-test("explicit client command authority is independent of the installed runtime", async () => {
-  const uninstall = installRuntimeMcp(async () => { throw new Error("explicit client must not invoke runtime authority") })
+test("explicit client commands use the configured authority and propagate denial", async () => {
   const signal = new AbortController().signal
   const calls: Array<{ path: string; init: RequestInit | undefined }> = []
   let denied = false
@@ -82,28 +80,24 @@ test("explicit client command authority is independent of the installed runtime"
     return Response.json({ id, computer_id: computerId, status: "exited", process_reconciled: true,
       outcome: { command_id: id, kind: "exited", exit_code: 0, terminal_at: "2026-10-08T00:00:00Z" } })
   }) as typeof fetch })
-  try {
-    const ref = await client.computers.ref(computerId).exec({ command: ["true"], idempotencyKey: "command" }, { signal })
-    expect(ref.id).toBe(id)
-    expect((await ref.get({ signal })).status).toBe("exited")
-    expect(await ref.wait({ signal })).toMatchObject({ kind: "exited", exitCode: 0 })
-    expect(await ref.logs.list({}, { signal })).toEqual({ items: [], outputState: "closed" })
-    expect(await ref.logs.stream({}, { signal }).next()).toEqual({ done: true, value: undefined })
-    expect(await client.commands.ref(id).cancel({ signal })).toEqual({ id: computerId, targetId: id, status: "accepted" })
-    expect(calls.map(call => call.path)).toEqual([
-      `/v1/computers/${computerId}/exec`, `/v1/commands/${id}`, `/v1/commands/${id}`,
-      `/v1/commands/${id}/logs`, `/v1/commands/${id}/logs`, `/v1/commands/${id}/cancel`,
-    ])
-    for (const call of calls) {
-      expect(call.init?.headers).toMatchObject({ Authorization: "Bearer explicit-key" })
-      expect(call.init?.signal).toBeDefined()
-    }
-    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ command: ["true"], idempotency_key: "command" })
-    denied = true
-    await expect(ref.get()).rejects.toMatchObject({ code: "permission_required" })
-  } finally {
-    uninstall()
+  const ref = await client.computers.ref(computerId).exec({ command: ["true"], idempotencyKey: "command" }, { signal })
+  expect(ref.id).toBe(id)
+  expect((await ref.get({ signal })).status).toBe("exited")
+  expect(await ref.wait({ signal })).toMatchObject({ kind: "exited", exitCode: 0 })
+  expect(await ref.logs.list({}, { signal })).toEqual({ items: [], outputState: "closed" })
+  expect(await ref.logs.stream({}, { signal }).next()).toEqual({ done: true, value: undefined })
+  expect(await client.commands.ref(id).cancel({ signal })).toEqual({ id: computerId, targetId: id, status: "accepted" })
+  expect(calls.map(call => call.path)).toEqual([
+    `/v1/computers/${computerId}/exec`, `/v1/commands/${id}`, `/v1/commands/${id}`,
+    `/v1/commands/${id}/logs`, `/v1/commands/${id}/logs`, `/v1/commands/${id}/cancel`,
+  ])
+  for (const call of calls) {
+    expect(call.init?.headers).toMatchObject({ Authorization: "Bearer explicit-key" })
+    expect(call.init?.signal).toBeDefined()
   }
+  expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ command: ["true"], idempotency_key: "command" })
+  denied = true
+  await expect(ref.get()).rejects.toMatchObject({ code: "permission_required" })
 })
 
 test("bounded wait returns settlement while a stalled transport cannot defeat its deadline", async () => {

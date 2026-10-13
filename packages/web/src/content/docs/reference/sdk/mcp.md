@@ -1,6 +1,6 @@
 ---
 title: Runtime MCP
-description: createRuntimeMcpConnection() and the runtime MCP tools available to a running Session.
+description: ctx.mcp.getConnectionOptions() and the runtime MCP tools available to a running Session.
 sidebarLabel: Runtime MCP
 ---
 
@@ -10,14 +10,13 @@ Each Session process can reach a Session-bound MCP server. Its tools create
 and control other Sessions with the current Session's runtime authority. For
 when to use child or independent work, see [Delegation](/docs/concepts/delegation).
 
-## `createRuntimeMcpConnection()`
+## `ctx.mcp.getConnectionOptions()`
 
 ```ts
-import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
+// Available on InitContext and AgentContext.
+const options: RuntimeMcpConnectionOptions = await ctx.mcp.getConnectionOptions()
 
-function createRuntimeMcpConnection(): Promise<RuntimeMcpConnection>
-
-interface RuntimeMcpConnection {
+interface RuntimeMcpConnectionOptions {
   readonly url: string
   readonly headers: Readonly<{ Authorization: string }>
 }
@@ -25,23 +24,27 @@ interface RuntimeMcpConnection {
 
 Returns the connection for the current Session process: a local
 `http://127.0.0.1:<port>/mcp` URL and a bearer `Authorization` header. Repeated
-calls return the same connection. It is available from `init` onward for the
-life of the process. Outside the managed Session runtime the promise rejects
-with `Runtime MCP requires the managed Session runtime`.
+calls return the same URL and header values while rechecking admission. The
+server is provisioned lazily on the first call. The accessor is available on
+`ctx.mcp` in both `init` and `turn`, including Agents without `init`; calls
+after process shutdown reject.
+
+Normal hibernation preserves the connection options. Reconstruction starts a
+new process and reruns `init`; obtain options from the new context. The return
+type `RuntimeMcpConnectionOptions` is exported from `@helmr/sdk`.
 
 Pass the URL and headers to any MCP client that supports the Streamable HTTP
 transport, for example a model harness running inside the Computer:
 
 ```ts
 import { agent } from "@helmr/sdk"
-import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 
 // `repoComputer` is an existing template() definition.
 export const coordinator = agent({
   id: "coordinator",
   template: repoComputer,
-  async init() {
-    const { url, headers } = await createRuntimeMcpConnection()
+  async init(ctx) {
+    const { url, headers } = await ctx.mcp.getConnectionOptions()
     return { helmrMcp: { url, headers } }
   },
   async turn(turn, ctx) {

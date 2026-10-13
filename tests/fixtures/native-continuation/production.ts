@@ -157,14 +157,14 @@ export const peer = agent({
   id: "peer",
   template: workspace,
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
-  async turn(turn, { initResult: state, session, computer }): Promise<Json> {
+  async turn(turn, { initResult: state, session, computer, mcp }): Promise<Json> {
     const input = fixtureValue(turn.input)
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
     if (input !== "hold" && input !== "hold-discovery" && !secretInput && !performanceProbe) return { received: input }
     if (secretInput || state.secrets) state.secrets = await checkSecretBindings(input, state.secrets)
     if (input === "hold-discovery" || state.discovery) {
-      state.discovery = await checkSessionDiscovery(turn, session.id, computer, receipt, state.discovery)
+      state.discovery = await checkSessionDiscovery(turn, session.id, computer, receipt, mcp, state.discovery)
     }
     let released = false
     await turn.onMessage(message => { if (fixtureValue(message) === "release") released = true })

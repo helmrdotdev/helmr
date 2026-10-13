@@ -70,7 +70,13 @@ export interface Turn<I extends InputContent = InputContent> {
   onMessage(handler: (input: InputContent, message: InputMessage) => MaybePromise<void>): Promise<void>
   ask<C extends AnswerControl>(question: Question<C>, options?: { signal?: AbortSignal }): Promise<AskResponse<AnswerFor<C>>>
 }
+export interface RuntimeMcpConnectionOptions {
+  readonly url: string
+  readonly headers: Readonly<{ Authorization: string }>
+}
+
 export interface InitContext {
+  readonly mcp: Readonly<{ getConnectionOptions(): Promise<RuntimeMcpConnectionOptions> }>
   readonly session: Readonly<{ id: string; key?: string; parent?: Readonly<{ id: string }> }>
   readonly computer: ComputerIdentity
   readonly deployment: Readonly<{ id: string }>

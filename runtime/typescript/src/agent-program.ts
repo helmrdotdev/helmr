@@ -6,7 +6,7 @@ import { requireJson } from "../../../sdk/typescript/src/agent"
 import { AgentChannel, OperationError, MAX_AGENT_FRAME_BYTES } from "./agent-channel"
 import { SessionActivity } from "./agent-activity"
 import { SessionNativeRegistry } from "./agent-native"
-import { installAgentMcp } from "./agent-mcp"
+import { createAgentMcp } from "./agent-mcp"
 import { GuestSessionDriver } from "./agent-driver"
 import { MessageBusy, SessionRuntime, type TurnTiming } from "./agent-session"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
@@ -60,7 +60,6 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
   const activity = new SessionActivity()
   const native = new SessionNativeRegistry(stopped.signal, failureConvergenceMs, undefined, activity)
   const uninstallNative = native.install()
-  let uninstallMcp: (() => void) | undefined
   let channel: AgentChannel | undefined
   let runtime: SessionRuntime | undefined
   let initialized = false
@@ -90,11 +89,11 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
           await channel.event({ case: "failed", value: create(agentProto.SessionFailedSchema, { code, message }) })
           return
         }
-        uninstallMcp = installAgentMcp(channel)
         const driver = new GuestSessionDriver(channel, native)
         const kind = start.recoveryKind === agentProto.SessionStart_RecoveryKind.INITIAL ? "initial" : start.recoveryKind === agentProto.SessionStart_RecoveryKind.RECONSTRUCTED ? "reconstructed" : undefined
         if (!kind) throw new Error("Invalid Session recovery kind")
         const context: InitContext = {
+          mcp: createAgentMcp(channel),
           session: { id: command.identity.sessionId, ...(start.conversationKey === undefined ? {} : { key: start.conversationKey }), ...(start.parentSessionId === undefined ? {} : { parent: Object.freeze({ id: start.parentSessionId }) }) },
           computer: { id: start.computerId }, deployment: { id: start.deploymentId }, recovery: { kind, ...(start.recoveryReason ? { reason: start.recoveryReason } : {}) }, signal: stopped.signal,
         }
@@ -192,7 +191,6 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
     const error = stopped.signal.reason ?? new Error("Guest pipe closed")
     stopped.abort(error)
     channel?.close(error)
-    uninstallMcp?.()
     uninstallNative()
     activity.close()
     void native.stop(error).catch(() => {})

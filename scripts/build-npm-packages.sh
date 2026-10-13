@@ -143,12 +143,6 @@ bun build sdk/typescript/src/fuzzy.ts \
 	--packages external \
 	--outfile "$sdk_pkg/dist/fuzzy.js"
 
-bun build sdk/typescript/src/mcp.ts \
-	--target node \
-	--format esm \
-	--packages external \
-	--outfile "$sdk_pkg/dist/mcp.js"
-
 bun x tsc -p sdk/typescript/tsconfig.build.json --outDir "$sdk_pkg/dist"
 fix_declaration_imports "$sdk_pkg/dist"
 
@@ -185,10 +179,6 @@ cat > "$sdk_pkg/package.json" <<EOF
     "./internal/fuzzy": {
       "types": "./dist/fuzzy.d.ts",
       "import": "./dist/fuzzy.js"
-    },
-    "./mcp": {
-      "types": "./dist/mcp.d.ts",
-      "import": "./dist/mcp.js"
     }
   },
   "files": [

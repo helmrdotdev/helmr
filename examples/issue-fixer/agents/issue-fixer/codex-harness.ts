@@ -1,4 +1,4 @@
-import type { RuntimeMcpConnection } from "@helmr/sdk/mcp"
+import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
 import { registerNativeOperation, type NativeResource, type NativeInvocation } from "@helmr/sdk/internal"
 import { openNativeHarness } from "./native-lifecycle"
 import { MessageRejected } from "@helmr/sdk"
@@ -65,7 +65,7 @@ export class CodexHarness {
     this.reader = this.read()
     void this.reader.catch(error => { this.broken = true; this.active?.done.reject(error); this.active?.boundary.reject(error) })
   }
-  static open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnection): Promise<CodexHarness> {
+  static open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexHarness> {
     return openNativeHarness(async resource => {
     const saved = await conversation(cwd, sessionId, "codex")
     const harness = new CodexHarness(saved.directory, resource, environment)

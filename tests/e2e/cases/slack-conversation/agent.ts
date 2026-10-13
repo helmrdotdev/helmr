@@ -1,5 +1,5 @@
 import { callMcp, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, template, image, type ComputerIdentity, type Json, type Turn } from "@helmr/sdk"
+import { agent, template, image, type InitContext, type Json, type Turn } from "@helmr/sdk"
 import { setTimeout as delay } from "node:timers/promises"
 
 const modes = ["progress", "long", "text", "choice", "withdraw", "empty", "silent", "stop", "multi"] as const
@@ -32,7 +32,7 @@ async function progress(turn: Turn, speaker: string, marker: string, count: numb
   }
 }
 
-async function conversation(turn: Turn, speaker: string, currentComputer: ComputerIdentity): Promise<Json> {
+async function conversation(turn: Turn, speaker: string, ctx: InitContext): Promise<Json> {
   const { mode, marker } = command(turn.input)
   const result: { marker: string; speaker: string; mode: Mode; privateMarker: string; answer?: Json } = {
     marker, speaker, mode, privateMarker: `PRIVATE_RETURN_${marker}`,
@@ -40,9 +40,9 @@ async function conversation(turn: Turn, speaker: string, currentComputer: Comput
   if (mode === "multi") {
     if (speaker !== "Alpha" || marker.length > 59) throw new Error("Start multi with Alpha and a marker of at most 59 characters")
     await turn.output.write(`Alpha ${marker}: starting a separate Beta task on this Computer.`)
-    const child = await callMcp<ManagedAdmission>(turn.signal, "start", {
+    const child = await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, "start", {
       agent: beta.id,
-      computerId: currentComputer.id,
+      computerId: ctx.computer.id,
       input: [{ type: "text", text: `case:choice marker:${marker}_beta` }],
       idempotencyKey: `${turn.id}:beta`,
     })
@@ -97,11 +97,11 @@ async function conversation(turn: Turn, speaker: string, currentComputer: Comput
 
 export const alpha = agent({
   id: "verification-alpha", template: conversationComputer,
-  maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Alpha", ctx.computer),
+  maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Alpha", ctx),
 })
 export const beta = agent({
   id: "verification-beta", template: conversationComputer,
-  maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Beta", ctx.computer),
+  maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Beta", ctx),
 })
 
 // This front Agent delegates progress without emitting authored output itself.
@@ -110,13 +110,13 @@ export const coordinator = agent({
   turn: async (turn, ctx): Promise<Json> => {
     const { mode, marker } = command(turn.input)
     if (mode !== "progress" || marker.length > 58) throw new Error("Start the coordinator with progress and a marker of at most 58 characters")
-    const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
+    const child = await callMcp<ManagedAdmission>(await ctx.mcp.getConnectionOptions(), turn.signal, "spawn", {
       agent: beta.id,
       computerId: ctx.computer.id,
       input: [{ type: "text", text: `case:progress marker:${marker}_child` }],
       idempotencyKey: `${turn.id}:beta`,
     })
-    const outcome = await waitManagedTurn(turn.signal, child.sessionId, child.turnId)
+    const outcome = await waitManagedTurn(await ctx.mcp.getConnectionOptions(), turn.signal, child.sessionId, child.turnId)
     if (outcome.status !== "completed") throw new Error(`Child ended as ${outcome.status}`)
     return { marker, privateMarker: `PRIVATE_RETURN_${marker}`, childSessionId: child.sessionId, childTurnId: child.turnId }
   },

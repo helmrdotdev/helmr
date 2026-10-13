@@ -35,9 +35,9 @@ ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
 
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
-  HelmrClient, agent, computer, image, source,
+  HelmrClient, agent, template, image, source,
   type AgentDefinition, type TemplateDefinition, type ImageBuilder, type InputContent,
-  type SecretCreateRequest, type SourceDirectory, type SourceFile,
+  type SecretCreateRequest, type SourceDirectory, type SourceFile, type RuntimeMcpConnectionOptions,
 } from "@helmr/sdk"
 
 const sourceFile: SourceFile = source.file("./package.json")
@@ -46,23 +46,28 @@ const fixtureImage: ImageBuilder = image("packed-consumer-image")
   .from("node:24-bookworm-slim")
   .copy(sourceFile, "/app/package.json")
   .copy(sourceDirectory, "/app/src")
-const machine: TemplateDefinition = computer({
+const machine: TemplateDefinition = template({
   id: "packed-machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" },
   prepare: async (build) => { await build.exec(["true"]) },
 })
 const fixture: AgentDefinition<InputContent, string, { ready: boolean }> = agent<InputContent, string, { ready: boolean }>({
-  id: "packed-consumer", computer: machine,
-  init: () => ({ ready: true }),
+  id: "packed-consumer", template: machine,
+  init: async ctx => {
+    const options: RuntimeMcpConnectionOptions = await ctx.mcp.getConnectionOptions()
+    return { ready: Boolean(options.url && options.headers.Authorization) }
+  },
   turn: async (turn, ctx) => {
+    const options: RuntimeMcpConnectionOptions = await ctx.mcp.getConnectionOptions()
+    void options
     if (!ctx.initResult.ready) throw new Error("setup result unavailable")
     await turn.output.write("working")
     await turn.respond("done")
     return turn.input.map(part => part.text).join("")
   },
 })
-const secretRequest: SecretCreateRequest = { name: "TOKEN", value: "secret" }
+const secretRequest: SecretCreateRequest = { secret: "TOKEN", value: "secret" }
 void secretRequest
-if (fixture.kind !== "agent" || machine.kind !== "computer") throw new Error("invalid authored definitions")
+if (fixture.kind !== "agent" || machine.kind !== "template") throw new Error("invalid authored definitions")
 
 const sessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 const turnID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"

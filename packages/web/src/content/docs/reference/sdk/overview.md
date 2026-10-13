@@ -7,24 +7,23 @@ sidebarLabel: Overview
 # TypeScript SDK
 
 `@helmr/sdk` declares Agents, Computers, images and triggers, configures the
-build, and provides an explicitly authenticated `HelmrClient`. The
-`@helmr/sdk/mcp` entry point connects Agent code to the runtime MCP tools.
+build, and provides an explicitly authenticated `HelmrClient`. Agent
+context exposes `ctx.mcp.getConnectionOptions()` for the runtime MCP tools.
 
 ```ts
 import { agent, template, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
-import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 ```
 
 ## Reference pages
 
 | Page | Covers |
 | --- | --- |
-| [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `MessageRejected`, and the client's Session and Turn methods. |
+| [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `RuntimeMcpConnectionOptions`, `MessageRejected`, and the client's Session and Turn methods. |
 | [Computer](/docs/reference/sdk/computer) | `template()`, `image()`, `source`, Secret bindings, and the client's Computer, Template definition and Command methods. |
 | [Client](/docs/reference/sdk/client) | `HelmrClient` options and properties, Agent and definition reads, Deployments and Secrets. |
 | [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Schedule methods. |
 | [Questions](/docs/reference/sdk/questions) | `turn.ask()`, answer controls, answer shapes and limits, and the client's ask methods. |
-| [Runtime MCP](/docs/reference/sdk/mcp) | `createRuntimeMcpConnection()` and every runtime MCP tool, with inputs and results. |
+| [Runtime MCP](/docs/reference/sdk/mcp) | `ctx.mcp.getConnectionOptions()` and every runtime MCP tool, with inputs and results. |
 
 Build configuration (`defineConfig`, `builder`) is documented in
 [Configuration](/docs/reference/config).
@@ -49,7 +48,7 @@ Types exported from `@helmr/sdk`, grouped by area:
 | Area | Types |
 | --- | --- |
 | Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `Json`, `JsonValue`, `MaybePromise` |
-| Turn handler | `Turn`, `InitContext`, `AgentContext`, `InputSource`, `InputMessage`, `OutputReceipt`, `TurnOutcome` |
+| Turn handler | `Turn`, `InitContext`, `AgentContext`, `RuntimeMcpConnectionOptions`, `InputSource`, `InputMessage`, `OutputReceipt`, `TurnOutcome` |
 | Content | `ContentPart`, `Content`, `HumanContent`, `InputPart`, `InputContent` |
 | Questions | `ChoiceOption`, `AnswerControl`, `Question`, `ChoiceAnswer`, `AnswerFor`, `AskResponse`, `AskState`, `AskResponseReceipt`, `AskQuery`, `AskPage`, `TurnAsks` |
 | Client | `HelmrClientOptions`, `RequestOptions`, `CursorPage`, `HelmrError`, `APIError` |
@@ -61,9 +60,6 @@ Types exported from `@helmr/sdk`, grouped by area:
 | Schedules | `ClientSchedulesApi`, `Schedule`, `ScheduleListQuery` |
 | Secrets | `ClientSecretsApi`, `SecretRef`, `Secret`, `SecretStatus`, `SecretCreateRequest`, `SecretListQuery`, `SecretRotateRequest`, `SecretRevokeRequest` |
 | Configuration | `HelmrConfig`, `HelmrConfigInput`, `HelmrBuildConfig`, `HelmrBuildInput`, `Builder`, `BuilderStep` |
-
-`@helmr/sdk/mcp` exports `createRuntimeMcpConnection` and the
-`RuntimeMcpConnection` type. See [Runtime MCP](/docs/reference/sdk/mcp).
 
 ## Shared conventions
 

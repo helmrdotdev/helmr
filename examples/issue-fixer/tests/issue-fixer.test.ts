@@ -15,7 +15,6 @@ const open = async (cwd: string, sessionId: string, _env: unknown, mcp: unknown)
 }
 mock.module("../agents/issue-fixer/codex-harness", () => ({ CodexHarness: { open } }))
 mock.module("../agents/issue-fixer/claude-harness", () => ({ ClaudeHarness: { open } }))
-mock.module("@helmr/sdk/mcp", () => ({ createRuntimeMcpConnection: async () => connection }))
 const { issuePrompt } = await import("../agents/issue-fixer/checks")
 mock.module("../agents/issue-fixer/checks", () => ({
   issuePrompt,
@@ -31,7 +30,7 @@ const { claudeIssueFixer } = await import("../agents/issue-fixer/claude")
 for (const definition of [codexIssueFixer, claudeIssueFixer]) {
   test(`${definition.id} reuses setup, accepts Content and settles only after checks`, async () => {
     trace.length = 0; prompts.length = 0; connections.length = 0; checksFail = false
-    const setup = { session: { id: "fixture-session" }, computer: { id: "fixture-computer" }, deployment: { id: "fixture-deployment" }, recovery: { kind: "initial" as const }, signal: new AbortController().signal }
+    const setup = { mcp: { getConnectionOptions: async () => connection }, session: { id: "fixture-session" }, computer: { id: "fixture-computer" }, deployment: { id: "fixture-deployment" }, recovery: { kind: "initial" as const }, signal: new AbortController().signal }
     const initResult = await definition.init!(setup)
     expect(connections).toEqual([definition === codexIssueFixer ? connection : { helmr: { type: "http", url: connection.url, headers: connection.headers } }])
     const context = { ...setup, initResult }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { agentProto } from "@helmr/proto"
-import type { AgentDefinition, Json, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, InitContext, Json, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import { runAgentProgram } from "./agent-program"
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
@@ -51,7 +51,10 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
       if (event.case === "deliveryResult") receipts.get(event.value.deliveryId)!.resolve(event.value)
       if (event.case === "operation") {
         operations.push(event.value)
-        void operate(event.value).then(value => send({ case: "operationResult", value: create(agentProto.OperationResultSchema, { requestId: event.value.requestId, outcome: { case: "valueJson", value: json(value) } }) }))
+        void operate(event.value).then(
+          value => send({ case: "operationResult", value: create(agentProto.OperationResultSchema, { requestId: event.value.requestId, outcome: { case: "valueJson", value: json(value) } }) }),
+          error => send({ case: "operationResult", value: create(agentProto.OperationResultSchema, { requestId: event.value.requestId, outcome: { case: "error", value: { code: "permission_required", message: String(error) } } }) }),
+        )
       }
     },
   })
@@ -261,27 +264,71 @@ test("interrupted Turn cleanup callbacks pin a held Session until their work end
   } finally { clearInterval(timer); await f.shutdown() }
 })
 
-test("managed MCP factory works during setup and is removed at process shutdown", async () => {
-  const { createRuntimeMcpConnection } = await import("../../../sdk/typescript/src/mcp")
-  await assert.rejects(createRuntimeMcpConnection(), /managed Session/)
+for (const withInit of [true, false]) {
+  test(`context MCP is lazy, reusable and bound to process lifetime (init=${withInit})`, async () => {
+    const connection = { url: "http://127.0.0.1:31415/mcp", headers: { Authorization: "Bearer local-only" } }
+    let retained: InitContext["mcp"] | undefined
+    let calls = 0
+    const f = fixture({
+      ...(withInit ? { init: async (ctx: InitContext) => {
+        retained = ctx.mcp
+        return ctx.mcp.getConnectionOptions()
+      } } : {}),
+      turn: async (_turn, ctx) => {
+        if (retained) assert.equal(ctx.mcp, retained)
+        retained = ctx.mcp
+        const options = await ctx.mcp.getConnectionOptions()
+        assert.deepEqual(options, connection)
+        assert(Object.isFrozen(options) && Object.isFrozen(options.headers))
+        if (withInit) assert.deepEqual(options, ctx.initResult)
+        return options.url
+      },
+    }, async operation => {
+      const payload = JSON.parse(Buffer.from(operation.payloadJson).toString())
+      if (operation.method === agentProto.Operation_Method.GET_MCP_CONNECTION) {
+        calls++
+        assert.equal(operation.turnId, undefined)
+        assert.equal(payload, null)
+        return connection
+      }
+      if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: payload.result }
+      return null
+    })
+    try {
+      await f.ready
+      assert.equal(calls, withInit ? 1 : 0)
+      assert.equal(value(await f.dispatch(1)).result, connection.url)
+      assert.equal(value(await f.dispatch(2)).result, connection.url)
+      assert.equal(calls, withInit ? 3 : 2)
+    } finally { await f.shutdown() }
+    await assert.rejects(retained!.getConnectionOptions(), /Session process must stop/)
+  })
+}
+
+test("context MCP retries after rejected admission and validates local connection options", async () => {
   const connection = { url: "http://127.0.0.1:31415/mcp", headers: { Authorization: "Bearer local-only" } }
-  let setups = 0
-  const f = fixture({ init: async () => { setups++; return createRuntimeMcpConnection() }, turn: (_turn, ctx) => (ctx.initResult as typeof connection).url }, async operation => {
-    const payload = JSON.parse(Buffer.from(operation.payloadJson).toString())
+  let denied = false
+  const responses: Json[] = [null, { ...connection, url: "https://example.test/mcp" }, { ...connection, headers: {} }, connection]
+  const f = fixture({ turn: async (_turn, ctx) => {
+    await assert.rejects(ctx.mcp.getConnectionOptions(), /admission denied/)
+    await assert.rejects(ctx.mcp.getConnectionOptions(), /Invalid runtime MCP connection/)
+    await assert.rejects(ctx.mcp.getConnectionOptions(), /not guest-local/)
+    await assert.rejects(ctx.mcp.getConnectionOptions(), /Invalid runtime MCP headers/)
+    assert.deepEqual(await ctx.mcp.getConnectionOptions(), connection)
+    return true
+  } }, async operation => {
     if (operation.method === agentProto.Operation_Method.GET_MCP_CONNECTION) {
-      assert.equal(operation.turnId, undefined)
-      assert.equal(payload, null)
-      return connection
+      if (!denied) { denied = true; throw new Error("admission denied") }
+      return responses.shift()!
     }
-    if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: payload.result }
+    if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: true }
     return null
   })
-  await f.ready
-  assert.equal(value(await f.dispatch(1)).result, connection.url)
-  assert.equal(value(await f.dispatch(2)).result, connection.url)
-  assert.equal(setups, 1)
-  await f.shutdown()
-  await assert.rejects(createRuntimeMcpConnection(), /managed Session/)
+  try {
+    await f.ready
+    assert.equal(value(await f.dispatch(1)).result, true)
+    assert.equal(responses.length, 0)
+  } finally { await f.shutdown() }
 })
 
 test("resume waits for interrupted work and a later hold supersedes the wait", async () => {

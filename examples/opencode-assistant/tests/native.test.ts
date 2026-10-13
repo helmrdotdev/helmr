@@ -81,7 +81,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
         return harness
       },
       turn: (turn, context) => (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join("")),
-    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
+    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
     const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api" } })
     const pid = harness!.processId, id = harness!.conversationId
     if (scenario === "interrupt" || scenario === "error") {
