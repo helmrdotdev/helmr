@@ -234,6 +234,8 @@ let
           exec go test -race -count=1 ./internal/clickhouse/... ./internal/telemetry
         '';
     ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.ciPostgres ''
+      bun install --frozen-lockfile --ignore-scripts
+      scripts/build-hostconfig-entry.sh
       exec ./scripts/ci-postgres.sh "$@"
     '';
   };
