@@ -177,7 +177,7 @@ rec {
     pkgs.gzip
   ];
 
-  ciPostgres = ciGo ++ [
+  ciPostgres = ciGoConsole ++ [
     pkgs.postgresql_18
   ];
 

@@ -25,6 +25,8 @@ func TestCapacityExternalConsumer(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), "SELECT worker_pool_id FROM worker_hosts WHERE id=$1", f.Worker).Scan(&poolID); err != nil {
 		t.Fatal(err)
 	}
+	// A capacity consumer selects only hosts with a fresh observation.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
 	emptyHost := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts (
  id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,vm_platform_id,
