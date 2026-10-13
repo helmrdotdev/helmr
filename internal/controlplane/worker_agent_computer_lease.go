@@ -6,15 +6,15 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func decodeAgentComputerLease(r *http.Request) (computer.LeaseIdentity, error) {
 	var request workerapi.AgentComputerLeaseRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		return computer.LeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, session.ErrInvalidInput
 	}
 	return agentComputerLeaseIdentity(request)
 }
@@ -24,7 +24,7 @@ func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (co
 	computerID, e2 := agentComputerID(request.ComputerID)
 	instance, e3 := agentComputerID(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || request.LeaseEpoch <= 0 {
-		return computer.LeaseIdentity{}, agent.ErrInvalidInput
+		return computer.LeaseIdentity{}, session.ErrInvalidInput
 	}
 	return computer.LeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
 }
@@ -44,7 +44,7 @@ func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *ht
 func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentComputerStoppedRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAgentComputerError(w, agent.ErrInvalidInput)
+		server.writeAgentComputerError(w, session.ErrInvalidInput)
 		return
 	}
 	identity, err := agentComputerLeaseIdentity(request.AgentComputerLeaseRequest)

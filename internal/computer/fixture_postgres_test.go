@@ -4,21 +4,21 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // fixture is the seeded Environment and Computer the storage tests share.
 type fixture struct {
-	base                      agenttest.Fixture
+	base                      sessiontest.Fixture
 	pool                      *pgxpool.Pool
 	env, computer, deployment uuid.UUID
 }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	return fixture{base: f, pool: f.Pool, env: f.Environment, computer: f.Computer, deployment: f.Deployment}
 }
 

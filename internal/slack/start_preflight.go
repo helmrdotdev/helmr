@@ -11,15 +11,15 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 func (c *WebClient) PrepareStart(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 	target := value.Route.Target
 	if _, err := c.verifyChannel(ctx, target.InstallationID, target.CredentialRevision, target.TeamID, target.ChannelID); err != nil {
-		return nil, agent.ErrSlackChannelUnavailable
+		return nil, session.ErrSlackChannelUnavailable
 	}
 	if value.Route.Source == nil {
 		// External and scheduled starts never publish their input implicitly.
@@ -32,7 +32,7 @@ func (c *WebClient) PrepareStart(ctx context.Context, value slackroute.StartCont
 	source := value.Route.Source
 	if source.Connection.InstallationID != target.InstallationID {
 		if _, err := c.verifyChannel(ctx, source.Connection.InstallationID, source.Connection.CredentialRevision, source.Connection.TeamID, source.Connection.ChannelID); err != nil {
-			return nil, agent.ErrSlackChannelUnavailable
+			return nil, session.ErrSlackChannelUnavailable
 		}
 	}
 	permalink, err := c.sourcePermalink(ctx, *source)
@@ -56,7 +56,7 @@ func (c *WebClient) PrepareStart(ctx context.Context, value slackroute.StartCont
 	prefix := "Request from " + source.Connection.AgentName + " to "
 	text := prefix + target.AgentName + "\n" + task.String() + "\nSource conversation: " + permalink
 	if utf8.RuneCountInString(quoteLiteral(text)) > contentCharacters {
-		return nil, agent.ErrStartMessageTooLarge
+		return nil, session.ErrStartMessageTooLarge
 	}
 	elements := []any{map[string]any{"type": "text", "text": prefix}, map[string]any{"type": "user", "user_id": target.BotUserID}, map[string]any{"type": "text", "text": "\n" + task.String() + "\n"}, map[string]any{"type": "link", "url": permalink, "text": "Source conversation"}}
 	return json.Marshal(map[string]any{"text": quoteLiteral(text), "blocks": []any{map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": elements}}}}, "mrkdwn": false, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false, "reply_broadcast": false})
@@ -65,39 +65,39 @@ func (c *WebClient) PrepareStart(ctx context.Context, value slackroute.StartCont
 func (c *WebClient) sourcePermalink(ctx context.Context, source slackroute.StartSource) (string, error) {
 	token, err := c.credentials.BotToken(ctx, source.Connection.InstallationID, source.Connection.CredentialRevision)
 	if err != nil || token == "" {
-		return "", agent.ErrSourceConversationUnavailable
+		return "", session.ErrSourceConversationUnavailable
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://slack.com/api/chat.getPermalink?"+url.Values{"channel": {source.Connection.ChannelID}, "message_ts": {source.ThreadTS}}.Encode(), nil)
 	if err != nil {
-		return "", agent.ErrSourceConversationUnavailable
+		return "", session.ErrSourceConversationUnavailable
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := c.http.Do(request)
 	if err != nil {
-		return "", agent.ErrSlackChannelUnavailable
+		return "", session.ErrSlackChannelUnavailable
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", agent.ErrSlackChannelUnavailable
+		return "", session.ErrSlackChannelUnavailable
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024+1))
 	if err != nil || len(raw) > 1024*1024 {
-		return "", agent.ErrSlackChannelUnavailable
+		return "", session.ErrSlackChannelUnavailable
 	}
 	raw, err = jsoncanon.Transform(raw)
 	if err != nil {
-		return "", agent.ErrSlackChannelUnavailable
+		return "", session.ErrSlackChannelUnavailable
 	}
 	var result struct {
 		OK        bool   `json:"ok"`
 		Permalink string `json:"permalink"`
 	}
 	if json.Unmarshal(raw, &result) != nil || !result.OK {
-		return "", agent.ErrSourceConversationUnavailable
+		return "", session.ErrSourceConversationUnavailable
 	}
 	parsed, err := url.Parse(result.Permalink)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil || !strings.HasSuffix(parsed.Hostname(), ".slack.com") || !strings.HasPrefix(parsed.Path, "/archives/"+source.Connection.ChannelID+"/") {
-		return "", agent.ErrSourceConversationUnavailable
+		return "", session.ErrSourceConversationUnavailable
 	}
 	return result.Permalink, nil
 }

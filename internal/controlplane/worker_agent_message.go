@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -23,7 +23,7 @@ func (server *Server) workerAgentMessage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	e.AuthorityGeneration = request.AuthorityGeneration
-	next, err := agent.ClaimRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn)
+	next, err := session.ClaimRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -48,7 +48,7 @@ func (server *Server) workerAgentMessageReceipt(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(errors.New("invalid message receipt identity")))
 		return
 	}
-	if err := agent.CompleteRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, id, request.RejectionReason); err != nil {
+	if err := session.CompleteRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, id, request.RejectionReason); err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
 	}

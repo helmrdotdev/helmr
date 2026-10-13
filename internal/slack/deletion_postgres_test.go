@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 func deleteEvent(t *testing.T, f statusFixture, timestamp string) {
@@ -53,7 +53,7 @@ func TestSlackDeletedRootSuppressesFutureDeliveryButPreservesCoreAndUncertainty(
  AND (SELECT bool_and(status='suppressed' AND error='root_deleted') FROM slack_posts WHERE id IN ($3,$4))`, f.thread, unknown, pending, later).Scan(&correct); err != nil || !correct {
 		t.Fatalf("deletion lost evidence or revived root: %v %v", correct, err)
 	}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatalf("projection deletion cancelled core: %v", err)
 	}
 }

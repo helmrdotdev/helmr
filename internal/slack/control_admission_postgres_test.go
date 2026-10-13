@@ -8,8 +8,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -46,17 +46,17 @@ func (f statusFixture) controlReceipt(t *testing.T, c controlEnvelope, answer js
 }
 func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask-turn", Input: json.RawMessage(`[]`)})
+	admission, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask-turn", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	if _, err = dispatchRuntimeTurn(t.Context(), f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err = agent.RuntimeAsk(t.Context(), f.Pool, host, execution, admission.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Choose"}],"answer":{"type":"text"}}`)); err != nil {
+	if err = session.RuntimeAsk(t.Context(), f.Pool, host, execution, admission.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Choose"}],"answer":{"type":"text"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	return admission.TurnID, ask

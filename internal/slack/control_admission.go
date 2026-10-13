@@ -9,9 +9,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -101,30 +101,30 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		var askID, controlID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
-			caller := agent.Caller{Kind: "user", ID: user}
+			caller := session.Caller{Kind: "user", ID: user}
 			if answering {
 				var question []byte
 				if err := coreTx.QueryRow(ctx, `SELECT question FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, target.Environment, target.Session, target.Turn, target.Ask).Scan(&question); err != nil {
 					if errors.Is(err, pgx.ErrNoRows) {
-						return agent.ErrNotReady
+						return session.ErrNotReady
 					}
 					return err
 				}
 				if question == nil {
-					return agent.ErrNotReady
+					return session.ErrNotReady
 				}
 				value, err := parseFormAnswer(question, gesture.Form)
 				if err != nil {
 					return err
 				}
-				answer, err := agent.RespondAsk(ctx, coreTx, caller, agent.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, ResponseID: "slack:" + id.String(), Answer: value})
+				answer, err := session.RespondAsk(ctx, coreTx, caller, session.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, ResponseID: "slack:" + id.String(), Answer: value})
 				if err != nil {
 					return err
 				}
 				askID = &answer.ID
 				gesture.Receipt, _ = json.Marshal(map[string]any{"ask_id": answer.ID, "status": answer.Status})
 			} else {
-				receipt, err := agent.ControlSession(ctx, coreTx, caller, agent.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", IdempotencyKey: "slack:" + id.String()})
+				receipt, err := session.ControlSession(ctx, coreTx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", IdempotencyKey: "slack:" + id.String()})
 				if err != nil {
 					return err
 				}
@@ -136,7 +136,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				return err
 			}
 			if deleted {
-				return agent.ErrNotReady
+				return session.ErrNotReady
 			}
 			if err := coreTx.QueryRow(ctx, `SELECT expires_at>clock_timestamp() AND $2>clock_timestamp() FROM slack_requests WHERE id=$1`, id, expires).Scan(&unexpired); err != nil {
 				return err
@@ -150,17 +150,17 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			switch {
 			case errors.Is(err, errAdmissionExpired):
 				return reject("gesture_expired")
-			case errors.Is(err, agent.ErrDenied):
+			case errors.Is(err, session.ErrDenied):
 				return reject("permission_denied")
-			case errors.Is(err, agent.ErrNotReady), errors.Is(err, agent.ErrTerminal):
+			case errors.Is(err, session.ErrNotReady), errors.Is(err, session.ErrTerminal):
 				return reject("target_unavailable")
-			case errors.Is(err, agent.ErrAskAlreadyResponded):
+			case errors.Is(err, session.ErrAskAlreadyResponded):
 				return reject("ask_already_answered")
-			case errors.Is(err, agent.ErrAskCancelled):
+			case errors.Is(err, session.ErrAskCancelled):
 				return reject("ask_cancelled")
-			case errors.Is(err, agent.ErrConflict):
+			case errors.Is(err, session.ErrConflict):
 				return reject("response_conflict")
-			case errors.Is(err, content.ErrAnswerInvalid), errors.Is(err, content.ErrLimit), errors.Is(err, agent.ErrInvalidInput):
+			case errors.Is(err, content.ErrAnswerInvalid), errors.Is(err, content.ErrLimit), errors.Is(err, session.ErrInvalidInput):
 				return reject("answer_invalid")
 			default:
 				return err

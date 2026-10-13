@@ -6,7 +6,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -15,10 +15,10 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 		t.Run(phase, func(t *testing.T) {
 			f := newStatusFixture(t)
 			turn, ask := f.pendingQuestion(t)
-			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			peer := uuid.NewV7()
-			if err := agent.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
+			if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
 				t.Fatal(err)
 			}
 			f.projectAll(t)
@@ -36,7 +36,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 				}
 			}
 			for range 2 {
-				if err := agent.RuntimeWithdrawAsk(t.Context(), f.Pool, host, execution, turn, ask); err != nil {
+				if err := session.RuntimeWithdrawAsk(t.Context(), f.Pool, host, execution, turn, ask); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -17,7 +17,7 @@ func allocationIdentity(in workerapi.AllocationIdentity) (dispatch.HostAllocatio
 	owner, e2 := agentComputerID(in.OwnerID)
 	instance, e3 := agentComputerID(in.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation") {
-		return dispatch.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, session.ErrInvalidInput
 	}
 	return dispatch.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
 }
@@ -74,7 +74,7 @@ func decodeAllocationIdentity(r *http.Request, kind string) (dispatch.HostAlloca
 		return dispatch.HostAllocation{}, err
 	}
 	if request.Kind != kind {
-		return dispatch.HostAllocation{}, agent.ErrInvalidInput
+		return dispatch.HostAllocation{}, session.ErrInvalidInput
 	}
 	return allocationIdentity(request)
 }
@@ -118,7 +118,7 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if request.Identity.Kind != "computer" {
-		server.writeAllocationError(w, agent.ErrInvalidInput)
+		server.writeAllocationError(w, session.ErrInvalidInput)
 		return
 	}
 	identity, err := allocationIdentity(request.Identity)
@@ -154,14 +154,14 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 	}
 	identity, err := allocationIdentity(request.Identity)
 	if err != nil || identity.Kind != "computer" {
-		server.writeAllocationError(w, agent.ErrInvalidInput)
+		server.writeAllocationError(w, session.ErrInvalidInput)
 		return
 	}
 	var after *dispatch.ProcessIdentity
 	if request.After != nil {
 		id, err := agentComputerID(request.After.SessionID)
 		if err != nil || request.After.Epoch <= 0 {
-			server.writeAllocationError(w, agent.ErrInvalidInput)
+			server.writeAllocationError(w, session.ErrInvalidInput)
 			return
 		}
 		after = &dispatch.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}

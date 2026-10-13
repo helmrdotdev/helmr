@@ -13,37 +13,37 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	op := workerapi.AgentOperationRequest{Session: session, RequestID: "register", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_REGISTER_MESSAGES), Payload: json.RawMessage(`null`)}
+	op := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "register", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_REGISTER_MESSAGES), Payload: json.RawMessage(`null`)}
 	if response, err := client.AgentOperation(t.Context(), op); err != nil || response.Error != nil {
 		t.Fatalf("register: %+v %v", response, err)
 	}
@@ -64,7 +64,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if again, err := client.AgentOperation(t.Context(), sendOp); err != nil || again.Error != nil || string(again.Value) != string(sent.Value) {
 		t.Fatalf("send retry: %+v %v", again, err)
 	}
-	request := workerapi.AgentMessageRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
+	request := workerapi.AgentMessageRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
 	next, err := client.NextAgentMessage(t.Context(), request)
 	if err != nil || next == nil || string(next.Input) != `[{"text":"steer","type":"text"}]` {
 		t.Fatalf("claim: %+v %v", next, err)
@@ -95,13 +95,13 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 		}
 	}
 	runSDK("live")
-	receipt := workerapi.AgentMessageReceipt{Session: session, AttachmentSequence: attachment.AttachmentSequence, TurnID: next.TurnID, MessageID: next.MessageID}
+	receipt := workerapi.AgentMessageReceipt{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, TurnID: next.TurnID, MessageID: next.MessageID}
 	wrong := receipt
 	wrong.TurnID = uuid.NewV7().String()
 	if err := client.ObserveAgentMessage(t.Context(), wrong); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("wrong target: %v", err)
 	}
-	attachment, err = client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err = client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}

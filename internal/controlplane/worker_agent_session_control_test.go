@@ -5,9 +5,9 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -142,7 +142,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", IdempotencyKey: "human"})
+	human, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", IdempotencyKey: "human"})
 	if err != nil {
 		t.Fatal(err)
 	}

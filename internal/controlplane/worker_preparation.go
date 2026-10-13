@@ -5,18 +5,18 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func preparationExecutor(in workerapi.PreparationExecutor) (computer.ImageBuildExecutor, error) {
 	identity, err := allocationIdentity(in.Identity)
 	if err != nil || identity.Kind != "preparation" || len(in.ChannelCredential) != 32 {
-		return computer.ImageBuildExecutor{}, agent.ErrInvalidInput
+		return computer.ImageBuildExecutor{}, session.ErrInvalidInput
 	}
 	return computer.ImageBuildExecutor{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch, ChannelCredential: in.ChannelCredential}, nil
 }
@@ -213,7 +213,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if captured.Trust.PreparationID != ref.ImageBuildID || captured.Trust.EnvironmentID != ref.EnvironmentID {
-			server.writeAllocationError(w, agent.ErrDenied)
+			server.writeAllocationError(w, session.ErrDenied)
 			return
 		}
 		protected = &workerapi.ProtectedEnv{Env: captured.Env, CA: captured.Trust.Certificate}
@@ -270,7 +270,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if manifest.Program.Artifact != start.Spec.Program {
-		server.writeAllocationError(w, agent.ErrConflict)
+		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
 	var computerID *definition.TemplateManifest
@@ -281,7 +281,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if computerID == nil {
-		server.writeAllocationError(w, agent.ErrConflict)
+		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
 	var seedObject workerapi.CASObject
@@ -292,7 +292,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if seedObject.Digest != computerID.Seed.ArtifactDigest {
-		server.writeAllocationError(w, agent.ErrConflict)
+		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
 	program, err := runtimeProgram(start.DeploymentID.String(), manifest)

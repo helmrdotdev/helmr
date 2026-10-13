@@ -12,13 +12,13 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -36,7 +36,7 @@ type workerClaimsRace struct {
 	bodies          map[string][][]byte
 }
 
-func newWorkerClaimsRace(t *testing.T, f agenttest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
+func newWorkerClaimsRace(t *testing.T, f sessiontest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
 	t.Helper()
 	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
 	server.hostAuth = testHostAuthConfig(t)
@@ -106,7 +106,7 @@ func (r *workerClaimsRace) requireReplayed(t *testing.T, path string) {
 	}
 }
 
-func drainWorkerHost(f agenttest.Fixture) func(context.Context) error {
+func drainWorkerHost(f sessiontest.Fixture) func(context.Context) error {
 	return func(ctx context.Context) error {
 		var claim int64
 		if err := f.Pool.QueryRow(ctx, `SELECT claim_version FROM worker_hosts WHERE id=$1`, f.Worker).Scan(&claim); err != nil {
@@ -120,7 +120,7 @@ func drainWorkerHost(f agenttest.Fixture) func(context.Context) error {
 	}
 }
 
-func runningComputerCommand(t *testing.T, f agenttest.Fixture) (uuid.UUID, uuid.UUID, int64) {
+func runningComputerCommand(t *testing.T, f sessiontest.Fixture) (uuid.UUID, uuid.UUID, int64) {
 	t.Helper()
 	var org, project uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
@@ -143,10 +143,10 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 		name, path string
 		stopping   bool
 		handler    func(*Server) http.HandlerFunc
-		call       func(*testing.T, agenttest.Fixture, *workerclient.Client, uuid.UUID, uuid.UUID, int64)
+		call       func(*testing.T, sessiontest.Fixture, *workerclient.Client, uuid.UUID, uuid.UUID, int64)
 	}{
 		{name: "completion", path: "/worker/v1/computer-commands/complete", handler: func(s *Server) http.HandlerFunc { return s.workerCompleteComputerCommand },
-			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+			call: func(t *testing.T, f sessiontest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				code := int32(0)
 				if err := client.CompleteComputerCommand(t.Context(), workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), AllocationID: instance.String(), WriterGeneration: generation, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}); err != nil {
 					t.Fatalf("completion across drain: %v", err)
@@ -157,7 +157,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 				}
 			}},
 		{name: "claim", path: "/worker/v1/computer-commands/claim", handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
-			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+			call: func(t *testing.T, f sessiontest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), AllocationID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("claim across drain: %v", err)
@@ -167,7 +167,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 				}
 			}},
 		{name: "cancellation", path: "/worker/v1/computer-commands/claim", stopping: true, handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
-			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+			call: func(t *testing.T, f sessiontest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), AllocationID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("cancellation claim across drain: %v", err)
@@ -177,7 +177,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 				}
 			}},
 		{name: "log append", path: "/worker/v1/computer-commands/logs/append", handler: func(s *Server) http.HandlerFunc { return s.workerAppendCommandLogs },
-			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+			call: func(t *testing.T, f sessiontest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				if _, err := client.AppendCommandLog(t.Context(), workerapi.CommandLogAppendRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), AllocationID: instance.String(), WriterGeneration: generation, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}); err != nil {
 					t.Fatalf("log append across drain: %v", err)
 				}
@@ -188,7 +188,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			command, instance, generation := runningComputerCommand(t, f)
 			if test.stopping {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)

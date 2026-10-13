@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -19,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -37,7 +37,7 @@ func (s *sessionBundleStore) Get(context.Context, string) (io.ReadCloser, error)
 func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 	for _, mode := range []string{"current", "bad bytes", "hold during read", "stale attachment"} {
 		t.Run(mode, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			raw, manifest := controlPlaneDeploymentBundle(t)
 			digest, err := bundle.Digest(raw)
 			if err != nil {
@@ -102,7 +102,7 @@ func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 }
 
 func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	raw, _ := controlPlaneDeploymentBundle(t)
 	digest, err := bundle.Digest(raw)
 	if err != nil {

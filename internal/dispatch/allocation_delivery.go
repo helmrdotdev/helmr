@@ -7,8 +7,8 @@ import (
 	"errors"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -151,7 +151,7 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 		if err != nil {
 			return err
 		}
-		if _, err := agent.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if _, err := session.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
 		var digest []byte
@@ -209,7 +209,7 @@ func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host wo
 		if err != nil {
 			return err
 		}
-		if _, err := agent.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if _, err := session.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
 		r, err := ReadLeaseAllocation(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)

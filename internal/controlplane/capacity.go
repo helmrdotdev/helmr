@@ -15,10 +15,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -257,8 +257,8 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 	})
 	if err != nil {
 		var lock *pgconn.PgError
-		if errors.Is(err, agent.ErrNotReady) || (errors.As(err, &lock) && lock.Code == "55P03") {
-			s.writeAgentComputerError(w, agent.ErrNotReady)
+		if errors.Is(err, session.ErrNotReady) || (errors.As(err, &lock) && lock.Code == "55P03") {
+			s.writeAgentComputerError(w, session.ErrNotReady)
 		} else {
 			s.writeWorkerGroupError(w, err)
 		}

@@ -12,9 +12,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
@@ -316,7 +316,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err != nil {
 			return err
 		}
-		sessions, err := agent.LockInitialSessions(ctx, tx, env, computerID)
+		sessions, err := session.LockInitialSessions(ctx, tx, env, computerID)
 		if err != nil {
 			return err
 		}
@@ -348,7 +348,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
 			return err
 		}
-		if err := agent.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
+		if err := session.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
@@ -398,7 +398,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err != nil {
 			return err
 		}
-		capture, err := agent.LockCapture(ctx, tx, env, checkpoint)
+		capture, err := session.LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}

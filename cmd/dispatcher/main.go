@@ -11,13 +11,13 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/version"
@@ -98,7 +98,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 
 	runners := []dispatcherRunner{
 		{name: "stale host fencer", run: staleHostFencer.Run},
-		{name: "Agent triggers", run: func(ctx context.Context) error { return agent.RunTriggers(ctx, pool, secretStore, log) }},
+		{name: "Agent triggers", run: func(ctx context.Context) error { return session.RunTriggers(ctx, pool, secretStore, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
 	}

@@ -7,9 +7,9 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
@@ -23,9 +23,9 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	session, err := ids.Parse(chi.URLParam(r, "sessionID"))
-	if err != nil || session == uuid.Nil() {
-		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
+	if err != nil || sessionID == uuid.Nil() {
+		s.writeAgentHTTPError(w, session.ErrInvalidInput)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -38,11 +38,11 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 		if cursor := r.URL.Query().Get("cursor"); cursor != "" {
 			after, err = strconv.ParseInt(cursor, 10, 64)
 			if err != nil || after < 0 {
-				s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+				s.writeAgentHTTPError(w, session.ErrInvalidInput)
 				return
 			}
 		}
-		rows, err := slack.ListSessionDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, session, after, limit)
+		rows, err := slack.ListSessionDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, sessionID, after, limit)
 		if err != nil {
 			s.writeSlackDeliveryError(w, err)
 			return
@@ -60,7 +60,7 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	post, err := ids.Parse(chi.URLParam(r, "postID"))
 	if err != nil || post == uuid.Nil() {
-		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		s.writeAgentHTTPError(w, session.ErrInvalidInput)
 		return
 	}
 	if chi.URLParam(r, "recovery") == "check" && s.slackConfig == nil {
@@ -72,7 +72,7 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	err = slack.RecoverDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, session, post, input, chi.URLParam(r, "recovery"))
+	err = slack.RecoverDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, sessionID, post, input, chi.URLParam(r, "recovery"))
 	if err != nil {
 		s.writeSlackDeliveryError(w, err)
 		return

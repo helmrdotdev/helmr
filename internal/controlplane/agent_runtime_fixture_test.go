@@ -13,9 +13,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -23,7 +23,7 @@ import (
 // Tests drive Turn transitions through the production runtime operations with
 // the fixture Worker's host principal.
 
-func fixtureHostFor(t *testing.T, pool db.TxBeginner, e agent.Execution) workergroup.HostPrincipal {
+func fixtureHostFor(t *testing.T, pool db.TxBeginner, e session.Execution) workergroup.HostPrincipal {
 	t.Helper()
 	var group uuid.UUID
 	if err := db.RunTx(t.Context(), pool, func(tx pgx.Tx) error {
@@ -34,40 +34,40 @@ func fixtureHostFor(t *testing.T, pool db.TxBeginner, e agent.Execution) workerg
 	return workergroup.HostPrincipal{HostID: e.WorkerHostID, GroupID: group, Epoch: e.WorkerEpoch, HostClaimVersion: 1, GroupClaimVersion: 1}
 }
 
-func dispatchRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution) (agent.TurnDispatch, error) {
+func dispatchRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution) (session.TurnDispatch, error) {
 	t.Helper()
 	host := fixtureHostFor(t, pool, e)
 	var sequence int64
 	if err := db.RunTx(t.Context(), pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(t.Context(), `SELECT attachment_sequence FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&sequence)
 	}); err != nil {
-		return agent.TurnDispatch{}, err
+		return session.TurnDispatch{}, err
 	}
 	if sequence == 0 {
-		a, err := agent.AcquireRuntimeAttachment(t.Context(), pool, host, e)
+		a, err := session.AcquireRuntimeAttachment(t.Context(), pool, host, e)
 		if err != nil {
-			return agent.TurnDispatch{}, err
+			return session.TurnDispatch{}, err
 		}
 		sequence = a.Sequence
 	}
-	dispatch, err := agent.DispatchRuntimeTurn(t.Context(), pool, host, e, sequence)
+	dispatch, err := session.DispatchRuntimeTurn(t.Context(), pool, host, e, sequence)
 	if err != nil {
-		return agent.TurnDispatch{}, err
+		return session.TurnDispatch{}, err
 	}
 	if dispatch == nil {
-		return agent.TurnDispatch{}, agent.ErrNotReady
+		return session.TurnDispatch{}, session.ErrNotReady
 	}
 	return *dispatch, nil
 }
 
-func closeRuntimeProcessing(t *testing.T, pool db.TxBeginner, e agent.Execution, turn uuid.UUID) error {
+func closeRuntimeProcessing(t *testing.T, pool db.TxBeginner, e session.Execution, turn uuid.UUID) error {
 	t.Helper()
-	return agent.RuntimeCloseProcessing(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn)
+	return session.RuntimeCloseProcessing(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn)
 }
 
-func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
+func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
 	t.Helper()
-	if _, err := agent.RuntimeFinalize(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn, result, evidence); err != nil {
+	if _, err := session.RuntimeFinalize(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn, result, evidence); err != nil {
 		return computer.SaveRequest{}, err
 	}
 	var save computer.SaveRequest
@@ -75,7 +75,7 @@ func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution, tu
 		return tx.QueryRow(t.Context(), `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return computer.SaveRequest{}, agent.ErrNotReady
+		return computer.SaveRequest{}, session.ErrNotReady
 	}
 	return save, err
 }

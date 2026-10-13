@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestSchemaCanonicalContentAndRequestDigests(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

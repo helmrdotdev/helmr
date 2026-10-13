@@ -6,13 +6,13 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -240,6 +240,6 @@ type definitionsFixture struct {
 
 func newDefinitionsFixture(t *testing.T) definitionsFixture {
 	t.Helper()
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	return definitionsFixture{pool: f.Pool, env: f.Environment, deployment: f.Deployment}
 }

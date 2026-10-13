@@ -10,31 +10,31 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 type retirementFixture struct {
-	agenttest.Fixture
+	sessiontest.Fixture
 	poolID uuid.UUID
 	host   workergroup.HostPrincipal
 }
 
 func newRetirementFixture(t *testing.T) retirementFixture {
 	t.Helper()
-	f := retirementFixture{Fixture: agenttest.New(t)}
+	f := retirementFixture{Fixture: sessiontest.New(t)}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT worker_pool_id FROM worker_hosts WHERE id=$1`, f.Worker).Scan(&f.poolID); err != nil {
 		t.Fatal(err)
 	}
 	f.host = workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	return f
 }
-func (f retirementFixture) capture() agent.ComputerCaptureRequest {
-	return agent.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
+func (f retirementFixture) capture() session.ComputerCaptureRequest {
+	return session.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
 }
 func cloneRestorePool(t *testing.T, f retirementFixture) uuid.UUID {
 	t.Helper()
@@ -83,7 +83,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hold.Rollback(t.Context())
-	if _, err = agent.BeginComputerCapture(t.Context(), hold, f.host, f.capture()); err != nil {
+	if _, err = session.BeginComputerCapture(t.Context(), hold, f.host, f.capture()); err != nil {
 		t.Fatal(err)
 	}
 	var blocker int32
@@ -129,14 +129,14 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	f := newRetirementFixture(t)
 	request := f.capture()
-	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
 		t.Fatal(err)
 	}
 	// This fixture supplies an already-certified checkpoint; this test exercises
 	// supplier retirement, not VM capture or manifest certification.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || !demand {
@@ -165,7 +165,7 @@ func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
 	f := newRetirementFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_pools SET status='draining',claim_version=claim_version+1 WHERE id=$1`, f.poolID)
-	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("capture without supplier=%v", err)
 	}
 	var count int
@@ -217,7 +217,7 @@ func TestCaptureRequiresRestoreAdmittingGroup(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			f := newRetirementFixture(t)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status=$2 WHERE id=$1`, f.Group, status)
-			if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, agent.ErrNotReady) {
+			if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, session.ErrNotReady) {
 				t.Fatalf("capture in %s Group: %v; want not ready", status, err)
 			}
 			var count int

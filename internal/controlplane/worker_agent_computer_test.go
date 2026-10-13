@@ -16,11 +16,11 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -36,9 +36,9 @@ func agentComputerBytes(t *testing.T, p proto.Message) []byte {
 	}
 	return raw
 }
-func beginWorkerAgentCapture(t *testing.T, f agenttest.Fixture, client *workerclient.Client) (workerapi.AgentComputerCaptureRequest, workerapi.AgentComputerCaptureResponse, *agentv1.ComputerSessionCapture) {
+func beginWorkerAgentCapture(t *testing.T, f sessiontest.Fixture, client *workerclient.Client) (workerapi.AgentComputerCaptureRequest, workerapi.AgentComputerCaptureResponse, *agentv1.ComputerSessionCapture) {
 	t.Helper()
-	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
+	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
 	response, err := client.BeginAgentComputerCapture(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func beginWorkerAgentCapture(t *testing.T, f agenttest.Fixture, client *workercl
 	}
 	return request, response, capture
 }
-func workerSourceAbort(t *testing.T, f agenttest.Fixture, capture *agentv1.ComputerSessionCapture) *agentv1.ComputerSessionInstallation {
+func workerSourceAbort(t *testing.T, f sessiontest.Fixture, capture *agentv1.ComputerSessionCapture) *agentv1.ComputerSessionInstallation {
 	t.Helper()
 	envelope := proto.Clone(capture.Envelope).(*computerv0.ComputerOperationEnvelope)
 	envelope.OperationExpiresAtUnixNano = time.Now().Add(20 * time.Second).UnixNano()
@@ -63,7 +63,7 @@ func workerSourceAbort(t *testing.T, f agenttest.Fixture, capture *agentv1.Compu
 	return p
 }
 func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -73,7 +73,7 @@ func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(result.Capture, repeated.Capture) || result.SaveID != repeated.SaveID {
 		t.Fatalf("capture retry changed: %v", err)
 	}
-	if capture.Envelope.ChannelCredential != agenttest.ChannelCredential {
+	if capture.Envelope.ChannelCredential != sessiontest.ChannelCredential {
 		t.Fatal("capture credential changed in transport")
 	}
 	observed := &agentv1.ComputerSessionReceipt{CheckpointId: capture.CheckpointId, DesiredVersion: capture.DesiredVersion, Frozen: true}
@@ -83,7 +83,7 @@ func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
 	if err := client.SealAgentComputerCapture(t.Context(), workerapi.AgentComputerReceiptRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, Receipt: agentComputerBytes(t, observed)}); err != nil {
 		t.Fatal(err)
 	}
-	prepare := workerapi.AgentComputerSourceAbortRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential, Receipt: agentComputerBytes(t, observed)}
+	prepare := workerapi.AgentComputerSourceAbortRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential, Receipt: agentComputerBytes(t, observed)}
 	assertForeignAgentComputer(t, f, func() error { _, err := foreign.PrepareAgentComputerSourceAbort(t.Context(), prepare); return err })
 	prepared, err := client.PrepareAgentComputerSourceAbort(t.Context(), prepare)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
 	}
 }
 func TestWorkerAgentComputerCancellationRequiresOwnedEvidence(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -182,7 +182,7 @@ func TestWorkerAgentComputerCancellationRequiresOwnedEvidence(t *testing.T) {
 	}
 }
 func TestWorkerAgentComputerRejectsForeignHostAndMalformedRequests(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	auth := seedHostSecret(t, f.Pool, f.Worker)
@@ -256,7 +256,7 @@ func postAgentComputerJSON(t *testing.T, server *httptest.Server, auth seededHos
 }
 
 func TestWorkerAgentComputerTargetRoundTrip(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -322,11 +322,11 @@ func TestWorkerAgentComputerCaptureRejectsExpiredAuthority(t *testing.T) {
 		{"host epoch", "UPDATE worker_hosts SET current_epoch=current_epoch+1", http.StatusUnauthorized},
 	} {
 		t.Run(change.name, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
 			dbtest.MustExec(t, t.Context(), f.Pool, change.sql)
-			client.post(t, "/worker/v1/agent-computers/capture/begin", workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}, change.status, nil)
+			client.post(t, "/worker/v1/agent-computers/capture/begin", workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}, change.status, nil)
 			var count int
 			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoints`).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("unauthorized capture changed state: %d %v", count, err)
@@ -335,7 +335,7 @@ func TestWorkerAgentComputerCaptureRejectsExpiredAuthority(t *testing.T) {
 	}
 }
 
-func foreignAgentComputerClient(t *testing.T, f agenttest.Fixture, baseURL string) *workerclient.Client {
+func foreignAgentComputerClient(t *testing.T, f sessiontest.Fixture, baseURL string) *workerclient.Client {
 	t.Helper()
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::uuid,'resource_id',$2::text,'current_service_id',$2::uuid))).* FROM worker_hosts h WHERE id=$1`, f.Worker, other)
@@ -348,7 +348,7 @@ func assertAgentComputerErrorCode(t *testing.T, err error, code string) {
 		t.Fatalf("expected 409 %s: %v", code, err)
 	}
 }
-func assertForeignAgentComputer(t *testing.T, f agenttest.Fixture, call func() error) {
+func assertForeignAgentComputer(t *testing.T, f sessiontest.Fixture, call func() error) {
 	t.Helper()
 	snapshot := func() string {
 		var value string
@@ -364,7 +364,7 @@ func assertForeignAgentComputer(t *testing.T, f agenttest.Fixture, call func() e
 	}
 }
 func TestWorkerAgentComputerOversizedChunkedBody(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	credential := seedHostSecret(t, f.Pool, f.Worker).issue(t, handler)
 	// An unknown Content-Length must still preserve the decoder's 413 result.
@@ -380,7 +380,7 @@ func TestWorkerAgentComputerOversizedChunkedBody(t *testing.T) {
 	}
 }
 
-func assertWorkerControlsBeforeCommit(t *testing.T, f agenttest.Fixture, client, foreign *workerclient.Client, request workerapi.AgentComputerInstallationRequest) {
+func assertWorkerControlsBeforeCommit(t *testing.T, f sessiontest.Fixture, client, foreign *workerclient.Client, request workerapi.AgentComputerInstallationRequest) {
 	t.Helper()
 	assertForeignAgentComputer(t, f, func() error { _, err := foreign.ReadAgentComputerControls(t.Context(), request); return err })
 	if _, err := client.ReadAgentComputerControls(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {
@@ -388,7 +388,7 @@ func assertWorkerControlsBeforeCommit(t *testing.T, f agenttest.Fixture, client,
 	}
 }
 
-func assertWorkerCurrentControls(t *testing.T, f agenttest.Fixture, client, foreign *workerclient.Client, request workerapi.AgentComputerInstallationRequest, installed *agentv1.ComputerSessionInstallation) {
+func assertWorkerCurrentControls(t *testing.T, f sessiontest.Fixture, client, foreign *workerclient.Client, request workerapi.AgentComputerInstallationRequest, installed *agentv1.ComputerSessionInstallation) {
 	t.Helper()
 	assertForeignAgentComputer(t, f, func() error { _, err := foreign.ReadAgentComputerControls(t.Context(), request); return err })
 	result, err := client.ReadAgentComputerControls(t.Context(), request)
@@ -449,7 +449,7 @@ func acknowledgeWorkerComputerMembers(t *testing.T, client *workerclient.Client,
 	}
 }
 
-func seedWorkerAgentRestoreTarget(t *testing.T, f agenttest.Fixture, request workerapi.AgentComputerCaptureRequest, result workerapi.AgentComputerCaptureResponse) (workerapi.AgentComputerRestoreRequest, uuid.UUID) {
+func seedWorkerAgentRestoreTarget(t *testing.T, f sessiontest.Fixture, request workerapi.AgentComputerCaptureRequest, result workerapi.AgentComputerCaptureResponse) (workerapi.AgentComputerRestoreRequest, uuid.UUID) {
 	t.Helper()
 	// Readiness, exact root certification and physical admission are fixture state
 	// here. Their storage/VM boundaries are not proved by this HTTP transport test.
@@ -469,7 +469,7 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f agenttest.Fixture, request wor
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,64,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',2,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$4,true);
- `+agenttest.DiskRootInsert("$1", "$5", "$7")+`;
+ `+sessiontest.DiskRootInsert("$1", "$5", "$7")+`;
  UPDATE computer_saves SET status='published',root_id=$5,captured_root_digest=decode(substring($8::text from 8),'hex'),flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),capture_evidence='fixture coherent cut',publication_evidence='fixture certified root' WHERE id=$3;
  UPDATE computers SET recovery_save_id=$3 WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='ready',manifest=$9,vm_platform_id=$8,ready_at=clock_timestamp() WHERE id=$10;

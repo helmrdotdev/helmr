@@ -10,17 +10,17 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var org, project uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
 		t.Fatal(err)

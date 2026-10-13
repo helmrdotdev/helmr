@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -38,7 +38,7 @@ func (*workerAgentTestMachine) WithRunningGuestControl(ctx context.Context, _ vm
 }
 
 func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -119,7 +119,7 @@ func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.
 }
 
 func TestWorkerAgentServiceRenewsCurrentGenerationWithoutSetup(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -182,7 +182,7 @@ func TestWorkerAgentServiceRenewsCurrentGenerationWithoutSetup(t *testing.T) {
 // PostgreSQL while retaining one guest attachment. Native processes and VM
 // suspension are qualified separately; the wire peer here is synthetic.
 func TestWorkerAgentHotCredentialRefreshPreservesAttachment(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
 		cfg.WorkerHostCredentialTTL = 2 * time.Second
 	})

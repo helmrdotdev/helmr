@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -41,7 +41,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 			controlFailure := strings.HasPrefix(scenario, "control-failure")
 			stopped := strings.HasSuffix(scenario, "stopped")
 			target := strings.HasPrefix(scenario, "target-")
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			var p *agentv1.ComputerSessionInstallation
 			var activated, installed atomic.Bool
@@ -135,7 +135,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				restore, _ := seedWorkerAgentRestoreTarget(t, f, request, captureResult)
 				prepared, err = client.PrepareAgentComputerRestore(t.Context(), restore)
 			} else {
-				prepared, err = client.PrepareAgentComputerSourceAbort(t.Context(), workerapi.AgentComputerSourceAbortRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential, Receipt: agentComputerBytes(t, observed)})
+				prepared, err = client.PrepareAgentComputerSourceAbort(t.Context(), workerapi.AgentComputerSourceAbortRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential, Receipt: agentComputerBytes(t, observed)})
 			}
 			if err != nil {
 				t.Fatal(err)

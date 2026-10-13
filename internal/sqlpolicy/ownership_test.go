@@ -51,10 +51,10 @@ var tableOwners = map[string]string{
 	"disk_object_pins": "internal/computer", "disk_objects": "internal/computer", "image_builds": "internal/computer",
 	"computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
 	"secret_exposures": "internal/computer",
-	// agent runtime: sessions and turns
-	"trigger_occurrences": "internal/agent", "session_controls": "internal/agent",
-	"session_events": "internal/agent", "session_holds": "internal/agent", "session_processes": "internal/agent",
-	"sessions": "internal/agent", "turn_asks": "internal/agent", "turn_messages": "internal/agent", "turns": "internal/agent",
+	// Sessions and Turns
+	"trigger_occurrences": "internal/session", "session_controls": "internal/session",
+	"session_events": "internal/session", "session_holds": "internal/session", "session_processes": "internal/session",
+	"sessions": "internal/session", "turn_asks": "internal/session", "turn_messages": "internal/session", "turns": "internal/session",
 	// commands
 	"commands": "internal/command", "idempotency_receipts": "internal/idempotency",
 	// secrets
@@ -76,11 +76,11 @@ var tableOwners = map[string]string{
 // coWriters are packages that still write another owner's table. Each entry
 // names the slice that retires it; the owner split (B1) is the default.
 var coWriters = map[string]map[string]string{
-	"trigger_activations": {"internal/agent": "owner split"},
+	"trigger_activations": {"internal/session": "owner split"},
 	"environments":        {"internal/deployment": "owner split"},
-	"slack_posts":         {"internal/agent": "owner split"},
-	"slack_requests":      {"internal/agent": "owner split"},
-	"slack_threads":       {"internal/agent": "owner split"},
+	"slack_posts":         {"internal/session": "owner split"},
+	"slack_requests":      {"internal/session": "owner split"},
+	"slack_threads":       {"internal/session": "owner split"},
 	"login_sessions":      {"internal/org": "member disablement revokes sessions"},
 	"users":               {"internal/org": "organization creation records the owner"},
 }

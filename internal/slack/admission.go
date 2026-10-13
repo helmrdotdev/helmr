@@ -12,9 +12,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -183,13 +183,13 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		}
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source
-		var receipt agent.SendReceipt
+		var receipt session.SendReceipt
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
 			if p.thread == uuid.Nil() {
-				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt.Admission, err = session.Start(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
 			} else {
-				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -200,7 +200,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 					return err
 				}
 				if deleted {
-					return agent.ErrNotReady
+					return session.ErrNotReady
 				}
 			}
 			var unexpired bool
@@ -216,11 +216,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			switch {
 			case errors.Is(err, errAdmissionExpired):
 				return rejectMessage(ctx, tx, id, "gesture_expired")
-			case errors.Is(err, agent.ErrDenied):
+			case errors.Is(err, session.ErrDenied):
 				return rejectMessage(ctx, tx, id, "permission_denied")
-			case errors.Is(err, agent.ErrNotReady), errors.Is(err, agent.ErrTerminal):
+			case errors.Is(err, session.ErrNotReady), errors.Is(err, session.ErrTerminal):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
-			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
+			case errors.Is(err, session.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
 				return rejectMessage(ctx, tx, id, "content_unsupported")
 			default:
 				return err

@@ -11,7 +11,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -149,7 +149,7 @@ func TestDiagnosticAuthenticationLockPreservesAdmission(t *testing.T) {
 			t.Fatal("diagnostic authentication did not reach held credential")
 		}
 	}
-	admission, err := agent.Enqueue(ctx, lifecycle, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+	admission, err := session.Enqueue(ctx, lifecycle, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 	if err != nil || admission.TurnID == uuid.Nil() {
 		t.Fatalf("ordinary admission blocked by diagnostic authentication: %+v %v", admission, err)
 	}

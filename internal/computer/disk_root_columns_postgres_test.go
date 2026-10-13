@@ -7,10 +7,10 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -20,7 +20,7 @@ import (
 // idempotently, refuses a different root at the same pack position, and keeps
 // the certified-object, direct-key and bounds guarantees in the schema.
 func TestDiskRootColumnsKeepIdentityAndObjectAuthority(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx := t.Context()
 	var rootID uuid.UUID
 	var initial []byte

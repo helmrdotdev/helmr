@@ -18,7 +18,6 @@ import (
 
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -31,6 +30,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -65,7 +65,7 @@ type Server struct {
 	preparationKeys            *computer.ImageBuildKeyBroker
 	preparationPublisher       *computer.ImageBuildPublisher
 	savePublisher              *computer.SavePublisher
-	checkpointPublisher        *agent.CheckpointPublisher
+	checkpointPublisher        *session.CheckpointPublisher
 	log                        *slog.Logger
 	deploymentMode             string
 	db                         db.Querier
@@ -228,7 +228,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	checkpointPublisher, err := agent.NewCheckpointPublisher(cfg.TX, cfg.CAS)
+	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}

@@ -5,9 +5,9 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -16,9 +16,9 @@ func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
-	session, err := ids.Parse(chi.URLParam(r, "sessionID"))
+	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		s.writeAgentHTTPError(w, session.ErrInvalidInput)
 		return
 	}
 	var request struct {
@@ -29,13 +29,13 @@ func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	req := agent.EnqueueRequest{EnvironmentID: environment, SessionID: session, IdempotencyKey: request.IdempotencyKey, Input: request.Data}
+	req := session.EnqueueRequest{EnvironmentID: environment, SessionID: sessionID, IdempotencyKey: request.IdempotencyKey, Input: request.Data}
 	turn, err := ids.Parse(chi.URLParam(r, "turnID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		s.writeAgentHTTPError(w, session.ErrInvalidInput)
 		return
 	}
-	receipt, err := agent.SendTurn(r.Context(), s.tx, caller, req, turn)
+	receipt, err := session.SendTurn(r.Context(), s.tx, caller, req, turn)
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return

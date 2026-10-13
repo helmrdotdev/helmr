@@ -10,7 +10,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 
@@ -192,7 +192,7 @@ INSERT INTO worker_hosts (
 }
 
 func TestCapacityHTTPDeploymentAppliedSchema(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := &Server{readinessDB: f.Pool, log: slog.Default()}
 	// Deliberately differs from the embedded migration maximum.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE schema_migrations SET version=12345, dirty=true`)

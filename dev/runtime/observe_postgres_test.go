@@ -2,10 +2,10 @@ package runtime
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"os/exec"
@@ -54,7 +54,7 @@ func observe(t *testing.T, pool *pgxpool.Pool, name string, inputs map[string]an
 }
 
 func TestVerificationObservations(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	placement := func() []any {
 		return observe(t, f.Pool, "session-placements", map[string]any{"session_ids": []string{f.Session.String()}}).([]any)
 	}
@@ -100,7 +100,7 @@ func TestVerificationObservations(t *testing.T) {
 }
 
 func TestVerificationObservationCurrentHost(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,lost_at) SELECT $2,resource_id,worker_group_id,worker_pool_id,'lost',now() FROM worker_hosts WHERE id=$1`, f.Worker, uuid.NewV7())
 	got := observe(t, f.Pool, "worker-state", map[string]any{"resource_ids": []string{"host"}}).([]any)
 	if len(got) != 1 || got[0].(map[string]any)["id"] != f.Worker.String() {
@@ -109,7 +109,7 @@ func TestVerificationObservationCurrentHost(t *testing.T) {
 }
 
 func TestVerificationTriggerObservation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	trigger, other, turn := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input)
  VALUES($1,$4,$5,'observed','* * * * *','UTC','{}'),($1,$4,$5,'other','* * * * *','UTC','{}');
@@ -155,7 +155,7 @@ func TestVerificationObservationRejectsQueryInputs(t *testing.T) {
 }
 
 func TestVerificationObservationAPIKeyScope(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var project, environment string
 	if err := f.Pool.QueryRow(t.Context(), `SELECT p.slug,e.slug FROM projects p JOIN environments e ON e.project_id=p.id WHERE e.id=$1`, f.Environment).Scan(&project, &environment); err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestVerificationObservationAPIKeyScope(t *testing.T) {
 }
 
 func TestVerificationObservationCapacityAndFleet(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=now()`)
 	inputs := map[string]any{"region": "test", "max_age_seconds": 300}
 	// Host epoch changes alone do not release either physical reservation owner.
@@ -254,7 +254,7 @@ func TestVerificationObservationCapacityAndFleet(t *testing.T) {
 }
 
 func TestVerificationObservationCheckpointMembership(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	save, checkpoint, peer := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest) VALUES($1,$2,$3,1,1,$4,'capturing','request',now()+interval '1 hour',decode(repeat('01',32),'hex'))`, f.Environment, checkpoint, f.Computer, save)
@@ -323,7 +323,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 }
 
 func TestSlackDeliveryObservationExcludesPrivatePayloads(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) SELECT $11,org_id,$3 FROM environments WHERE id=$1;

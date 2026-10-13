@@ -8,12 +8,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request, request workerapi.AgentOperationRequest, host workergroup.HostPrincipal, execution agent.Execution, turn uuid.UUID) {
+func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request, request workerapi.AgentOperationRequest, host workergroup.HostPrincipal, execution session.Execution, turn uuid.UUID) {
 	var input struct {
 		Result json.RawMessage `json:"result"`
 	}
@@ -30,7 +30,7 @@ func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		outcome, err := agent.RuntimeFinalize(ctx, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
+		outcome, err := session.RuntimeFinalize(ctx, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return

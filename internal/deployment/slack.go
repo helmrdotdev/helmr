@@ -7,9 +7,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -56,7 +56,7 @@ func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal aut
 	}
 	for _, connection := range routes {
 		if preflight == nil {
-			return nil, agent.ErrSlackChannelUnavailable
+			return nil, session.ErrSlackChannelUnavailable
 		}
 		if _, err = preflight.PrepareStart(ctx, slackroute.StartContext{Route: slackroute.StartRoute{Target: connection, DeploymentID: deployment}}); err != nil {
 			return nil, err

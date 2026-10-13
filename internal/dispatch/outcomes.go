@@ -9,18 +9,18 @@ import (
 	"context"
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
 // Dispatch outcomes are the Session and Computer outcomes, so a result keeps
 // its meaning through every caller.
 var (
-	ErrInvalidInput = agent.ErrInvalidInput
-	ErrDenied       = agent.ErrDenied
-	ErrConflict     = agent.ErrConflict
-	ErrNotReady     = agent.ErrNotReady
+	ErrInvalidInput = session.ErrInvalidInput
+	ErrDenied       = session.ErrDenied
+	ErrConflict     = session.ErrConflict
+	ErrNotReady     = session.ErrNotReady
 )
 
 // hideMissing reports a row the caller cannot see as a denial.

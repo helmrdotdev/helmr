@@ -6,31 +6,31 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "content", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "content", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: session, RequestID: "output", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_OUTPUT)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "output", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_OUTPUT)}
 	output := map[string]any{"outputId": uuid.NewV7().String(), "value": "progress\x00"}
 	request.Payload, _ = json.Marshal(output)
 	first, err := client.AgentOperation(t.Context(), request)
@@ -66,7 +66,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	if err := json.Unmarshal(response.Value, &outcome); err != nil || outcome["response"] != nil || string(outcome["status"]) != `"failed"` {
 		t.Fatalf("failed response publication %s %v", response.Value, err)
 	}
-	view, err := agent.GetTurn(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, f.Environment, f.Session, a.TurnID)
+	view, err := session.GetTurn(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, f.Session, a.TurnID)
 	if err != nil || view.Response != nil {
 		t.Fatalf("failed response read %+v %v", view, err)
 	}

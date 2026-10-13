@@ -7,8 +7,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -258,7 +258,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 		var err error
 		switch candidate.kind {
 		case "waiter":
-			err = agent.ExpireImageWaiter(ctx, database, candidate.environment, candidate.id)
+			err = session.ExpireImageWaiter(ctx, database, candidate.environment, candidate.id)
 		case "attempt":
 			err = ExpireImageBuild(ctx, database, candidate.environment, candidate.id)
 		case "unattached":
@@ -266,7 +266,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 		case "image":
 			err = reconcileComputerImage(ctx, database, candidate.environment, candidate.id)
 		case "secret_revocation":
-			err = agent.ReconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
+			err = session.ReconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
 		case "revocation":
 			err = ReconcileImageBuildRevocation(ctx, database, candidate.environment, candidate.id)
 		}

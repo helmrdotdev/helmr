@@ -4,12 +4,12 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-func insertRecoveryCommand(t *testing.T, f agenttest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
+func insertRecoveryCommand(t *testing.T, f sessiontest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
@@ -17,7 +17,7 @@ func insertRecoveryCommand(t *testing.T, f agenttest.Fixture, computer uuid.UUID
 }
 
 func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	for range 32 {
 		insertRecoveryCommand(t, f, f.Computer, true)
 	}
@@ -36,7 +36,7 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 }
 
 func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	secretID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),2)`, secretID, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)

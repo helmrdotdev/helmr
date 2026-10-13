@@ -10,25 +10,25 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/session"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
-func runtimeTestSession(f agenttest.Fixture) workerapi.RuntimeSession {
+func runtimeTestSession(f sessiontest.Fixture) workerapi.RuntimeSession {
 	return workerapi.RuntimeSession{EnvironmentID: f.Environment.String(), SessionID: f.Session.String(), ProcessEpoch: 1, ComputerLeaseEpoch: 1}
 }
-func runtimeEnqueue(f agenttest.Fixture, key string) workerapi.AgentOperationRequest {
+func runtimeEnqueue(f sessiontest.Fixture, key string) workerapi.AgentOperationRequest {
 	payload, _ := json.Marshal(map[string]any{"tool": "enqueue", "arguments": map[string]any{"sessionId": f.Session.String(), "input": json.RawMessage(`[{"type":"text","text":"hello"}]`), "idempotencyKey": key}})
 	return workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.New().String(), AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: payload}
 }
 
 func TestWorkerAgentClientAuthorityAndRetry(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	secret := seedHostSecret(t, f.Pool, f.Worker)
 	server := httptest.NewServer(handler)
@@ -68,7 +68,7 @@ func TestWorkerAgentAdmissionFences(t *testing.T) {
 		{"revoked group claims", "UPDATE worker_groups SET claim_version=2", 401, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
 			dbtest.MustExec(t, t.Context(), f.Pool, test.sql)
@@ -86,7 +86,7 @@ func TestWorkerAgentAdmissionFences(t *testing.T) {
 }
 
 func TestWorkerAgentAuthorityDoesNotReleaseHold(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
 	dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE sessions SET authority_generation=2")
@@ -109,7 +109,7 @@ func TestWorkerAgentAuthorityDoesNotReleaseHold(t *testing.T) {
 }
 
 func TestWorkerAgentRejectsCallerSubstitution(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
 	client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
 	local := client
@@ -140,14 +140,14 @@ func TestWorkerAgentRejectsCallerSubstitution(t *testing.T) {
 func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 	for _, change := range []string{"hold", "generation", "origin-ended", "deployment-revoked"} {
 		t.Run(change, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
-			origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+			origin, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
 			if _, err = dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 }
 
 func TestWorkerAgentAcceptedFrameDoesNotExpandBeyondHTTPBound(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -226,11 +226,11 @@ func TestWorkerAgentAcceptedFrameDoesNotExpandBeyondHTTPBound(t *testing.T) {
 }
 
 func TestWorkerAgentAttachmentSurvivesClientReplacement(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
-	for sequence := agenttest.SeededAttachment + 1; sequence <= agenttest.SeededAttachment+2; sequence++ {
+	for sequence := sessiontest.SeededAttachment + 1; sequence <= sessiontest.SeededAttachment+2; sequence++ {
 		client := secret.client(t, server.URL)
 		result, err := client.AcquireAgentAttachment(t.Context(), runtimeTestSession(f))
 		if err != nil || result.AttachmentSequence != sequence || result.AuthorityGeneration != 1 || !result.ExpiresAt.After(time.Now()) {
@@ -245,13 +245,13 @@ func TestWorkerAgentAttachmentSurvivesClientReplacement(t *testing.T) {
 	}
 }
 
-func acknowledgeTestAgentControl(t *testing.T, client *workerclient.Client, session workerapi.RuntimeSession, attachment int64) {
+func acknowledgeTestAgentControl(t *testing.T, client *workerclient.Client, sessionID workerapi.RuntimeSession, attachment int64) {
 	t.Helper()
-	control, err := client.PrepareAgentControl(t.Context(), workerapi.AgentControlRequest{Session: session, AttachmentSequence: attachment})
+	control, err := client.PrepareAgentControl(t.Context(), workerapi.AgentControlRequest{Session: sessionID, AttachmentSequence: attachment})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: session, AttachmentSequence: attachment, Sequence: control.Sequence, AuthorityGeneration: control.AuthorityGeneration, Kind: control.Kind}); err != nil {
+	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: sessionID, AttachmentSequence: attachment, Sequence: control.Sequence, AuthorityGeneration: control.AuthorityGeneration, Kind: control.Kind}); err != nil {
 		t.Fatal(err)
 	}
 }

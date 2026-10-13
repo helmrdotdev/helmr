@@ -4,8 +4,8 @@ import (
 	"context"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -45,7 +45,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 		if _, err := tx.Exec(ctx, `SELECT id FROM worker_hosts WHERE id=$1 FOR SHARE`, host); err != nil {
 			return err
 		}
-		members, err := agent.LockComputerMembers(ctx, tx, env, computerID)
+		members, err := session.LockComputerMembers(ctx, tx, env, computerID)
 		if err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 		if err = computer.MarkLeaseLost(ctx, tx, env, computerID, epoch); err != nil {
 			return err
 		}
-		if err := agent.LoseLeaseProcesses(ctx, tx, env, computerID, epoch, members, false); err != nil {
+		if err := session.LoseLeaseProcesses(ctx, tx, env, computerID, epoch, members, false); err != nil {
 			return err
 		}
 		return computer.SettleLostSaves(ctx, tx, env, computerID, epoch)
@@ -71,7 +71,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
 func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
-	members, err := agent.LockCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
+	members, err := session.LockCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err
 	}
@@ -114,12 +114,12 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 			if !stopped {
 				return ErrNotReady
 			}
-			if err := agent.LoseProcess(ctx, tx, agent.Execution{EnvironmentID: identity.EnvironmentID, SessionID: member.Session, ProcessEpoch: member.Epoch, LeaseEpoch: member.LeaseEpoch}, true); err != nil {
+			if err := session.LoseProcess(ctx, tx, session.Execution{EnvironmentID: identity.EnvironmentID, SessionID: member.Session, ProcessEpoch: member.Epoch, LeaseEpoch: member.LeaseEpoch}, true); err != nil {
 				return err
 			}
 		}
 	}
-	if err = agent.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true); err != nil {
+	if err = session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true); err != nil {
 		return err
 	}
 	// Physical closure also settles an unfinished capture owned by this allocation.

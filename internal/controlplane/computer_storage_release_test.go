@@ -10,19 +10,19 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func computerStorageFixture(t *testing.T) (agenttest.Fixture, computer.Scope) {
+func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope) {
 	t.Helper()
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;
@@ -37,7 +37,7 @@ func computerStorageFixture(t *testing.T) (agenttest.Fixture, computer.Scope) {
 func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	f, scope := computerStorageFixture(t)
 	start := func(key string) error {
-		_, err := agent.Start(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+		_, err := session.Start(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 		return err
 	}
 	assertStatus := func(want computer.Status) {
@@ -51,7 +51,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live Session allowed deletion: %v", err)
 	}
-	if err := start("before-delete"); !errors.Is(err, agent.ErrNotReady) {
+	if err := start("before-delete"); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("full environment admitted new Computer: %v", err)
 	}
 	// Logical work has ended; the Worker has not yet confirmed physical stop.
@@ -64,7 +64,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)
-	if err := start("before-stop"); !errors.Is(err, agent.ErrNotReady) {
+	if err := start("before-stop"); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
@@ -107,7 +107,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	for err := range admissions {
 		if err == nil {
 			accepted++
-		} else if !errors.Is(err, agent.ErrNotReady) {
+		} else if !errors.Is(err, session.ErrNotReady) {
 			t.Fatal(err)
 		}
 	}

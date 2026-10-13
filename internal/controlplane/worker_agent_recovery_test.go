@@ -10,11 +10,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/jackc/pgx/v5"
@@ -22,7 +22,7 @@ import (
 )
 
 func TestWorkerAgentStartupRecoveryFencesOnlyReportedPriorAllocations(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	instance := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET allocation_id=$1`, instance)
 	handler := newPostgresServer(t, f.Pool)
@@ -88,7 +88,7 @@ func TestWorkerAgentStartupRecoveryFencesOnlyReportedPriorAllocations(t *testing
 }
 
 func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
 }
 
 func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
 }
 
 func TestWorkerAgentEnrollmentRechecksAllocationAfterAuthorityLock(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)

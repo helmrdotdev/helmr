@@ -4,17 +4,17 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var org, project, pool uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT e.org_id,e.project_id,h.worker_pool_id FROM environments e,worker_hosts h WHERE e.id=$1 AND h.id=$2`, f.Environment, f.Worker).Scan(&org, &project, &pool); err != nil {
 		t.Fatal(err)

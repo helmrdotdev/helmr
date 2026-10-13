@@ -6,9 +6,9 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,7 +16,7 @@ import (
 
 // revokedCommands seeds running Commands on a Computer whose Secret binding is
 // revoked, so every one is a recovery candidate.
-func revokedCommands(t *testing.T, f agenttest.Fixture, count int) []uuid.UUID {
+func revokedCommands(t *testing.T, f sessiontest.Fixture, count int) []uuid.UUID {
 	t.Helper()
 	secretID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),1)`, secretID, f.Environment)
@@ -31,7 +31,7 @@ func revokedCommands(t *testing.T, f agenttest.Fixture, count int) []uuid.UUID {
 	return ids
 }
 
-func convergedCount(t *testing.T, f agenttest.Fixture) int {
+func convergedCount(t *testing.T, f sessiontest.Fixture) int {
 	t.Helper()
 	var n int
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&n); err != nil {
@@ -137,7 +137,7 @@ func newPoisonDB(pool db.TxDB, poisoned ...uuid.UUID) poisonDB {
 // candidates than one page holds and failing candidates at the head of the
 // order, one pass still reaches every other Command.
 func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	const total, page = 600, 256
 	ids := revokedCommands(t, f, total)
 	poisoned := []uuid.UUID{ids[0], ids[1], ids[300]}
@@ -184,7 +184,7 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 // mid-way (process restart) is restart-safe; the next pass from the zero
 // position converges the remainder without touching recovered Commands twice.
 func TestRecoveryPassRestartsFromTheBeginningAfterInterruption(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	const total, page = 300, 100
 	revokedCommands(t, f, total)
 	position, more, err := RecoverBatch(t.Context(), f.Pool, RecoveryPosition{}, page)

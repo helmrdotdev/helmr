@@ -3,12 +3,12 @@ package db_test
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestStoredDiagnosticIngestSizeTracksData(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at) VALUES($1,$2,1,'stdout',1,1,0,5,'data',1,convert_to('hello','UTF8'),0,false,now())`, f.Environment, f.Session)
 	var size int64

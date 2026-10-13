@@ -19,11 +19,11 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -31,7 +31,7 @@ import (
 )
 
 type snapshotFixture struct {
-	fixture            agenttest.Fixture
+	fixture            sessiontest.Fixture
 	q                  *db.Queries
 	store              *secret.Store
 	server             *Server
@@ -43,7 +43,7 @@ type snapshotFixture struct {
 
 func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	t.Helper()
-	f := &snapshotFixture{fixture: agenttest.New(t)}
+	f := &snapshotFixture{fixture: sessiontest.New(t)}
 	f.q = db.New(f.fixture.Pool)
 	var err error
 	f.store, err = secret.New(f.q, f.fixture.Pool, bytes.Repeat([]byte{71}, 32))

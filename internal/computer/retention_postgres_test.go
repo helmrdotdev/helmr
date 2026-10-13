@@ -8,13 +8,13 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=3600000,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	if _, err := reconcileUnused(ctx, f.Pool, f.Environment, f.Computer); err != nil {
@@ -81,7 +81,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 }
 
 func TestComputerUnusedRestartsAfterSaveBetweenScans(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.Session)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
@@ -97,7 +97,7 @@ func TestComputerUnusedRestartsAfterSaveBetweenScans(t *testing.T) {
 }
 
 func TestComputerUnusedScanSkipsFutureQuietClock(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=86400000,unused_since=clock_timestamp() WHERE id=$1`, f.Computer)
 	tx, err := f.Pool.Begin(ctx)

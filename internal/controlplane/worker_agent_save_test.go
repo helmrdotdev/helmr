@@ -14,12 +14,12 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -45,14 +45,14 @@ func (p saveHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file 
 }
 
 func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	store := newTestUploadStore(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = store }))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err := client.PublishAgentSave(t.Context(), request); err != nil {
 		t.Fatalf("committed receipt after expiry: %v", err)
 	}
-	if err := agent.Complete(t.Context(), f.Pool, f.Environment, f.Session, a.TurnID); err != nil {
+	if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	tree, err := blockformat.OpenTree(t.Context(), store, f.Environment.String(), map[string][]byte{keyID.String(): key}, locator)
@@ -155,7 +155,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 }
 
 func TestWorkerSaveDiscoveryContentionIsTemporary(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
@@ -185,7 +185,7 @@ func TestWorkerSaveDiscoveryContentionIsTemporary(t *testing.T) {
 
 func TestWorkerSaveTerminalErrorIsNotRetryable(t *testing.T) {
 	server := &Server{log: discardTestLogger()}
-	for _, err := range []error{agent.ErrTerminal, fmt.Errorf("save disposition: %w", agent.ErrTerminal)} {
+	for _, err := range []error{session.ErrTerminal, fmt.Errorf("save disposition: %w", session.ErrTerminal)} {
 		response := httptest.NewRecorder()
 		server.writeAgentSaveError(response, err)
 		if response.Code != http.StatusConflict {

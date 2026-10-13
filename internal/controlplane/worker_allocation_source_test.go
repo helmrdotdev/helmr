@@ -9,7 +9,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -17,12 +16,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/oci"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	wrapper, err := computerkey.NewLocal("allocation-source-test", bytes.Repeat([]byte{8}, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,$7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);
- `+agenttest.DiskRootInsert("$1", "$9", "$10")+`;
+ `+sessiontest.DiskRootInsert("$1", "$9", "$10")+`;
  UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),image_spec_id=$12 WHERE environment_id=$1 AND id=$2;
  UPDATE image_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
  UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1;

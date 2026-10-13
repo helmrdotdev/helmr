@@ -5,8 +5,8 @@ import (
 	"slices"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -79,7 +79,7 @@ func ObserveProviderAbsentHost(ctx context.Context, absence workergroup.Confirme
 		for i, m := range before {
 			sessions[i] = m.session
 		}
-		if _, err = agent.LockSessionsAndComputers(ctx, tx, env, sessions, computers); err != nil {
+		if _, err = session.LockSessionsAndComputers(ctx, tx, env, sessions, computers); err != nil {
 			return err
 		}
 		after, err := read()

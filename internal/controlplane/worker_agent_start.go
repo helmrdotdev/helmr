@@ -6,12 +6,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -28,7 +28,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	start, err := agent.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
+	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -38,7 +38,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 		server.writeAgentWorkerError(w, err)
 		return
 	}
-	exposure, err := agent.RecordSessionStartExposure(r.Context(), server.tx, host, execution, request.AttachmentSequence)
+	exposure, err := session.RecordSessionStartExposure(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -71,7 +71,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 	}
 	// Object reads can outlive authority. Release only after a current business
 	// admission check, including the exact transport that will receive setup.
-	start, err = agent.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
+	start, err = session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -81,7 +81,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // The pinned immutable bundle root supplies executable descriptor authority.
-func (server *Server) sessionProgram(ctx context.Context, start agent.ProcessStart) (workerapi.RuntimeProgram, error) {
+func (server *Server) sessionProgram(ctx context.Context, start session.ProcessStart) (workerapi.RuntimeProgram, error) {
 	manifest, err := server.readExecutableBundle(ctx, start.BundleDigest)
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
@@ -140,13 +140,13 @@ func (server *Server) workerAgentStartRelease(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(errors.New("invalid Session start release")))
 		return
 	}
-	start, err := agent.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
+	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
 	}
 	if start.BundleDigest != request.BundleDigest {
-		server.writeAgentWorkerError(w, agent.ErrNotReady)
+		server.writeAgentWorkerError(w, session.ErrNotReady)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentAuthorityResponse{AuthorityGeneration: start.Authority.Generation, ExpiresAt: start.Authority.ExpiresAt})

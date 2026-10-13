@@ -8,13 +8,13 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req workerapi.AgentOperationRequest, host workergroup.HostPrincipal, e agent.Execution, turn uuid.UUID) {
+func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req workerapi.AgentOperationRequest, host workergroup.HostPrincipal, e session.Execution, turn uuid.UUID) {
 	if _, err := canonicalJSON(req.Payload); err != nil {
 		writeJSON(w, http.StatusOK, agentOperationFailure(req.RequestID, "invalid_arguments", "ambiguous ask arguments"))
 		return
@@ -33,7 +33,7 @@ func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req work
 			writeJSON(w, http.StatusOK, agentOperationFailure(req.RequestID, "invalid_arguments", "invalid question identity"))
 			return
 		}
-		if err := agent.RuntimeAsk(r.Context(), s.tx, host, e, turn, id, input.Question); err != nil {
+		if err := session.RuntimeAsk(r.Context(), s.tx, host, e, turn, id, input.Question); err != nil {
 			s.writeAgentAdmissionError(w, req.RequestID, err)
 			return
 		}
@@ -54,7 +54,7 @@ func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req work
 		return
 	}
 	if agentv1.Operation_Method(req.Method) == agentv1.Operation_METHOD_WITHDRAW_ASK {
-		if err := agent.RuntimeWithdrawAsk(r.Context(), s.tx, host, e, turn, id); err != nil {
+		if err := session.RuntimeWithdrawAsk(r.Context(), s.tx, host, e, turn, id); err != nil {
 			s.writeAgentAdmissionError(w, req.RequestID, err)
 			return
 		}
@@ -66,7 +66,7 @@ func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req work
 
 	// A pending observation releases the host's shared operation slot. The SDK
 	// polls the same durable ask; waiting here can starve withdrawal and drainage.
-	view, err := agent.RuntimeObserveAsk(ctx, s.tx, host, e, turn, id)
+	view, err := session.RuntimeObserveAsk(ctx, s.tx, host, e, turn, id)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return

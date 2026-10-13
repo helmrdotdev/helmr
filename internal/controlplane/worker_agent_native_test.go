@@ -21,8 +21,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -34,7 +34,7 @@ func TestWorkerAgentNativeManagedMCP(t *testing.T) {
 	if os.Getenv("HELMR_NATIVE_CP_PROOF") != "1" {
 		t.Skip("requires authorized disposable privileged Docker on Docker Desktop")
 	}
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
 		cfg.WorkerHostCredentialTTL = 35 * time.Second
 	})

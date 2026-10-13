@@ -13,8 +13,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -84,11 +84,11 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			if kind == "too-large" {
 				input, _ = json.Marshal([]map[string]string{{"type": "text", "text": strings.Repeat("x", contentCharacters+1)}})
 			}
-			caller := agent.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
-			result, err := agent.Start(t.Context(), f.Pool, nil, caller, agent.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input, SlackPreflight: client})
+			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
+			result, err := session.Start(t.Context(), f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input, SlackPreflight: client})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
-				want := map[string]error{"pending-source": agent.ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": agent.ErrTargetWorkspaceMismatch, "target-denied": agent.ErrSlackChannelUnavailable, "source-denied": agent.ErrSlackChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": agent.ErrSourceConversationUnavailable, "too-large": agent.ErrStartMessageTooLarge}[kind]
+				want := map[string]error{"pending-source": session.ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": session.ErrTargetWorkspaceMismatch, "target-denied": session.ErrSlackChannelUnavailable, "source-denied": session.ErrSlackChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": session.ErrSourceConversationUnavailable, "too-large": session.ErrStartMessageTooLarge}[kind]
 				if !errors.Is(err, want) {
 					t.Fatal("wrong rejection", err, want)
 				}
@@ -111,7 +111,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				if kind == "target-stopped" {
 					stopped = result.SessionID
 				}
-				if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "source-stopped" {

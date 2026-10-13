@@ -10,24 +10,24 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func runtimeExecution(session workerapi.RuntimeSession, host workergroup.HostPrincipal) (agent.Execution, error) {
-	env, err := uuid.Parse(session.EnvironmentID)
+func runtimeExecution(sessionID workerapi.RuntimeSession, host workergroup.HostPrincipal) (session.Execution, error) {
+	env, err := uuid.Parse(sessionID.EnvironmentID)
 	if err != nil || env == uuid.Nil() {
-		return agent.Execution{}, errors.New("invalid Environment identity")
+		return session.Execution{}, errors.New("invalid Environment identity")
 	}
-	id, err := uuid.Parse(session.SessionID)
-	if err != nil || id == uuid.Nil() || session.ProcessEpoch <= 0 || session.ComputerLeaseEpoch <= 0 {
-		return agent.Execution{}, errors.New("invalid Session execution identity")
+	id, err := uuid.Parse(sessionID.SessionID)
+	if err != nil || id == uuid.Nil() || sessionID.ProcessEpoch <= 0 || sessionID.ComputerLeaseEpoch <= 0 {
+		return session.Execution{}, errors.New("invalid Session execution identity")
 	}
-	return agent.Execution{EnvironmentID: env, SessionID: id, ProcessEpoch: session.ProcessEpoch, LeaseEpoch: session.ComputerLeaseEpoch, WorkerHostID: host.HostID, WorkerEpoch: host.Epoch}, nil
+	return session.Execution{EnvironmentID: env, SessionID: id, ProcessEpoch: sessionID.ProcessEpoch, LeaseEpoch: sessionID.ComputerLeaseEpoch, WorkerHostID: host.HostID, WorkerEpoch: host.Epoch}, nil
 }
 func (server *Server) workerAgentAuthority(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RuntimeSession
@@ -41,7 +41,7 @@ func (server *Server) workerAgentAuthority(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	authority, err := agent.RenewRuntimeAuthority(r.Context(), server.tx, host, execution)
+	authority, err := session.RenewRuntimeAuthority(r.Context(), server.tx, host, execution)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -60,7 +60,7 @@ func (server *Server) workerAgentAttachment(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	attachment, err := agent.AcquireRuntimeAttachment(r.Context(), server.tx, host, execution)
+	attachment, err := session.AcquireRuntimeAttachment(r.Context(), server.tx, host, execution)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return
@@ -81,7 +81,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	execution.AuthorityGeneration = request.AuthorityGeneration
-	caller := agent.Caller{Kind: "session", ID: execution.SessionID, Execution: execution, Host: &host}
+	caller := session.Caller{Kind: "session", ID: execution.SessionID, Execution: execution, Host: &host}
 	method := agentv1.Operation_Method(request.Method)
 	if request.TurnID != "" {
 		caller.TurnID, err = uuid.Parse(request.TurnID)
@@ -114,7 +114,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 				writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid Agent list arguments"))
 				return
 			}
-			page, err := agent.RuntimeListAgents(r.Context(), server.tx, caller, input.Operation, input.Cursor)
+			page, err := session.RuntimeListAgents(r.Context(), server.tx, caller, input.Operation, input.Cursor)
 			if err != nil {
 				server.writeAgentAdmissionError(w, request.RequestID, err)
 				return
@@ -195,7 +195,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid Turn target"))
 			return
 		}
-		view, err := agent.RuntimeObserveTurn(r.Context(), server.tx, caller, target, turn)
+		view, err := session.RuntimeObserveTurn(r.Context(), server.tx, caller, target, turn)
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -227,7 +227,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "message registration takes no arguments"))
 			return
 		}
-		if err := agent.RuntimeRegisterMessages(r.Context(), server.tx, host, execution, caller.TurnID); err != nil {
+		if err := session.RuntimeRegisterMessages(r.Context(), server.tx, host, execution, caller.TurnID); err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
 		}
@@ -269,12 +269,12 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		value := json.RawMessage("null")
 		if method == agentv1.Operation_METHOD_OUTPUT {
 			var sequence int64
-			sequence, err = agent.RuntimeOutput(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
+			sequence, err = session.RuntimeOutput(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
 			if err == nil {
 				value, _ = json.Marshal(map[string]int64{"sequence": sequence})
 			}
 		} else {
-			err = agent.RuntimeRespond(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
+			err = session.RuntimeRespond(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
 		}
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -289,7 +289,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid runtime hold"))
 			return
 		}
-		if err := agent.RuntimeHold(r.Context(), server.tx, host, execution, input.Reason); err != nil {
+		if err := session.RuntimeHold(r.Context(), server.tx, host, execution, input.Reason); err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
 		}
@@ -299,14 +299,14 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "processing close takes no arguments"))
 			return
 		}
-		if err := agent.RuntimeCloseProcessing(r.Context(), server.tx, host, execution, caller.TurnID); err != nil {
+		if err := session.RuntimeCloseProcessing(r.Context(), server.tx, host, execution, caller.TurnID); err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: json.RawMessage("null")})
 	case agentv1.Operation_METHOD_FAIL:
 		var input struct {
-			Error agent.TurnError `json:"error"`
+			Error session.TurnError `json:"error"`
 		}
 		if _, err := canonicalJSON(payload); err != nil {
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "ambiguous failure arguments"))
@@ -316,7 +316,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "failure requires native drainage evidence"))
 			return
 		}
-		outcome, err := agent.RuntimeFail(r.Context(), server.tx, host, execution, caller.TurnID, input.Error, request.DrainEvidence)
+		outcome, err := session.RuntimeFail(r.Context(), server.tx, host, execution, caller.TurnID, input.Error, request.DrainEvidence)
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -355,12 +355,12 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		if server.slackConfig != nil {
 			preflight = server.slackConfig.Client
 		}
-		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}
-		var receipt agent.Admission
+		admission := session.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}
+		var receipt session.Admission
 		if method == agentv1.Operation_METHOD_SPAWN {
-			receipt, err = agent.Spawn(r.Context(), server.tx, server.secretProxy, caller, admission)
+			receipt, err = session.Spawn(r.Context(), server.tx, server.secretProxy, caller, admission)
 		} else {
-			receipt, err = agent.Start(r.Context(), server.tx, server.secretProxy, caller, admission)
+			receipt, err = session.Start(r.Context(), server.tx, server.secretProxy, caller, admission)
 		}
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -390,7 +390,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.SendTurn(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
+		receipt, err := session.SendTurn(r.Context(), server.tx, caller, session.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -434,7 +434,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.ControlSession(r.Context(), server.tx, caller, agent.SessionControlRequest{
+		receipt, err := session.ControlSession(r.Context(), server.tx, caller, session.SessionControlRequest{
 			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, IdempotencyKey: input.IdempotencyKey,
 		})
 		if err != nil {
@@ -469,7 +469,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
+		receipt, err := session.Enqueue(r.Context(), server.tx, server.secretProxy, caller, session.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -482,7 +482,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 }
 
 func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string, err error) {
-	var notInterruptible agent.TurnNotInterruptibleError
+	var notInterruptible session.TurnNotInterruptibleError
 	if errors.As(err, &notInterruptible) {
 		writeJSON(w, http.StatusOK, agentOperationFailure(id, notInterruptible.ErrorCode(), notInterruptible.Error()))
 		return
@@ -490,39 +490,39 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 
 	code := ""
 	switch {
-	case errors.Is(err, agent.ErrSourceConversationPending):
+	case errors.Is(err, session.ErrSourceConversationPending):
 		code = "source_conversation_pending"
-	case errors.Is(err, agent.ErrSourceConversationUnavailable):
+	case errors.Is(err, session.ErrSourceConversationUnavailable):
 		code = "source_conversation_unavailable"
 	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		code = "target_not_published"
-	case errors.Is(err, agent.ErrTargetWorkspaceMismatch):
+	case errors.Is(err, session.ErrTargetWorkspaceMismatch):
 		code = "target_workspace_mismatch"
-	case errors.Is(err, agent.ErrSlackChannelUnavailable):
+	case errors.Is(err, session.ErrSlackChannelUnavailable):
 		code = "channel_unavailable"
-	case errors.Is(err, agent.ErrStartMessageTooLarge):
+	case errors.Is(err, session.ErrStartMessageTooLarge):
 		code = "start_message_too_large"
 	case errors.Is(err, slackroute.ErrConversationChanged):
 		code = "conversation_changed"
-	case errors.Is(err, agent.ErrRootSessionRequired):
+	case errors.Is(err, session.ErrRootSessionRequired):
 		code = "root_session_required"
-	case errors.Is(err, agent.ErrMessageClosed):
+	case errors.Is(err, session.ErrMessageClosed):
 		code = "message_closed"
 	case errors.Is(err, content.ErrUnsupported):
 		code = "content_kind_unsupported"
 	case errors.Is(err, content.ErrLimit):
 		code = "content_limit_exceeded"
-	case errors.Is(err, agent.ErrResponseAlreadyStaged):
+	case errors.Is(err, session.ErrResponseAlreadyStaged):
 		code = "response_already_staged"
 	case errors.Is(err, content.ErrInvalid):
 		code = "invalid_arguments"
-	case errors.Is(err, agent.ErrInvalidInput):
+	case errors.Is(err, session.ErrInvalidInput):
 		code = "invalid_arguments"
-	case errors.Is(err, agent.ErrDenied):
+	case errors.Is(err, session.ErrDenied):
 		code = "authority_changed"
-	case errors.Is(err, agent.ErrConflict):
+	case errors.Is(err, session.ErrConflict):
 		code = "idempotency_conflict"
-	case errors.Is(err, agent.ErrNotReady):
+	case errors.Is(err, session.ErrNotReady):
 		code = "admission_unavailable"
 	}
 	if code == "" {
@@ -530,7 +530,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		return
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, agent.ErrSourceConversationPending) || errors.Is(err, agent.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, agent.ErrTargetWorkspaceMismatch) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, agent.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, agent.ErrResponseAlreadyStaged) {
+	if errors.Is(err, session.ErrSourceConversationPending) || errors.Is(err, session.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, session.ErrTargetWorkspaceMismatch) || errors.Is(err, session.ErrSlackChannelUnavailable) || errors.Is(err, session.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))
@@ -541,13 +541,13 @@ func agentOperationFailure(id, code, message string) workerapi.AgentOperationRes
 }
 func (server *Server) writeAgentWorkerError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, agent.ErrInvalidInput):
+	case errors.Is(err, session.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Session worker operation")))
-	case errors.Is(err, agent.ErrConflict):
+	case errors.Is(err, session.ErrConflict):
 		writeError(w, conflict(errors.New("session control changed")))
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
-	case errors.Is(err, agent.ErrDenied), errors.Is(err, agent.ErrNotReady):
+	case errors.Is(err, session.ErrDenied), errors.Is(err, session.ErrNotReady):
 		writeError(w, conflict(errors.New("session execution authority is unavailable")))
 	default:
 		server.log.Error("Session worker operation failed", "error", err)

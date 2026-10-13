@@ -7,9 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestCapacityResolvePostgres(t *testing.T) {
@@ -93,7 +93,7 @@ func TestConfirmHostProviderAbsenceSupply(t *testing.T) {
 }
 
 func TestDrainHostPostgresRejectsQueuedDemand(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	queuedTurn(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
 	q := db.New(f.Pool)

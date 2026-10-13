@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request, requestID string, caller agent.Caller, payload json.RawMessage) {
+func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request, requestID string, caller session.Caller, payload json.RawMessage) {
 	var input struct {
 		Cursor string `json:"cursor,omitempty"`
 	}
@@ -28,7 +28,7 @@ func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request
 		}
 		page.After = &computer.ListPosition{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	listing, scope, err := agent.RuntimeListComputers(r.Context(), s.tx, caller, page)
+	listing, scope, err := session.RuntimeListComputers(r.Context(), s.tx, caller, page)
 	if err != nil {
 		s.writeAgentAdmissionError(w, requestID, err)
 		return

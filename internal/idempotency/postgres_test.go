@@ -7,11 +7,11 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	retry "github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,7 +19,7 @@ func runRetry(ctx context.Context, txb db.TxBeginner, request *retry.Request, fn
 	return db.RunTx(ctx, txb, func(tx pgx.Tx) error { return retry.Run(ctx, tx, request, fn) })
 }
 
-func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) *retry.Request {
+func deploymentRequest(t *testing.T, f sessiontest.Fixture, key string) *retry.Request {
 	t.Helper()
 	var project uuid.UUID
 	var digest string
@@ -32,7 +32,7 @@ func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) *retry.Req
 	}
 	return request
 }
-func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target retry.Target) db.IdempotencyReceipt {
+func accept(t *testing.T, f sessiontest.Fixture, request *retry.Request, target retry.Target) db.IdempotencyReceipt {
 	t.Helper()
 	var claim db.IdempotencyReceipt
 	if err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
@@ -51,14 +51,14 @@ func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target re
 	}
 	return stored
 }
-func acquireError(t *testing.T, f agenttest.Fixture, request *retry.Request) error {
+func acquireError(t *testing.T, f sessiontest.Fixture, request *retry.Request) error {
 	t.Helper()
 	return runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
 		return retry.Completion{}, nil
 	})
 }
 func TestPlatformConcurrentRetryCommitsOneReceipt(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	request := deploymentRequest(t, f, "concurrent")
 	var wg sync.WaitGroup
 	results := make(chan retry.Result, 8)
@@ -106,7 +106,7 @@ func TestPlatformConcurrentRetryCommitsOneReceipt(t *testing.T) {
 func TestPlatformIncompleteTransactionAndWrongTargetRollBack(t *testing.T) {
 	for _, mode := range []string{"unfinished", "wrong-family", "foreign-target"} {
 		t.Run(mode, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			request := deploymentRequest(t, f, mode)
 			err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
 				if _, err := tx.Exec(t.Context(), `UPDATE computers SET key='partial' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer); err != nil {
@@ -137,7 +137,7 @@ func TestPlatformIncompleteTransactionAndWrongTargetRollBack(t *testing.T) {
 	}
 }
 func TestPlatformExpiredIdentityCannotExecuteBeforeOrAfterCollection(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	request := deploymentRequest(t, f, "expired")
 	claim := accept(t, f, request, retry.Target{DeploymentID: f.Deployment})
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE idempotency_receipts SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND id=$2`, f.Environment, claim.ID)
@@ -165,7 +165,7 @@ func TestPlatformExpiredIdentityCannotExecuteBeforeOrAfterCollection(t *testing.
 func TestPlatformOwnedSavepointRollsBackIgnoredFailure(t *testing.T) {
 	for _, mode := range []string{"error", "panic", "cancel", "missing-receipt"} {
 		t.Run(mode, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			request := deploymentRequest(t, f, mode)
 			err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {
 				ctx, cancel := context.WithCancel(t.Context())
@@ -214,7 +214,7 @@ func TestPlatformOwnedSavepointRollsBackIgnoredFailure(t *testing.T) {
 	}
 }
 
-func assertNoPartialMutation(t *testing.T, f agenttest.Fixture) {
+func assertNoPartialMutation(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
 	var partial bool
 	var count int
@@ -227,7 +227,7 @@ func assertNoPartialMutation(t *testing.T, f agenttest.Fixture) {
 }
 
 func TestPlatformNestedSameKeyCannotCommitTwoMutations(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	request := deploymentRequest(t, f, "nested")
 	completion := retry.Completion{Target: retry.Target{DeploymentID: f.Deployment}, Receipt: []byte(`{}`)}
 	var mutationErr error
@@ -254,7 +254,7 @@ func TestPlatformNestedSameKeyCannotCommitTwoMutations(t *testing.T) {
 }
 
 func TestPlatformSuccessfulInnerMutationFollowsOuterRollback(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	request := deploymentRequest(t, f, "outer-rollback")
 	rollback := errors.New("outer rejected")
 	err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {

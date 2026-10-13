@@ -7,11 +7,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
@@ -81,12 +81,12 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,d.execution_revoked_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
 		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
-	caller := agent.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
+	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
+	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("synthetic Deployment start=%v, want denied", err)
 	}
-	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := session.Enqueue(ctx, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }

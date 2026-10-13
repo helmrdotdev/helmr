@@ -6,30 +6,30 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func retainedPreparation(t *testing.T, f agenttest.Fixture) uuid.UUID {
+func retainedPreparation(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,error_code,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
  SELECT $1,$2,$3,'failed-but-owned','failed',clock_timestamp()-interval '1 hour','fixture_failure',1,id,1,$4,decode(repeat('00',32),'hex'),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$5`, f.Environment, id, f.Deployment, uuid.NewV7(), f.Worker)
 	return id
 }
-func hostSecret(t *testing.T, f agenttest.Fixture) {
+func hostSecret(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,secret_hash) VALUES($1,$2,$3,'fixture',decode(repeat('12',32),'hex'))`, uuid.NewV7(), f.Group, f.Worker)
 }
-func fenceFixtureComputer(t *testing.T, f agenttest.Fixture) {
+func fenceFixtureComputer(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
 }
-func fenceFixturePreparation(t *testing.T, f agenttest.Fixture) {
+func fenceFixturePreparation(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
 }
@@ -37,7 +37,7 @@ func fenceFixturePreparation(t *testing.T, f agenttest.Fixture) {
 func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 	for _, kind := range []string{"computer", "preparation", "both"} {
 		t.Run(kind, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			hostSecret(t, f)
 			if kind != "computer" {
 				retainedPreparation(t, f)
@@ -82,7 +82,7 @@ func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T) {
 	for _, path := range []string{"provider drift", "worker fence", "stale observation"} {
 		t.Run(path, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			hostSecret(t, f)
 			retainedPreparation(t, f)
 			q := db.New(f.Pool)
@@ -111,7 +111,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 }
 
 func TestGroupDisableWaitsForLostHostCustody(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	retainedPreparation(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='draining' WHERE id=$1;
  UPDATE worker_pools SET status='disabled' WHERE worker_group_id=$1;

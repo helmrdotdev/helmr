@@ -14,12 +14,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestReadinessRejectsReadOnlyServingPool(t *testing.T) {
-	fixture := agenttest.New(t)
+	fixture := sessiontest.New(t)
 	cfg := fixture.Pool.Config()
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	readOnly, err := pgxpool.NewWithConfig(t.Context(), cfg)
@@ -67,7 +67,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				name = outage + "/live draining host"
 			}
 			t.Run(name, func(t *testing.T) {
-				fixture := agenttest.New(t)
+				fixture := sessiontest.New(t)
 				secret := seedHostSecret(t, fixture.Pool, fixture.Worker)
 				cfg := fixture.Pool.Config()
 				cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
@@ -162,7 +162,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 	}
 }
 
-func assertServingHostPreserved(t *testing.T, fixture agenttest.Fixture, draining bool) {
+func assertServingHostPreserved(t *testing.T, fixture sessiontest.Fixture, draining bool) {
 	t.Helper()
 	want := "active"
 	if draining {

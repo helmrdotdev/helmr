@@ -8,8 +8,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -25,7 +25,7 @@ func TestDiskGraphRootAdoptionArbitratesDeletion(t *testing.T) {
 			}
 			// Replace the seed through the real storage fixture, leaving its original
 			// descriptor eligible for collection. Both descriptors contain valid roots.
-			agenttest.ReplaceInitialRoot(t, f.base)
+			sessiontest.ReplaceInitialRoot(t, f.base)
 			tx, err := f.pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)

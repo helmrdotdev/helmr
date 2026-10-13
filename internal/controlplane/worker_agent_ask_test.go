@@ -16,37 +16,37 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	var cfg ServerConfig
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}; cfg = *c })
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	caller := agent.Caller{Kind: "user", ID: f.User}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	caller := session.Caller{Kind: "user", ID: f.User}
+	admission, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: session, RequestID: "ask", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: admission.TurnID.String()}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "ask", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: admission.TurnID.String()}
 	operation := func(method agentv1.Operation_Method, payload any) workerapi.AgentOperationResponse {
 		t.Helper()
 		request.Method = int32(method)
@@ -189,27 +189,27 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 }
 
 func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "many asks", Input: json.RawMessage(`[]`)})
+	sessionID := runtimeTestSession(f)
+	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "many asks", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
+	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
-	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
+	acknowledgeTestAgentControl(t, client, sessionID, attachment.AttachmentSequence)
+	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	ids := make([]uuid.UUID, 65)
-	req := workerapi.AgentOperationRequest{Session: session, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
+	req := workerapi.AgentOperationRequest{Session: sessionID, AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String()}
 	for i := range ids {
 		ids[i] = uuid.NewV7()
 		req.RequestID = fmt.Sprintf("create-%d", i)

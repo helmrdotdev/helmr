@@ -4,12 +4,12 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
-func queuedTurn(t *testing.T, f agenttest.Fixture) {
+func queuedTurn(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
  VALUES($1,$2,$3,$4,1,'user',$5,'slack_route',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
@@ -32,7 +32,7 @@ func TestQueuedDemandRespectsRegionHoldsAndRevocation(t *testing.T) {
 		{name: "other region", change: `INSERT INTO regions(id,display_name) VALUES('elsewhere','Elsewhere'); UPDATE projects SET default_region_id='elsewhere' WHERE id=(SELECT project_id FROM environments WHERE id=$1)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := agenttest.New(t)
+			f := sessiontest.New(t)
 			queuedTurn(t, f)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
 			if tc.change != "" {
@@ -47,7 +47,7 @@ func TestQueuedDemandRespectsRegionHoldsAndRevocation(t *testing.T) {
 }
 
 func TestQueuedDemandIncludesUnassignedPreparationsUntilDeadline(t *testing.T) {
-	f := agenttest.New(t)
+	f := sessiontest.New(t)
 	got, err := HasQueuedDemand(t.Context(), f.Pool, f.Group)
 	if err != nil || got {
 		t.Fatalf("idle fixture: %v %v", got, err)
