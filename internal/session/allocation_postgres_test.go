@@ -56,7 +56,7 @@ func TestAllocationPreparationUsesResourcesWithoutComputerCount(t *testing.T) {
 func TestAllocationPreparationCapacityFailureRollsBack(t *testing.T) {
 	f, p, a := preparationAllocationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1999 WHERE id=$1`, f.env)
-	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("overcommitted physical CPU: %v", err)
 	}
 	var untouched bool
@@ -72,12 +72,12 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrong, _ := dispatch.NewAllocator(f.pool, bytes.Repeat([]byte{20}, 32), nil)
-	if _, err := wrong.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, session.ErrDenied) {
+	if _, err := wrong.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("mismatched key accepted: %v", err)
 	}
 	other := *f.host()
 	other.Epoch++
-	if _, err := a.DeliverImageBuild(t.Context(), other, computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, session.ErrDenied) && !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.DeliverImageBuild(t.Context(), other, computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, dispatch.ErrDenied) && !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("wrong epoch accepted: %v", err)
 	}
 	var untouched bool
@@ -132,7 +132,7 @@ func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T)
 	if r.DeliveredAt != nil || r.InitializedAt != nil || r.ExpiresAt != nil {
 		t.Fatal("premature authority")
 	}
-	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, session.ErrNotReady) {
+	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("ready before delivery: %v", err)
 	}
 	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, computerID, 1); err != nil {
@@ -148,11 +148,11 @@ func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T)
 	}
 	wrong := r.Shape
 	wrong.VCPUCount++
-	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, wrong, r.BaseVersion); !errors.Is(err, session.ErrDenied) {
+	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, wrong, r.BaseVersion); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("wrong shape accepted: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.group)
-	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, session.ErrNotReady) {
+	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("paused initial activation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='active' WHERE id=$1`, f.group)
@@ -166,7 +166,7 @@ func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T)
 	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 2, f.worker); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("initialized Computer cold booted: %v", err)
 	}
 }
@@ -207,7 +207,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1;
  UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
-	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("source still owns VM: %v", err)
 	}
 	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
@@ -215,7 +215,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET per_vm_guest_ephemeral_disk_bytes=536870912 WHERE id=$1`, f.worker)
-	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("undersized scratch admitted: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET per_vm_guest_ephemeral_disk_bytes=1073741824 WHERE id=$1`, f.worker)
@@ -226,17 +226,17 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if r.RestoredFrom == nil || *r.RestoredFrom != cp.save || r.BaseVersion != cp.save.String() || r.Shape.VCPUCount != int64(cp.manifest.Runtime.VMVCPUCount) || r.ExpiresAt != nil {
 		t.Fatalf("wrong restore reservation: %+v", r)
 	}
-	if _, err := a.AllocateFreshLease(t.Context(), f.env, f.computer, 2, f.worker); !errors.Is(err, session.ErrConflict) {
+	if _, err := a.AllocateFreshLease(t.Context(), f.env, f.computer, 2, f.worker); !errors.Is(err, dispatch.ErrConflict) {
 		t.Fatalf("restore receipt became fresh: %v", err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 2, InstanceID: r.InstanceID}
 	if _, err := a.DeliverLease(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, session.ErrDenied) {
+	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("restore skipped checkpoint activation: %v", err)
 	}
-	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 3, f.worker); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 3, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("target duplicate allocated: %v", err)
 	}
 	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
@@ -285,7 +285,7 @@ func TestAllocationPreparationConcurrentQuotaIsAtomic(t *testing.T) {
 		err := <-results
 		if err == nil {
 			successes++
-		} else if !errors.Is(err, session.ErrNotReady) {
+		} else if !errors.Is(err, dispatch.ErrNotReady) {
 			t.Fatal(err)
 		}
 	}
@@ -321,7 +321,7 @@ func TestAllocationPreparationStopDoesNotRequireDeliveredCredential(t *testing.T
 			identity := computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 			wrong := identity
 			wrong.InstanceID = uuid.NewV7()
-			if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+			if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("wrong stop accepted: %v", err)
 			}
 			for range 2 {
@@ -344,7 +344,7 @@ func TestAllocationDeliveryDistinguishesPauseFromDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.group)
-	if _, err := a.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("paused delivery not retryable: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, f.group)
@@ -364,7 +364,7 @@ func TestAllocationComputerDeliveryDistinguishesPauseFromDrain(t *testing.T) {
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: 1}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.group)
-	if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, session.ErrNotReady) {
+	if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("paused delivery not retryable: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, f.group)
@@ -424,7 +424,7 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
 		err := <-results
 		if err == nil {
 			successes++
-		} else if !errors.Is(err, session.ErrNotReady) {
+		} else if !errors.Is(err, dispatch.ErrNotReady) {
 			t.Fatal(err)
 		}
 	}
@@ -461,7 +461,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			}
 			wrong := identity
 			wrong.InstanceID = uuid.NewV7()
-			if _, err := a.DeliverLease(t.Context(), *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+			if _, err := a.DeliverLease(t.Context(), *f.host(), wrong); !errors.Is(err, dispatch.ErrDenied) {
 				t.Fatalf("wrong identity was not denied: %v", err)
 			}
 			if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrAllocationClosed) {
@@ -552,7 +552,7 @@ func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
 	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
-		if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, session.ErrNotReady) {
+		if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrNotReady) {
 			t.Fatalf("drain bypassed temporary health denial (%s): %v", pause, err)
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`=NULL WHERE id=$1`, f.worker)
@@ -591,7 +591,7 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
 	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
-		if _, err := a.DeliverImageBuild(t.Context(), *f.host(), identity); !errors.Is(err, session.ErrNotReady) {
+		if _, err := a.DeliverImageBuild(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrNotReady) {
 			t.Fatalf("drain bypassed temporary health denial (%s): %v", pause, err)
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`=NULL WHERE id=$1`, f.worker)

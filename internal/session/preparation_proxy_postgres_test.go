@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -55,7 +53,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 		_, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
 		return err
 	}
-	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, session.ErrDenied) {
+	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("value available before exposure commit: %v", err)
 	}
 	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
@@ -161,10 +159,10 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, session.ErrDenied) {
+			if _, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("closed authority leaf: %v", err)
 			}
-			if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, session.ErrDenied) {
+			if _, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("closed authority value: %v", err)
 			}
 			var cleared, unfenced bool

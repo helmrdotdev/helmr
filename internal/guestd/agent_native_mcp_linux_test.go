@@ -255,7 +255,7 @@ func (peer *nativeManagedMCPPeer) RenewAgentAuthority(ctx context.Context, sessi
 	return result, err
 }
 func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
-	if agentv1.Operation_Method(request.Method) == agentv1.Operation_METHOD_RUNTIME_MCP {
+	if request.Method == workerapi.AgentMethodRuntimeMCP {
 		result, err := peer.client.AgentOperation(ctx, request)
 		if err == nil && result.Error == nil {
 			peer.mcpCalls.Add(1)
@@ -264,17 +264,17 @@ func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request wo
 	}
 	// These fixture-owned receipts do not represent CP lifecycle acceptance.
 	value := json.RawMessage("null")
-	switch agentv1.Operation_Method(request.Method) {
-	case agentv1.Operation_METHOD_REGISTER_MESSAGES, agentv1.Operation_METHOD_CLOSE_PROCESSING, agentv1.Operation_METHOD_HOLD, agentv1.Operation_METHOD_RESPOND:
-	case agentv1.Operation_METHOD_ASK:
+	switch request.Method {
+	case workerapi.AgentMethodRegisterMessages, workerapi.AgentMethodCloseProcessing, workerapi.AgentMethodHold, workerapi.AgentMethodRespond:
+	case workerapi.AgentMethodAsk:
 		value = json.RawMessage(`{"id":"fixture-approval"}`)
-	case agentv1.Operation_METHOD_WAIT_ASK:
+	case workerapi.AgentMethodWaitAsk:
 		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"respondedBy":{"kind":"api_key","id":"fixture-operator"}}`)
-	case agentv1.Operation_METHOD_OUTPUT:
+	case workerapi.AgentMethodOutput:
 		value = json.RawMessage(`{"sequence":1}`)
-	case agentv1.Operation_METHOD_FAIL:
+	case workerapi.AgentMethodFail:
 		return workerapi.AgentOperationResponse{}, fmt.Errorf("native fixture Turn failed: %s", request.Payload)
-	case agentv1.Operation_METHOD_FINALIZE:
+	case workerapi.AgentMethodFinalize:
 		var payload struct{ Result json.RawMessage }
 		if err := json.Unmarshal(request.Payload, &payload); err != nil {
 			return workerapi.AgentOperationResponse{}, err
@@ -284,7 +284,7 @@ func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request wo
 		peer.mu.Unlock()
 		value, _ = json.Marshal(map[string]any{"status": "completed", "result": payload.Result})
 	default:
-		return workerapi.AgentOperationResponse{}, fmt.Errorf("unexpected authored operation: %d", request.Method)
+		return workerapi.AgentOperationResponse{}, fmt.Errorf("unexpected authored operation: %s", request.Method)
 	}
 	return workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: value}, nil
 }

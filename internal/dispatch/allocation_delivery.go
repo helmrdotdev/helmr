@@ -8,10 +8,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -169,7 +168,7 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 			return ErrDenied
 		}
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
-			if errors.Is(err, ErrDenied) {
+			if errors.Is(err, computer.ErrDenied) {
 				return ErrAllocationClosed
 			}
 			return err
@@ -220,7 +219,7 @@ func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host wo
 			return ErrDenied
 		}
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
-			if errors.Is(err, ErrDenied) {
+			if errors.Is(err, computer.ErrDenied) {
 				return ErrAllocationClosed
 			}
 			return err

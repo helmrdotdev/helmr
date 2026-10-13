@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -23,13 +25,13 @@ func (server *Server) writeAgentComputerError(w http.ResponseWriter, err error) 
 	switch {
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
-	case errors.Is(err, session.ErrInvalidInput):
+	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Computer continuation request")))
-	case errors.Is(err, session.ErrDenied):
+	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerAuthorityUnavailable, message: "Computer continuation authority is unavailable"}))
-	case errors.Is(err, session.ErrNotReady):
+	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerNotReady, message: "Computer continuation requires reconciliation"}))
-	case errors.Is(err, session.ErrConflict):
+	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerEvidenceConflict, message: "Computer continuation evidence conflicts"}))
 	default:
 		server.log.Error("Computer continuation failed", "error", err)

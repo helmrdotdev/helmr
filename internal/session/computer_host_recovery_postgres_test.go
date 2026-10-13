@@ -50,10 +50,10 @@ func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing
 		t.Fatal(err)
 	}
 	assertFenced(false)
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, *f.host(), []uuid.UUID{}); !errors.Is(err, session.ErrDenied) {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, *f.host(), []uuid.UUID{}); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("prior epoch reported recovery: %v", err)
 	}
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, h, nil); !errors.Is(err, session.ErrInvalidInput) {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, h, nil); !errors.Is(err, dispatch.ErrInvalidInput) {
 		t.Fatalf("missing inventory accepted: %v", err)
 	}
 	for range 2 {
@@ -198,7 +198,7 @@ func TestComputerHostRecoveryContinuesPastBlockedComputer(t *testing.T) {
 	if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	if err = dispatch.ObserveRecoveredHost(t.Context(), f.pool, h, []uuid.UUID{}); !errors.Is(err, session.ErrNotReady) {
+	if err = dispatch.ObserveRecoveredHost(t.Context(), f.pool, h, []uuid.UUID{}); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("blocked recovery: %v", err)
 	}
 	var progressed bool

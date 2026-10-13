@@ -5,8 +5,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -168,7 +166,7 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	for _, change := range []func(*computer.ImageBuildIdentity){func(i *computer.ImageBuildIdentity) { i.Epoch++ }, func(i *computer.ImageBuildIdentity) { i.InstanceID = uuid.NewV7() }} {
 		wrong := correct
 		change(&wrong)
-		if _, err := a.DeliverImageBuild(t.Context(), *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+		if _, err := a.DeliverImageBuild(t.Context(), *f.host(), wrong); !errors.Is(err, dispatch.ErrDenied) {
 			t.Fatalf("wrong identity delivered: %v", err)
 		}
 	}

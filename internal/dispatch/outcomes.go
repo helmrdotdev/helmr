@@ -10,17 +10,15 @@ import (
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
-// Dispatch outcomes are the Session and Computer outcomes, so a result keeps
-// its meaning through every caller.
+// Dispatch outcomes belong to this owner; lower-owner errors pass through unchanged.
 var (
-	ErrInvalidInput = session.ErrInvalidInput
-	ErrDenied       = session.ErrDenied
-	ErrConflict     = session.ErrConflict
-	ErrNotReady     = session.ErrNotReady
+	ErrInvalidInput = errors.New("invalid operation input")
+	ErrDenied       = errors.New("operation not authorized")
+	ErrConflict     = errors.New("request identity conflicts with its original request")
+	ErrNotReady     = errors.New("execution is not ready")
 )
 
 // hideMissing reports a row the caller cannot see as a denial.

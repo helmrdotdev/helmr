@@ -7,11 +7,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/slackroute"
-
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -150,17 +150,17 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			switch {
 			case errors.Is(err, errAdmissionExpired):
 				return reject("gesture_expired")
-			case errors.Is(err, session.ErrDenied):
+			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return reject("permission_denied")
-			case errors.Is(err, session.ErrNotReady), errors.Is(err, session.ErrTerminal):
+			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return reject("target_unavailable")
 			case errors.Is(err, session.ErrAskAlreadyResponded):
 				return reject("ask_already_answered")
 			case errors.Is(err, session.ErrAskCancelled):
 				return reject("ask_cancelled")
-			case errors.Is(err, session.ErrConflict):
+			case (errors.Is(err, session.ErrConflict) || errors.Is(err, computer.ErrConflict)):
 				return reject("response_conflict")
-			case errors.Is(err, content.ErrAnswerInvalid), errors.Is(err, content.ErrLimit), errors.Is(err, session.ErrInvalidInput):
+			case errors.Is(err, content.ErrAnswerInvalid), errors.Is(err, content.ErrLimit), (errors.Is(err, session.ErrInvalidInput) || errors.Is(err, computer.ErrInvalidInput)):
 				return reject("answer_invalid")
 			default:
 				return err

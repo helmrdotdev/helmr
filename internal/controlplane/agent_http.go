@@ -5,18 +5,18 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/slack"
-
-	"github.com/helmrdotdev/helmr/internal/content"
-	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/slackroute"
-
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/content"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slack"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 )
 
 // externalAgentCaller derives identity only from authenticated transport. The
@@ -294,7 +294,7 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, badRequest(codedError{code: "bad_request", message: "Input must be an array of text parts"}))
 	case errors.Is(err, session.ErrInvalidCursor):
 		writeError(w, badRequest(codedError{code: "invalid_cursor", message: "Session event cursor exceeds the allocated end"}))
-	case errors.Is(err, session.ErrInvalidInput), errors.As(err, &invalidScope):
+	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, agent.ErrInvalidInput), errors.As(err, &invalidScope):
 		writeError(w, badRequest(errors.New("invalid Agent or Session request")))
 	case errors.Is(err, slackroute.ErrChannelUnavailable):
 		writeError(w, notFound(codedError{code: "channel_unavailable", message: err.Error()}))
@@ -312,11 +312,11 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "conversation_changed", message: err.Error()}))
 	case errors.Is(err, slack.ErrSlackDestinationConflict):
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
-	case errors.Is(err, session.ErrDenied):
+	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))
-	case errors.Is(err, session.ErrConflict):
+	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
-	case errors.Is(err, session.ErrNotReady), errors.Is(err, session.ErrTerminal):
+	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady), errors.Is(err, session.ErrTerminal), errors.Is(err, computer.ErrTerminal):
 		// Unavailability also includes a closed Session. The code distinguishes
 		// admission state from conflicting identity without promising retryability.
 		writeError(w, conflict(codedError{code: "admission_unavailable", message: "Agent or Session is not available for admission"}))

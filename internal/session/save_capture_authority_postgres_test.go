@@ -23,7 +23,7 @@ func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {
 	ref := s.ref(save.ID)
 	foreign := ref
 	foreign.Host.HostID = other
-	if err := s.publisher.Capture(t.Context(), foreign, root, "foreign"); !errors.Is(err, session.ErrDenied) {
+	if err := s.publisher.Capture(t.Context(), foreign, root, "foreign"); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("foreign capture: %v", err)
 	}
 	var state string
@@ -37,11 +37,11 @@ func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed, _ := s.cut(t, 8)
-	if err := s.publisher.Capture(t.Context(), ref, changed, "new cut"); !errors.Is(err, session.ErrConflict) {
+	if err := s.publisher.Capture(t.Context(), ref, changed, "new cut"); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("changed capture: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
-	if err := s.publisher.Capture(t.Context(), ref, root, "expired"); !errors.Is(err, session.ErrDenied) {
+	if err := s.publisher.Capture(t.Context(), ref, root, "expired"); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired writer: %v", err)
 	}
 }

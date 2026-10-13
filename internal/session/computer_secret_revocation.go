@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -66,7 +65,7 @@ func ReconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 		}
 		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err == nil {
 			return nil
-		} else if !errors.Is(err, ErrDenied) {
+		} else if !errors.Is(err, computer.ErrDenied) {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT session_id,epoch,computer_lease_epoch FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL ORDER BY session_id FOR NO KEY UPDATE`, env, computerID)

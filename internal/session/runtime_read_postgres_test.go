@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"testing"
 	"uuid"
 
@@ -128,7 +129,11 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			case "deployment":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
 			}
-			if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID); !errors.Is(err, session.ErrDenied) {
+			expected := session.ErrDenied
+			if change == "host" {
+				expected = computer.ErrDenied
+			}
+			if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID); !errors.Is(err, expected) {
 				t.Fatalf("stale caller: %v", err)
 			}
 		})

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -21,7 +22,7 @@ func (server *Server) workerAgentReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := session.ObserveSessionReady(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
-		if errors.Is(err, session.ErrConflict) {
+		if errors.Is(err, session.ErrConflict) || errors.Is(err, computer.ErrConflict) {
 			writeJSON(w, http.StatusOK, struct{}{})
 			return
 		}
@@ -69,7 +70,7 @@ func (server *Server) workerAgentControlReceipt(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := session.AcknowledgeSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence, request.Sequence, request.AuthorityGeneration, request.Kind, request.Error, request.StopSequence); err != nil {
-		if errors.Is(err, session.ErrConflict) {
+		if errors.Is(err, session.ErrConflict) || errors.Is(err, computer.ErrConflict) {
 			// Current authority accepted the receipt, but a newer desired control
 			// has superseded it. Retire the old guest event and keep converging.
 			writeJSON(w, http.StatusOK, struct {

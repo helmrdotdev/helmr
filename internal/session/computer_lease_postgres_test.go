@@ -104,14 +104,14 @@ func TestComputerLeaseRenewalRequiresLiveExactOwner(t *testing.T) {
 	}
 	wrong := identity
 	wrong.InstanceID = uuid.NewV7()
-	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("wrong instance renewed: %v", err)
 	}
-	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), wrong, uuid.Nil()); !errors.Is(err, session.ErrDenied) {
+	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), wrong, uuid.Nil()); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("wrong instance fenced: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); !errors.Is(err, session.ErrDenied) {
+	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired lease resurrected: %v", err)
 	}
 	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
@@ -141,7 +141,7 @@ func TestComputerLeaseRenewalRechecksExpiryAfterLock(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !errors.Is(err, session.ErrDenied) {
+	if err = <-done; !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired while waiting: %v", err)
 	}
 }
@@ -458,11 +458,11 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 			current := identity()
 			wrongInstance := current
 			wrongInstance.InstanceID = uuid.NewV7()
-			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, session.ErrDenied) {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, dispatch.ErrDenied) {
 				t.Fatalf("wrong instance report: %v", err)
 			}
 			queued := r.f.enqueue(t, "queued-through-invalid-restore")
-			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, session.ErrDenied) {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, dispatch.ErrDenied) {
 				t.Fatalf("unbound checkpoint report: %v", err)
 			}
 			var intact bool

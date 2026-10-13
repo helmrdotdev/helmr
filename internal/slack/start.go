@@ -217,6 +217,17 @@ func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, 
 // whether those connections still admit work. An exact retry returns its
 // receipt before connection eligibility is considered.
 func admitRoutedRoot(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, plan session.StartPlan, route slackroute.StartRoute, active bool) (session.Admission, error) {
+	// A binding insert can wait on promotion's first use of the same channel.
+	// Take that wait at the Slack step, before admission locks the Environment.
+	// Inactive routes still reach the retained receipt before fresh eligibility.
+	var channel uuid.UUID
+	if active {
+		var err error
+		channel, err = slackroute.ResolveChannelBinding(ctx, tx, route.Target)
+		if err != nil {
+			return session.Admission{}, err
+		}
+	}
 	admission, pin, err := session.AdmitStart(ctx, tx, trust, plan)
 	if err != nil || !pin.Fresh {
 		return admission, err
@@ -225,10 +236,6 @@ func admitRoutedRoot(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer,
 		return session.Admission{}, slackroute.ErrConversationChanged
 	}
 	if err = validateSlackStart(ctx, tx, plan.Request.EnvironmentID, pin.AgentID, pin.DeploymentID, plan.Caller, &route); err != nil {
-		return session.Admission{}, err
-	}
-	channel, err := slackroute.ResolveChannelBinding(ctx, tx, route.Target)
-	if err != nil {
 		return session.Admission{}, err
 	}
 	if err = createSlackRoot(ctx, tx, plan.Request.EnvironmentID, admission.SessionID, admission.TurnID, channel, route); err != nil {

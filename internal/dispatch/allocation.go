@@ -13,14 +13,12 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/org"
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
-
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -449,7 +447,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 			return ErrNotReady
 		}
 		if err := computer.ValidateCheckpointRuntime(ctx, tx, workergroup.HostPrincipal{HostID: host}, manifest.Runtime); err != nil {
-			if errors.Is(err, ErrConflict) {
+			if errors.Is(err, computer.ErrConflict) {
 				return ErrNotReady
 			}
 			return err

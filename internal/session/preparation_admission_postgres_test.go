@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
@@ -158,7 +157,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, session.ErrNotReady) {
+	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("fresh demand preempted pending successor: %v", err)
 	}
 	for range 2 {

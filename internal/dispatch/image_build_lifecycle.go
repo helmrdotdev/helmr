@@ -8,9 +8,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -290,7 +289,7 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 	defer cancel()
 	if _, err := computer.PinImage(ctx, database, env, computerID); err == nil {
 		return nil
-	} else if !errors.Is(err, ErrNotReady) {
+	} else if !errors.Is(err, computer.ErrNotReady) {
 		return err
 	}
 	var attached *uuid.UUID
@@ -301,7 +300,7 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 		return nil
 	}
 	_, err := computer.EnsureImageBuildSuccessor(ctx, database, env, *attached)
-	if errors.Is(err, ErrNotReady) {
+	if errors.Is(err, computer.ErrNotReady) {
 		return nil
 	}
 	return err
@@ -315,13 +314,13 @@ func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, com
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if _, err := computer.PinAdmissionImage(ctx, tx, env, computerID); err == nil {
 			return nil
-		} else if !errors.Is(err, ErrNotReady) {
+		} else if !errors.Is(err, computer.ErrNotReady) {
 			return err
 		}
 		_, err := computer.AttachImageBuild(ctx, tx, env, computerID)
 		return err
 	})
-	if errors.Is(err, ErrNotReady) {
+	if errors.Is(err, computer.ErrNotReady) {
 		return nil
 	}
 	return err

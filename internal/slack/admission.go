@@ -8,13 +8,11 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-
-	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/slackroute"
-
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -226,11 +224,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			switch {
 			case errors.Is(err, errAdmissionExpired):
 				return rejectMessage(ctx, tx, id, "gesture_expired")
-			case errors.Is(err, session.ErrDenied):
+			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return rejectMessage(ctx, tx, id, "permission_denied")
-			case errors.Is(err, session.ErrNotReady), errors.Is(err, session.ErrTerminal):
+			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
-			case errors.Is(err, session.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
+			case (errors.Is(err, session.ErrInvalidInput) || errors.Is(err, computer.ErrInvalidInput)), errors.Is(err, content.ErrUnsupported):
 				return rejectMessage(ctx, tx, id, "content_unsupported")
 			default:
 				return err

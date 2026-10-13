@@ -112,16 +112,16 @@ func (p *nativeKVMPeer) AgentOperation(_ context.Context, request workerapi.Agen
 		}
 	}()
 	var value json.RawMessage
-	switch agentv1.Operation_Method(request.Method) {
-	case agentv1.Operation_METHOD_REGISTER_MESSAGES, agentv1.Operation_METHOD_CLOSE_PROCESSING, agentv1.Operation_METHOD_HOLD:
+	switch request.Method {
+	case workerapi.AgentMethodRegisterMessages, workerapi.AgentMethodCloseProcessing, workerapi.AgentMethodHold:
 		value = json.RawMessage(`null`)
-	case agentv1.Operation_METHOD_ASK:
+	case workerapi.AgentMethodAsk:
 		value = json.RawMessage(`{"id":"fixture-approval"}`)
-	case agentv1.Operation_METHOD_WAIT_ASK:
+	case workerapi.AgentMethodWaitAsk:
 		value = json.RawMessage(`{"allow":true}`)
-	case agentv1.Operation_METHOD_OUTPUT:
+	case workerapi.AgentMethodOutput:
 		value = json.RawMessage(`{"sequence":1}`)
-	case agentv1.Operation_METHOD_RUNTIME_MCP:
+	case workerapi.AgentMethodRuntimeMCP:
 		if request.TurnID != "" {
 			return workerapi.AgentOperationResponse{}, errors.New("MCP inferred a Turn")
 		}
@@ -141,7 +141,7 @@ func (p *nativeKVMPeer) AgentOperation(_ context.Context, request workerapi.Agen
 			return response, errors.New("unexpected native MCP call count")
 		}
 		value, _ = json.Marshal(map[string]any{"sessionId": "peer", "turnId": "fixture-tool-turn-" + call.Arguments.IdempotencyKey, "sequence": 1})
-	case agentv1.Operation_METHOD_FINALIZE:
+	case workerapi.AgentMethodFinalize:
 		var payload struct{ Result json.RawMessage }
 		if err := json.Unmarshal(request.Payload, &payload); err != nil {
 			return workerapi.AgentOperationResponse{}, err
@@ -279,7 +279,7 @@ func (*nativeKVMContinuation) ReconcileControls(context.Context, *agentv1.Comput
 
 func TestNativeKVMPeerReplaysOriginalReceiptOnce(t *testing.T) {
 	peer := newNativeKVMPeer(nil)
-	original := workerapi.AgentOperationRequest{Session: workerapi.RuntimeSession{SessionID: "codex", ProcessEpoch: 1, ComputerLeaseEpoch: 2}, RequestID: "retained-call", AuthorityGeneration: 3, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: json.RawMessage(`{"tool":"enqueue","arguments":{"idempotencyKey":"codex-1"}}`)}
+	original := workerapi.AgentOperationRequest{Session: workerapi.RuntimeSession{SessionID: "codex", ProcessEpoch: 1, ComputerLeaseEpoch: 2}, RequestID: "retained-call", AuthorityGeneration: 3, Method: workerapi.AgentMethodRuntimeMCP, Payload: json.RawMessage(`{"tool":"enqueue","arguments":{"idempotencyKey":"codex-1"}}`)}
 	first, err := peer.AgentOperation(t.Context(), original)
 	nativeKVMMust(t, err)
 	replay, err := peer.AgentOperation(t.Context(), original)

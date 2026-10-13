@@ -36,10 +36,10 @@ func RecordCheckpointManifest(ctx context.Context, tx pgx.Tx, env uuid.UUID, man
 	return err
 }
 
-// MarkCheckpointReady records a checkpoint whose registered objects are
-// stored as ready. The caller holds the capture locks and has verified the
-// source lease and Secret authority.
-func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env uuid.UUID, manifest computercheckpoint.Manifest) error {
+// PublishCheckpointObjects records storage-verified objects under their owning
+// organization. The caller holds the capture locks and must recheck authority
+// after these potentially blocking writes before marking the checkpoint ready.
+func PublishCheckpointObjects(ctx context.Context, tx pgx.Tx, env uuid.UUID, manifest computercheckpoint.Manifest) error {
 	var org uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, env).Scan(&org); err != nil {
 		return err
@@ -57,7 +57,13 @@ func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env uuid.UUID, manifest
 			return err
 		}
 	}
-	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, manifest.CheckpointID)
+	return nil
+}
+
+// MarkCheckpointReady records readiness after object publication and the final
+// authority check. The caller holds the capture locks.
+func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 	return err
 }
 

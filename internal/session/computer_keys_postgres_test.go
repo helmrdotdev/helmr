@@ -8,8 +8,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -155,7 +153,7 @@ func TestComputerDiskSourceRejectsUndeliveredAllocation(t *testing.T) {
 	}
 	broker, _ := computer.NewKeyBroker(f.pool, preparationWrapper(t))
 	source, err := broker.Source(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch})
-	if !errors.Is(err, session.ErrDenied) || len(source.Keys) != 0 {
+	if !errors.Is(err, computer.ErrDenied) || len(source.Keys) != 0 {
 		source.Clear()
 		t.Fatalf("undelivered source: %v", err)
 	}

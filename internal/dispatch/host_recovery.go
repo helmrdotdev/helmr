@@ -6,8 +6,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -60,7 +60,7 @@ func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergrou
 			return recordComputerStopped(ctx, tx, host.HostID, a.hostEpoch, a.identity, "successor worker completed local VM inventory and physical cleanup", uuid.Nil())
 		}); err != nil {
 			var lock *pgconn.PgError
-			if errors.Is(err, ErrNotReady) || (errors.As(err, &lock) && lock.Code == "55P03") {
+			if (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) || (errors.As(err, &lock) && lock.Code == "55P03") {
 				if !hostLocked {
 					return ErrNotReady
 				}
@@ -71,7 +71,7 @@ func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergrou
 		}
 	}
 	if err := observeRecoveredHostImageBuilds(ctx, database, host, quarantined); err != nil {
-		if errors.Is(err, ErrNotReady) {
+		if errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady) {
 			pending = true
 		} else {
 			return hideMissing(err)

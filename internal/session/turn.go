@@ -19,24 +19,22 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/org"
-
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Session outcomes are the Computer owner's outcomes: a Computer outcome
-// returned through a Session operation keeps its meaning.
+// Session outcomes belong to this owner; lower-owner errors pass through unchanged.
 var (
-	ErrInvalidInput = computer.ErrInvalidInput
-	ErrDenied       = computer.ErrDenied
-	ErrConflict     = computer.ErrConflict
-	ErrNotReady     = computer.ErrNotReady
-	ErrTerminal     = computer.ErrTerminal
+	ErrInvalidInput = errors.New("invalid operation input")
+	ErrDenied       = errors.New("operation not authorized")
+	ErrConflict     = errors.New("request identity conflicts with its original request")
+	ErrNotReady     = errors.New("execution is not ready")
+	ErrTerminal     = errors.New("turn is terminal")
 )
 
 // Caller is transport-authenticated identity. Runtime requests carry the stable
@@ -367,7 +365,7 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
 			return ErrDenied
 		}
 		if err := executionAvailable(ctx, tx, caller.Execution, o, caller.TurnID == uuid.Nil()); err != nil {
-			if errors.Is(err, ErrNotReady) || errors.Is(err, ErrDenied) {
+			if (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) || (errors.Is(err, ErrDenied) || errors.Is(err, computer.ErrDenied)) {
 				return ErrDenied
 			}
 			return err
@@ -560,8 +558,6 @@ func hideMissing(err error) error {
 	return err
 }
 
-// Worker and Group claims are locked in the same transaction as Session
-// admission. HTTP authentication alone cannot protect a request delayed by locks.
 // lockFirstComputerImage takes the image locks that creating a Session's first
 // Computer needs before the Session rows are locked, keeping the global order
 // image spec before Sessions. The read is stable: every writer of
@@ -584,6 +580,8 @@ func lockFirstComputerImage(ctx context.Context, tx pgx.Tx, env, session uuid.UU
 	return computer.LockImageSpec(ctx, tx, env, spec)
 }
 
+// Worker and Group claims are locked in the same transaction as Session
+// admission. HTTP authentication alone cannot protect a request delayed by locks.
 func lockRuntimeHost(ctx context.Context, tx pgx.Tx, caller Caller) error {
 	if caller.Host == nil || caller.Host.HostID != caller.Execution.WorkerHostID || caller.Host.Epoch != caller.Execution.WorkerEpoch {
 		return ErrDenied

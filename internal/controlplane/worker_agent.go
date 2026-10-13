@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -134,13 +137,13 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "response_already_staged"
 	case errors.Is(err, content.ErrInvalid):
 		code = "invalid_arguments"
-	case errors.Is(err, session.ErrInvalidInput):
+	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, agent.ErrInvalidInput):
 		code = "invalid_arguments"
-	case errors.Is(err, session.ErrDenied):
+	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		code = "authority_changed"
-	case errors.Is(err, session.ErrConflict):
+	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		code = "idempotency_conflict"
-	case errors.Is(err, session.ErrNotReady):
+	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady):
 		code = "admission_unavailable"
 	}
 	if code == "" {
@@ -159,13 +162,13 @@ func agentOperationFailure(id, code, message string) workerapi.AgentOperationRes
 }
 func (server *Server) writeAgentWorkerError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, session.ErrInvalidInput):
+	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Session worker operation")))
-	case errors.Is(err, session.ErrConflict):
+	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):
 		writeError(w, conflict(errors.New("session control changed")))
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
-	case errors.Is(err, session.ErrDenied), errors.Is(err, session.ErrNotReady):
+	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied), errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
 		writeError(w, conflict(errors.New("session execution authority is unavailable")))
 	default:
 		server.log.Error("Session worker operation failed", "error", err)

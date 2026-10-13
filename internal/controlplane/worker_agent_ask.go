@@ -37,7 +37,6 @@ func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req work
 	}
 	value, _ := json.Marshal(map[string]string{"id": id.String()})
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: req.RequestID, Value: value})
-	return
 }
 
 func decodeAgentAskID(payload json.RawMessage) (uuid.UUID, error) {
@@ -68,7 +67,6 @@ func (s *Server) workerAgentWithdrawAsk(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: req.RequestID, Value: json.RawMessage(`null`)})
-	return
 }
 
 func (s *Server) workerAgentWaitAsk(w http.ResponseWriter, r *http.Request, req workerapi.AgentOperationRequest, host workergroup.HostPrincipal, e session.Execution, turn uuid.UUID) {

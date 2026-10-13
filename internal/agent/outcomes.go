@@ -8,16 +8,14 @@ import (
 	"errors"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
-// Agent outcomes are the Session outcomes, so a result keeps its meaning
-// through every caller.
+// Agent outcomes belong to this owner; lower-owner errors pass through unchanged.
 var (
-	ErrInvalidInput = session.ErrInvalidInput
-	ErrDenied       = session.ErrDenied
-	ErrNotReady     = session.ErrNotReady
+	ErrInvalidInput = errors.New("invalid operation input")
+	ErrDenied       = errors.New("operation not authorized")
+	ErrNotReady     = errors.New("execution is not ready")
 )
 
 func hideMissing(err error) error {

@@ -3,6 +3,7 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,7 +40,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
  VALUES($1,$2,$2,$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
 	req := f.startRequest("computer-trust")
-	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
+	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("missing issuer: %v", err)
 	}
 	failed := &countingComputerTrust{store: f.secrets, failure: errors.New("signing failed")}

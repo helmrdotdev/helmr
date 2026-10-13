@@ -7,9 +7,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -138,7 +138,7 @@ func (a *Allocator) Reconcile(ctx context.Context, after AllocationPosition) (Al
 		if errors.Is(err, errEnvironmentCapacity) {
 			after.host = lastAllocationHost
 		}
-		if err != nil && !errors.Is(err, ErrNotReady) && !errors.Is(err, ErrDenied) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !(errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) && !(errors.Is(err, ErrDenied) || errors.Is(err, computer.ErrDenied) || errors.Is(err, session.ErrDenied)) && !errors.Is(err, context.DeadlineExceeded) {
 			failures = append(failures, err)
 		}
 	}

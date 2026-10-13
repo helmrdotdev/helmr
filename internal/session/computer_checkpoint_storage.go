@@ -7,9 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -119,13 +117,16 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 		if !published || !head {
 			return ErrNotReady
 		}
+		if err = computer.PublishCheckpointObjects(ctx, tx, ref.EnvironmentID, manifest); err != nil {
+			return err
+		}
 		if _, err = computer.CurrentLease(ctx, tx, ref.Host, ref.EnvironmentID, manifest.ComputerID, manifest.LeaseEpoch); err != nil {
 			return err
 		}
 		if err = computer.RequireSecretsNotRevoked(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
 			return err
 		}
-		return computer.MarkCheckpointReady(ctx, tx, ref.EnvironmentID, manifest)
+		return computer.MarkCheckpointReady(ctx, tx, ref.EnvironmentID, manifest.CheckpointID)
 	}))
 }
 

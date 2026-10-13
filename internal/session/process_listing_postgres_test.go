@@ -45,7 +45,7 @@ func TestComputerProcessListingPreservesCustodyWithoutExecutionAuthority(t *test
 	assertListed()
 	wrong := identity
 	wrong.InstanceID = uuid.NewV7()
-	if _, err := dispatch.ListHostProcesses(t.Context(), f.pool, *f.host(), wrong, nil); !errors.Is(err, session.ErrDenied) {
+	if _, err := dispatch.ListHostProcesses(t.Context(), f.pool, *f.host(), wrong, nil); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("foreign instance: %v", err)
 	}
 	host := *f.host()

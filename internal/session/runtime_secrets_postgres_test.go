@@ -117,12 +117,12 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if err != nil || string(values[markers[0]]) != "v1" || string(values[markers[1]]) != "v2" {
 		t.Fatalf("simultaneous pins: %v", err)
 	}
-	if _, err = resolve([]string{first.ProtectedEnv["OTHER_TOKEN"]}); !errors.Is(err, session.ErrDenied) {
+	if _, err = resolve([]string{first.ProtectedEnv["OTHER_TOKEN"]}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("cross-origin alias: %v", err)
 	}
 	// Ending the first process cannot leave its selector authorized by a live peer.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID)
-	if _, err = resolve(markers); !errors.Is(err, session.ErrDenied) {
+	if _, err = resolve(markers); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("partial selection leaked an ended pin: %v", err)
 	}
 	if _, err = resolve(markers[1:]); err != nil {
@@ -131,7 +131,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), f.env, secretID, "runtime-revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = resolve(markers[1:]); !errors.Is(err, session.ErrDenied) {
+	if _, err = resolve(markers[1:]); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("revoked pin: %v", err)
 	}
 	var retained bool
@@ -216,7 +216,7 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	selectors := []string{first.ProtectedEnv["TOKEN"]}
-	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, session.ErrDenied) {
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.pool, *f.host(), sourceInstance, "https://api.example.com", selectors); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("old source: %v", err)
 	}
 	rows, err := computer.CaptureProtectedSecrets(t.Context(), f.pool, host, uuid.MustParse(p.Envelope.ComputerInstanceId), "https://api.example.com", selectors)
@@ -338,7 +338,7 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 				if err != nil {
 					t.Fatalf("committed acquiring allocation lost trust on Host drain: %v", err)
 				}
-			} else if !errors.Is(err, session.ErrDenied) {
+			} else if !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("acquiring on unavailable supply: %v", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='active' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)

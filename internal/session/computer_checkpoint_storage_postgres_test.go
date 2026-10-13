@@ -6,18 +6,17 @@ import (
 	"crypto/sha256"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
-	"github.com/helmrdotdev/helmr/internal/computer"
-
-	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
-
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
@@ -178,6 +177,9 @@ func TestCheckpointRuntimeRejectsMismatchedCapture(t *testing.T) {
 				m.Memory.MediaType = cas.CheckpointVMStateMediaType
 			}
 			expected := session.ErrConflict
+			if which == "runtime" {
+				expected = computer.ErrConflict
+			}
 			if which == "config" || which == "media" {
 				expected = session.ErrInvalidInput
 			}
@@ -362,5 +364,70 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	var ready bool
 	if err := f.f.pool.QueryRow(ctx, `SELECT status,ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&state, &ready); err != nil || state != "aborting" || ready {
 		t.Fatalf("state=%s ready=%v %v", state, ready, err)
+	}
+}
+
+func TestCheckpointRuntimeRechecksLeaseAfterCASWriteWait(t *testing.T) {
+	f := newCheckpointStorageFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	f.upload(t)
+	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
+		t.Fatal(err)
+	}
+	object := f.manifest.Objects()[0]
+	dbtest.MustExec(t, ctx, f.f.pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$2,$3,$4 FROM environments WHERE id=$1 ON CONFLICT DO NOTHING`, f.f.env, object.Digest, object.SizeBytes, object.MediaType)
+	holder, err := f.f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(context.Background())
+	if _, err = holder.Exec(ctx, `SELECT 1 FROM cas_objects WHERE digest=$1 FOR UPDATE`, object.Digest); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '5 seconds' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
+	done := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		done <- f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest)
+	}()
+	defer func() { cancel(); holder.Rollback(context.Background()); wg.Wait() }()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err = f.f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%INSERT INTO cas_objects%')`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("publication did not wait for CAS write: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	// The publication holds the lease lock. Let its actual database deadline
+	// pass while the independent CAS row prevents readiness from committing.
+	if _, err = f.f.pool.Exec(ctx, `SELECT pg_sleep(GREATEST(EXTRACT(EPOCH FROM expires_at-clock_timestamp()),0)) FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer); err != nil {
+		t.Fatal(err)
+	}
+	if err = holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("expired authority published checkpoint: %v", err)
+	}
+	var ready bool
+	if err = f.f.pool.QueryRow(ctx, `SELECT ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&ready); err != nil || ready {
+		t.Fatalf("ready=%v: %v", ready, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -172,7 +173,7 @@ func reconcileSessionCompletion(ctx context.Context, database db.TxDB, environme
 	} else {
 		err = Complete(attempt, database, environment, session, turn)
 	}
-	if errors.Is(err, ErrTerminal) || errors.Is(err, ErrNotReady) {
+	if (errors.Is(err, ErrTerminal) || errors.Is(err, computer.ErrTerminal)) || (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) {
 		return nil
 	}
 	return err

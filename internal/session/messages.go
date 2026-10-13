@@ -9,7 +9,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -61,7 +60,7 @@ func admitMessage(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequ
 	if err != nil {
 		return false, err
 	}
-	if err = executionReady(ctx, tx, e, o); errors.Is(err, ErrNotReady) {
+	if err = executionReady(ctx, tx, e, o); errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) {
 		return false, nil
 	} else if err != nil {
 		return false, err

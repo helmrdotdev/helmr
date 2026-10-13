@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -76,7 +74,7 @@ func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, capacity); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, session.ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, computer.ErrDenied) || values != nil {
 		t.Fatalf("sealed delivery: %v", err)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "disk")
@@ -118,11 +116,11 @@ func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.
 }
 func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	p, key := newPreparationPublicationTest(t)
-	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); !errors.Is(err, session.ErrNotReady) {
+	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("capture before exposure: %v", err)
 	}
 	root := p.capture(t, key)
-	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, 2<<20); !errors.Is(err, session.ErrInvalidInput) {
+	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, 2<<20); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("capacity changed: %v", err)
 	}
 	// Ordinary rotation does not turn a successful cut into an execution failure.
@@ -134,10 +132,10 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	if _, err := swapped.Digest(); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.publisher.Capture(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, session.ErrConflict) {
+	if err := p.publisher.Capture(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("capture changed page: %v", err)
 	}
-	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, session.ErrConflict) {
+	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, swapped, "different page in same pack"); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("publication changed page: %v", err)
 	}
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "verified storage graph"); err != nil {
@@ -219,7 +217,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "late publish"); !errors.Is(err, session.ErrDenied) {
+			if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "late publish"); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("late publication: %v", err)
 			}
 			var count int
@@ -260,7 +258,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 		}
 		return p.remote.Stat(ctx, digest)
 	}))
-	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, session.ErrDenied) {
+	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("certified after revocation: %v", err)
 	}
 	object, _ := describeStoredObject(inspection)
@@ -283,7 +281,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = p.publisher.Register(t.Context(), *p.f.host(), p.ref, blockformat.ObjectInspection{Pack: &pack}); !errors.Is(err, session.ErrConflict) {
+	if err = p.publisher.Register(t.Context(), *p.f.host(), p.ref, blockformat.ObjectInspection{Pack: &pack}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int

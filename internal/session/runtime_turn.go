@@ -6,6 +6,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -30,7 +31,7 @@ func DispatchRuntimeTurn(ctx context.Context, pool db.TxBeginner, host workergro
 		}
 		var assignment TurnDispatch
 		err = dispatchTurn(ctx, tx, e, &assignment)
-		if err != nil && !errors.Is(err, ErrNotReady) {
+		if err != nil && !(errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) {
 			return err
 		}
 		if err == nil {

@@ -9,9 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Operation outcomes. The Session and dispatch owners return them unchanged
-// and declare their own outcomes as these values, so a Computer outcome keeps
-// its meaning through every caller.
+// Computer outcomes pass through higher owners unchanged.
 var (
 	ErrInvalidInput = errors.New("invalid operation input")
 	ErrDenied       = errors.New("operation not authorized")

@@ -66,7 +66,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err = session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, resume.Sequence, resume.Generation, resume.Kind, "", 0); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
-	if _, err = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("revoked capture: %v", err)
 	}
 	for range 2 {
@@ -172,11 +172,11 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 			if _, err := secrets.secrets.Revoke(t.Context(), r.f.env, secrets.secretID, "revoke"); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); !errors.Is(err, session.ErrDenied) {
+			if err := session.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("validate revoked: %v", err)
 			}
 			err := session.CommitComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, observed)
-			if phase == "consumed" && err != nil || phase == "prepared" && !errors.Is(err, session.ErrDenied) {
+			if phase == "consumed" && err != nil || phase == "prepared" && !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("commit revoked %s: %v", phase, err)
 			}
 			attachment, err := session.AcquireRuntimeAttachment(t.Context(), r.f.pool, r.host, r.execution())
@@ -202,7 +202,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 				t.Fatalf("cleanup protocol lost: %s", state)
 			}
 			if phase == "consumed" {
-				if err = session.CompleteComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, session.ErrDenied) {
+				if err = session.CompleteComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("activate revoked: %v", err)
 				}
 			}
@@ -216,7 +216,7 @@ func TestPreparationImageRevocationDeniesCheckpointProgress(t *testing.T) {
 	if _, err := secrets.secrets.Revoke(t.Context(), f.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); !errors.Is(err, session.ErrDenied) {
+	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("revoked checkpoint registration: %v", err)
 	}
 }
@@ -230,7 +230,7 @@ func TestPreparationImageRevocationDeniesCaptureReplay(t *testing.T) {
 	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("revoked capture replay: %v", err)
 	}
 }

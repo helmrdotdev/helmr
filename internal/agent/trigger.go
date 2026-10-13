@@ -8,14 +8,12 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
-
 	"github.com/helmrdotdev/helmr/internal/slackroute"
-
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -161,9 +159,9 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 					switch {
 					case errors.Is(admissionErr, slackroute.ErrChannelUnavailable):
 						reason = "slack_channel_unavailable"
-					case errors.Is(admissionErr, ErrDenied):
+					case errors.Is(admissionErr, session.ErrDenied) || errors.Is(admissionErr, computer.ErrDenied):
 						reason = "execution_denied"
-					case errors.Is(admissionErr, ErrInvalidInput):
+					case errors.Is(admissionErr, session.ErrInvalidInput) || errors.Is(admissionErr, computer.ErrInvalidInput):
 						reason = "invalid_definition"
 					default:
 						return admissionErr

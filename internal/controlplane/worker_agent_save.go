@@ -99,7 +99,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	save, err := computer.NextSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
-	if errors.Is(err, session.ErrNotReady) {
+	if errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady) {
 		writeError(w, unavailable(errors.New("save discovery is temporarily unavailable")))
 		return
 	}
@@ -117,7 +117,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 
 // A settled save cannot become publishable by retrying the same writer.
 func (server *Server) writeAgentSaveError(w http.ResponseWriter, err error) {
-	if errors.Is(err, session.ErrTerminal) {
+	if errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal) {
 		writeError(w, conflict(errors.New("save is terminal")))
 		return
 	}

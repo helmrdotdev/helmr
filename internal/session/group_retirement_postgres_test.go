@@ -153,7 +153,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
  INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$3::text,'worker_group_id',$2::text))).* FROM worker_pools p WHERE p.id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$6);
  INSERT INTO worker_pool_cpu_shapes SELECT $3,vcpu_count,cpu_config_digest FROM worker_pool_cpu_shapes WHERE worker_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$6);
  INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$4::text,'worker_group_id',$2::text,'worker_pool_id',$3::text,'resource_id','successor','observed_at',clock_timestamp(),'epoch_cpu_millis',8000,'epoch_memory_bytes',8589934592,'epoch_guest_ephemeral_disk_bytes',8589934592,'max_vm_slots',8,'max_vm_starts',8))).* FROM worker_hosts h WHERE id=$6`, pgx.QueryExecModeSimpleProtocol, f.group, group, pool, host, token, f.worker)
-	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, session.ErrNotReady) {
+	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
 	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {

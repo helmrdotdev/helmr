@@ -273,7 +273,7 @@ func TestComputerHostAbsenceOrdersRootsAcrossWorkerGroups(t *testing.T) {
 }
 
 func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
-	if err := dispatch.ObserveProviderAbsentHost(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, session.ErrInvalidInput) {
+	if err := dispatch.ObserveProviderAbsentHost(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, dispatch.ErrInvalidInput) {
 		t.Fatalf("missing confirmation: %v", err)
 	}
 	f := newFixture(t)

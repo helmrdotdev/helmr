@@ -11,7 +11,7 @@ import (
 )
 
 func (server *Server) workerAgentMCP(w http.ResponseWriter, r *http.Request, request workerapi.AgentOperationRequest, caller session.Caller) {
-	method := request.Method
+	var method workerapi.AgentOperationMethod
 	payload := request.Payload
 
 	if request.TurnID != "" {
@@ -95,5 +95,4 @@ func (server *Server) workerAgentListAgents(w http.ResponseWriter, r *http.Reque
 	}
 	body, _ := json.Marshal(page)
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: requestID, Value: body})
-	return
 }

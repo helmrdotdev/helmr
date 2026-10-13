@@ -193,7 +193,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				if publishFirst && err != nil {
 					t.Fatal(err)
 				}
-				if !publishFirst && !errors.Is(err, session.ErrTerminal) && !errors.Is(err, session.ErrDenied) {
+				if !publishFirst && !errors.Is(err, computer.ErrTerminal) && !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("fenced publication result: %v", err)
 				}
 				// Use the real lifecycle scan, including Sessions no longer in the live

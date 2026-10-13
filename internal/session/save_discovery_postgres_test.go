@@ -208,7 +208,7 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, session.ErrDenied) || save != nil {
+			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, computer.ErrDenied) || save != nil {
 				t.Fatalf("invalid writer: %+v %v", save, err)
 			}
 		})
@@ -252,7 +252,7 @@ func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil || save != nil {
 		t.Fatalf("ordinary discovery blocked: %+v %v", save, err)
 	}
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, session.ErrNotReady) || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, computer.ErrNotReady) || save != nil {
 		t.Fatalf("optional admission bypassed lock: %+v %v", save, err)
 	}
 }

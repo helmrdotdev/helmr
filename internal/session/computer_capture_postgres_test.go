@@ -66,7 +66,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 	}
 	other := req
 	other.CheckpointID = uuid.NewV7()
-	if _, err = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), other); !errors.Is(err, session.ErrNotReady) {
+	if _, err = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), other); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("second capture = %v", err)
 	}
 	req.ChannelCredential = "wrong"
@@ -223,7 +223,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 	req := f.captureRequest()
 	result, _ := beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='captured',captured_root_digest=decode(repeat('1',64),'hex'),capture_evidence='cut',flush_acknowledged_at=clock_timestamp(),captured_at=clock_timestamp() WHERE id=$1`, result.SaveID)
-	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, session.ErrConflict) {
+	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("disk cut was silently discarded: %v", err)
 	}
 	var state string

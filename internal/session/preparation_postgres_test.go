@@ -112,7 +112,7 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 	}
 	// Logical failure blocks a new writer without poisoning fresh demand.
 	fresh := f.waiter(t)
-	if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, session.ErrNotReady) {
+	if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("unfenced writer: %v", err)
 	}
 	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
@@ -137,24 +137,24 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	}
 	wrong := ref
 	wrong.InstanceID = uuid.NewV7()
-	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("changed instance: %v", err)
 	}
 	wrong = ref
 	wrong.ChannelCredential = bytes.Repeat([]byte{6}, 32)
-	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, session.ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("wrong credential: %v", err)
 	}
 	host := *f.host()
 	host.Epoch++
-	if _, err := computer.RenewImageBuild(t.Context(), f.pool, host, ref); !errors.Is(err, session.ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, host, ref); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("wrong host epoch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
-	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, session.ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired renewal: %v", err)
 	}
-	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, session.ErrDenied) {
+	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired reclaim: %v", err)
 	}
 	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
@@ -187,7 +187,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if _, err = f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, session.ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) || values != nil {
 		t.Fatalf("revoked exposure: %+v %v", values, err)
 	}
 }
@@ -246,7 +246,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	if err = blocker.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !errors.Is(err, session.ErrDenied) {
+	if err = <-done; !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("late exposure: %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, session.ErrDenied) {
+				if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("revoked renewal: %v", err)
 				}
 				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
@@ -287,7 +287,7 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 			}
 			fresh := f.waiter(t)
 			if kind != "queued" {
-				if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, session.ErrNotReady) {
+				if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, computer.ErrNotReady) {
 					t.Fatalf("unfenced blocker: %v", err)
 				}
 				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
@@ -418,7 +418,7 @@ func TestPreparationUnclaimedExecutorOperationsAreDenied(t *testing.T) {
 			return computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref))
 		},
 	} {
-		if err := operation(); !errors.Is(err, session.ErrDenied) {
+		if err := operation(); !errors.Is(err, computer.ErrDenied) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -435,7 +435,7 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
 			fresh := f.waiter(t)
-			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, session.ErrNotReady) {
+			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, computer.ErrNotReady) {
 				t.Fatalf("expired attach: %v", err)
 			}
 			if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
@@ -540,7 +540,7 @@ func TestPreparationConcurrentClaimsSelectOneExecutor(t *testing.T) {
 		switch {
 		case err == nil:
 			success++
-		case errors.Is(err, session.ErrDenied):
+		case errors.Is(err, computer.ErrDenied):
 			denied++
 		default:
 			t.Fatal(err)
@@ -620,7 +620,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				}
 			}
 			fresh := f.waiter(t)
-			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, session.ErrNotReady) {
+			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, computer.ErrNotReady) {
 				t.Fatalf("known %s loss before reconciliation: %v", kind, err)
 			}
 			if kind == "host" {
