@@ -89,6 +89,9 @@ func ReconcileDiskRetention(ctx context.Context, database db.TxDB) error {
 	if err := retireRevokedComputerImages(ctx, database); err != nil {
 		failures = append(failures, err)
 	}
+	if err := retireSupersededImages(ctx, database); err != nil {
+		failures = append(failures, err)
+	}
 	if err := collectComputerDiskGraph(ctx, database); err != nil {
 		failures = append(failures, err)
 	}

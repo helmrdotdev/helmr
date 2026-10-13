@@ -180,7 +180,7 @@ type ImageBuildLifecyclePosition struct {
 }
 
 // RunImageBuildLifecycle owns due waiter settlement, attempt expiry and revoked
-// exposure reconciliation independently of guest connectivity.
+// exposure reconciliation and periodic image refresh independently of guest connectivity.
 func RunImageBuildLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("preparation lifecycle database and logger are required")
@@ -221,6 +221,11 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
   SELECT revoked.environment_id,revoked.computer_id,'secret_revocation' FROM (`+db.RevokedComputerSecretsSQL+`) revoked
    JOIN session_processes p ON (p.environment_id,p.computer_id)=(revoked.environment_id,revoked.computer_id)
    WHERE p.fenced_at IS NULL AND (p.status IN ('starting','ready') OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=p.environment_id AND t.session_id=p.session_id AND t.process_epoch=p.epoch AND t.status='running'))
+  UNION
+  SELECT s.environment_id,s.id,'refresh' FROM image_specs s JOIN environments e ON e.id=s.environment_id
+   WHERE e.retired_at IS NULL AND s.next_refresh_at<=statement_timestamp()
+   AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=s.environment_id AND p.image_spec_id=s.id
+     AND p.status NOT IN ('queued','running') AND p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL)
   UNION
   SELECT environment_id,id,'attempt' FROM image_builds WHERE status IN ('queued','running') AND deadline_at<=statement_timestamp()
   UNION
@@ -268,6 +273,8 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 			err = session.ReconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
 		case "revocation":
 			err = ReconcileImageBuildRevocation(ctx, database, candidate.environment, candidate.id)
+		case "refresh":
+			err = reconcileImageRefresh(ctx, database, candidate.environment, candidate.id)
 		}
 		if err != nil {
 			failures = append(failures, err)
@@ -320,6 +327,16 @@ func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, com
 		_, err := computer.AttachImageBuild(ctx, tx, env, computerID)
 		return err
 	})
+	if errors.Is(err, computer.ErrNotReady) {
+		return nil
+	}
+	return err
+}
+
+func reconcileImageRefresh(ctx context.Context, database db.TxDB, env, spec uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := computer.RefreshImageSpec(ctx, database, env, spec)
 	if errors.Is(err, computer.ErrNotReady) {
 		return nil
 	}
