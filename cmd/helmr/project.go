@@ -118,7 +118,7 @@ func projectCreateCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "create PROJECT",
-		Short: "Create a project with 30-day Session history retention.",
+		Short: "Create a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := strings.TrimSpace(args[0])

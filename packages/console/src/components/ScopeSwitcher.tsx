@@ -472,7 +472,6 @@ export function ScopeSwitcher() {
       <Show when={creating() === "project"}>
         <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
           <form onSubmit={submitCreateProject}>
-            <p class={ui.muted}>Session history is retained for 30 days. You can change this later in Project settings.</p>
             <label class={ui.field}>
               <span>Name</span>
               <input

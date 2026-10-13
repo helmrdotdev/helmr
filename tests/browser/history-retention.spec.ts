@@ -36,12 +36,11 @@ const mode = (page: Page) => page.getByRole("combobox", { name: "History retenti
 const period = (page: Page) => page.getByLabel("Retention period", { exact: true });
 const save = (page: Page) => page.getByRole("button", { name: "Save history retention", exact: true });
 
-test("Project creation discloses the default without asking for a policy", async ({ page }) => {
+test("Project creation uses the default without asking for a policy", async ({ page }) => {
   const { writes } = await scope(page);
   await page.goto("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("New project");
   await expect(mode(page)).toHaveCount(0);
-  await expect(page.getByText("Session history is retained for 30 days.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]!.body).not.toHaveProperty("history_retention");
