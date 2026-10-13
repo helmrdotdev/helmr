@@ -46,9 +46,6 @@ SELECT lifetime.digest, sqlc.arg(upload_id) FROM cas_blobs lifetime
  WHERE lifetime.digest=sqlc.arg(digest) AND lifetime.retired_at IS NOT NULL
 ON CONFLICT DO NOTHING;
 
--- name: ListRetiredCasUploads :many
-SELECT upload_id FROM cas_upload_reclaims WHERE digest=sqlc.arg(digest) ORDER BY upload_id;
-
 -- Retained upload IDs get independent, fair retry scheduling. Historical IDs
 -- must not monopolize the digest's deadline or starve completed-version cleanup.
 -- name: ClaimRetiredCasUploads :many

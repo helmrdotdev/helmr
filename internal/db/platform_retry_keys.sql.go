@@ -89,43 +89,6 @@ func (q *Queries) CreatePlatformRetryKey(ctx context.Context, arg CreatePlatform
 	return i, err
 }
 
-const getPlatformRetryKey = `-- name: GetPlatformRetryKey :one
-SELECT environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt_expires_at, receipt, receipt_pruned_at FROM platform_retry_keys WHERE environment_id=$1 AND id=$2
-`
-
-type GetPlatformRetryKeyParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetPlatformRetryKey(ctx context.Context, arg GetPlatformRetryKeyParams) (PlatformRetryKey, error) {
-	row := q.db.QueryRow(ctx, getPlatformRetryKey, arg.EnvironmentID, arg.ID)
-	var i PlatformRetryKey
-	err := row.Scan(
-		&i.EnvironmentID,
-		&i.ID,
-		&i.Operation,
-		&i.SlotHash,
-		&i.RequestFingerprint,
-		&i.ScopeSecretName,
-		&i.ScopeSecretID,
-		&i.ScopeComputerID,
-		&i.ScopeCommandID,
-		&i.ScopeCallerKind,
-		&i.ScopeComputerKey,
-		&i.DeploymentID,
-		&i.SecretID,
-		&i.SecretVersionID,
-		&i.ComputerID,
-		&i.CommandID,
-		&i.AcceptedAt,
-		&i.ReceiptExpiresAt,
-		&i.Receipt,
-		&i.ReceiptPrunedAt,
-	)
-	return i, err
-}
-
 const lockPlatformRetryKey = `-- name: LockPlatformRetryKey :one
 SELECT k.environment_id, k.id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt_expires_at, k.receipt, k.receipt_pruned_at,
     k.receipt_expires_at<=clock_timestamp() AND NOT EXISTS (

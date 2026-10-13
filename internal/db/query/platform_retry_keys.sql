@@ -19,9 +19,6 @@ VALUES(sqlc.arg(environment_id),sqlc.arg(id),sqlc.arg(operation),sqlc.arg(slot_h
     statement_timestamp(),statement_timestamp()+interval '720 hours')
 RETURNING *;
 
--- name: GetPlatformRetryKey :one
-SELECT * FROM platform_retry_keys WHERE environment_id=sqlc.arg(environment_id) AND id=sqlc.arg(id);
-
 -- name: PruneExpiredPlatformRetryReceipts :execrows
 WITH candidates AS MATERIALIZED (
     SELECT k.environment_id,k.id FROM platform_retry_keys k

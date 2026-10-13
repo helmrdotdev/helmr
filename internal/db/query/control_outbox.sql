@@ -1,18 +1,3 @@
--- name: CreateControlOutbox :one
-INSERT INTO control_outbox (
-    id,
-    topic,
-    payload,
-    available_at
-)
-VALUES (
-    sqlc.arg(id),
-    sqlc.arg(topic),
-    sqlc.arg(payload),
-    sqlc.arg(available_at)
-)
-RETURNING *;
-
 -- name: ClaimControlOutbox :many
 WITH candidates AS (
     SELECT id
