@@ -162,6 +162,8 @@ func deploymentHTTPEnvironment(t *testing.T, fixture httpPostgresFixture, orgID 
 		HistoryRetentionMode: "until_environment_deletion",
 		ID:                   pgvalue.UUID(environmentID), OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
 		Slug: "staging", Name: "Staging", ColorHex: "#315FCE", IsDefault: true,
+		MaxOutstandingAdmissions: 1024, MaxCausalDepth: 32, MaxResidentComputers: 1024, MaxCpuMillis: 1024000, MaxMemoryBytes: 1 << 40,
+		MaxReservedStorageBytes: 1 << 40, PreparationTimeoutMs: 600000, AdmissionRatePerSecond: 1000000, AdmissionBurst: 1000000,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func deploymentHTTPDeployment(t *testing.T, fixture httpPostgresFixture, orgID, 
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, environmentID, deploymentID, digest)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,$3,'{}','{}')`, environmentID, specID, digest)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'report-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($1,$2,$3,$3,'{}')`, pgx.QueryExecModeSimpleProtocol, environmentID, deploymentID, specID)
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$2,$3,$3,1000,536870912,NULL)`, pgx.QueryExecModeSimpleProtocol, environmentID, deploymentID, specID)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'daily-report')`, environmentID, agentID)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($1,$2,$3,(SELECT id FROM templates WHERE environment_id=$1 AND key='report-computer'),false,'{}')`, environmentID, agentID, deploymentID)
 	return deploymentID

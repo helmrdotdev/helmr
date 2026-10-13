@@ -49,7 +49,7 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, f.env, id, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
 	return id
 }
 func (f preparationFixture) attach(t *testing.T, id uuid.UUID) Preparation {

@@ -203,7 +203,7 @@ func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, ret
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
-			updated, err := q.RotateSecret(ctx, db.RotateSecretParams{VersionID: pgvalue.UUID(versionID), Version: version, Nonce: encrypted.nonce, Ciphertext: encrypted.ciphertext, EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, ExpectedRevision: record.Revision, ExpectedCurrentVersionID: record.CurrentVersionID})
+			updated, err := q.RotateSecret(ctx, db.RotateSecretParams{VersionID: pgvalue.UUID(versionID), Version: version, Nonce: encrypted.nonce, Ciphertext: encrypted.ciphertext, EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID})
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
@@ -239,7 +239,7 @@ func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, retryKey string) 
 			}
 			q := db.New(tx)
 			if record.Status != "revoked" {
-				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedRevision: record.Revision}); err != nil {
+				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID}); err != nil {
 					return idempotency.Completion{}, err
 				}
 			}

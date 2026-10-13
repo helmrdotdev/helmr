@@ -210,11 +210,11 @@ func (p *PreparationPublisher) Publish(ctx context.Context, host workergroup.Hos
 		if err = scope.checkKeyClosure(ctx, tx, object); err != nil {
 			return err
 		}
-		raw, err := json.Marshal(root)
+		params, err := retainDiskRootParams(scope.environmentID, root)
 		if err != nil {
 			return err
 		}
-		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: scope.environmentID, Locator: raw})
+		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, params)
 		if err != nil {
 			return err
 		}

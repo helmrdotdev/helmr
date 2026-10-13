@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"uuid"
 
@@ -141,17 +140,13 @@ func lockPreparationImageSecrets(ctx context.Context, tx pgx.Tx, env, spec uuid.
 func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUID) (ComputerImage, uuid.UUID, error) {
 	result := ComputerImage{ID: image}
 	var rootID uuid.UUID
-	var raw []byte
 	var captured string
-	err := tx.QueryRow(ctx, `SELECT i.preparation_id,i.seq,i.root_id,r.locator,p.capture_root FROM computer_images i
+	err := tx.QueryRow(ctx, `SELECT i.preparation_id,i.seq,i.root_id,p.capture_root,`+diskRootColumns+` FROM computer_images i
  JOIN computer_disk_roots r ON (r.environment_id,r.id)=(i.environment_id,i.root_id)
  JOIN computer_preparations p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
- WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(&result.PreparationID, &result.Sequence, &rootID, &raw, &captured)
+ WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.PreparationID, &result.Sequence, &rootID, &captured}, diskRootFields(&result.Root)...)...)
 	if err != nil {
 		return ComputerImage{}, uuid.Nil(), err
-	}
-	if json.Unmarshal(raw, &result.Root) != nil {
-		return ComputerImage{}, uuid.Nil(), ErrConflict
 	}
 	identity, err := result.Root.Digest()
 	if err != nil || identity != captured {

@@ -30,7 +30,7 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 	}
 	s := DiagnosticSource{EnvironmentID: env, Kind: kind, ID: uuid.NewV7(), ProducerEpoch: 1}
 	if env != baseEnv {
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) SELECT 'until_environment_deletion',$1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233' FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
 	}
 	switch kind {
 	case "session":
@@ -47,9 +47,9 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
  deployment AS (INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat(replace($2::text,'-',''),2))),
  template AS (INSERT INTO templates(environment_id,id,key) VALUES($1,$2,$2::text)),
- definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,resources) VALUES($1,$2,$2,$2,'{}'))
- INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,'{}',34359738368)`, env, s.ID)
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'user','test')`, env, s.ID)
+ definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$2,$2,$2,1000,536870912,NULL))
+ INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,1000,536870912,NULL,34359738368)`, env, s.ID)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'session',uuidv7())`, env, s.ID)
 	default:
 		t.Fatal("unsupported diagnostic test owner")
 	}
@@ -209,7 +209,7 @@ func TestDiagnosticAcceptanceRollbackAndExpiredRetry(t *testing.T) {
 	if _, err = appendDiagnosticTest(t, pool, source, changed, bounds); !errors.Is(err, ErrDiagnosticConflict) {
 		t.Fatalf("changed pruned retry %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours',stdout_last_expires_at=stdout_last_expires_at-interval '2200 hours' WHERE session_id=$1`, source.ID)
+	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours' WHERE session_id=$1`, source.ID)
 	expired, err := appendDiagnosticTest(t, pool, source, record, bounds)
 	if err != nil || !expired.Expired || expired.ThroughSequence != 1 || !expired.AcceptedAt.IsZero() || !expired.ExpiresAt.IsZero() {
 		t.Fatalf("expired disposition %+v %v", expired, err)
@@ -219,7 +219,7 @@ func TestDiagnosticAcceptanceRollbackAndExpiredRetry(t *testing.T) {
 		t.Fatalf("expired digest retained %v %v", cleared, err)
 	}
 	// A later wall-clock correction cannot revive already expired coverage.
-	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=statement_timestamp(),stdout_last_expires_at=statement_timestamp()+interval '2160 hours' WHERE session_id=$1`, source.ID)
+	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=statement_timestamp() WHERE session_id=$1`, source.ID)
 	expired, err = appendDiagnosticTest(t, pool, source, record, bounds)
 	if err != nil || !expired.Expired {
 		t.Fatalf("expired prefix revived %+v %v", expired, err)
@@ -239,7 +239,7 @@ func TestDiagnosticAcceptanceFixedPipesAndMonotonicClock(t *testing.T) {
 	if _, err := appendDiagnosticTest(t, pool, source, another, bounds); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=statement_timestamp()+interval '1 hour',stdout_last_expires_at=statement_timestamp()+interval '2161 hours' WHERE session_id=$1`, source.ID)
+	dbtest.MustExec(t, t.Context(), pool, `UPDATE session_processes SET stdout_last_accepted_at=statement_timestamp()+interval '1 hour' WHERE session_id=$1`, source.ID)
 	var future time.Time
 	if err := pool.QueryRow(t.Context(), `SELECT stdout_last_accepted_at FROM session_processes WHERE session_id=$1`, source.ID).Scan(&future); err != nil {
 		t.Fatal(err)

@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // These tests cover the HTTP contract of the project handlers; the durable
@@ -35,14 +38,17 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 	for index := range 3 {
 		projectID := uuid.NewV7()
 		projectRows = append(projectRows, []any{projectID, orgID, "project-http", fmt.Sprintf("project-%d", index), fmt.Sprintf("Project %d", index), index == 0})
-		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true, "until_environment_deletion"})
+		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true, "until_environment_deletion",
+			int64(1024), int32(32), int64(1024), int64(1024000), int64(1 << 40), int64(1 << 40), int64(600000), int64(1000000), int64(1000000), pgtype.Numeric{Int: big.NewInt(1000000), Valid: true}, time.Now()})
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"projects"},
 		[]string{"id", "org_id", "default_region_id", "slug", "name", "is_default"}, pgx.CopyFromRows(projectRows)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode"}, pgx.CopyFromRows(environmentRows)); err != nil {
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode",
+			"max_outstanding_admissions", "max_causal_depth", "max_resident_computers", "max_cpu_millis", "max_memory_bytes", "max_reserved_storage_bytes",
+			"preparation_timeout_ms", "admission_rate_per_second", "admission_burst", "admission_tokens", "admission_refilled_at"}, pgx.CopyFromRows(environmentRows)); err != nil {
 		t.Fatal(err)
 	}
 

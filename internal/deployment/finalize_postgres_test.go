@@ -38,7 +38,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 	if _, err := database.Pool.Exec(t.Context(), `INSERT INTO regions(id,display_name) VALUES('test','Test');
  INSERT INTO organizations(id,name,slug) VALUES($1,'Org','org');
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($2,$1,'test','project','Project');
- INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$3,$1,$2,'test','Test','#112233');`, pgx.QueryExecModeSimpleProtocol, org, project, env); err != nil {
+ INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$3,$1,$2,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, project, env); err != nil {
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
@@ -160,7 +160,7 @@ func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 	}
 
 	otherEnv := uuid.NewV7()
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233')`, otherEnv, f.request.orgID, f.request.projectID); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnv, f.request.orgID, f.request.projectID); err != nil {
 		t.Fatal(err)
 	}
 	other := f.request
@@ -200,7 +200,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	firstEnv := pgvalue.MustUUIDValue(f.request.environmentID)
 	secondEnv := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233')`, secondEnv, f.request.orgID, f.request.projectID)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, secondEnv, f.request.orgID, f.request.projectID)
 	refs := []definition.SecretBinding{{Secret: "API_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Secrets = refs
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = refs

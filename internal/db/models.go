@@ -162,8 +162,8 @@ type ComputerCommand struct {
 	Env                   []byte             `json:"env"`
 	Stdin                 []byte             `json:"stdin"`
 	TimeoutMs             int64              `json:"timeout_ms"`
-	CreatedBySubjectType  string             `json:"created_by_subject_type"`
-	CreatedBySubjectID    string             `json:"created_by_subject_id"`
+	CallerKind            string             `json:"caller_kind"`
+	CallerID              pgtype.UUID        `json:"caller_id"`
 	StartedAt             pgtype.Timestamptz `json:"started_at"`
 	CancelRequestedAt     pgtype.Timestamptz `json:"cancel_requested_at"`
 	ProcessExitedAt       pgtype.Timestamptz `json:"process_exited_at"`
@@ -193,7 +193,6 @@ type ComputerCommand struct {
 	StdoutLastSequence    pgtype.Int8        `json:"stdout_last_sequence"`
 	StdoutLastDigest      []byte             `json:"stdout_last_digest"`
 	StdoutLastAcceptedAt  pgtype.Timestamptz `json:"stdout_last_accepted_at"`
-	StdoutLastExpiresAt   pgtype.Timestamptz `json:"stdout_last_expires_at"`
 	StderrAcceptedThrough int64              `json:"stderr_accepted_through"`
 	StderrByteOffset      int64              `json:"stderr_byte_offset"`
 	StderrEnded           bool               `json:"stderr_ended"`
@@ -203,7 +202,6 @@ type ComputerCommand struct {
 	StderrLastSequence    pgtype.Int8        `json:"stderr_last_sequence"`
 	StderrLastDigest      []byte             `json:"stderr_last_digest"`
 	StderrLastAcceptedAt  pgtype.Timestamptz `json:"stderr_last_accepted_at"`
-	StderrLastExpiresAt   pgtype.Timestamptz `json:"stderr_last_expires_at"`
 }
 
 type ComputerObject struct {
@@ -250,15 +248,15 @@ type Environment struct {
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 	CurrentDeploymentID      pgtype.UUID        `json:"current_deployment_id"`
 	RetiredAt                pgtype.Timestamptz `json:"retired_at"`
-	MaxOutstandingAdmissions pgtype.Int8        `json:"max_outstanding_admissions"`
-	MaxCausalDepth           pgtype.Int4        `json:"max_causal_depth"`
-	MaxResidentComputers     pgtype.Int8        `json:"max_resident_computers"`
-	MaxCpuMillis             pgtype.Int8        `json:"max_cpu_millis"`
-	MaxMemoryBytes           pgtype.Int8        `json:"max_memory_bytes"`
-	MaxReservedStorageBytes  pgtype.Int8        `json:"max_reserved_storage_bytes"`
-	PreparationTimeoutMs     pgtype.Int8        `json:"preparation_timeout_ms"`
-	AdmissionRatePerSecond   pgtype.Int8        `json:"admission_rate_per_second"`
-	AdmissionBurst           pgtype.Int8        `json:"admission_burst"`
+	MaxOutstandingAdmissions int64              `json:"max_outstanding_admissions"`
+	MaxCausalDepth           int32              `json:"max_causal_depth"`
+	MaxResidentComputers     int64              `json:"max_resident_computers"`
+	MaxCpuMillis             int64              `json:"max_cpu_millis"`
+	MaxMemoryBytes           int64              `json:"max_memory_bytes"`
+	MaxReservedStorageBytes  int64              `json:"max_reserved_storage_bytes"`
+	PreparationTimeoutMs     int64              `json:"preparation_timeout_ms"`
+	AdmissionRatePerSecond   int64              `json:"admission_rate_per_second"`
+	AdmissionBurst           int64              `json:"admission_burst"`
 	AdmissionTokens          pgtype.Numeric     `json:"admission_tokens"`
 	AdmissionRefilledAt      pgtype.Timestamptz `json:"admission_refilled_at"`
 }
@@ -331,7 +329,6 @@ type PlatformRetryKey struct {
 	ComputerID         pgtype.UUID        `json:"computer_id"`
 	CommandID          pgtype.UUID        `json:"command_id"`
 	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
-	ReceiptExpiresAt   pgtype.Timestamptz `json:"receipt_expires_at"`
 	Receipt            []byte             `json:"receipt"`
 	ReceiptPrunedAt    pgtype.Timestamptz `json:"receipt_pruned_at"`
 }
@@ -360,7 +357,6 @@ type Secret struct {
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	Name                 string             `json:"name"`
 	Status               string             `json:"status"`
-	Revision             int64              `json:"revision"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
 	RevocationGeneration int64              `json:"revocation_generation"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
@@ -379,19 +375,15 @@ type SecretVersion struct {
 
 type VMPlatform struct {
 	ID                    string             `json:"id"`
-	Arch                  string             `json:"arch"`
-	Contract              string             `json:"contract"`
 	DescriptorDigest      string             `json:"descriptor_digest"`
 	FirecrackerDigest     string             `json:"firecracker_digest"`
 	FirecrackerVersion    string             `json:"firecracker_version"`
 	SnapshotFormatVersion string             `json:"snapshot_format_version"`
 	HostKernelRelease     string             `json:"host_kernel_release"`
-	CPUTemplateKind       string             `json:"cpu_template_kind"`
 	CPUTemplateDigest     pgtype.Text        `json:"cpu_template_digest"`
 	KernelDigest          string             `json:"kernel_digest"`
 	InitramfsDigest       string             `json:"initramfs_digest"`
 	RootfsDigest          string             `json:"rootfs_digest"`
-	FirstSeenAt           pgtype.Timestamptz `json:"first_seen_at"`
 	LastSeenAt            pgtype.Timestamptz `json:"last_seen_at"`
 }
 

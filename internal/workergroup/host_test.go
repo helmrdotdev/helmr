@@ -108,14 +108,11 @@ func TestVMPlatformParamsDeriveCompleteProfile(t *testing.T) {
 	got := vmPlatformParams(profile)
 	want := db.UpsertVMPlatformParams{
 		ID:                    profile.ID,
-		Arch:                  profile.Arch,
-		Contract:              profile.Contract,
 		DescriptorDigest:      profile.VMRuntimeDescriptorDigest,
 		FirecrackerDigest:     profile.FirecrackerDigest,
 		FirecrackerVersion:    profile.FirecrackerVersion,
 		SnapshotFormatVersion: profile.SnapshotFormatVersion,
 		HostKernelRelease:     profile.HostKernelRelease,
-		CPUTemplateKind:       string(profile.CPUTemplate.Kind),
 		CPUTemplateDigest:     pgtype.Text{String: profile.CPUTemplate.Digest, Valid: true},
 		KernelDigest:          profile.KernelDigest,
 		InitramfsDigest:       profile.InitramfsDigest,

@@ -20,17 +20,17 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET primary_pool_id=$2 WHERE id=$1`, f.Group, pool)
 	for _, key := range []string{"first", "second"} {
-		if _, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{SubjectType: string(auth.PrincipalKindSession), SubjectID: f.User.String()}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
+		if _, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1`, f.Environment)
 	// This incompatible preparation sorts before the eligible candidate. It must
 	// not consume the one-row budget, even on repeated planning passes.
 	incompatibleSpec, incompatible := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','{}','{}')`, f.Environment, incompatibleSpec)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'incompatible');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($1,$2,$3,$3,'{"milliCpu":2000,"memoryMiB":512}')`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, incompatibleSpec)
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes) VALUES($1,$2,$3,$3,2000,536870912)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, incompatibleSpec)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'incompatible','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, incompatible, incompatibleSpec)
 	preparation := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at) VALUES($1,$2,$3,'queued','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, preparation, f.Deployment)

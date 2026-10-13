@@ -139,7 +139,7 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 			f := newAdmissionFixture(t)
 			caller := runtimeReadCaller(t, f)
 			// Fractional declared CPU still reserves a whole physical vCPU.
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources='{"milliCpu":500,"memoryMiB":512}' WHERE environment_id=$1`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500,memory_bytes=536870912 WHERE environment_id=$1`, f.env)
 			receipt, err := Start(t.Context(), f.pool, nil, caller, f.startRequest("target"))
 			if err != nil {
 				t.Fatal(err)

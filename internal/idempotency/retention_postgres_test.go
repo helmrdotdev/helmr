@@ -12,12 +12,12 @@ import (
 func TestPlatformCommandCreationAndCancellationRetainReceiptsUntilPhysicalStop(t *testing.T) {
 	f := agenttest.New(t)
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,1,'running',ARRAY['true'],'{}',''::bytea,1000,'api_key','fixture')`, f.Environment, command, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,1,'running',ARRAY['true'],'{}',''::bytea,1000,'api_key',uuidv7())`, f.Environment, command, f.Computer)
 	create, _ := retry.NewComputerCommandRequest(f.Environment, f.Computer, "create", retry.ComputerCommandFingerprint{Command: []string{"true"}, TimeoutMS: 1000})
 	cancel, _ := retry.NewCommandCancelRequest(f.Environment, command)
 	a := accept(t, f, create, retry.Target{CommandID: command})
 	b := accept(t, f, cancel, retry.Target{CommandID: command})
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days',receipt_expires_at=receipt_expires_at-interval '31 days' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1`, f.Environment)
 	for _, request := range []*retry.Request{create, cancel} {
 		if err := acquireError(t, f, request); err != nil {
 			t.Fatalf("live Command lost receipt: %v", err)

@@ -95,6 +95,9 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 	if err := input.HistoryRetention.Validate(); err != nil {
 		return db.Project{}, nil, err
 	}
+	if err := input.ExecutionLimits.Validate(); err != nil {
+		return db.Project{}, nil, err
+	}
 	slug, name, err := normalizeProjectSlugName(input.Slug, input.Name)
 	if err != nil {
 		return db.Project{}, nil, err
@@ -116,16 +119,25 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 			return err
 		}
 		created, err := q.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-			ID:                      pgvalue.UUID(uuid.NewV7()),
-			OrgID:                   pgvalue.UUID(orgID),
-			DefaultRegionID:         regionID,
-			Slug:                    slug,
-			Name:                    name,
-			IsDefault:               false,
-			EnvironmentID:           pgvalue.UUID(uuid.NewV7()),
-			StagingEnvironmentID:    pgvalue.UUID(uuid.NewV7()),
-			HistoryRetentionMode:    input.HistoryRetention.Mode,
-			HistoryRetentionSeconds: input.HistoryRetention.seconds(),
+			ID:                       pgvalue.UUID(uuid.NewV7()),
+			OrgID:                    pgvalue.UUID(orgID),
+			DefaultRegionID:          regionID,
+			Slug:                     slug,
+			Name:                     name,
+			IsDefault:                false,
+			EnvironmentID:            pgvalue.UUID(uuid.NewV7()),
+			StagingEnvironmentID:     pgvalue.UUID(uuid.NewV7()),
+			HistoryRetentionMode:     input.HistoryRetention.Mode,
+			HistoryRetentionSeconds:  input.HistoryRetention.seconds(),
+			MaxOutstandingAdmissions: input.ExecutionLimits.MaxOutstandingAdmissions,
+			MaxCausalDepth:           int32(input.ExecutionLimits.MaxCausalDepth),
+			MaxResidentComputers:     input.ExecutionLimits.MaxResidentComputers,
+			MaxCpuMillis:             input.ExecutionLimits.MaxCPUMillis,
+			MaxMemoryBytes:           input.ExecutionLimits.MaxMemoryBytes,
+			MaxReservedStorageBytes:  input.ExecutionLimits.MaxReservedStorageBytes,
+			PreparationTimeoutMs:     input.ExecutionLimits.PreparationTimeoutMS,
+			AdmissionRatePerSecond:   input.ExecutionLimits.AdmissionRatePerSecond,
+			AdmissionBurst:           input.ExecutionLimits.AdmissionBurst,
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrProjectSlugInUse
@@ -135,15 +147,7 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 		}
 		project = db.Project(created)
 		environments, err = ListEnvironments(ctx, q, project)
-		if err != nil {
-			return err
-		}
-		for _, env := range environments {
-			if err = input.ExecutionLimits.InitializeEnvironment(ctx, tx, pgvalue.MustUUIDValue(env.ID)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return db.Project{}, nil, err
@@ -200,6 +204,9 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 	if err := details.HistoryRetention.Validate(); err != nil {
 		return db.Environment{}, err
 	}
+	if err := limits.Validate(); err != nil {
+		return db.Environment{}, err
+	}
 	slug, name, err := normalizeSlugName(details.Slug, details.Name)
 	if err != nil {
 		return db.Environment{}, err
@@ -215,15 +222,24 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 			return fmt.Errorf("load project: %w", err)
 		}
 		environment, err = q.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-			ID:                      pgvalue.UUID(uuid.NewV7()),
-			OrgID:                   pgvalue.UUID(orgID),
-			ProjectID:               pgvalue.UUID(projectID),
-			Slug:                    slug,
-			Name:                    name,
-			ColorHex:                details.ColorHex,
-			IsDefault:               false,
-			HistoryRetentionMode:    details.HistoryRetention.Mode,
-			HistoryRetentionSeconds: details.HistoryRetention.seconds(),
+			ID:                       pgvalue.UUID(uuid.NewV7()),
+			OrgID:                    pgvalue.UUID(orgID),
+			ProjectID:                pgvalue.UUID(projectID),
+			Slug:                     slug,
+			Name:                     name,
+			ColorHex:                 details.ColorHex,
+			IsDefault:                false,
+			HistoryRetentionMode:     details.HistoryRetention.Mode,
+			HistoryRetentionSeconds:  details.HistoryRetention.seconds(),
+			MaxOutstandingAdmissions: limits.MaxOutstandingAdmissions,
+			MaxCausalDepth:           int32(limits.MaxCausalDepth),
+			MaxResidentComputers:     limits.MaxResidentComputers,
+			MaxCpuMillis:             limits.MaxCPUMillis,
+			MaxMemoryBytes:           limits.MaxMemoryBytes,
+			MaxReservedStorageBytes:  limits.MaxReservedStorageBytes,
+			PreparationTimeoutMs:     limits.PreparationTimeoutMS,
+			AdmissionRatePerSecond:   limits.AdmissionRatePerSecond,
+			AdmissionBurst:           limits.AdmissionBurst,
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrEnvironmentSlugInUse
@@ -231,7 +247,7 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 		if err != nil {
 			return fmt.Errorf("create environment: %w", err)
 		}
-		return limits.InitializeEnvironment(ctx, tx, pgvalue.MustUUIDValue(environment.ID))
+		return nil
 	})
 	if err != nil {
 		return db.Environment{}, err

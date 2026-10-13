@@ -8,7 +8,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -45,14 +44,11 @@ func newSupplyFixture(t *testing.T) supplyFixture {
 	}
 	if _, err := q.UpsertVMPlatform(t.Context(), db.UpsertVMPlatformParams{
 		ID:                    fixture.vmPlatformID,
-		Arch:                  "x86_64",
-		Contract:              vmplatform.Contract,
 		DescriptorDigest:      dbtest.Digest("worker-pool-runtime-descriptor"),
 		FirecrackerDigest:     dbtest.Digest("worker-pool-firecracker"),
 		FirecrackerVersion:    "1.12.0",
 		SnapshotFormatVersion: "1.0.0",
 		HostKernelRelease:     "6.12.0",
-		CPUTemplateKind:       "none",
 		KernelDigest:          dbtest.Digest("worker-pool-kernel"),
 		InitramfsDigest:       dbtest.Digest("worker-pool-initramfs"),
 		RootfsDigest:          dbtest.Digest("worker-pool-rootfs"),

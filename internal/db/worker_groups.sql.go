@@ -433,8 +433,6 @@ WITH live_workers AS (
            worker_hosts.id AS worker_host_id,
            worker_hosts.current_epoch AS worker_epoch,
            worker_hosts.vm_platform_id,
-           vm_platforms.arch,
-           vm_platforms.contract,
            worker_hosts.per_vm_cpu_millis,
            worker_hosts.per_vm_memory_bytes,
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
@@ -453,8 +451,6 @@ WITH live_workers AS (
         ON worker_pools.id = worker_hosts.worker_pool_id
        AND worker_pools.worker_group_id = worker_hosts.worker_group_id
        AND worker_pools.status = 'active'
-      JOIN vm_platforms
-        ON vm_platforms.id = worker_hosts.vm_platform_id
      WHERE ($1::uuid IS NULL OR worker_groups.id = $1)
        AND ($2::text = '' OR worker_groups.region_id = $2)
        AND worker_groups.status = 'active'
@@ -484,8 +480,6 @@ SELECT live_workers.worker_group_id,
        live_workers.worker_host_id,
        live_workers.worker_epoch,
        live_workers.vm_platform_id,
-       live_workers.arch,
-       live_workers.contract,
        live_workers.per_vm_cpu_millis,
        live_workers.per_vm_memory_bytes,
        live_workers.per_vm_guest_ephemeral_disk_bytes,
@@ -524,8 +518,6 @@ type ListWorkerCapacityBinsRow struct {
 	WorkerHostID                     pgtype.UUID `json:"worker_host_id"`
 	WorkerEpoch                      pgtype.Int8 `json:"worker_epoch"`
 	VMPlatformID                     pgtype.Text `json:"vm_platform_id"`
-	Arch                             string      `json:"arch"`
-	Contract                         string      `json:"contract"`
 	PerVMCPUMillis                   int64       `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes                 int64       `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes     int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
@@ -560,8 +552,6 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 			&i.WorkerHostID,
 			&i.WorkerEpoch,
 			&i.VMPlatformID,
-			&i.Arch,
-			&i.Contract,
 			&i.PerVMCPUMillis,
 			&i.PerVMMemoryBytes,
 			&i.PerVMGuestEphemeralDiskBytes,
@@ -1151,45 +1141,39 @@ func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWo
 
 const upsertVMPlatform = `-- name: UpsertVMPlatform :one
 INSERT INTO vm_platforms (
-    id, arch, contract, descriptor_digest,
+    id, descriptor_digest,
     firecracker_digest, firecracker_version, snapshot_format_version,
-    host_kernel_release, cpu_template_kind, cpu_template_digest,
+    host_kernel_release, cpu_template_digest,
     kernel_digest, initramfs_digest, rootfs_digest, last_seen_at
 )
 VALUES (
-    $1, $2, $3,
+    $1,
+    $2, $3,
     $4, $5,
-    $6, $7,
-    $8, $9,
-    $10, $11,
-    $12, $13, now()
+    $6,
+    $7, $8,
+    $9, $10, now()
 )
 ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
- WHERE vm_platforms.arch = EXCLUDED.arch
-   AND vm_platforms.contract = EXCLUDED.contract
-   AND vm_platforms.descriptor_digest = EXCLUDED.descriptor_digest
+ WHERE vm_platforms.descriptor_digest = EXCLUDED.descriptor_digest
    AND vm_platforms.firecracker_digest = EXCLUDED.firecracker_digest
    AND vm_platforms.firecracker_version = EXCLUDED.firecracker_version
    AND vm_platforms.snapshot_format_version = EXCLUDED.snapshot_format_version
    AND vm_platforms.host_kernel_release = EXCLUDED.host_kernel_release
-   AND vm_platforms.cpu_template_kind = EXCLUDED.cpu_template_kind
    AND vm_platforms.cpu_template_digest IS NOT DISTINCT FROM EXCLUDED.cpu_template_digest
    AND vm_platforms.kernel_digest = EXCLUDED.kernel_digest
    AND vm_platforms.initramfs_digest = EXCLUDED.initramfs_digest
    AND vm_platforms.rootfs_digest = EXCLUDED.rootfs_digest
-RETURNING id, arch, contract, descriptor_digest, firecracker_digest, firecracker_version, snapshot_format_version, host_kernel_release, cpu_template_kind, cpu_template_digest, kernel_digest, initramfs_digest, rootfs_digest, first_seen_at, last_seen_at
+RETURNING id, descriptor_digest, firecracker_digest, firecracker_version, snapshot_format_version, host_kernel_release, cpu_template_digest, kernel_digest, initramfs_digest, rootfs_digest, last_seen_at
 `
 
 type UpsertVMPlatformParams struct {
 	ID                    string      `json:"id"`
-	Arch                  string      `json:"arch"`
-	Contract              string      `json:"contract"`
 	DescriptorDigest      string      `json:"descriptor_digest"`
 	FirecrackerDigest     string      `json:"firecracker_digest"`
 	FirecrackerVersion    string      `json:"firecracker_version"`
 	SnapshotFormatVersion string      `json:"snapshot_format_version"`
 	HostKernelRelease     string      `json:"host_kernel_release"`
-	CPUTemplateKind       string      `json:"cpu_template_kind"`
 	CPUTemplateDigest     pgtype.Text `json:"cpu_template_digest"`
 	KernelDigest          string      `json:"kernel_digest"`
 	InitramfsDigest       string      `json:"initramfs_digest"`
@@ -1199,14 +1183,11 @@ type UpsertVMPlatformParams struct {
 func (q *Queries) UpsertVMPlatform(ctx context.Context, arg UpsertVMPlatformParams) (VMPlatform, error) {
 	row := q.db.QueryRow(ctx, upsertVMPlatform,
 		arg.ID,
-		arg.Arch,
-		arg.Contract,
 		arg.DescriptorDigest,
 		arg.FirecrackerDigest,
 		arg.FirecrackerVersion,
 		arg.SnapshotFormatVersion,
 		arg.HostKernelRelease,
-		arg.CPUTemplateKind,
 		arg.CPUTemplateDigest,
 		arg.KernelDigest,
 		arg.InitramfsDigest,
@@ -1215,19 +1196,15 @@ func (q *Queries) UpsertVMPlatform(ctx context.Context, arg UpsertVMPlatformPara
 	var i VMPlatform
 	err := row.Scan(
 		&i.ID,
-		&i.Arch,
-		&i.Contract,
 		&i.DescriptorDigest,
 		&i.FirecrackerDigest,
 		&i.FirecrackerVersion,
 		&i.SnapshotFormatVersion,
 		&i.HostKernelRelease,
-		&i.CPUTemplateKind,
 		&i.CPUTemplateDigest,
 		&i.KernelDigest,
 		&i.InitramfsDigest,
 		&i.RootfsDigest,
-		&i.FirstSeenAt,
 		&i.LastSeenAt,
 	)
 	return i, err

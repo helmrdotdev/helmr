@@ -25,7 +25,7 @@ WITH secret AS (
         $3,
         $4
     )
-    RETURNING id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+    RETURNING id, environment_id, name, status, current_version_id, revocation_generation, created_at, updated_at, revoked_at
 ),
 version AS (
     INSERT INTO secret_versions (
@@ -44,7 +44,7 @@ version AS (
     FROM secret
     RETURNING secret_id
 )
-SELECT secret.id, secret.environment_id, secret.name, secret.status, secret.revision, secret.current_version_id, secret.revocation_generation, secret.created_at, secret.updated_at, secret.revoked_at
+SELECT secret.id, secret.environment_id, secret.name, secret.status, secret.current_version_id, secret.revocation_generation, secret.created_at, secret.updated_at, secret.revoked_at
 FROM secret
 JOIN version ON version.secret_id = secret.id
 `
@@ -63,7 +63,6 @@ type CreateSecretRow struct {
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	Name                 string             `json:"name"`
 	Status               string             `json:"status"`
-	Revision             int64              `json:"revision"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
 	RevocationGeneration int64              `json:"revocation_generation"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
@@ -86,7 +85,6 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		&i.EnvironmentID,
 		&i.Name,
 		&i.Status,
-		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -127,7 +125,7 @@ func (q *Queries) GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecre
 }
 
 const getSecret = `-- name: GetSecret :one
-SELECT secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
 FROM secrets
 WHERE environment_id = $1
   AND id = $2
@@ -146,7 +144,6 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 		&i.EnvironmentID,
 		&i.Name,
 		&i.Status,
-		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -376,7 +373,6 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 const revokeSecret = `-- name: RevokeSecret :one
 UPDATE secrets
 SET status = 'revoked',
-    revision = revision + 1,
     current_version_id = NULL,
     revocation_generation = revocation_generation + 1,
     revoked_at = now(),
@@ -384,25 +380,24 @@ SET status = 'revoked',
 WHERE environment_id = $1
   AND id = $2
   AND status = 'active'
-  AND revision = $3
-RETURNING id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+  AND current_version_id = $3
+RETURNING id, environment_id, name, status, current_version_id, revocation_generation, created_at, updated_at, revoked_at
 `
 
 type RevokeSecretParams struct {
-	EnvironmentID    pgtype.UUID `json:"environment_id"`
-	ID               pgtype.UUID `json:"id"`
-	ExpectedRevision int64       `json:"expected_revision"`
+	EnvironmentID            pgtype.UUID `json:"environment_id"`
+	ID                       pgtype.UUID `json:"id"`
+	ExpectedCurrentVersionID pgtype.UUID `json:"expected_current_version_id"`
 }
 
 func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, revokeSecret, arg.EnvironmentID, arg.ID, arg.ExpectedRevision)
+	row := q.db.QueryRow(ctx, revokeSecret, arg.EnvironmentID, arg.ID, arg.ExpectedCurrentVersionID)
 	var i Secret
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
 		&i.Status,
-		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,
@@ -414,13 +409,12 @@ func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Sec
 
 const rotateSecret = `-- name: RotateSecret :one
 WITH locked AS (
-    SELECT id, environment_id, name, status, revision, current_version_id, revocation_generation, created_at, updated_at, revoked_at
+    SELECT id, environment_id, name, status, current_version_id, revocation_generation, created_at, updated_at, revoked_at
     FROM secrets
     WHERE secrets.environment_id = $1
       AND secrets.id = $2
       AND secrets.status = 'active'
-      AND secrets.revision = $3
-      AND secrets.current_version_id = $4
+      AND secrets.current_version_id = $3
     FOR UPDATE
 ),
 version AS (
@@ -432,27 +426,25 @@ version AS (
         ciphertext
     )
     SELECT
-        $5,
+        $4,
         locked.id,
+        $5,
         $6,
-        $7,
-        $8
+        $7
     FROM locked
     RETURNING secret_id, id
 )
 UPDATE secrets
 SET current_version_id = version.id,
-    revision = revision + 1,
     updated_at = now()
 FROM version
 WHERE secrets.id = version.secret_id
-RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.revision, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
+RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at
 `
 
 type RotateSecretParams struct {
 	EnvironmentID            pgtype.UUID `json:"environment_id"`
 	SecretID                 pgtype.UUID `json:"secret_id"`
-	ExpectedRevision         int64       `json:"expected_revision"`
 	ExpectedCurrentVersionID pgtype.UUID `json:"expected_current_version_id"`
 	VersionID                pgtype.UUID `json:"version_id"`
 	Version                  int64       `json:"version"`
@@ -464,7 +456,6 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 	row := q.db.QueryRow(ctx, rotateSecret,
 		arg.EnvironmentID,
 		arg.SecretID,
-		arg.ExpectedRevision,
 		arg.ExpectedCurrentVersionID,
 		arg.VersionID,
 		arg.Version,
@@ -477,7 +468,6 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		&i.EnvironmentID,
 		&i.Name,
 		&i.Status,
-		&i.Revision,
 		&i.CurrentVersionID,
 		&i.RevocationGeneration,
 		&i.CreatedAt,

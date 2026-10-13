@@ -1,7 +1,6 @@
 package disk
 
 import (
-	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -15,14 +14,6 @@ func TestVersionRootFraming(t *testing.T) {
 	valid := VersionRoot{FormatVersion: 1, LogicalBytes: 4096, Offset: 128,
 		Pack: VersionPack{Digest: sha256sum.DigestBytes([]byte("pack")), SizeBytes: 512, Rank: 2},
 		Page: VersionPage{Digest: sha256sum.DigestBytes([]byte("page")), Salt: strings.Repeat("ab", 32), KeyID: uuid.NewV7().String(), Kind: 3, Count: 1, SizeBytes: 64}}
-	raw, err := json.Marshal(valid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := ParseVersionRoot(raw, 4096)
-	if err != nil || got != valid {
-		t.Fatalf("root roundtrip: %v", err)
-	}
 	locator, err := valid.Locator(4096)
 	if err != nil {
 		t.Fatal(err)
@@ -60,10 +51,5 @@ func TestVersionRootFraming(t *testing.T) {
 				t.Fatal("invalid descriptor returned usable locator")
 			}
 		})
-	}
-	for _, bad := range [][]byte{append(append([]byte{}, raw...), raw...), []byte(strings.Repeat(" ", 2049)), []byte(strings.Replace(string(raw), "\"offset\":", "\"unknown\":0,\"offset\":", 1))} {
-		if r, err := ParseVersionRoot(bad, 4096); err == nil || r != (VersionRoot{}) {
-			t.Fatal("malformed root returned usable data")
-		}
 	}
 }

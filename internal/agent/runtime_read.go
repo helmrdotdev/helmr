@@ -2,13 +2,10 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"math"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/jackc/pgx/v5"
 )
@@ -63,13 +60,13 @@ func RuntimeObserveTurn(ctx context.Context, pool db.TxBeginner, caller Caller, 
 // already makes impossible for this distinct target. Other workloads ending,
 // another Host arriving or a transient full pool are not assumed to be dependencies.
 func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, session, turn uuid.UUID) (bool, error) {
-	var resources []byte
+	var targetCPU, targetMemory int64
 	var ownCPU, ownMemory int64
-	var maxResident, maxCPU, maxMemory *int64
+	var maxResident, maxCPU, maxMemory int64
 	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
         SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
         UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-    ) SELECT target.resources,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
+    ) SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
       FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
       JOIN computers target ON (target.environment_id,target.id)=(s.environment_id,s.computer_id)
       JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
@@ -77,31 +74,24 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
       JOIN session_processes p ON p.environment_id=$1 AND p.session_id=$4 AND p.epoch=$5
       JOIN computer_leases own ON (own.environment_id,own.computer_id,own.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
       WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3 AND t.status='queued' AND s.status IN ('open','closing')
-        AND target.id<>own.computer_id AND target.resources IS NOT NULL
+        AND target.id<>own.computer_id
         AND target.preparation_failed_at IS NULL AND target.integrity_fault_at IS NULL AND target.deleted_at IS NULL
         AND d.execution_revoked_at IS NULL
         AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=$1 AND revoked.computer_id=target.id)
         AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=target.id AND l.fenced_at IS NULL)
-        AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&resources, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
+        AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	var requested definition.ResourcesManifest
-	if err := json.Unmarshal(resources, &requested); err != nil {
-		return false, err
-	}
-	if definition.ValidateResourcesManifest(requested) != nil || requested.MemoryMiB > math.MaxInt64/(1<<20) {
-		return false, ErrInvalidInput
-	}
-	cpu, err := vm.ReservedCPUMillis(requested.MilliCPU)
+	cpu, err := vm.ReservedCPUMillis(targetCPU)
 	if err != nil {
 		return false, err
 	}
-	exceeds := func(own, added int64, limit *int64) bool {
-		return limit != nil && added > 0 && added <= *limit && own > *limit-added
+	exceeds := func(own, added, limit int64) bool {
+		return added > 0 && added <= limit && own > limit-added
 	}
-	return exceeds(1, 1, maxResident) || exceeds(ownCPU, cpu, maxCPU) || exceeds(ownMemory, requested.MemoryMiB*(1<<20), maxMemory), nil
+	return exceeds(1, 1, maxResident) || exceeds(ownCPU, cpu, maxCPU) || exceeds(ownMemory, targetMemory, maxMemory), nil
 }

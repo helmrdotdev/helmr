@@ -8,7 +8,7 @@
 SELECT COALESCE(jsonb_agg(jsonb_build_object(
  'id',h.id,'resource_id',h.resource_id,'worker_group',h.worker_group,'region',h.region_id,
  'status',h.status,'current_epoch',h.current_epoch,'vm_platform_id',h.vm_platform_id,
- 'arch',v.arch,'contract',v.contract,'descriptor_digest',v.descriptor_digest,
+ 'descriptor_digest',v.descriptor_digest,
  'kernel_digest',v.kernel_digest,'initramfs_digest',v.initramfs_digest,'rootfs_digest',v.rootfs_digest,
  'epoch_cpu_millis',h.epoch_cpu_millis,'epoch_memory_bytes',h.epoch_memory_bytes,
  'epoch_guest_ephemeral_disk_bytes',h.epoch_guest_ephemeral_disk_bytes,'max_vm_slots',h.max_vm_slots,

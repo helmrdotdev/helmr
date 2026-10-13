@@ -37,7 +37,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	channel := "C1"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
- UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$5;
+ UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$5;
  UPDATE org_members SET role='owner' WHERE user_id=$4;
  INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $2,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$4 FROM environments WHERE id=$5;

@@ -32,7 +32,7 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	projectID, environmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO regions (id, display_name) VALUES ('api-keys', 'API keys')`)
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'api-keys', 'API keys', true)`, projectID, orgID)
-	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true)`, environmentID, orgID, projectID)
+	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, environmentID, orgID, projectID)
 	return apiKeyFixture{
 		identityFixture: fixture,
 		owner:           auth.Principal{OrgID: orgID, UserID: userID, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner},
@@ -149,7 +149,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	fixture.member(t, otherOrg, other.UserID, db.OrgMemberRoleOwner)
 	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)
-	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true)`, otherEnvironmentID, otherOrg, otherProjectID)
+	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironmentID, otherOrg, otherProjectID)
 	otherScope := auth.Scope{OrgID: otherOrg, ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String()}
 	if _, err := IssueAPIKey(ctx, fixture.queries, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err != nil {
 		t.Fatal(err)

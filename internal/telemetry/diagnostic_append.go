@@ -44,6 +44,10 @@ func (s DiagnosticSource) Validate() error {
 
 // A disposition is effective only after the authorized transaction commits.
 // Expired is a rejection of re-acceptance, not a new durability acknowledgment.
+// DiagnosticRetention is how long an accepted diagnostic chunk and its owner's
+// replayable head stay readable; expiry is accepted_at plus this duration.
+const DiagnosticRetention = 90 * 24 * time.Hour
+
 type DiagnosticReceipt struct {
 	ThroughSequence int64
 	AcceptedAt      time.Time
@@ -59,7 +63,6 @@ type diagnosticProgress struct {
 	lastSequence   int64
 	digest         []byte
 	acceptedAt     *time.Time
-	expiresAt      *time.Time
 }
 
 // DiagnosticAdmission holds the transaction's queue gate and a fresh occupancy
@@ -141,15 +144,15 @@ func (a *DiagnosticAdmission) Append(ctx context.Context, record diagnostic.Reco
 	prefix := record.Stream + "_"
 	args := []any{source.EnvironmentID, source.ID, source.ProducerEpoch}
 	var progress diagnosticProgress
-	query := fmt.Sprintf(`SELECT %[1]saccepted_through,%[1]sbyte_offset,%[1]sended,%[1]sexpired_through,COALESCE(%[1]slast_sequence,0),%[1]slast_digest,%[1]slast_accepted_at,%[1]slast_expires_at FROM %[2]s WHERE %[3]s FOR NO KEY UPDATE NOWAIT`, prefix, table, predicate)
-	if err := tx.QueryRow(ctx, query, args...).Scan(&progress.through, &progress.byteOffset, &progress.ended, &progress.expiredThrough, &progress.lastSequence, &progress.digest, &progress.acceptedAt, &progress.expiresAt); err != nil {
+	query := fmt.Sprintf(`SELECT %[1]saccepted_through,%[1]sbyte_offset,%[1]sended,%[1]sexpired_through,COALESCE(%[1]slast_sequence,0),%[1]slast_digest,%[1]slast_accepted_at FROM %[2]s WHERE %[3]s FOR NO KEY UPDATE NOWAIT`, prefix, table, predicate)
+	if err := tx.QueryRow(ctx, query, args...).Scan(&progress.through, &progress.byteOffset, &progress.ended, &progress.expiredThrough, &progress.lastSequence, &progress.digest, &progress.acceptedAt); err != nil {
 		return DiagnosticReceipt{}, err
 	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return DiagnosticReceipt{}, err
 	}
-	if progress.expiresAt != nil && !progress.expiresAt.After(now) {
+	if progress.acceptedAt != nil && !progress.acceptedAt.Add(DiagnosticRetention).After(now) {
 		progress.expiredThrough = progress.through
 		query := fmt.Sprintf(`UPDATE %s SET %sexpired_through=%saccepted_through,%slast_digest=NULL WHERE %s`, table, prefix, prefix, prefix, predicate)
 		if _, err := tx.Exec(ctx, query, args...); err != nil {
@@ -167,10 +170,10 @@ func (a *DiagnosticAdmission) Append(ctx context.Context, record diagnostic.Reco
 		if !bytes.Equal(progress.digest, digest[:]) {
 			return DiagnosticReceipt{}, ErrDiagnosticConflict
 		}
-		if progress.acceptedAt == nil || progress.expiresAt == nil {
+		if progress.acceptedAt == nil {
 			return DiagnosticReceipt{}, ErrDiagnosticInvalid
 		}
-		return DiagnosticReceipt{ThroughSequence: progress.through, AcceptedAt: *progress.acceptedAt, ExpiresAt: *progress.expiresAt}, nil
+		return DiagnosticReceipt{ThroughSequence: progress.through, AcceptedAt: *progress.acceptedAt, ExpiresAt: progress.acceptedAt.Add(DiagnosticRetention)}, nil
 	}
 	if progress.ended {
 		return DiagnosticReceipt{}, ErrDiagnosticClosed
@@ -189,18 +192,18 @@ func (a *DiagnosticAdmission) Append(ctx context.Context, record diagnostic.Reco
 	if progress.acceptedAt != nil && progress.acceptedAt.After(now) {
 		now = *progress.acceptedAt
 	}
-	receipt := DiagnosticReceipt{ThroughSequence: record.ThroughSequence, AcceptedAt: now, ExpiresAt: now.Add(90 * 24 * time.Hour)}
+	receipt := DiagnosticReceipt{ThroughSequence: record.ThroughSequence, AcceptedAt: now, ExpiresAt: now.Add(DiagnosticRetention)}
 	data := record.Data
 	if data == nil {
 		data = []byte{}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,preparation_id,preparation_epoch,command_id,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at,expires_at)
- VALUES($1,CASE WHEN $2='session' THEN $3::uuid END,CASE WHEN $2='session' THEN $4::bigint END,CASE WHEN $2='computer_preparation' THEN $3::uuid END,CASE WHEN $2='computer_preparation' THEN $4::bigint END,CASE WHEN $2='computer_command' THEN $3::uuid END,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, source.EnvironmentID, source.Kind, source.ID, source.ProducerEpoch, record.Stream, record.Sequence, record.ThroughSequence, progress.byteOffset, offset, record.Kind, record.ObservedAtUnixNano, data, record.DroppedBytes, record.Complete, receipt.AcceptedAt, receipt.ExpiresAt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,preparation_id,preparation_epoch,command_id,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at)
+ VALUES($1,CASE WHEN $2='session' THEN $3::uuid END,CASE WHEN $2='session' THEN $4::bigint END,CASE WHEN $2='computer_preparation' THEN $3::uuid END,CASE WHEN $2='computer_preparation' THEN $4::bigint END,CASE WHEN $2='computer_command' THEN $3::uuid END,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, source.EnvironmentID, source.Kind, source.ID, source.ProducerEpoch, record.Stream, record.Sequence, record.ThroughSequence, progress.byteOffset, offset, record.Kind, record.ObservedAtUnixNano, data, record.DroppedBytes, record.Complete, receipt.AcceptedAt); err != nil {
 		return DiagnosticReceipt{}, err
 	}
 	digest := diagnosticDigest(source, record)
-	query = fmt.Sprintf(`UPDATE %[1]s SET %[2]saccepted_through=$4,%[2]sbyte_offset=$5,%[2]sended=$6,%[2]send_complete=$7,%[2]sgapped=%[2]sgapped OR $8,%[2]slast_sequence=$9,%[2]slast_digest=$10,%[2]slast_accepted_at=$11,%[2]slast_expires_at=$12,%[2]sexpired_through=$13 WHERE %[3]s`, table, prefix, predicate)
-	if _, err := tx.Exec(ctx, query, source.EnvironmentID, source.ID, source.ProducerEpoch, record.ThroughSequence, offset, record.Kind == "end", record.Complete, record.Kind == "gap", record.Sequence, digest[:], receipt.AcceptedAt, receipt.ExpiresAt, progress.expiredThrough); err != nil {
+	query = fmt.Sprintf(`UPDATE %[1]s SET %[2]saccepted_through=$4,%[2]sbyte_offset=$5,%[2]sended=$6,%[2]send_complete=$7,%[2]sgapped=%[2]sgapped OR $8,%[2]slast_sequence=$9,%[2]slast_digest=$10,%[2]slast_accepted_at=$11,%[2]sexpired_through=$12 WHERE %[3]s`, table, prefix, predicate)
+	if _, err := tx.Exec(ctx, query, source.EnvironmentID, source.ID, source.ProducerEpoch, record.ThroughSequence, offset, record.Kind == "end", record.Complete, record.Kind == "gap", record.Sequence, digest[:], receipt.AcceptedAt, progress.expiredThrough); err != nil {
 		return DiagnosticReceipt{}, err
 	}
 	a.aggregate.bytes += size

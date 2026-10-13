@@ -32,7 +32,7 @@ func commandHTTPFixture(t *testing.T) (commandRouteFixture, workerHTTPClient, co
 		t.Fatal(err)
 	}
 	f.OrgID = org
-	created, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{SubjectType: string(auth.PrincipalKindSession), SubjectID: f.User.String()}, Argv: []string{"true"}, IdempotencyKey: "command"})
+	created, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User}, Argv: []string{"true"}, IdempotencyKey: "command"})
 	if err != nil {
 		t.Fatal(err)
 	}

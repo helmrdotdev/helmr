@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -66,7 +67,7 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$4,$5,'application/octet-stream' FROM environments WHERE id=$2;
       INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,$7,clock_timestamp() FROM environments WHERE id=$2;
       INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
-      INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($2,$8,$9);
+      `+agenttest.DiskRootInsert("$2", "$8", "$9")+`;
       UPDATE computers SET initial_root_id=$8,initial_root_digest=decode(substring($10::text from 8),'hex') WHERE environment_id=$2 AND id=$3;
     `, pgx.QueryExecModeSimpleProtocol, keyID, f.env, f.computer, object.digest, object.size, object.rank, string(object.encoded), rootID, string(rootJSON), rootIdentity, writeKeyID)
 	if actual, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, writeKeyID); err != nil || actual != root {
@@ -498,7 +499,7 @@ func TestComputerLeaseDiskRejectsChangedMountAndKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seedKey uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN computer_data_keys k ON k.id=r.root_page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN computer_data_keys k ON k.id=r.page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, seedKey); !errors.Is(err, ErrDenied) {

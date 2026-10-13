@@ -15,12 +15,12 @@ const createPlatformRetryKey = `-- name: CreatePlatformRetryKey :one
 INSERT INTO platform_retry_keys(environment_id,id,operation,slot_hash,request_fingerprint,
     scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key,
     deployment_id,secret_id,secret_version_id,computer_id,command_id,receipt,
-    accepted_at,receipt_expires_at)
+    accepted_at)
 VALUES($1,$2,$3,$4,$5,
     $6,$7,$8,$9,$10,$11,
     $12,$13,$14,$15,$16,$17,
-    statement_timestamp(),statement_timestamp()+interval '720 hours')
-RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt_expires_at, receipt, receipt_pruned_at
+    statement_timestamp())
+RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt, receipt_pruned_at
 `
 
 type CreatePlatformRetryKeyParams struct {
@@ -82,7 +82,6 @@ func (q *Queries) CreatePlatformRetryKey(ctx context.Context, arg CreatePlatform
 		&i.ComputerID,
 		&i.CommandID,
 		&i.AcceptedAt,
-		&i.ReceiptExpiresAt,
 		&i.Receipt,
 		&i.ReceiptPrunedAt,
 	)
@@ -90,8 +89,8 @@ func (q *Queries) CreatePlatformRetryKey(ctx context.Context, arg CreatePlatform
 }
 
 const lockPlatformRetryKey = `-- name: LockPlatformRetryKey :one
-SELECT k.environment_id, k.id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt_expires_at, k.receipt, k.receipt_pruned_at,
-    k.receipt_expires_at<=clock_timestamp() AND NOT EXISTS (
+SELECT k.environment_id, k.id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt, k.receipt_pruned_at,
+    k.accepted_at<=clock_timestamp()-interval '720 hours' AND NOT EXISTS (
         SELECT 1 FROM computer_commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
     ) AS expired
@@ -132,7 +131,6 @@ func (q *Queries) LockPlatformRetryKey(ctx context.Context, arg LockPlatformRetr
 		&i.PlatformRetryKey.ComputerID,
 		&i.PlatformRetryKey.CommandID,
 		&i.PlatformRetryKey.AcceptedAt,
-		&i.PlatformRetryKey.ReceiptExpiresAt,
 		&i.PlatformRetryKey.Receipt,
 		&i.PlatformRetryKey.ReceiptPrunedAt,
 		&i.Expired,
@@ -143,10 +141,10 @@ func (q *Queries) LockPlatformRetryKey(ctx context.Context, arg LockPlatformRetr
 const pruneExpiredPlatformRetryReceipts = `-- name: PruneExpiredPlatformRetryReceipts :execrows
 WITH candidates AS MATERIALIZED (
     SELECT k.environment_id,k.id FROM platform_retry_keys k
-    WHERE k.receipt IS NOT NULL AND k.receipt_pruned_at IS NULL AND k.receipt_expires_at<=statement_timestamp()
+    WHERE k.receipt IS NOT NULL AND k.receipt_pruned_at IS NULL AND k.accepted_at<=statement_timestamp()-interval '720 hours'
     AND NOT EXISTS(SELECT 1 FROM computer_commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL)))
-    ORDER BY k.receipt_expires_at,k.id LIMIT $1 FOR UPDATE OF k SKIP LOCKED
+    ORDER BY k.accepted_at,k.id LIMIT $1 FOR UPDATE OF k SKIP LOCKED
 )
 UPDATE platform_retry_keys k SET receipt=NULL,receipt_pruned_at=statement_timestamp()
 FROM candidates c WHERE k.environment_id=c.environment_id AND k.id=c.id

@@ -5,9 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"

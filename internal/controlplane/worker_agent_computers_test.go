@@ -20,15 +20,15 @@ func runtimeDiscoveryEnvironment(t *testing.T, original agenttest.Fixture) agent
 	t.Helper()
 	f := agenttest.Fixture{Pool: original.Pool, Environment: uuid.NewV7(), Deployment: uuid.NewV7(), Agent: uuid.NewV7(), Computer: uuid.NewV7()}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
-      INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex)
-        SELECT history_retention_mode,$2,org_id,project_id,$2::text,'Other','#112233' FROM environments WHERE id=$1;
+      INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
+        SELECT history_retention_mode,$2,org_id,project_id,$2::text,'Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
       INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,$3,bundle_digest FROM deployments WHERE environment_id=$1 AND id=$6;
       INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM computer_preparation_specs WHERE environment_id=$1 AND id=$6;
       INSERT INTO templates(environment_id,id,key) VALUES($2,$3,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($2,$3,$3,$3,'{}');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($2,$3,$3,$3,1000,536870912,NULL);
       INSERT INTO agents(environment_id,id,key) VALUES($2,$4,'agent');
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($2,$4,$3,$3,false,'{}');
-      INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour',$3,$3,'{}',34359738368);
+      INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour',$3,$3,1000,536870912,NULL,34359738368);
     `, pgx.QueryExecModeSimpleProtocol, original.Environment, f.Environment, f.Deployment, f.Agent, f.Computer, original.Deployment)
 	return f
 }
@@ -38,7 +38,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 	foreign := runtimeDiscoveryEnvironment(t, f)
 	// More than one page, including Computers with no Session relationship.
 	for range 51 {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, uuid.NewV7(), f.Computer)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, uuid.NewV7(), f.Computer)
 	}
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
@@ -120,8 +120,8 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('2',64));
-      INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources)
-        SELECT environment_id,$3,template_id,preparation_spec_id,resources FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+      INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes)
+        SELECT environment_id,$3,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)
         SELECT environment_id,agent_id,$3,template_id,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
       UPDATE environments SET current_deployment_id=$3 WHERE id=$1;

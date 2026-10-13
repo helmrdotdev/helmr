@@ -616,8 +616,8 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID) db.ListWorkerCapacityBinsRow {
 	return db.ListWorkerCapacityBinsRow{
 		WorkerGroupID: pgvalue.UUID(plannerTestGroupID), PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
-		WorkerHostID: plannerTestUUID(row.ID.Bytes[15] + 100),
-		VMPlatformID: row.VMPlatformID, Arch: "x86_64", Contract: vmplatform.Contract,
+		WorkerHostID:   plannerTestUUID(row.ID.Bytes[15] + 100),
+		VMPlatformID:   row.VMPlatformID,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
 		PerVMGuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 		AvailableCPUMillis:           row.CapacityCPUMillis.Int64, AvailableMemoryBytes: row.CapacityMemoryBytes.Int64,
@@ -630,7 +630,7 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 }
 
 func plannerFreshComputer(seed byte) db.ListAllocationPlanningDemandRow {
-	return db.ListAllocationPlanningDemandRow{RemainingCpuMillis: 100000000, RemainingMemoryBytes: 100000000000000, RemainingResidents: 100000, EnvironmentID: plannerTestUUID(1), OwnerID: plannerTestUUID(seed), Kind: "computer", Resources: []byte(`{"milliCpu":1000,"memoryMiB":1024}`)}
+	return db.ListAllocationPlanningDemandRow{RemainingCpuMillis: 100000000, RemainingMemoryBytes: 100000000000000, RemainingResidents: 100000, EnvironmentID: plannerTestUUID(1), OwnerID: plannerTestUUID(seed), Kind: "computer", CpuMillis: 1000, MemoryBytes: 1024 << 20}
 }
 func plannerRestoreComputer(seed byte, requirements RestoreRequirements) db.ListAllocationPlanningDemandRow {
 	row := plannerFreshComputer(seed)

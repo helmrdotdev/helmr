@@ -8,6 +8,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -209,7 +210,7 @@ func TestComputerDiskSourceRestoredClosureOpensMultipleKeys(t *testing.T) {
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$3,$4,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$3,org_id,project_id,$4,'application/octet-stream','root',$5,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$3,$6,false),($1,$3,$7,true);
- INSERT INTO computer_disk_roots(environment_id,id,locator) VALUES($1,$8,$9);
+ `+agenttest.DiskRootInsert("$1", "$8", "$9")+`;
  INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,requested_at,flush_acknowledged_at,captured_at,captured_root_digest,capture_evidence,publication_evidence,root_id) VALUES($1,$10,$2,1,1,'published',now(),now(),now(),decode(substring($11::text from 8),'hex'),'fixture capture','fixture publication',$8);
  UPDATE computer_leases SET restored_from_save_id=$10 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
  `, pgx.QueryExecModeSimpleProtocol, f.env, id.ComputerID, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, first, second, rootID, string(raw), save, digest)

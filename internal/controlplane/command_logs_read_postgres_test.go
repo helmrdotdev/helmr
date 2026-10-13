@@ -100,7 +100,7 @@ func TestCommandHistoryUsesExplicitCoverageAndAcceptanceRetention(t *testing.T) 
 	if !errors.As(err, &lag) {
 		t.Fatalf("missing end fabricated closure: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET stdout_last_accepted_at=stdout_last_accepted_at-interval '91 days',stdout_last_expires_at=stdout_last_expires_at-interval '91 days' WHERE id=$1`, target.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET stdout_last_accepted_at=stdout_last_accepted_at-interval '91 days' WHERE id=$1`, target.ID)
 	_, err = server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, "", 10)
 	if errorStatus(err) != http.StatusGone {
 		t.Fatalf("expired acceptance: %v", err)
