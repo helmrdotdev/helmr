@@ -13,6 +13,55 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestSessionAbsenceWaitsForInFlightSetup(t *testing.T) {
+	session, _ := agentSessionFixture(t)
+	registry := newComputerOperationRegistry()
+	registry.entries[session.entry.computerInstanceID] = session.entry
+	descriptor := &agentv1.SessionProgramArtifact{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1}
+	// Another admission is still materializing the same runtime. This setup
+	// waits for those bytes without needing a mounted Program or running code.
+	image := &agentProgramImage{descriptor: descriptor, ready: make(chan struct{}), references: 1}
+	registry.agentPrograms = agentProgramStore{images: map[string]*agentProgramImage{fmt.Sprintf("%d:%s", agentv1.SessionProgramRequest_KIND_RUNTIME, descriptor.Digest): image}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	grant := proto.Clone(session.grant).(*agentv1.SessionGrant)
+	start := &agentv1.SessionStart{Program: &agentv1.SessionProgram{Runtime: descriptor, Artifact: descriptor}}
+	done := make(chan error, 1)
+	go func() {
+		_, err := registry.openAgentSession(ctx, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: 1, Start: start}, agentProgramTransfer{})
+		done <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		registry.agentPrograms.mu.Lock()
+		waiting := image.references == 2
+		registry.agentPrograms.mu.Unlock()
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("setup ended before materialization: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("setup did not reach materialization")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	request := &agentv1.SessionAttach{Grant: proto.Clone(grant).(*agentv1.SessionGrant), AttachmentSequence: 2}
+	if _, err := registry.openAgentSession(t.Context(), request, agentProgramTransfer{}); err == nil || errors.Is(err, errAgentSessionAbsent) {
+		t.Fatalf("in-flight setup was reported absent: %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("setup cancellation: %v", err)
+	}
+	if _, err := registry.openAgentSession(t.Context(), request, agentProgramTransfer{}); !errors.Is(err, errAgentSessionAbsent) {
+		t.Fatalf("cancelled setup did not become absent: %v", err)
+	}
+}
+
 type fakeAgentProcess struct {
 	physicallyFrozen bool
 	thawHook         func(context.Context) error

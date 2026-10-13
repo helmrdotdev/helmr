@@ -40,6 +40,13 @@ type allocatedSessionTestClient struct {
 	renewals  atomic.Int64
 }
 
+func (c *allocatedSessionTestClient) PrepareAgentControl(ctx context.Context, request workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
+	return c.terminalControlClient.PrepareAgentControl(ctx, request)
+}
+func (c *allocatedSessionTestClient) ObserveAgentStopped(ctx context.Context, request workerapi.AgentControlRequest) error {
+	return c.terminalControlClient.ObserveAgentStopped(ctx, request)
+}
+
 func (c *allocatedSessionTestClient) NextAgentTurn(context.Context, workerapi.AgentTurnRequest) (*workerapi.AgentTurnDispatch, error) {
 	return nil, nil
 }
