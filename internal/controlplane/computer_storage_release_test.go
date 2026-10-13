@@ -51,7 +51,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live Session allowed deletion: %v", err)
 	}
-	if err := start("before-delete"); !errors.Is(err, session.ErrNotReady) {
+	if err := start("before-delete"); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("full environment admitted new Computer: %v", err)
 	}
 	// Logical work has ended; the Worker has not yet confirmed physical stop.
@@ -64,7 +64,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)
-	if err := start("before-stop"); !errors.Is(err, session.ErrNotReady) {
+	if err := start("before-stop"); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
@@ -107,7 +107,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	for err := range admissions {
 		if err == nil {
 			accepted++
-		} else if !errors.Is(err, session.ErrNotReady) {
+		} else if !errors.Is(err, computer.ErrNotReady) {
 			t.Fatal(err)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -35,7 +36,7 @@ func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 	f := newAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$1;
  UPDATE environments SET max_cpu_millis=999 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env)
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, session.ErrInvalidInput) {
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("admitted a whole vCPU below physical bound: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
@@ -167,7 +168,7 @@ func TestStartBudgetFailureRollsBackPreparationAndComputer(t *testing.T) {
 		t.Fatalf("partial admission: %v %v", clean, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=1,max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("disk-limited")); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("disk-limited")); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("disk exhaustion: %v", err)
 	}
 	req := f.startRequest("shared")
@@ -400,7 +401,7 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	f := newAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET disk_bytes=107374182400 WHERE environment_id=$1`, f.env)
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, session.ErrInvalidInput) {
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("unsupported disk admitted: %v", err)
 	}
 	var count int

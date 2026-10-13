@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -216,7 +217,7 @@ func TestFirstEnqueueRetriesExactlyAfterCapacityExhaustion(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: sessionID, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)}
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("capacity exhaustion: %v", err)
 	}
 	var clean bool

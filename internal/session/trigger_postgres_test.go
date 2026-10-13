@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/session"
 
@@ -131,7 +132,11 @@ func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
 			case "storage":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
 			}
-			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, session.ErrNotReady) {
+			want := session.ErrNotReady
+			if shortage == "storage" {
+				want = computer.ErrNotReady
+			}
+			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); !errors.Is(err, want) {
 				t.Fatalf("temporary shortage: %v", err)
 			}
 			var unchanged bool

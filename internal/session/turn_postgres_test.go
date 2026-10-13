@@ -179,7 +179,7 @@ func TestCompletionRequiresOwnSaveAndMonotonicHead(t *testing.T) {
 	cut1, root1 := storage.cut(t, 2)
 	cut2, root2 := storage.cut(t, 3)
 	err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
-	if !errors.Is(err, session.ErrNotReady) {
+	if !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("out of order capture: %v", err)
 	}
 	f.capture(t, save1, root1)
