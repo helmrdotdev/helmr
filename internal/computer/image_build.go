@@ -27,6 +27,14 @@ type ImageBuild struct {
 	Deadline      time.Time
 }
 
+// A retained attempt can satisfy fresh demand only while its executor and
+// exposed Secret authority are usable. Physical exclusion alone is insufficient.
+const usableImageBuildSQL = `p.status IN ('queued','running') AND p.deadline_at>clock_timestamp()
+   AND (p.worker_host_id IS NULL OR ((p.delivered_at IS NULL OR p.executor_expires_at>clock_timestamp()) AND EXISTS (
+     SELECT 1 FROM worker_hosts h WHERE h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch AND h.status IN ('active','draining'))))
+   AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`
+
 // AttachImageBuild participates in its caller's admission transaction. It acquires
 // Environment and preparation owners before the Computer, so callers must invoke
 // it before acquiring existing Session-root or Computer locks. An error leaves
@@ -64,11 +72,7 @@ func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 	}
 	var attempt uuid.UUID
 	var usable bool
-	err := tx.QueryRow(ctx, `SELECT p.id,p.status IN ('queued','running') AND p.deadline_at>clock_timestamp()
-   AND (p.worker_host_id IS NULL OR ((p.delivered_at IS NULL OR p.executor_expires_at>clock_timestamp()) AND EXISTS (
-     SELECT 1 FROM worker_hosts h WHERE h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch AND h.status IN ('active','draining'))))
-   AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')
+	err := tx.QueryRow(ctx, `SELECT p.id,`+usableImageBuildSQL+`
    FROM image_builds p WHERE p.environment_id=$1 AND p.image_spec_id=$2
    AND (p.status IN ('queued','running') OR (p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL))`, env, spec).Scan(&attempt, &usable)
 	if errors.Is(err, pgx.ErrNoRows) {

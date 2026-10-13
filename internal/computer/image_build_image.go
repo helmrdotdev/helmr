@@ -20,6 +20,15 @@ type Image struct {
 	Root         disk.VersionRoot
 }
 
+// Aliases p and spec identify a published build and its immutable specification.
+// Pinning and payload retention use the same current-Secret eligibility rule.
+const usableImageSecretsSQL = `NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
+   SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
+     AND s.status='active' AND s.current_version_id=x.version_id))
+ AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))`
+
 // PinImage resolves an admitted Computer's preparation without creating
 // another Computer or changing its reservation. Selection serializes with Secret
 // rotation/revocation. An existing pin is returned unchanged after rotation;
@@ -85,12 +94,7 @@ func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) 
  WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.root_id IS NOT NULL AND p.status='succeeded'
  AND ($4::uuid IS NULL OR p.id=$4 OR p.successor_of=$4)
  AND ($3::bigint IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=$3)
- AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
-   SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
-     AND s.status='active' AND s.current_version_id=x.version_id))
- AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))
+ AND `+usableImageSecretsSQL+`
  ORDER BY i.seq DESC LIMIT 1`, env, *spec, maxAge, attached).Scan(&image)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrNotReady

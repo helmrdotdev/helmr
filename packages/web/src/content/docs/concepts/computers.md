@@ -88,10 +88,18 @@ Refresh affects only Computers created afterward. A Computer keeps the image it
 started from for its whole life, and its disk then changes only through its own
 work.
 
-In this release, `maxAge` is enforced when a Computer is created. Helmr records
-`every` when a Deployment is promoted, but it does not yet re-prepare images in
-the background on that interval; a new image is prepared when a Computer needs
-one.
+`maxAge` is enforced when a Computer is created. Promoting a Deployment activates
+its `every` policy for background preparation. The interval is best effort: a
+usable build already in progress satisfies the interval, missed intervals are
+coalesced, and capacity or an executor awaiting physical shutdown can delay work.
+It does not guarantee a successful image at each interval.
+
+Helmr keeps the newest usable prepared image for each immutable recipe and images
+still needed by existing Computers or waiting preparations. Superseded payloads
+are reclaimed after the producing executor has stopped; image identities and
+build history remain. A new preparation may produce different bytes if external
+inputs changed. Historical generated image versions are not selectable through
+the API.
 
 ## Build and runtime Secrets
 
