@@ -59,7 +59,7 @@ func TestPersistenceObservationQuery(t *testing.T) {
 	if got["checkpoint_id"] != cp.String() || got["source_fenced"] != false || got["target_current"] != false {
 		t.Fatalf("source still resident: %v", got)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=now(),fence_evidence='source stopped'`)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=now(),fence_evidence='source stopped'`)
 	got = persistenceObservation(t, f, "persistence.sql", f.Session)
 	if got["checkpoint_status"] != "ready" || got["source_fenced"] != true || got["target_runtime_id"] != nil {
 		t.Fatalf("parked: %v", got)
