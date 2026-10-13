@@ -89,20 +89,24 @@ func TestAllocationImageBuildDeliveryKeepsStartBudgetUntilAuthenticatedStart(t *
 	if _, err = a.AllocateFreshLease(t.Context(), f.env, target, 1, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("delivery freed physical start budget: %v", err)
 	}
+	if _, err = computer.ReadImageBuildStart(t.Context(), f.pool, *f.host(), delivered.Executor); err != nil {
+		t.Fatal(err)
+	}
+	assertStartBudget(t, f, 1)
 	wrong := delivered.Executor
 	wrong.ChannelCredential = bytes.Repeat([]byte{99}, 32)
-	if _, err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
+	if err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("unauthenticated start admitted: %v", err)
 	}
 	assertStartBudget(t, f, 1)
-	if _, err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), delivered.Executor); err != nil {
+	if err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), delivered.Executor); err != nil {
 		t.Fatal(err)
 	}
 	var first time.Time
 	if err = f.pool.QueryRow(t.Context(), `SELECT started_at FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, build).Scan(&first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), delivered.Executor); err != nil {
+	if err = computer.StartImageBuild(t.Context(), f.pool, *f.host(), delivered.Executor); err != nil {
 		t.Fatal(err)
 	}
 	var replay time.Time

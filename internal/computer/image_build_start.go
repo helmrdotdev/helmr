@@ -19,11 +19,10 @@ type ImageBuildStart struct {
 	RootfsDigest string
 }
 
-// StartImageBuild records the executor's first authenticated start and resolves
-// executable inputs from the admitted immutable
+// ReadImageBuildStart resolves executable inputs from the admitted immutable
 // spec. A deployment is only a container for its verified bundle; no Session
 // or caller-selected Program can replace the preparation's content identity.
-func StartImageBuild(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildStart, error) {
+func ReadImageBuildStart(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildStart, error) {
 	if !ref.Valid() {
 		return ImageBuildStart{}, ErrInvalidInput
 	}
@@ -59,14 +58,42 @@ func StartImageBuild(ctx context.Context, database db.TxBeginner, host workergro
 		if err != nil {
 			return err
 		}
-		if err := CheckImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE image_builds SET started_at=COALESCE(started_at,clock_timestamp()) WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID)
-		return err
+		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
 	})
 	if err != nil {
 		return ImageBuildStart{}, hideMissing(err)
 	}
 	return result, nil
+}
+
+// StartImageBuild records the first authenticated start after executable inputs
+// have been verified, immediately before the transport returns them to the host.
+// It rechecks authority after external I/O; replay preserves the first timestamp.
+func StartImageBuild(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) error {
+	if !ref.Valid() {
+		return ErrInvalidInput
+	}
+	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
+			return err
+		}
+		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
+			return err
+		}
+		var sealed bool
+		if err := tx.QueryRow(ctx, `SELECT logical_bytes IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID).Scan(&sealed); err != nil {
+			return err
+		}
+		if sealed {
+			return ErrDenied
+		}
+		if err := CheckImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE image_builds SET started_at=COALESCE(started_at,clock_timestamp()) WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID)
+		return err
+	}))
 }
