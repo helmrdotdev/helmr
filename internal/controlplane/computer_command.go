@@ -30,7 +30,7 @@ func computerCommandCreatorFromPrincipal(principal auth.Principal) command.Creat
 	return creator
 }
 
-func publicCommandInfo(process db.ComputerCommand) (api.CommandInfo, error) {
+func publicCommandInfo(process db.Command) (api.CommandInfo, error) {
 	if process.ResultPrunedAt.Valid {
 		return api.CommandInfo{}, gone(codedError{code: "command_result_expired", message: "exec result has expired"})
 	}

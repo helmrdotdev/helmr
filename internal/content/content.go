@@ -1,5 +1,5 @@
-// Package conversation validates the portable authored content contract.
-package conversation
+// Package content validates the portable authored content contract.
+package content
 
 import (
 	"encoding/json"

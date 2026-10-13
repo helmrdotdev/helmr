@@ -88,7 +88,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 					return errors.New("guest receipt retired before durable acknowledgment")
 				}
 				caller := agent.Caller{Kind: "user", ID: f.User}
-				req := agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: kind}
+				req := agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: kind}
 				switch index {
 				case 0:
 					req.Kind = "interrupt"
@@ -160,7 +160,7 @@ func TestWorkerAgentSupersededControlReceiptKeepsCurrentAttachment(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: request.Session, AttachmentSequence: request.AttachmentSequence, Sequence: first.Sequence, AuthorityGeneration: first.AuthorityGeneration, Kind: first.Kind}); err != nil {

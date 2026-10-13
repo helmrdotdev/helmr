@@ -43,7 +43,7 @@ func commandHTTPFixture(t *testing.T) (commandRouteFixture, workerHTTPClient, co
 // the command owner: changed authority is 409, rejected input 400.
 func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 	f, worker, command := commandHTTPFixture(t)
-	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration}
+	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration}
 	invalid := claim
 	invalid.EnvironmentID = "org"
 	worker.post(t, "/worker/v1/computer-commands/claim", invalid, http.StatusBadRequest, nil)
@@ -52,7 +52,7 @@ func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 	worker.post(t, "/worker/v1/computer-commands/claim", stale, http.StatusConflict, nil)
 	var started workerapi.ComputerCommandClaimResponse
 	worker.post(t, "/worker/v1/computer-commands/claim", claim, http.StatusOK, &started)
-	if started.Command == nil || started.Command.CommandID != command.ID.String() || started.Command.ComputerInstanceID != command.InstanceID.String() || started.Command.WriterGeneration != command.WriterGeneration || started.Command.RequestFingerprint == "" {
+	if started.Command == nil || started.Command.CommandID != command.ID.String() || started.Command.AllocationID != command.InstanceID.String() || started.Command.WriterGeneration != command.WriterGeneration || started.Command.RequestFingerprint == "" {
 		t.Fatalf("claim = %+v", started)
 	}
 	running := claim
@@ -61,7 +61,7 @@ func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 		t.Fatalf("running Command claimed again: %s", out.Body.String())
 	}
 
-	log := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}
+	log := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}
 	var receipt workerapi.DiagnosticLogReceipt
 	worker.post(t, "/worker/v1/computer-commands/logs/append", log, http.StatusOK, &receipt)
 	if receipt.ThroughSequence != 1 || receipt.AcceptedAt.IsZero() || receipt.ExpiresAt.Sub(receipt.AcceptedAt) != 90*24*time.Hour {
@@ -88,7 +88,7 @@ func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 	worker.post(t, "/worker/v1/computer-commands/logs/append", changed, http.StatusConflict, nil)
 
 	code := int32(0)
-	completion := workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 2, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}
+	completion := workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 2, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}
 	ambiguous := completion
 	ambiguous.ExitCode = nil
 	worker.post(t, "/worker/v1/computer-commands/complete", ambiguous, http.StatusBadRequest, nil)
@@ -127,12 +127,12 @@ func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 
 func TestWorkerCommandClaimDeliversCancellation(t *testing.T) {
 	f, worker, command := commandHTTPFixture(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET computer_lease_epoch=1,status='stopping',started_at=now(),cancel_requested_at=now() WHERE id=$1`, command.ID)
-	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET computer_lease_epoch=1,status='stopping',started_at=now(),cancel_requested_at=now() WHERE id=$1`, command.ID)
+	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration}
 	var response workerapi.ComputerCommandClaimResponse
 	worker.post(t, "/worker/v1/computer-commands/claim", claim, http.StatusOK, &response)
 	c := response.Cancellation
-	if c == nil || response.Command != nil || c.CommandID != command.ID.String() || c.ComputerInstanceID != command.InstanceID.String() || c.WriterGeneration != command.WriterGeneration || c.RequestFingerprint == "" || c.ExpiresAt.IsZero() {
+	if c == nil || response.Command != nil || c.CommandID != command.ID.String() || c.AllocationID != command.InstanceID.String() || c.WriterGeneration != command.WriterGeneration || c.RequestFingerprint == "" || c.ExpiresAt.IsZero() {
 		t.Fatalf("cancellation = %+v", response)
 	}
 	claim.ActiveCancellationIDs = []string{command.ID.String()}
@@ -149,9 +149,9 @@ func TestWorkerCommandRoutesRejectStaleClaims(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.WorkerID)
 	code := int32(0)
 	for path, body := range map[string]any{
-		"/worker/v1/computer-commands/claim":       workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration},
-		"/worker/v1/computer-commands/complete":    workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 2, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}},
-		"/worker/v1/computer-commands/logs/append": workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now(), Content: []byte("output")},
+		"/worker/v1/computer-commands/claim":       workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration},
+		"/worker/v1/computer-commands/complete":    workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 2, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}},
+		"/worker/v1/computer-commands/logs/append": workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: command.ID.String(), AllocationID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now(), Content: []byte("output")},
 	} {
 		worker.post(t, path, body, http.StatusUnauthorized, nil)
 	}

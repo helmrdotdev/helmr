@@ -66,7 +66,7 @@ func TestCommandCompletionNormalizesErrorDocument(t *testing.T) {
 
 func TestCommandReleaseLeavesRecoveryScopesUnreconciled(t *testing.T) {
 	for _, reason := range []string{"secret_revoked", "instance_lost", "worker_lost"} {
-		report, err := release(db.ComputerCommand{Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text(reason)}, uuid.NewV7(), Lease{})
+		report, err := release(db.Command{Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text(reason)}, uuid.NewV7(), Lease{})
 		if err != nil || report != nil {
 			t.Fatalf("recovery reason %s blocked peer claims: %v", reason, err)
 		}

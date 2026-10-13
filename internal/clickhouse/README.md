@@ -1,7 +1,7 @@
 # Historical telemetry
 
 The clean schema contains three diagnostic histories: `session_logs`,
-`computer_preparation_logs`, and `computer_command_logs`. PostgreSQL owns accepted
+`image_build_logs`, and `computer_command_logs`. PostgreSQL owns accepted
 chunks and durable export claims. ClickHouse stores their historical projection;
 its acknowledgment permits chunk retirement. A failed or ambiguous acknowledgment
 leaves the claim retryable. Deployment events are retained in PostgreSQL and are

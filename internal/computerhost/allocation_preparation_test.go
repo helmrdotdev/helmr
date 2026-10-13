@@ -154,7 +154,7 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}
+	identity := workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}
 	digest := sha256sum.DigestBytes([]byte("seed"))
 	backend := &preparationOwnerBackend{}
 	client := &preparationOwnerClient{backend: backend, delivery: workerapi.PreparationAllocationDelivery{Identity: identity, Shape: workerapi.AllocationShape{CPUMillis: 1000, VCPUCount: 1, MemoryBytes: 512 << 20, ScratchBytes: 1 << 30, VMPlatformID: "platform", CPUConfigDigest: "shape"}, ExpiresAt: time.Now().Add(time.Minute), ChannelCredential: bytes.Repeat([]byte{23}, 32)}, start: workerapi.PreparationStart{TemplateDefinitionID: "repo", RootfsDigest: digest, Seed: definition.ComputerSeedManifest{Profile: definition.ComputerSeedProfile, ArtifactDigest: digest, MediaType: definition.ComputerSeedMediaType}, SeedObject: workerapi.CASObject{Digest: digest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}, Program: workerapi.RuntimeProgram{Runtime: workerapi.CASObject{SizeBytes: 4096}, Artifact: workerapi.CASObject{SizeBytes: 4096}}}}

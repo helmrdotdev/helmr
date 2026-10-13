@@ -39,7 +39,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if m.ComputerID.String() != o.identity.OwnerID || m.LeaseEpoch >= o.identity.Epoch || expectedDisk != capturedDisk || m.Runtime.RuntimeID != delivery.Shape.VMPlatformID || int64(m.Runtime.VMVCPUCount) != delivery.Shape.VCPUCount || m.Runtime.CPUConfigDigest != delivery.Shape.CPUConfigDigest {
 		return errors.New("checkpoint differs from admitted Computer allocation")
 	}
-	directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.InstanceID, o.identity.Epoch), "checkpoint")
+	directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "checkpoint")
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if !bytes.Equal(config, m.Config) {
 		return invalidCheckpoint(errors.New("encrypted checkpoint config differs from manifest"))
 	}
-	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.InstanceID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.InstanceID, Generation: 1, ComputerInstanceID: o.identity.InstanceID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
+	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
 	if err != nil {
 		if errors.Is(err, filepack.ErrInvalidContent) {
 			return invalidCheckpoint(err)

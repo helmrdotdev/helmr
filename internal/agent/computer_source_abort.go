@@ -78,7 +78,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 		return err
 	}
 	var retained []byte
-	if err = tx.QueryRow(ctx, `SELECT capture_digest FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT capture_digest FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&retained); err != nil {
 		return err
 	}
 	encoded, err := (proto.MarshalOptions{Deterministic: true}).Marshal(p.GetCapture())
@@ -140,7 +140,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 		}
 	}
 	var added bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
 		return err
 	}
 	if added {
@@ -195,7 +195,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 				// A live observation that no installation exists permits refreshing the
 				// terminal set before installation. The physical owner, membership and
 				// successor version remain fixed by validateSourceAbort.
-				_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+				_, err = tx.Exec(ctx, `UPDATE checkpoints SET abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
 				return err
 			}
 			return matchSourceAbort(ctx, tx, env, checkpoint, identity)
@@ -207,14 +207,14 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if tag.RowsAffected() != 1 {
 			return ErrConflict
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='aborting',abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='aborting',abort_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
 		return err
 	}))
 }
 
 func matchSourceAbort(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID, identity []byte) error {
 	var stored []byte
-	if err := tx.QueryRow(ctx, `SELECT abort_identity FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT abort_identity FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
 		return err
 	}
 	if !bytes.Equal(stored, identity) {
@@ -266,12 +266,12 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 		// the delivery identity once, so delayed old receipts also fail to match.
 		// Retain a pending failure until lifecycle reconciliation records it.
 		if _, err = tx.Exec(ctx, `UPDATE session_processes p SET control_kind=NULL,control_acknowledged_at=NULL,control_error=NULL
- FROM computer_checkpoint_members m WHERE m.environment_id=$1 AND m.checkpoint_id=$2
+ FROM checkpoint_processes m WHERE m.environment_id=$1 AND m.checkpoint_id=$2
  AND (p.environment_id,p.session_id,p.epoch)=(m.environment_id,m.session_id,m.process_epoch)
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }
@@ -323,7 +323,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }

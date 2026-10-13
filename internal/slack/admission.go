@@ -8,7 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -56,7 +56,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("gesture_expired")
 	}
 	var env, target uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT environment_id,agent_id FROM agent_publications WHERE slack_installation_id=$1`, p.installation).Scan(&env, &target)
+	err = tx.QueryRow(ctx, `SELECT environment_id,agent_id FROM slack_connections WHERE slack_installation_id=$1`, p.installation).Scan(&env, &target)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return reject("binding_unavailable")
 	}
@@ -74,7 +74,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("thread_generation_unavailable")
 	}
 	var enabled, connected time.Time
-	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM agent_publications p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.PublicationID).Scan(&enabled, &connected); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM slack_connections p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.ConnectionID).Scan(&enabled, &connected); err != nil {
 		return nil, err
 	}
 	if occurred.Before(enabled) || occurred.Before(connected) || occurred.Before(p.route.Target.AuthorizedAt) {
@@ -90,11 +90,11 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	}
 	var owner uuid.UUID
 	var deleted bool
-	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.publication_id,t.deleted_at IS NOT NULL
- FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
- WHERE t.organization_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
+	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
+ WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
 	if err == nil {
-		if owner != p.route.Target.PublicationID || deleted {
+		if owner != p.route.Target.ConnectionID || deleted {
 			return reject("thread_generation_unavailable")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -144,14 +144,14 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 	if err != nil {
 		return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 			code := "content_invalid"
-			if errors.Is(err, conversation.ErrUnsupported) {
+			if errors.Is(err, content.ErrUnsupported) {
 				code = "content_unsupported"
 			}
 			return rejectMessage(ctx, tx, id, code)
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		active, err := agent.LockSlackPublications(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.PublicationID})
+		active, err := agent.LockSlackConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		if err != nil || current == nil {
 			return err
 		}
-		if current.user != p.user || current.route.Target.PublicationID != p.route.Target.PublicationID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
+		if current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
 			return agent.ErrConversationChanged
 		}
 		// A concurrent mention may have created the same front during remote checks.
@@ -182,9 +182,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
 			if p.thread == uuid.Nil() {
-				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, RetryKey: "slack:" + id.String(), Input: input})
+				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
 			} else {
-				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, RetryKey: "slack:" + id.String(), Input: input})
+				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -215,7 +215,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 				return rejectMessage(ctx, tx, id, "permission_denied")
 			case errors.Is(err, agent.ErrNotReady), errors.Is(err, agent.ErrTerminal):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
-			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, conversation.ErrUnsupported):
+			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
 				return rejectMessage(ctx, tx, id, "content_unsupported")
 			default:
 				return err
@@ -231,7 +231,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		}
 		var message any
 		if receipt.MessageID != uuid.Nil() {
-			operation = "send"
+			operation = "slack_route"
 			message = receipt.MessageID
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message)

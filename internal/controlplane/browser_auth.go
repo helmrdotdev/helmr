@@ -27,7 +27,7 @@ const (
 )
 
 type browserAuthFlow struct {
-	PublicationID     string          `json:"publication_id,omitempty"`
+	ConnectionID      string          `json:"connection_id,omitempty"`
 	AppRegistrationID string          `json:"app_registration_id,omitempty"`
 	EnvironmentID     string          `json:"environment_id,omitempty"`
 	SlackLinkToken    string          `json:"slack_link_token,omitempty"`
@@ -35,7 +35,7 @@ type browserAuthFlow struct {
 	Nonce             string          `json:"nonce,omitempty"`
 	SlackTeamID       string          `json:"slack_team_id,omitempty"`
 	SlackUserID       string          `json:"slack_user_id,omitempty"`
-	OrganizationID    string          `json:"organization_id,omitempty"`
+	OrganizationID    string          `json:"org_id,omitempty"`
 	UserID            string          `json:"user_id,omitempty"`
 	InstallationID    string          `json:"installation_id,omitempty"`
 	Kind              browserAuthKind `json:"kind"`

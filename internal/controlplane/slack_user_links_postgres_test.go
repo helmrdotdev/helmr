@@ -39,8 +39,8 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal(err)
 			}
 			installation, registration := uuid.NewV7(), uuid.NewV7()
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,organization_id,app_id,created_by_user_id) VALUES($1,$2,'app',$3)`, registration, org, f.User)
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($1,$6,$2,'app','team','bot','Workspace',1,$3,$4,'{chat:write}',$5)`, installation, org, bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{1}, 12), f.User, registration)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,app_id,created_by_user_id) VALUES($1,$2,'app',$3)`, registration, org, f.User)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($1,$6,$2,'app','team','bot','Workspace',1,$3,$4,'{chat:write}',$5)`, installation, org, bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{1}, 12), f.User, registration)
 			key, err := rsa.GenerateKey(rand.Reader, 2048)
 			if err != nil {
 				t.Fatal(err)
@@ -129,8 +129,8 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			authorize := map[string]string{"installation_id": installation.String()}
 			if scenario == "first-use" {
 				channel, publication, request := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($4,$3,$6,$7,$2,$5);
- INSERT INTO slack_channels(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $1,$3,$4,$2,organization_id,team_id,'C1' FROM slack_installations WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, channel, installation, f.Environment, publication, f.User, f.Agent, registration)
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($4,$3,$6,$7,$2,$5);
+ INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $1,$3,$4,$2,org_id,team_id,'C1' FROM slack_installations WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, channel, installation, f.Environment, publication, f.User, f.Agent, registration)
 				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,payload_expired_at,status,expires_at,finished_at,error) VALUES($1,$2,'first-use',decode(repeat('11',32),'hex'),clock_timestamp(),'human',clock_timestamp(),'rejected',clock_timestamp()+interval '10 minutes',clock_timestamp(),'identity_unlinked')`, request, installation)
 				payload := base64.RawURLEncoding.EncodeToString([]byte(request.String() + ":C1"))
 				mac, err := auth.MAC(cfg.Slack.ControlKey, []byte("helmr.slack-link:"), []byte(payload))

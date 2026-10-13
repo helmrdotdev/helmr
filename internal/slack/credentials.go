@@ -93,7 +93,7 @@ func (s *CredentialStore) BotToken(ctx context.Context, installation uuid.UUID, 
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var org uuid.UUID
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT organization_id,credential_ciphertext,credential_nonce FROM slack_installations
+		err := tx.QueryRow(ctx, `SELECT org_id,credential_ciphertext,credential_nonce FROM slack_installations
  WHERE id=$1 AND credential_revision=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL
  AND refresh_attempt_id IS NULL AND (credential_expires_at IS NULL OR credential_expires_at>clock_timestamp()) FOR SHARE`, installation, revision).Scan(&org, &ciphertext, &nonce)
 		if err != nil {

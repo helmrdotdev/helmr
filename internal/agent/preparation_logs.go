@@ -21,7 +21,7 @@ func AppendPreparationLog(ctx context.Context, pool db.TxBeginner, host workergr
 	}
 	var result telemetry.DiagnosticReceipt
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		admission, err := telemetry.BeginDiagnosticAdmission(ctx, tx, telemetry.DiagnosticSource{EnvironmentID: ref.EnvironmentID, Kind: "computer_preparation", ID: ref.PreparationID, ProducerEpoch: ref.Epoch}, bounds)
+		admission, err := telemetry.BeginDiagnosticAdmission(ctx, tx, telemetry.DiagnosticSource{EnvironmentID: ref.EnvironmentID, Kind: "image_build", ID: ref.PreparationID, ProducerEpoch: ref.Epoch}, bounds)
 		if err != nil {
 			return err
 		}

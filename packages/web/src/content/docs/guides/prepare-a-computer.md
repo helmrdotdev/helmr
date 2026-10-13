@@ -8,7 +8,7 @@ description: Build a Computer's image, prepare its starting disk with prepare(),
 A Template definition controls what every new Computer starts with: the Linux
 image, and optionally a `prepare` step that sets up the disk once so that
 Sessions do not repeat the work. This guide builds both and rolls out a change.
-For how prepared baselines, refresh and Secret bindings behave, see
+For how prepared images, refresh and Secret bindings behave, see
 [Computers](/docs/concepts/computers).
 
 The examples use the `demo` Project's `staging` Environment, with the CLI
@@ -75,8 +75,8 @@ export const repo = template({
 with optional `cwd` and `env`. It resolves when the command exits with status 0
 and rejects otherwise. `build.signal` is aborted if preparation is cancelled.
 
-`prepare` runs on a worker, inside a Computer built from the image, the first
-time a Computer from this definition needs a baseline. When it returns and its
+`prepare` runs on a worker, inside a Computer built from the `image()` recipe, the
+first time a Computer from this definition needs a prepared image. When it returns and its
 commands finish, the disk is saved, and new Computers start from a copy. If it
 throws, the waiting Computer reports `residency: "unavailable"` with an error:
 
@@ -111,15 +111,15 @@ Environment. Everything `prepare` writes is copied into every new Computer, so
 never write a build Secret's value to a file. Bindings that Computers need while
 they run go in `secrets`, not `buildSecrets`.
 
-## Limit the baseline's age
+## Limit the prepared image's age
 
 ```ts
 refresh: { every: "1d", maxAge: "7d" },
 ```
 
-With `maxAge`, a new Computer does not start from a baseline older than that;
+With `maxAge`, a new Computer does not start from a prepared image older than that;
 Helmr prepares a fresh one first. Both fields are durations, and `every` is
-required. In this release Helmr does not re-prepare baselines in the background
+required. In this release Helmr does not re-prepare images in the background
 on the `every` interval; see [Computers](/docs/concepts/computers).
 
 ## Roll out a change
@@ -138,10 +138,10 @@ on the `every` interval; see [Computers](/docs/concepts/computers).
    ```
 
 Computers created after the Deployment is promoted use the new definition; the
-first one prepares a new baseline. Existing Computers keep the disk they have,
+first one prepares a new image. Existing Computers keep the disk they have,
 and existing Sessions stay on the Deployment they started with. To use the change,
 start new Sessions without `--computer`, or create a new Computer as described
 in [Run commands](/docs/guides/run-commands).
 
 Rotating a Secret named in `buildSecrets` also makes the next new Computer
-prepare a fresh baseline with the new value. Existing Computers are not changed.
+prepare a fresh image with the new value. Existing Computers are not changed.

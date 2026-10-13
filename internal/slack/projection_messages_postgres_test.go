@@ -29,7 +29,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				t.Fatal(err)
 			}
 			var message uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT message_id FROM slack_requests WHERE id=$1 AND status='accepted' AND operation='send' AND turn_id=$2`, request, turn).Scan(&message); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT message_id FROM slack_requests WHERE id=$1 AND status='accepted' AND operation='slack_route' AND turn_id=$2`, request, turn).Scan(&message); err != nil {
 				t.Fatal(err)
 			}
 			attachment, err := agent.AcquireRuntimeAttachment(t.Context(), f.Pool, host, execution)
@@ -43,7 +43,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				}
 			}
 			if kind == "not-started" || kind == "started-then-stopped" {
-				if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", RetryKey: "stop"}); err != nil {
+				if _, err = agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -87,7 +87,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 			if err = admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
-			if err = f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM turns WHERE session_id=$1)=1 AND message_id=$3 AND status='accepted' AND operation='send' FROM slack_requests WHERE id=$2`, f.Session, request, message).Scan(&exact); err != nil || !exact {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM turns WHERE session_id=$1)=1 AND message_id=$3 AND status='accepted' AND operation='slack_route' FROM slack_requests WHERE id=$2`, f.Session, request, message).Scan(&exact); err != nil || !exact {
 				t.Fatal("late failure replayed input", exact, err)
 			}
 		})

@@ -329,11 +329,11 @@ func (g *nativePublicationGate) restartIdentity(ctx context.Context, save string
 	var expires time.Time
 	var state string
 	var valid bool
-	err := g.pool.QueryRow(ctx, `SELECT s.computer_id::text,l.computer_instance_id::text,l.worker_host_id::text,
+	err := g.pool.QueryRow(ctx, `SELECT s.computer_id::text,l.allocation_id::text,l.worker_host_id::text,
  encode(s.captured_root_digest,'hex'),s.capture_evidence,t.result::text,l.epoch,l.worker_epoch,s.captured_at,l.expires_at,s.status,
- COALESCE((SELECT jsonb_agg(p.digest ORDER BY p.digest)::text FROM computer_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id),'[]'),
- COALESCE((SELECT sum(o.size_bytes) FROM computer_object_pins p JOIN computer_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=s.environment_id AND p.save_id=s.id),0),
- COALESCE((SELECT sum(o.size_bytes) FROM computer_object_pins p JOIN computer_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=s.environment_id AND p.save_id=s.id AND o.certified),0),
+ COALESCE((SELECT jsonb_agg(p.digest ORDER BY p.digest)::text FROM disk_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id),'[]'),
+ COALESCE((SELECT sum(o.size_bytes) FROM disk_object_pins p JOIN disk_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=s.environment_id AND p.save_id=s.id),0),
+ COALESCE((SELECT sum(o.size_bytes) FROM disk_object_pins p JOIN disk_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=s.environment_id AND p.save_id=s.id AND o.certified),0),
  l.base_root_id::text, l.retained_base_root_id IS NOT NULL AND l.status IN ('active','releasing') AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp() AND h.current_epoch=l.worker_epoch
  FROM computer_saves s JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id)

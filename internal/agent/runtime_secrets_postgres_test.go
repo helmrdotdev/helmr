@@ -24,7 +24,7 @@ func runtimeSecretsFixture(t *testing.T) (fixture, Execution, *secret.Store, uui
 func runtimeSecretsOnFixture(t *testing.T, f fixture, e Execution) (fixture, Execution, *secret.Store, uuid.UUID, int64, uuid.UUID) {
 	t.Helper()
 	var instance uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.computer_id,l.computer_instance_id FROM sessions s JOIN computer_leases l ON l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=$3 WHERE s.environment_id=$1 AND s.id=$2`, f.env, e.SessionID, e.LeaseEpoch).Scan(&f.computer, &instance); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.computer_id,l.allocation_id FROM sessions s JOIN computer_leases l ON l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=$3 WHERE s.environment_id=$1 AND s.id=$2`, f.env, e.SessionID, e.LeaseEpoch).Scan(&f.computer, &instance); err != nil {
 		t.Fatal(err)
 	}
 	store, err := secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32))
@@ -45,7 +45,7 @@ func runtimeSecretsOnFixture(t *testing.T, f fixture, e Execution) (fixture, Exe
 		if binding.origin != "" {
 			origins = append(origins, binding.origin)
 		}
-		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.env, f.computer, secretID, binding.kind, binding.target, binding.mode, origins, marker)
+		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.env, f.computer, secretID, binding.kind, binding.target, binding.mode, origins, marker)
 	}
 	trust, err := store.GenerateProxyTrust(f.env, f.computer, time.Now())
 	if err != nil {

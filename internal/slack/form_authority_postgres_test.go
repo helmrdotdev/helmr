@@ -29,7 +29,7 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			case "disabled_user":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET disabled_at=clock_timestamp() WHERE id=$1`, f.User)
 			case "revoked_publication":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "retired_app":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_app_registrations SET retired_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, f.registration)
 			case "disconnected":
@@ -37,7 +37,7 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			case "reauthorized":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=$2 WHERE id=$1`, f.installation, source.Add(time.Second))
 			case "reenabled":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET created_at=$2 WHERE id=$1`, f.publication, source.Add(time.Second))
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET created_at=$2 WHERE id=$1`, f.publication, source.Add(time.Second))
 			case "wrong_app":
 				app = "other"
 			case "wrong_team":

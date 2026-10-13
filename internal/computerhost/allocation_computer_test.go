@@ -141,7 +141,7 @@ func (b *allocationOwnerTestBackend) Cleanup(context.Context, vm.Owner) error {
 
 func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocationOwnerTestClient, *allocationOwnerTestBackend) {
 	t.Helper()
-	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 2}
+	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 2}
 	root := testVersionRoot(4096)
 	base, err := root.Digest()
 	if err != nil {
@@ -164,7 +164,7 @@ func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocation
 			if r.ComputerId != identity.OwnerID || r.WriterGeneration != identity.Epoch || r.MountedImageConfig == nil {
 				t.Error("unbound runtime preparation")
 			}
-			if err := frameio.WriteProtoFrame(stream, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: identity.InstanceID}); err != nil {
+			if err := frameio.WriteProtoFrame(stream, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: identity.AllocationID}); err != nil {
 				t.Error(err)
 			}
 		case wire.StreamTypeComputerMaterialize:
@@ -173,7 +173,7 @@ func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocation
 				t.Error(err)
 				return
 			}
-			if r.Envelope.ComputerInstanceId != identity.InstanceID || r.Envelope.ChannelCredential != "owned" || r.Target.BaseComputerDiskVersionId != base {
+			if r.Envelope.ComputerInstanceId != identity.AllocationID || r.Envelope.ChannelCredential != "owned" || r.Target.BaseComputerDiskVersionId != base {
 				t.Error("unbound materialization")
 			}
 			if err := frameio.WriteProtoFrame(stream, &computerv0.MaterializeComputerResponse{Status: "running", Target: r.Target, GuestChannelCredentialHash: sha256sum.HexBytes([]byte("owned"))}); err != nil {
@@ -203,7 +203,7 @@ func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocation
 	}
 	owner.attachDevice = func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
 		device := &failingCloseComputerDevice{}
-		machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{{id: identity.InstanceID, epoch: identity.Epoch}: device}
+		machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{{id: identity.AllocationID, epoch: identity.Epoch}: device}
 		return device, nil
 	}
 	return owner, client, backend
@@ -236,7 +236,7 @@ func TestComputerAllocationOwnsRenewalAndRetriesCleanupWithoutReboot(t *testing.
 		}
 		// The machine keeps its cached Close failure; backend cleanup must reconcile it.
 		backend.failCleanup.Store(false)
-		arena := o.machines.computerPreparationDirectory(o.identity.InstanceID, o.identity.Epoch)
+		arena := o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch)
 		if err := os.MkdirAll(arena, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -340,7 +340,7 @@ func TestComputerAllocationJoinsCommandRequestsBeforePhysicalCleanup(t *testing.
 		owner, client, backend := allocationOwnerFixture(t)
 		var entered, joined atomic.Bool
 		client.claimCommand = func(ctx context.Context, request workerapi.ComputerCommandClaimRequest) (workerapi.ComputerCommandClaimResponse, error) {
-			if request.EnvironmentID != owner.identity.EnvironmentID || request.ComputerInstanceID != owner.identity.InstanceID || request.WriterGeneration != owner.identity.Epoch {
+			if request.EnvironmentID != owner.identity.EnvironmentID || request.AllocationID != owner.identity.AllocationID || request.WriterGeneration != owner.identity.Epoch {
 				t.Error("Command claim escaped its allocation")
 			}
 			entered.Store(true)
@@ -480,7 +480,7 @@ func TestComputerAllocationCapacityWaitRenewsWithQuarantine(t *testing.T) {
 func TestComputerAllocationRetainsCapacityUntilDeviceCleanupSucceeds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		owner, client, backend := allocationOwnerFixture(t)
-		ref := preparedMachineRef{id: owner.identity.InstanceID, epoch: owner.identity.Epoch}
+		ref := preparedMachineRef{id: owner.identity.AllocationID, epoch: owner.identity.Epoch}
 		deviceFailure := errors.New("device cleanup failed")
 		device := &countingCloseComputerDevice{err: deviceFailure}
 		owner.attachDevice = func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {

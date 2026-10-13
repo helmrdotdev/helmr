@@ -57,14 +57,14 @@ func TestWorkerAllocationListingAndPhysicalStop(t *testing.T) {
 		t.Fatalf("list owned expired allocation: %+v %v", page, err)
 	}
 	record := page.Allocations[0]
-	if record.Kind != "computer" || record.EnvironmentID != f.Environment.String() || record.OwnerID != f.Computer.String() || record.InstanceID != f.Computer.String() || record.Epoch != 1 {
+	if record.Kind != "computer" || record.EnvironmentID != f.Environment.String() || record.OwnerID != f.Computer.String() || record.AllocationID != f.Computer.String() || record.Epoch != 1 {
 		t.Fatalf("wrong physical identity: %+v", record)
 	}
 	last, err := client.ListAllocations(t.Context(), &record)
 	if err != nil || len(last.Allocations) != 0 {
 		t.Fatalf("cursor: %+v %v", last, err)
 	}
-	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: record.EnvironmentID, ComputerID: record.OwnerID, InstanceID: record.InstanceID, LeaseEpoch: record.Epoch}}); err != nil {
+	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: record.EnvironmentID, ComputerID: record.OwnerID, AllocationID: record.AllocationID, LeaseEpoch: record.Epoch}}); err != nil {
 		t.Fatal(err)
 	}
 	page, err = client.ListAllocations(t.Context(), nil)
@@ -78,7 +78,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	worker := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), InstanceID: f.Computer.String(), Epoch: 1}
+	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	scope := computer.Scope{EnvironmentID: f.Environment}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := agent.ObserveSessionStopped(t.Context(), f.Pool, host, execution, attachment.Sequence); err != nil {
@@ -103,7 +103,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 		t.Fatal(err)
 	}
 	wrong := identity
-	wrong.InstanceID = uuid.NewV7().String()
+	wrong.AllocationID = uuid.NewV7().String()
 	if _, err := worker.ListComputerProcesses(t.Context(), wrong, nil); err == nil {
 		t.Fatal("foreign allocation received closure authority")
 	}
@@ -118,7 +118,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='releasing' AND fenced_at IS NULL AND reserved_cpu_millis>0 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&retained); err != nil || !retained {
 		t.Fatalf("delete released physical custody: %v %v", retained, err)
 	}
-	if err := worker.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, LeaseEpoch: identity.Epoch}}); err != nil {
+	if err := worker.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, AllocationID: identity.AllocationID, LeaseEpoch: identity.Epoch}}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := worker.ListAllocations(t.Context(), nil)

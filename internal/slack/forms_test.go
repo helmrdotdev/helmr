@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 var choiceQuestion = json.RawMessage(`{"prompt":[{"type":"text","text":"Pick <@U1> literally"},{"type":"json","value":{"detail":1}}],"answer":{"type":"choice","multiple":true,"allowText":true,"options":[{"id":"a","label":"First","description":"Full first description","value":{"approved":true}},{"id":"b","label":"Second","value":17}]}}`)
@@ -28,7 +28,7 @@ func TestSlackFormMapsFrozenValuesInDeclarationOrder(t *testing.T) {
 	}
 	for _, choices := range []string{`[{"value":"a"},{"value":"a"}]`, `[{"value":"unknown"}]`} {
 		state["choice"]["choice"] = json.RawMessage(`{"type":"multi_static_select","selected_options":` + choices + `}`)
-		if _, err := parseFormAnswer(choiceQuestion, state); !errors.Is(err, conversation.ErrAnswerInvalid) {
+		if _, err := parseFormAnswer(choiceQuestion, state); !errors.Is(err, content.ErrAnswerInvalid) {
 			t.Fatalf("invalid selection admitted: %v", err)
 		}
 	}
@@ -43,7 +43,7 @@ func TestSlackFormRequiresCompleteDeclaredInputs(t *testing.T) {
 		`{"choice":{"choice":{"type":"static_select","selected_option":{"value":"a"}}},"text":{"text":{"type":"plain_text_input","value":null}}}`,
 		`{"choice":{"choice":{"type":"multi_static_select","selected_options":[]}},"text":{"text":{"type":"plain_text_input","value":null}}}`,
 	} {
-		if _, err := parseFormAnswer(choiceQuestion, stateFixture(t, raw)); !errors.Is(err, conversation.ErrAnswerInvalid) {
+		if _, err := parseFormAnswer(choiceQuestion, stateFixture(t, raw)); !errors.Is(err, content.ErrAnswerInvalid) {
 			t.Fatalf("partial/invalid state accepted %s: %v", raw, err)
 		}
 	}
@@ -98,7 +98,7 @@ func TestSlackFormPreservesPromptAndDescriptionsOrRequiresCLI(t *testing.T) {
 
 func TestSlackFormFallsBackWhenEncodedViewExceedsNativeSize(t *testing.T) {
 	question, _ := json.Marshal(map[string]any{"prompt": []any{map[string]any{"type": "text", "text": strings.Repeat("x", 245000)}}, "answer": map[string]any{"type": "text"}})
-	if _, err := conversation.Question(question); err != nil {
+	if _, err := content.Question(question); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := answerModal(question, "signed-form"); !errors.Is(err, errCLIAnswer) {

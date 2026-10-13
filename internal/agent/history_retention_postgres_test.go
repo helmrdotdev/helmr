@@ -42,7 +42,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if historyClock(t, f) != nil {
 		t.Fatal("open Session started clock")
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='lost' WHERE session_id=$1`, f.session)
@@ -99,7 +99,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 func TestHistoryRetentionPendingSaveAndUntilDeletion(t *testing.T) {
 	f := newFixture(t)
 	_, save := f.finalize(t, "save")
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -126,7 +126,7 @@ func TestHistoryRetentionCheckpointObligation(t *testing.T) {
 	if historyClock(t, f) != nil {
 		t.Fatal("continuation started history clock")
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='continuation unavailable',capture_request=NULL WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',terminal_evidence='continuation unavailable',capture_request=NULL WHERE environment_id=$1`, f.env)
 	reconcileHistory(t, f)
 	if historyClock(t, f) == nil {
 		t.Fatal("released continuation did not start clock")
@@ -162,7 +162,7 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 	f := newFixture(t)
 	f.enqueue(t, "max-duration")
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)

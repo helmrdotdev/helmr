@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
-func (s *Server) agentSlackPublication(w http.ResponseWriter, r *http.Request) {
+func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	principal, err := slackManagementPrincipal(r)
 	if err != nil {
@@ -31,33 +31,33 @@ func (s *Server) agentSlackPublication(w http.ResponseWriter, r *http.Request) {
 	}
 	env := pgvalue.MustUUIDValue(environment)
 	name := chi.URLParam(r, "agentName")
-	agent, err := slack.PublicationAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name)
+	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name)
 	if err != nil {
 		s.writeSlackError(w, err)
 		return
 	}
-	var publication uuid.UUID
-	if raw := chi.URLParam(r, "publicationID"); raw != "" {
-		publication, err = ids.Parse(raw)
-		if err != nil || publication == uuid.Nil() {
+	var connection uuid.UUID
+	if raw := chi.URLParam(r, "connectionID"); raw != "" {
+		connection, err = ids.Parse(raw)
+		if err != nil || connection == uuid.Nil() {
 			writeError(w, badRequest(errors.New("invalid Agent connection")))
 			return
 		}
 	}
-	if r.Method == http.MethodPost && publication == uuid.Nil() {
-		_, err = slack.BeginPublication(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
+	if r.Method == http.MethodPost && connection == uuid.Nil() {
+		_, err = slack.BeginConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
 		if err != nil {
 			s.writeSlackError(w, err)
 			return
 		}
 	}
-	view, err := slack.GetPublication(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
+	view, err := slack.GetConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
 	if err != nil {
 		s.writeSlackError(w, err)
 		return
 	}
-	if publication != uuid.Nil() && (view == nil || view.ID != publication) {
-		s.writeSlackError(w, slack.ErrPublicationUnavailable)
+	if connection != uuid.Nil() && (view == nil || view.ID != connection) {
+		s.writeSlackError(w, slack.ErrConnectionUnavailable)
 		return
 	}
 	switch r.Method {
@@ -74,14 +74,14 @@ func (s *Server) agentSlackPublication(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case http.MethodDelete:
-		if err = s.slackConfig.Credentials.DisconnectPublication(r.Context(), principal.OrgID, principal.UserID, env, publication); err != nil {
+		if err = s.slackConfig.Credentials.DisconnectConnection(r.Context(), principal.OrgID, principal.UserID, env, connection); err != nil {
 			s.writeSlackError(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case http.MethodPost:
-		if publication != uuid.Nil() {
+		if connection != uuid.Nil() {
 			var input struct {
 				ReturnTo string `json:"return_to"`
 			}
@@ -94,12 +94,12 @@ func (s *Server) agentSlackPublication(w http.ResponseWriter, r *http.Request) {
 				writeError(w, err)
 				return
 			}
-			redirect, err := s.slackConfig.Credentials.PublicationAuthorizationURL(r.Context(), principal.OrgID, principal.UserID, publication, state, s.slackRedirectURL())
+			redirect, err := s.slackConfig.Credentials.ConnectionAuthorizationURL(r.Context(), principal.OrgID, principal.UserID, connection, state, s.slackRedirectURL())
 			if err != nil {
 				s.writeSlackError(w, err)
 				return
 			}
-			flow := browserAuthFlow{Kind: browserAuthSlackInstallation, State: state, OrganizationID: principal.OrgID.String(), UserID: principal.UserID.String(), PublicationID: publication.String(), AppRegistrationID: view.RegistrationID.String(), EnvironmentID: env.String(), RedirectAfter: validateRedirectAfter(input.ReturnTo)}
+			flow := browserAuthFlow{Kind: browserAuthSlackInstallation, State: state, OrganizationID: principal.OrgID.String(), UserID: principal.UserID.String(), ConnectionID: connection.String(), AppRegistrationID: view.RegistrationID.String(), EnvironmentID: env.String(), RedirectAfter: validateRedirectAfter(input.ReturnTo)}
 			encoded, err := s.encodeAuthFlow(flow)
 			if err != nil {
 				writeError(w, err)
@@ -111,7 +111,7 @@ func (s *Server) agentSlackPublication(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	result := map[string]any{"publication": view}
+	result := map[string]any{"connection": view}
 	if view != nil {
 		manifest := slack.AppManifest(s.publicURL, view.RegistrationID, name)
 		result["manifest"] = manifest

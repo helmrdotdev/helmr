@@ -173,11 +173,11 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 		}
 		var rootID uuid.UUID
 		if restored == nil {
-			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computer).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computer).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
 				return err
 			}
 		} else {
-			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves v JOIN computer_disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computer, *restored).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves v JOIN disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computer, *restored).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
 				return err
 			}
 		}
@@ -189,7 +189,7 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return ErrConflict
 		}
 		var authorizedKey uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM computer_data_keys WHERE environment_id=$1 AND writer_computer_id=$2 AND id=$3 AND available FOR KEY SHARE`, env, computer, writeKey).Scan(&authorizedKey); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM disk_encryption_keys WHERE environment_id=$1 AND writer_computer_id=$2 AND id=$3 AND available FOR KEY SHARE`, env, computer, writeKey).Scan(&authorizedKey); err != nil {
 			return hideMissing(err)
 		}
 		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET base_root_id=$4,write_key_id=$5 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NULL AND disk_released_at IS NULL`, env, computer, epoch, rootID, writeKey); err != nil {
@@ -223,7 +223,7 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var host, group uuid.UUID
 		var ownerEpoch int64
-		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id,h.worker_group_id,l.epoch FROM computer_checkpoints c JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,COALESCE(c.target_lease_epoch,c.source_lease_epoch)) JOIN worker_hosts h ON h.id=l.worker_host_id WHERE c.environment_id=$1 AND c.id=$2`, env, checkpoint).Scan(&host, &group, &ownerEpoch); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id,h.worker_group_id,l.epoch FROM checkpoints c JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,COALESCE(c.target_lease_epoch,c.source_lease_epoch)) JOIN worker_hosts h ON h.id=l.worker_host_id WHERE c.environment_id=$1 AND c.id=$2`, env, checkpoint).Scan(&host, &group, &ownerEpoch); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `SELECT id FROM worker_groups WHERE id=$1 FOR SHARE`, group); err != nil {
@@ -261,7 +261,7 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 				return err
 			}
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }

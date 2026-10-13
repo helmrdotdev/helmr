@@ -77,7 +77,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, org, user, re
 		}
 		var client *string
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND organization_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org).Scan(&client, &revision)
+		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org).Scan(&client, &revision)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errInstallationAuthority
 		}
@@ -105,7 +105,7 @@ func (s *CredentialStore) appCredentials(ctx context.Context, registration uuid.
 		var org uuid.UUID
 		var revision int64
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT organization_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &revision, &ciphertext, &nonce)
+		err := tx.QueryRow(ctx, `SELECT org_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &revision, &ciphertext, &nonce)
 		if err != nil {
 			return errCredentialUnavailable
 		}
@@ -136,7 +136,7 @@ func (s *CredentialStore) callbackCredentials(ctx context.Context, registration 
 		var app *string
 		var revision int64
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT organization_id,app_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &app, &revision, &ciphertext, &nonce)
+		err := tx.QueryRow(ctx, `SELECT org_id,app_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &app, &revision, &ciphertext, &nonce)
 		if err != nil {
 			return errCredentialUnavailable
 		}

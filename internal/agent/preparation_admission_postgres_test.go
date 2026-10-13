@@ -16,7 +16,7 @@ func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 	rejected := errors.New("initial Turn rejected")
 	var attempt uuid.UUID
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, computer, f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, computer, f.deployment); err != nil {
 			return err
 		}
 		p, err := attachComputerPreparation(t.Context(), tx, f.env, computer)
@@ -30,7 +30,7 @@ func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 		t.Fatalf("admission: %v", err)
 	}
 	var leaked bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1 AND id=$3)`, f.env, computer, attempt).Scan(&leaked); err != nil || leaked {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND id=$3)`, f.env, computer, attempt).Scan(&leaked); err != nil || leaked {
 		t.Fatalf("rollback leaked demand or attempt: %v, %v", leaked, err)
 	}
 }
@@ -45,7 +45,7 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 	rejected := errors.New("initial Turn rejected")
 	var image uuid.UUID
 	err := db.RunTx(t.Context(), p.f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, computer, p.f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, computer, p.f.deployment); err != nil {
 			return err
 		}
 		selected, err := pinComputerImage(t.Context(), tx, p.f.env, computer)
@@ -91,7 +91,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	}
 	reconcile()
 	var attached *uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached); err != nil || attached != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached); err != nil || attached != nil {
 		t.Fatalf("unfenced executor admitted replacement: %v %v", attached, err)
 	}
 	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
@@ -99,16 +99,16 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	}
 	reconcile()
 	var after time.Time
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_id,preparation_deadline_at FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached, &after); err != nil || attached == nil || *attached == original.ID || !after.Equal(deadline) {
+	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id,preparation_deadline_at FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached, &after); err != nil || attached == nil || *attached == original.ID || !after.Equal(deadline) {
 		t.Fatalf("fresh demand not attached under original deadline: %v %v %v", attached, after, err)
 	}
 	var retained uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {
+	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {
 		t.Fatalf("failed chain was retried: %v %v", retained, err)
 	}
 	reconcile()
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_preparations WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("duplicate preparation: %d %v", count, err)
 	}
 }
@@ -123,7 +123,7 @@ func TestPreparationUnattachedDemandExpiresWithoutAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var settled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_failed_at IS NOT NULL AND preparation_id IS NULL AND NOT EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1) FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&settled); err != nil || !settled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_failed_at IS NOT NULL AND image_build_id IS NULL AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1) FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&settled); err != nil || !settled {
 		t.Fatalf("unattached demand not settled: %v %v", settled, err)
 	}
 }
@@ -135,7 +135,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	// Existing demand has less time left than the later fresh Computer. Joining
 	// a chain does not promise a fresh execution window or extend its deadline.
 	var originalDeadline time.Time
-	if err := p.f.pool.QueryRow(t.Context(), `UPDATE computers SET preparation_deadline_at=statement_timestamp()+interval '1 minute' WHERE environment_id=$1 AND preparation_id=$2 RETURNING preparation_deadline_at`, p.f.env, original.ID).Scan(&originalDeadline); err != nil {
+	if err := p.f.pool.QueryRow(t.Context(), `UPDATE computers SET preparation_deadline_at=statement_timestamp()+interval '1 minute' WHERE environment_id=$1 AND image_build_id=$2 RETURNING preparation_deadline_at`, p.f.env, original.ID).Scan(&originalDeadline); err != nil {
 		t.Fatal(err)
 	}
 	root := p.capture(t, key)
@@ -150,7 +150,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 	// Sort fresh demand before every attached waiter in the actual scan page.
 	fresh := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
+	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
@@ -163,17 +163,17 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 	var successor, predecessor, retained uuid.UUID
 	var count int
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id,p.successor_of,(SELECT count(*) FROM computer_preparations WHERE environment_id=$1) FROM computers c JOIN computer_preparations p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,p.successor_of,(SELECT count(*) FROM image_builds WHERE environment_id=$1) FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
 		t.Fatalf("fresh demand did not join the single successor: %v %v %d %v", successor, predecessor, count, err)
 	}
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, p.f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, p.f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {
 		t.Fatalf("original chain changed: %v %v", retained, err)
 	}
 	var attemptDeadline, freshDeadline time.Time
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT p.deadline_at,c.preparation_deadline_at FROM computer_preparations p JOIN computers c ON (c.environment_id,c.preparation_id)=(p.environment_id,p.id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&attemptDeadline, &freshDeadline); err != nil || !attemptDeadline.Equal(originalDeadline) || !freshDeadline.After(attemptDeadline) {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT p.deadline_at,c.preparation_deadline_at FROM image_builds p JOIN computers c ON (c.environment_id,c.image_build_id)=(p.environment_id,p.id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&attemptDeadline, &freshDeadline); err != nil || !attemptDeadline.Equal(originalDeadline) || !freshDeadline.After(attemptDeadline) {
 		t.Fatalf("join changed deadlines: %v %v %v", attemptDeadline, freshDeadline, err)
 	}
-	if _, err := p.f.pool.Exec(t.Context(), `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, successor); err != nil {
+	if _, err := p.f.pool.Exec(t.Context(), `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, successor); err != nil {
 		t.Fatal(err)
 	}
 	if err := expirePreparation(t.Context(), p.f.pool, p.f.env, successor); err != nil {
@@ -183,7 +183,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	var unchanged bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.preparation_id=$3 AND c.preparation_deadline_at=$4 AND (SELECT count(*) FROM computer_preparations WHERE environment_id=$1)=2 FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, fresh, successor, freshDeadline).Scan(&unchanged); err != nil || !unchanged {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id=$3 AND c.preparation_deadline_at=$4 AND (SELECT count(*) FROM image_builds WHERE environment_id=$1)=2 FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, fresh, successor, freshDeadline).Scan(&unchanged); err != nil || !unchanged {
 		t.Fatalf("joined expiry created another attempt or moved deadline: %v %v", unchanged, err)
 	}
 
@@ -199,7 +199,7 @@ func TestPreparationUnattachedDemandInRetiredEnvironmentIsNotPolled(t *testing.T
 		t.Fatal(err)
 	}
 	var pending bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_id IS NULL AND preparation_failed_at IS NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&pending); err != nil || !pending {
+	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id IS NULL AND preparation_failed_at IS NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&pending); err != nil || !pending {
 		t.Fatalf("retired environment created work: %v %v", pending, err)
 	}
 }

@@ -110,23 +110,23 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	if err := client.CompleteAgentCheckpoint(t.Context(), changed); err == nil {
 		t.Fatal("changed committed manifest accepted")
 	}
-	id := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), InstanceID: f.Computer.String(), Epoch: 1}
+	id := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	if _, err := client.ReadAgentCheckpoint(t.Context(), id); err == nil {
 		t.Fatal("source allocation read restore image")
 	}
 	if _, err := foreign.ReadAgentCheckpoint(t.Context(), id); err == nil {
 		t.Fatal("foreign host read image")
 	}
-	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: id.EnvironmentID, ComputerID: id.OwnerID, InstanceID: id.InstanceID, LeaseEpoch: id.Epoch}}); err != nil {
+	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: id.EnvironmentID, ComputerID: id.OwnerID, AllocationID: id.AllocationID, LeaseEpoch: id.Epoch}}); err != nil {
 		t.Fatal(err)
 	}
 	// Seed only the target allocation for this transport test. Source fencing,
 	// publication and encrypted disk certification above use their real owners.
 	target := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,restored_from_save_id,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,base_root_id,write_key_id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,base_root_id,write_key_id)
       SELECT l.environment_id,l.computer_id,2,l.worker_host_id,l.worker_epoch,clock_timestamp()+interval '1 minute',$3,decode(repeat('42',32),'hex'),s.id,clock_timestamp(),l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,'acquiring',s.root_id,l.write_key_id
       FROM computer_leases l JOIN computer_saves s ON s.environment_id=l.environment_id AND s.id=$4 WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=1`, f.Environment, f.Computer, target, result.SaveID)
-	id.InstanceID = target.String()
+	id.AllocationID = target.String()
 	id.Epoch = 2
 	got, err := client.ReadAgentCheckpoint(t.Context(), id)
 	if err != nil {

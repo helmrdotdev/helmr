@@ -16,7 +16,7 @@ func CollectResults(ctx context.Context, queries *db.Queries, log *slog.Logger) 
 	defer ticker.Stop()
 	for {
 		batchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		_, err := queries.PruneExpiredComputerCommandResults(batchCtx, 1000)
+		_, err := queries.PruneExpiredCommandResults(batchCtx, 1000)
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			log.ErrorContext(ctx, "collect expired Command results", "error", err)

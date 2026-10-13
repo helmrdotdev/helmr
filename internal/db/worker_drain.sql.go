@@ -42,8 +42,8 @@ WITH target AS MATERIALIZED (
             WHERE computer_leases.worker_host_id=drain_target.id AND computer_leases.fenced_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM computer_preparations
-            WHERE computer_preparations.worker_host_id=drain_target.id AND computer_preparations.fenced_at IS NULL
+           SELECT 1 FROM image_builds
+            WHERE image_builds.worker_host_id=drain_target.id AND image_builds.fenced_at IS NULL
        )
 ), completed AS (
     UPDATE worker_hosts

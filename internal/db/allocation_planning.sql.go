@@ -15,7 +15,7 @@ const listAllocationPlanningChargedPools = `-- name: ListAllocationPlanningCharg
 SELECT DISTINCT h.worker_pool_id FROM worker_hosts h
 WHERE h.worker_group_id=$1 AND (
  EXISTS(SELECT 1 FROM computer_leases l WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM computer_preparations p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)
+ OR EXISTS(SELECT 1 FROM image_builds p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)
 )
 `
 
@@ -50,24 +50,24 @@ WITH RECURSIVE held AS (
  NULL::uuid required_worker_group_id,''::text required_vm_platform_id,0::integer required_vm_vcpu_count,
  ''::text required_cpu_config_digest,0::bigint required_cpu_millis,0::bigint required_memory_bytes,
  0::bigint required_scratch_bytes
- FROM computer_preparations p
- JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.preparation_spec_id=p.preparation_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
+ FROM image_builds p
+ JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
- AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
- WHERE binding.environment_id=p.environment_id AND binding.preparation_spec_id=p.preparation_spec_id AND secret.status='revoked')
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
+ WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.status='revoked')
  UNION ALL
  SELECT c.environment_id,c.id,'computer',c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
  COALESCE(source.vm_vcpu_count,0),COALESCE(source.cpu_config_digest,''),COALESCE(source.reserved_cpu_millis,0),
  COALESCE(source.reserved_memory_bytes,0),COALESCE(source.reserved_scratch_bytes,0)
  FROM computers c
- LEFT JOIN computer_checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('ready','restoring')
+ LEFT JOIN checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('ready','restoring')
  LEFT JOIN computer_leases source ON source.environment_id=cp.environment_id AND source.computer_id=cp.computer_id AND source.epoch=cp.source_lease_epoch
  LEFT JOIN worker_hosts h ON h.id=source.worker_host_id
  WHERE NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=c.environment_id AND live.computer_id=c.id AND live.fenced_at IS NULL) AND (
  c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM (SELECT c.environment_id,c.id AS computer_id,x.secret_id
-    FROM computers c JOIN computer_images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
-    JOIN secret_exposures x ON (x.environment_id,x.preparation_id)=(i.environment_id,i.preparation_id)
+    FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
+    JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id)
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
     WHERE s.status='revoked'
     UNION
@@ -76,11 +76,11 @@ WITH RECURSIVE held AS (
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked'
     UNION
     SELECT c.environment_id,c.computer_id,x.secret_id FROM secret_exposures x
-    JOIN computer_commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
+    JOIN commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked') revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND ((cp.id IS NOT NULL) OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
   AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.initialized_at IS NOT NULL)))
- AND (EXISTS(SELECT 1 FROM computer_commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
+ AND (EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing')
   AND (cp.id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued'))
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
@@ -94,7 +94,7 @@ JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.d
 CROSS JOIN LATERAL (
  SELECT COALESCE(sum(cpu),0) cpu,COALESCE(sum(memory),0) memory,COALESCE(sum(residents),0) residents FROM (
   SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,1::bigint residents FROM computer_leases WHERE environment_id=e.id AND fenced_at IS NULL
-  UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM computer_preparations WHERE environment_id=e.id AND worker_host_id IS NOT NULL AND fenced_at IS NULL
+  UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM image_builds WHERE environment_id=e.id AND worker_host_id IS NOT NULL AND fenced_at IS NULL
  ) physical
 ) usage
 WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE (d.cpu_millis+999)/1000*1000 END

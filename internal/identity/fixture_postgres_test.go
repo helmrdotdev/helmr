@@ -101,7 +101,7 @@ func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID
 func (f identityFixture) activeSessions(t *testing.T, userID uuid.UUID) int {
 	t.Helper()
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM auth_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()`, userID).Scan(&count); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM login_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()`, userID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
@@ -133,9 +133,9 @@ func (f identityFixture) rejectLoginSessions(t *testing.T) func() {
 			RAISE EXCEPTION 'injected login session failure';
 		END
 		$$`)
-	f.exec(t, `CREATE TRIGGER reject_login_session BEFORE INSERT ON auth_sessions FOR EACH ROW EXECUTE FUNCTION reject_login_session()`)
+	f.exec(t, `CREATE TRIGGER reject_login_session BEFORE INSERT ON login_sessions FOR EACH ROW EXECUTE FUNCTION reject_login_session()`)
 	return func() {
-		f.exec(t, `DROP TRIGGER reject_login_session ON auth_sessions`)
+		f.exec(t, `DROP TRIGGER reject_login_session ON login_sessions`)
 		f.exec(t, `DROP FUNCTION reject_login_session()`)
 	}
 }
@@ -143,7 +143,7 @@ func (f identityFixture) rejectLoginSessions(t *testing.T) func() {
 func (f identityFixture) sessionCount(t *testing.T) int {
 	t.Helper()
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM auth_sessions`).Scan(&count); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM login_sessions`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count

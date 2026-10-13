@@ -36,9 +36,9 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			}
 			installation, registration, publication, user := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
- INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $5,$6,id,$2,$4,$1 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, publication, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
+ INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $5,$6,id,$2,$4,$1 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, publication, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
 			calls := 0
 			preflight := triggerPreflightFunc(func(ctx context.Context, value agent.SlackStartContext) (json.RawMessage, error) {
 				calls++
@@ -50,7 +50,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 					return nil, err
 				}
 				if race {
-					if _, err := f.pool.Exec(ctx, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication); err != nil {
+					if _, err := f.pool.Exec(ctx, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication); err != nil {
 						return nil, err
 					}
 				}
@@ -62,7 +62,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 					t.Fatal(err)
 				}
 				var clean bool
-				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) AND NOT EXISTS(SELECT 1 FROM slack_channels) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
+				if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) AND NOT EXISTS(SELECT 1 FROM slack_channel_bindings) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&clean); err != nil || !clean {
 					t.Fatal("failed preflight retained activation", clean, err)
 				}
 				return
@@ -71,14 +71,14 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(calls, err)
 			}
 			var pin uuid.UUID
-			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channels c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.publication_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
+			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channel_bindings c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.connection_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
 				t.Fatal("promotion lost destination", err)
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
 			if receipt, err := register(t.Context(), f.pool, f.request); err != nil || receipt.ID != registered.ID {
 				t.Fatal("lost exact registration", receipt, err)
 			}
-			f.request.retryKey = "new-deployment"
+			f.request.idempotencyKey = "new-deployment"
 			f.request.bundle.root.Digest = artifacttest.Digest("new-slack-bundle")
 			newer, err := register(t.Context(), f.pool, f.request)
 			if err != nil {

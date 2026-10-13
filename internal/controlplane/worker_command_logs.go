@@ -57,7 +57,7 @@ func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request)
 func commandLogChunk(request workerapi.CommandLogAppendRequest) (command.LogChunk, error) {
 	environment, e1 := ids.Parse(request.EnvironmentID)
 	commandID, e2 := ids.Parse(request.CommandID)
-	instance, e3 := ids.Parse(request.ComputerInstanceID)
+	instance, e3 := ids.Parse(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil {
 		return command.LogChunk{}, command.ErrInvalidLog
 	}

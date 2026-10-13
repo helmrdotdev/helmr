@@ -33,10 +33,10 @@ import (
 func preparationTransportFixture(t *testing.T) (agenttest.Fixture, workerapi.PreparationExecutor) {
 	t.Helper()
 	f := agenttest.New(t)
-	request := workerapi.PreparationExecutor{Identity: workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: f.Environment.String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: bytes.Repeat([]byte{21}, 32)}
+	request := workerapi.PreparationExecutor{Identity: workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: f.Environment.String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: bytes.Repeat([]byte{21}, 32)}
 	digest := sha256.Sum256(request.ChannelCredential)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
- SELECT $1,$2,$3,'transport','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$6`, f.Environment, request.Identity.OwnerID, f.Deployment, request.Identity.InstanceID, digest[:], f.Worker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+ SELECT $1,$2,$3,'transport','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$6`, f.Environment, request.Identity.OwnerID, f.Deployment, request.Identity.AllocationID, digest[:], f.Worker)
 	return f, request
 }
 
@@ -65,7 +65,7 @@ func TestWorkerPreparationAuthorityAndTerminalCustody(t *testing.T) {
 	}
 	clear(replay.Key)
 	body, _ := json.Marshal(request)
-	response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/preparation/key", body)
+	response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/image-build/key", body)
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal("key response was cacheable or failed")
@@ -73,7 +73,7 @@ func TestWorkerPreparationAuthorityAndTerminalCustody(t *testing.T) {
 	for _, mutate := range []func(*workerapi.PreparationExecutor){
 		func(r *workerapi.PreparationExecutor) { r.Identity.Kind = "computer" },
 		func(r *workerapi.PreparationExecutor) { r.Identity.Epoch++ },
-		func(r *workerapi.PreparationExecutor) { r.Identity.InstanceID = uuid.NewV7().String() },
+		func(r *workerapi.PreparationExecutor) { r.Identity.AllocationID = uuid.NewV7().String() },
 		func(r *workerapi.PreparationExecutor) { r.ChannelCredential = bytes.Repeat([]byte{22}, 32) },
 	} {
 		wrong := request
@@ -100,7 +100,7 @@ func TestWorkerPreparationAuthorityAndTerminalCustody(t *testing.T) {
 		t.Fatal("failed executor received key")
 	}
 	var unfenced bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&unfenced); err != nil || !unfenced {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&unfenced); err != nil || !unfenced {
 		t.Fatalf("failure released custody: %v", err)
 	}
 	if err := client.ObservePreparationStopped(t.Context(), request.Identity); err != nil {
@@ -138,14 +138,14 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 					t.Fatal(err)
 				}
 				secretID := pgvalue.MustUUIDValue(record.ID)
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,$4,$5,'raw')`, f.Environment, f.Deployment, secretID, kind, map[string]string{"env": "TOKEN", "file": "/etc/service/token"}[kind])
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,$4,$5,'raw')`, f.Environment, f.Deployment, secretID, kind, map[string]string{"env": "TOKEN", "file": "/etc/service/token"}[kind])
 				opener := &preparationSecretOpener{opener: secrets}
 				server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.SecretDelivery = opener }))
 				defer server.Close()
 				client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 				opener.after = func() {
 					var count int
-					if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, f.Environment, request.Identity.OwnerID).Scan(&count); err != nil || count != 1 {
+					if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.Environment, request.Identity.OwnerID).Scan(&count); err != nil || count != 1 {
 						t.Errorf("exposure not committed before opening: %d %v", count, err)
 					}
 				}
@@ -171,9 +171,9 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 				opener.after = func() {
 					switch transition {
 					case "expiry":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID)
 					case "seal":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 					case "revocation":
 						if _, err := secrets.Revoke(t.Context(), f.Environment, secretID, "revoke"); err != nil {
 							t.Error(err)
@@ -263,7 +263,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrong := receipt
-	wrong.Executor.Identity.InstanceID = uuid.NewV7().String()
+	wrong.Executor.Identity.AllocationID = uuid.NewV7().String()
 	if err := client.PublishPreparation(t.Context(), wrong); err == nil {
 		t.Fatal("foreign instance published")
 	}
@@ -279,7 +279,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		t.Fatalf("published bytes: %v", err)
 	}
 	var succeeded, unfenced bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
 		t.Fatalf("publication lost physical custody: %v", err)
 	}
 	if err := client.ObservePreparationStopped(t.Context(), request.Identity); err != nil {
@@ -289,7 +289,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		t.Fatalf("lost publication reply could not reconcile after stop: %v", err)
 	}
 	var images int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_images WHERE environment_id=$1 AND preparation_id=$2`, f.Environment, request.Identity.OwnerID).Scan(&images); err != nil || images != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM images WHERE environment_id=$1 AND image_build_id=$2`, f.Environment, request.Identity.OwnerID).Scan(&images); err != nil || images != 1 {
 		t.Fatalf("duplicate publication: %d %v", images, err)
 	}
 }
@@ -315,7 +315,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3,execution_revoked_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
 			store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
 			switch mode {
@@ -323,11 +323,11 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 				store.body = bytes.Repeat([]byte("!"), len(raw))
 			case "expiry during read":
 				store.onRead = func() {
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID)
 				}
 			case "seal during read":
 				store.onRead = func() {
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 				}
 			}
 			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store }))

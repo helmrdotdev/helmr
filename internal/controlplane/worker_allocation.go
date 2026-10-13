@@ -11,14 +11,14 @@ import (
 func allocationIdentity(in workerapi.AllocationIdentity) (agent.HostAllocation, error) {
 	env, e1 := agentComputerID(in.EnvironmentID)
 	owner, e2 := agentComputerID(in.OwnerID)
-	instance, e3 := agentComputerID(in.InstanceID)
+	instance, e3 := agentComputerID(in.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation") {
 		return agent.HostAllocation{}, agent.ErrInvalidInput
 	}
 	return agent.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
 }
 func allocationWireIdentity(in agent.HostAllocation) workerapi.AllocationIdentity {
-	return workerapi.AllocationIdentity{Kind: in.Kind, EnvironmentID: in.EnvironmentID.String(), OwnerID: in.OwnerID.String(), InstanceID: in.InstanceID.String(), Epoch: in.Epoch}
+	return workerapi.AllocationIdentity{Kind: in.Kind, EnvironmentID: in.EnvironmentID.String(), OwnerID: in.OwnerID.String(), AllocationID: in.InstanceID.String(), Epoch: in.Epoch}
 }
 func allocationWireReceipt(kind string, in agent.Allocation) workerapi.AllocationIdentity {
 	return allocationWireIdentity(agent.HostAllocation{Kind: kind, EnvironmentID: in.EnvironmentID, OwnerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch})

@@ -67,13 +67,13 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "member-disabled":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "publication-revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "reauthorized":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=clock_timestamp() WHERE id=$1`, f.installation)
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
 			case "closed":
-				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+				if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -233,12 +233,12 @@ func TestSlackNewHumanRootAcceptsText(t *testing.T) {
 	}
 }
 
-func TestSlackHistoricalRootCannotBindAcrossPublicationGeneration(t *testing.T) {
+func TestSlackHistoricalRootCannotBindAcrossConnectionGeneration(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	nextPublication := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1;
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $2,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id FROM agent_publications WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.publication, nextPublication)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1;
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $2,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id FROM slack_connections WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.publication, nextPublication)
 	id := f.newMessage(t, "old-root", "123.456")
 	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
@@ -252,9 +252,9 @@ func TestSlackHistoricalRootCannotBindAcrossPublicationGeneration(t *testing.T) 
 func newSlackAdmissionFixture(t *testing.T) statusFixture {
 	t.Helper()
 	f := newStatusFixture(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+ UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	return f
 }
 

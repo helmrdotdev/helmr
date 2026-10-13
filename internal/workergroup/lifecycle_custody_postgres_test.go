@@ -17,7 +17,7 @@ import (
 func retainedPreparation(t *testing.T, f agenttest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,error_code,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,error_code,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
  SELECT $1,$2,$3,'failed-but-owned','failed',clock_timestamp()-interval '1 hour','fixture_failure',1,id,1,$4,decode(repeat('00',32),'hex'),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$5`, f.Environment, id, f.Deployment, uuid.NewV7(), f.Worker)
 	return id
 }
@@ -31,7 +31,7 @@ func fenceFixtureComputer(t *testing.T, f agenttest.Fixture) {
 }
 func fenceFixturePreparation(t *testing.T, f agenttest.Fixture) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1`, f.Environment)
 }
 
 func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
@@ -102,7 +102,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 			var kept bool
 			if err = f.Pool.QueryRow(t.Context(), `SELECT h.status='lost' AND s.revoked_at IS NOT NULL
  AND EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$2 AND fenced_at IS NULL)
- AND EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$2 AND fenced_at IS NULL)
+ AND EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$2 AND fenced_at IS NULL)
  FROM worker_hosts h JOIN worker_host_secrets s ON s.worker_host_id=h.id WHERE h.id=$1`, f.Worker, f.Environment).Scan(&kept); err != nil || !kept {
 				t.Fatalf("loss released physical custody or kept credentials: %v %v", kept, err)
 			}

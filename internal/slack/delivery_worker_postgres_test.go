@@ -34,7 +34,7 @@ func TestSlackDeliveryWorkerRotatesBlockedRootToIndependentThread(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET thread_ts=NULL WHERE id=$1;
  INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$3,agent_id,deployment_id,computer_id,$3,0 FROM sessions WHERE id=$2;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $4,$7,$3,$5,organization_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channels WHERE id=$5;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$7,$3,$5,org_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($6,$4,$7,$3);
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)
 	independent := peer.post(t, 1, "independent", "lifecycle", nil)
@@ -146,8 +146,8 @@ func TestSlackDeliveryWorkerSelectsQuestionAheadOfBlockedOutputBacklog(t *testin
 	}
 	// An ordinary authored output budget can create thousands of continuations.
 	// Here all earlier rows depend on the unknown first mutation.
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,publication_key,continuation_ordinal,role,turn_id,payload,payload_digest,presentation_path)
- SELECT gen_random_uuid(),environment_id,session_id,thread_id,thread_source_id,seq+n,publication_key,n,role,turn_id,payload,payload_digest,presentation_path FROM slack_posts CROSS JOIN generate_series(1,1000) n WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,continuation_ordinal,role,turn_id,payload,payload_digest,presentation_path)
+ SELECT gen_random_uuid(),environment_id,session_id,thread_id,thread_source_id,seq+n,post_key,n,role,turn_id,payload,payload_digest,presentation_path FROM slack_posts CROSS JOIN generate_series(1,1000) n WHERE id=$1;
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour';
  UPDATE slack_posts SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, first)
 	var turn uuid.UUID
@@ -182,8 +182,8 @@ func TestSlackDeliveryWorkerFairBatchDoesNotStarveQuestionBehindIdleStatus(t *te
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH ids AS (SELECT gen_random_uuid() id,n FROM generate_series(1,80) n),
  added_sessions AS (INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT s.history_retention_mode,s.environment_id,i.id,s.agent_id,s.deployment_id,s.computer_id,i.id,0 FROM sessions s CROSS JOIN ids i WHERE s.id=$1 RETURNING id),
- added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key)
- SELECT s.id,$3,s.id,$2,c.organization_id,c.team_id,c.slack_channel_id,'123.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channels c WHERE c.id=$2 RETURNING id)
+ added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
+ SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'123.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;
  UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.Session, f.channel, f.Environment)
@@ -241,7 +241,7 @@ func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T)
 		peer.Session, peer.thread, peer.participant = uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,opening_publication_key) SELECT $3,$6,$2,$4,organization_id,team_id,slack_channel_id,$2::uuid::text FROM slack_channels WHERE id=$4;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,opening_post_key) SELECT $3,$6,$2,$4,org_id,team_id,slack_channel_id,$2::uuid::text FROM slack_channel_bindings WHERE id=$4;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($5,$3,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)
 		peer.post(t, int64(n+1), peer.Session.String(), "lifecycle", nil)
 	}
@@ -295,7 +295,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 		t.Fatal("initial assertion", methods)
 	}
 	// Change authoritative core state while retaining FinishStatus's refresh_at.
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1;
@@ -316,8 +316,8 @@ func TestSlackDeliveryWorkerWaitingContentPrecedesPeriodicRefreshPopulation(t *t
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH ids AS (SELECT gen_random_uuid() id,n FROM generate_series(1,12) n),
  added_sessions AS (INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT s.history_retention_mode,s.environment_id,i.id,s.agent_id,s.deployment_id,s.computer_id,i.id,0 FROM sessions s CROSS JOIN ids i WHERE s.id=$1 RETURNING id),
- added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key)
- SELECT s.id,$3,s.id,$2,c.organization_id,c.team_id,c.slack_channel_id,'456.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channels c WHERE c.id=$2 RETURNING id)
+ added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
+ SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'456.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;
  UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',confirmed_revision=desired_revision,refresh_at=clock_timestamp()-interval '1 minute';
@@ -375,7 +375,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, initial, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Discover the core change while the previous call still owns the budget.
@@ -407,8 +407,8 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 	f := newStatusFixture(t)
 	first := f.streamPost(t, 1, "first")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id=$1;
- INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,publication_key,continuation_ordinal,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,next_attempt_at)
- SELECT gen_random_uuid(),environment_id,session_id,thread_id,thread_source_id,seq+n,publication_key,n,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,clock_timestamp()-interval '1 hour' FROM slack_posts CROSS JOIN generate_series(1,17) n WHERE id=$1;
+ INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,continuation_ordinal,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,next_attempt_at)
+ SELECT gen_random_uuid(),environment_id,session_id,thread_id,thread_source_id,seq+n,post_key,n,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,clock_timestamp()-interval '1 hour' FROM slack_posts CROSS JOIN generate_series(1,17) n WHERE id=$1;
  UPDATE slack_threads SET status_confirmation='acknowledged',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, f.thread)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
@@ -427,7 +427,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 	}
 }
 
-func TestSlackDeliveryWorkerSuppressesBlockedTailWhenPublicationAuthorityEnds(t *testing.T) {
+func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *testing.T) {
 	for _, reason := range []string{"channel", "speaker", "disconnected", "authorization"} {
 		t.Run(reason, func(t *testing.T) {
 			f := newStatusFixture(t)
@@ -438,12 +438,12 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenPublicationAuthorityEnds(t 
 			}
 			tail := f.post(t, 2, "tail", "lifecycle", nil)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp() WHERE id=$1;
- UPDATE slack_posts SET publication_key='chain',continuation_ordinal=1 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, tail)
+ UPDATE slack_posts SET post_key='chain',continuation_ordinal=1 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, tail)
 			switch reason {
 			case "channel":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "speaker":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "disconnected":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET disconnected_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, f.installation)
 			case "authorization":

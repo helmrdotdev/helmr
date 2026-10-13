@@ -29,7 +29,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 		t.Fatalf("empty creation allocated work: %v %v", valid, err)
 	}
 	conflict := req
-	conflict.RetryKey = "occupied"
+	conflict.IdempotencyKey = "occupied"
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), conflict); !errors.Is(err, ErrConflict) {
 		t.Fatalf("occupied key: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 	var wg sync.WaitGroup
 	for range count {
 		wg.Go(func() {
-			a, e := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, RetryKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+			a, e := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 			results <- a
 			errs <- e
 		})
@@ -70,7 +70,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 		t.Fatalf("first-input allocation: %v %v", valid, err)
 	}
 	for _, kind := range []string{"interrupt", "cancel"} {
-		if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: kind, RetryKey: kind}); err != nil {
+		if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: kind, IdempotencyKey: kind}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -97,7 +97,7 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(a, retry) {
 				t.Fatalf("retry: %+v %v", retry, err)
 			}
-			_, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: a.SessionID, RetryKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+			_, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: a.SessionID, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 			if !errors.Is(err, ErrNotReady) {
 				t.Fatalf("Turn limit: %v", err)
 			}
@@ -114,12 +114,12 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				ctl, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: kind, RetryKey: kind})
+				ctl, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: kind, IdempotencyKey: kind})
 				if err != nil {
 					t.Fatal(err)
 				}
 				if kind == "interrupt" {
-					if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: "resume", HoldID: ctl.HoldID, RetryKey: "resume"}); err != nil {
+					if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: "resume", HoldID: ctl.HoldID, IdempotencyKey: "resume"}); err != nil {
 						t.Fatal(err)
 					}
 				}

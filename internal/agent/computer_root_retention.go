@@ -13,7 +13,7 @@ const retirableComputerRoots = `c.deleted_at IS NOT NULL AND (c.initial_root_id 
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=c.environment_id AND p.computer_id=c.id AND p.fenced_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('requested','captured'))
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints k WHERE k.environment_id=c.environment_id AND k.computer_id=c.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)`
+ AND NOT EXISTS(SELECT 1 FROM checkpoints k WHERE k.environment_id=c.environment_id AND k.computer_id=c.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)`
 
 func retireDeletedComputerRoots(ctx context.Context, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id FROM computers c WHERE `+retirableComputerRoots+` ORDER BY c.environment_id,c.id LIMIT 100 FOR NO KEY UPDATE OF c SKIP LOCKED`)

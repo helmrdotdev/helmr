@@ -19,7 +19,7 @@ func preparationResidentImage(t *testing.T) *preparationPublicationTest {
 	}
 	// Install the real published image through the admission operation; the
 	// resident fixture represents the later allocator-created process and lease.
-	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET initial_root_id=NULL,initial_root_digest=NULL,preparation_spec_id=$3,preparation_deadline_at=clock_timestamp()+interval '5 minutes' WHERE environment_id=$1 AND id=$2`, p.f.env, p.f.computer, p.f.deployment)
+	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET initial_root_id=NULL,initial_root_digest=NULL,image_spec_id=$3,preparation_deadline_at=clock_timestamp()+interval '5 minutes' WHERE environment_id=$1 AND id=$2`, p.f.env, p.f.computer, p.f.deployment)
 	if _, err := PinComputerImage(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked enqueue: %v", err)
 	}
 	shutdown, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
@@ -103,7 +103,7 @@ func TestPreparationImageRevocationLifecycleAndLease(t *testing.T) {
 	p := preparationResidentImage(t)
 	f := p.f.fixture
 	var instanceID string
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_instance_id::text FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instanceID); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id::text FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instanceID); err != nil {
 		t.Fatal(err)
 	}
 	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1}
@@ -143,9 +143,9 @@ func checkpointImageExposure(t *testing.T, f fixture) preparationFixture {
 		t.Fatal(err)
 	}
 	clear(key.Key)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations p SET status='succeeded',logical_bytes=1048576,capture_root='sha256:'||encode(c.initial_root_digest,'hex'),capture_evidence='fixture authenticated root' FROM computers c WHERE p.environment_id=$1 AND p.id=$2 AND c.environment_id=$1 AND c.id=$3;
- INSERT INTO computer_images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence) SELECT $1,$2,$4,$2,1,initial_root_id,'fixture lineage' FROM computers WHERE environment_id=$1 AND id=$3;
- UPDATE computers SET preparation_spec_id=$4,image_id=$2 WHERE environment_id=$1 AND id=$3;`, pgx.QueryExecModeSimpleProtocol, f.env, attempt.ID, f.computer, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds p SET status='succeeded',logical_bytes=1048576,capture_root='sha256:'||encode(c.initial_root_digest,'hex'),capture_evidence='fixture authenticated root' FROM computers c WHERE p.environment_id=$1 AND p.id=$2 AND c.environment_id=$1 AND c.id=$3;
+ INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence) SELECT $1,$2,$4,$2,1,initial_root_id,'fixture lineage' FROM computers WHERE environment_id=$1 AND id=$3;
+ UPDATE computers SET image_spec_id=$4,image_id=$2 WHERE environment_id=$1 AND id=$3;`, pgx.QueryExecModeSimpleProtocol, f.env, attempt.ID, f.computer, f.deployment)
 	return p
 }
 
@@ -186,7 +186,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 				t.Fatal(err)
 			}
 			var state string
-			if err = r.f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, r.f.env, r.manifest.CheckpointID).Scan(&state); err != nil {
+			if err = r.f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE environment_id=$1 AND id=$2`, r.f.env, r.manifest.CheckpointID).Scan(&state); err != nil {
 				t.Fatal(err)
 			}
 			want := "restoring"

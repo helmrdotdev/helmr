@@ -42,7 +42,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), retryKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
+	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
 }
 
 func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
@@ -56,7 +56,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			defer wg.Done()
 			req := f.request
 			if i == 2 {
-				req.retryKey = "different-key"
+				req.idempotencyKey = "different-key"
 			}
 			records[i], errs[i] = register(t.Context(), f.pool, req)
 		}()
@@ -70,7 +70,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			t.Fatal("same bundle created distinct deployments")
 		}
 	}
-	for table, want := range map[string]int{"deployments": 1, "deployment_events": 1, "platform_retry_keys": 2, "computer_preparation_specs": 1, "template_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
+	for table, want := range map[string]int{"deployments": 1, "deployment_events": 1, "idempotency_receipts": 2, "image_specs": 1, "template_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
 			t.Fatalf("%s=%d want %d: %v", table, count, want, err)
@@ -90,7 +90,7 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	if _, err := register(t.Context(), f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
-	for _, table := range []string{"deployments", "deployment_events", "platform_retry_keys", "computer_preparation_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
+	for _, table := range []string{"deployments", "deployment_events", "idempotency_receipts", "image_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("partial %s=%d: %v", table, count, err)
@@ -120,7 +120,7 @@ func TestRegisterPostgresRechecksScopeAndRetirement(t *testing.T) {
 				t.Fatalf("scope check: %v", err)
 			}
 			var count int
-			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys`).Scan(&count); err != nil || count != 0 {
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts`).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("unexpected receipt %d: %v", count, err)
 			}
 		})
@@ -215,19 +215,19 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		}
 		records = append(records, record)
 		var bindings int
-		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&bindings); err != nil || bindings != 2 {
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&bindings); err != nil || bindings != 2 {
 			t.Fatalf("Environment did not pin its own Secret: %d %v", bindings, err)
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret)
-		for _, key := range []string{request.retryKey, "same-bundle-new-key"} {
+		for _, key := range []string{request.idempotencyKey, "same-bundle-new-key"} {
 			replay := request
-			replay.retryKey = key
+			replay.idempotencyKey = key
 			got, err := register(t.Context(), f.pool, replay)
 			if err != nil || got.ID != record.ID {
 				t.Fatalf("revocation changed registered bundle replay: %+v %v", got, err)
 			}
 		}
-		request.retryKey = "new-bundle"
+		request.idempotencyKey = "new-bundle"
 		request.bundle.root.Digest = artifacttest.Digest("new bundle")
 		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, agent.ErrSecretUnavailable) {
 			t.Fatalf("new Deployment accepted revoked Secret: %v", err)
@@ -236,7 +236,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM deployments WHERE environment_id=$1`, env).Scan(&deployments); err != nil || deployments != 1 {
 			t.Fatalf("failed registration retained state: %d %v", deployments, err)
 		}
-		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&retained); err != nil || retained != 2 {
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&retained); err != nil || retained != 2 {
 			t.Fatalf("historical bindings changed: %d %v", retained, err)
 		}
 	}
@@ -244,7 +244,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		t.Fatal("cross-Environment Deployment identity reused")
 	}
 	var digests int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT spec_digest) FROM computer_preparation_specs`).Scan(&digests); err != nil || digests != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT spec_digest) FROM image_specs`).Scan(&digests); err != nil || digests != 1 {
 		t.Fatalf("logical definition changed across Environments: %d %v", digests, err)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type publicationAuthorization struct {
+type connectionAuthorization struct {
 	registration uuid.UUID
 	installation *uuid.UUID
 	revision     int64
@@ -20,23 +20,23 @@ type publicationAuthorization struct {
 	app          *string
 }
 
-func (s *CredentialStore) publicationAuthorization(ctx context.Context, org, user, publication uuid.UUID) (publicationAuthorization, error) {
-	var value publicationAuthorization
+func (s *CredentialStore) connectionAuthorization(ctx context.Context, org, user, connection uuid.UUID) (connectionAuthorization, error) {
+	var value connectionAuthorization
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM agent_publications p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.organization_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, publication, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
+		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, connection, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		return err
 	})
 	return value, err
 }
 
-func (s *CredentialStore) PublicationAuthorizationURL(ctx context.Context, org, user, publication uuid.UUID, state, redirect string) (string, error) {
-	value, err := s.publicationAuthorization(ctx, org, user, publication)
+func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, org, user, connection uuid.UUID, state, redirect string) (string, error) {
+	value, err := s.connectionAuthorization(ctx, org, user, connection)
 	if err != nil {
 		return "", err
 	}
@@ -44,13 +44,13 @@ func (s *CredentialStore) PublicationAuthorizationURL(ctx context.Context, org, 
 	return oauth.AuthorizationURL(state, redirect), nil
 }
 
-// AuthorizePublication performs remote exchange outside SQL locks, then verifies
+// AuthorizeConnection performs remote exchange outside SQL locks, then verifies
 // the unchanged registration and connection slot before attaching the grant.
-func (s *CredentialStore) AuthorizePublication(ctx context.Context, org, user, publication uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
+func (s *CredentialStore) AuthorizeConnection(ctx context.Context, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
 	if code == "" || len(code) > 4096 || redirect == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
-	observed, err := s.publicationAuthorization(ctx, org, user, publication)
+	observed, err := s.connectionAuthorization(ctx, org, user, connection)
 	if err != nil {
 		return uuid.Nil(), err
 	}
@@ -74,10 +74,10 @@ func (s *CredentialStore) AuthorizePublication(ctx context.Context, org, user, p
 			return uuid.Nil(), ErrOAuthAuthorization
 		}
 	}
-	return s.attachPublicationGrant(ctx, org, user, publication, observed, result.grant)
+	return s.attachConnectionGrant(ctx, org, user, connection, observed, result.grant)
 }
 
-func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user, publication uuid.UUID, observed publicationAuthorization, grant oauthGrant) (uuid.UUID, error) {
+func (s *CredentialStore) attachConnectionGrant(ctx context.Context, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
 	installation := uuid.NewV7()
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
@@ -85,55 +85,55 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		}
 		var revision int64
 		var app *string
-		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND organization_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, observed.registration, org).Scan(&revision, &app)
+		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, observed.registration, org).Scan(&revision, &app)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		if err != nil {
 			return err
 		}
 		if revision != observed.revision || app != nil && *app != grant.app {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
-		// Existing installation identities precede the Publication lock.
+		// Existing installation identities precede the connection lock.
 		var installedApp, team, bot string
 		var tokenRevision int64 = 1
 		if observed.installation != nil {
 			installation = *observed.installation
-			err = tx.QueryRow(ctx, `SELECT app_id,team_id,bot_user_id,credential_revision FROM slack_installations WHERE id=$1 AND app_registration_id=$2 AND organization_id=$3 AND disconnected_at IS NULL FOR NO KEY UPDATE`, installation, observed.registration, org).Scan(&installedApp, &team, &bot, &tokenRevision)
+			err = tx.QueryRow(ctx, `SELECT app_id,team_id,bot_user_id,credential_revision FROM slack_installations WHERE id=$1 AND app_registration_id=$2 AND org_id=$3 AND disconnected_at IS NULL FOR NO KEY UPDATE`, installation, observed.registration, org).Scan(&installedApp, &team, &bot, &tokenRevision)
 			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrPublicationUnavailable
+				return ErrConnectionUnavailable
 			}
 			if err != nil {
 				return err
 			}
 			if installedApp != grant.app || team != grant.team || bot != grant.bot {
-				return ErrPublicationUnavailable
+				return ErrConnectionUnavailable
 			}
 			tokenRevision++
 		}
 		var current *uuid.UUID
 		var environment uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT environment_id,slack_installation_id FROM agent_publications WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, publication, observed.registration).Scan(&environment, &current)
+		err = tx.QueryRow(ctx, `SELECT environment_id,slack_installation_id FROM slack_connections WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, connection, observed.registration).Scan(&environment, &current)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		if err != nil {
 			return err
 		}
 		if (current == nil) != (observed.installation == nil) || current != nil && *current != *observed.installation {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		var id uuid.UUID
 		if err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR SHARE`, environment, org).Scan(&id); err != nil {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		ciphertext, nonce, err := s.seal(org, installation, tokenRevision, grant.bundle)
 		if err != nil {
 			return err
 		}
 		if current == nil {
-			_, err = tx.Exec(ctx, `INSERT INTO slack_installations(id,organization_id,app_registration_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,credential_expires_at,granted_scopes,connected_by_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, installation, org, observed.registration, grant.app, grant.team, grant.bot, grant.workspace, tokenRevision, ciphertext, nonce, grant.bundle.ExpiresAt, grant.scopes, user)
+			_, err = tx.Exec(ctx, `INSERT INTO slack_installations(id,org_id,app_registration_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,credential_expires_at,granted_scopes,connected_by_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, installation, org, observed.registration, grant.app, grant.team, grant.bot, grant.workspace, tokenRevision, ciphertext, nonce, grant.bundle.ExpiresAt, grant.scopes, user)
 		} else {
 			if err = suppressInstallationPosts(ctx, tx, installation); err != nil {
 				return err
@@ -146,7 +146,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		if _, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET app_id=$2 WHERE id=$1 AND app_id IS NULL`, observed.registration, grant.app); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE agent_publications SET slack_installation_id=$2 WHERE id=$1 AND slack_installation_id IS NULL`, publication, installation)
+		_, err = tx.Exec(ctx, `UPDATE slack_connections SET slack_installation_id=$2 WHERE id=$1 AND slack_installation_id IS NULL`, connection, installation)
 		return err
 	})
 	if err != nil {

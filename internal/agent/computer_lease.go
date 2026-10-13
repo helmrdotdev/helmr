@@ -41,7 +41,7 @@ func RenewComputerLease(ctx context.Context, pool db.TxBeginner, host workergrou
 		}
 		// The time predicate runs after the ownership lock, including any lock wait.
 		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=GREATEST(expires_at,clock_timestamp()+interval '1 minute')
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
+ WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
 	})
@@ -113,8 +113,8 @@ func loseComputerProcesses(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 			continue
 		}
 		var save uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT cp.disk_save_id FROM computer_checkpoints cp
- JOIN computer_checkpoint_members m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
+		err := tx.QueryRow(ctx, `SELECT cp.disk_save_id FROM checkpoints cp
+ JOIN checkpoint_processes m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
  WHERE cp.environment_id=$1 AND cp.computer_id=$2 AND cp.status IN ('ready','restoring')
  AND (cp.source_lease_epoch=$3 OR cp.target_lease_epoch=$3) AND m.session_id=$4 AND m.process_epoch=$5`, env, computer, epoch, member.Session, member.Epoch).Scan(&save)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -187,7 +187,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		return err
 	}
 	var fenced bool
-	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
 		return err
 	}
 	if fenced {
@@ -198,19 +198,19 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		var bound bool
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(cp.status IN ('ready','restoring') AND cp.disk_save_id=l.restored_from_save_id
    AND cp.source_lease_epoch<l.epoch AND (cp.target_lease_epoch IS NULL OR cp.target_lease_epoch<=l.epoch),false)
-   FROM computer_checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id)=(cp.environment_id,cp.computer_id)
+   FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id)=(cp.environment_id,cp.computer_id)
    WHERE cp.environment_id=$1 AND cp.computer_id=$2 AND cp.id=$3 AND l.epoch=$4 FOR NO KEY UPDATE OF cp`, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint, identity.Epoch).Scan(&bound); err != nil {
 			return err
 		}
 		if !bound {
 			return ErrConflict
 		}
-		if _, err := tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='owning worker proved checkpoint contents invalid after physical cleanup',capture_request=NULL WHERE environment_id=$1 AND id=$2`, identity.EnvironmentID, invalidCheckpoint); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='owning worker proved checkpoint contents invalid after physical cleanup',capture_request=NULL WHERE environment_id=$1 AND id=$2`, identity.EnvironmentID, invalidCheckpoint); err != nil {
 			return err
 		}
 		for _, member := range members {
 			var captured bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_checkpoint_members WHERE environment_id=$1 AND checkpoint_id=$2 AND session_id=$3 AND process_epoch=$4)`, identity.EnvironmentID, invalidCheckpoint, member.Session, member.Epoch).Scan(&captured); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoint_processes WHERE environment_id=$1 AND checkpoint_id=$2 AND session_id=$3 AND process_epoch=$4)`, identity.EnvironmentID, invalidCheckpoint, member.Session, member.Epoch).Scan(&captured); err != nil {
 				return err
 			}
 			if !captured {
@@ -235,7 +235,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 	}
 	// Physical closure also settles an unfinished capture owned by this allocation.
 	// Disk publication is reconciled under the same Computer lock below.
-	if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL
+	if _, err = tx.Exec(ctx, `UPDATE checkpoints SET status='lost',terminal_evidence='physical owner unavailable without an eligible restore',capture_request=NULL
  WHERE environment_id=$1 AND computer_id=$2 AND COALESCE(target_lease_epoch,source_lease_epoch)=$3
  AND status IN ('capturing','sealed','aborting','consumed') AND controls_reconciled_at IS NULL`, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err

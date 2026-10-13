@@ -19,7 +19,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	}
 	version := values[0].VersionID
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id)
  VALUES($1,$2,$3,1,ARRAY['true'],'{}','',1000,'session',$4)`, f.env, command, f.computer, f.user)
 	// The same version may be exposed independently to all three typed owners.
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,1,$3,$4,0)`, f.env, f.session, f.secretID, version)
@@ -33,7 +33,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 		}
 	}
 	reject("no owner", "23514", `INSERT INTO secret_exposures(id,environment_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,0)`, f.env, f.secretID, version)
-	reject("multiple owners", "23514", `INSERT INTO secret_exposures(id,environment_id,preparation_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,$5,0)`, f.env, p.ID, command, f.secretID, version)
+	reject("multiple owners", "23514", `INSERT INTO secret_exposures(id,environment_id,image_build_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,$5,0)`, f.env, p.ID, command, f.secretID, version)
 	reject("missing process epoch", "23514", `INSERT INTO secret_exposures(id,environment_id,session_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, f.env, f.session, f.secretID, version)
 	reject("wrong process epoch", "23503", `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,9,$3,$4,0)`, f.env, f.session, f.secretID, version)
 	reject("unknown command", "23503", `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, f.env, uuid.NewV7(), f.secretID, version)
@@ -46,7 +46,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT id,current_version_id FROM secrets WHERE environment_id=$1 AND name='OTHER'`, other).Scan(&otherSecret, &otherVersion); err != nil {
 		t.Fatal(err)
 	}
-	reject("cross environment preparation", "23503", `INSERT INTO secret_exposures(id,environment_id,preparation_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, other, p.ID, otherSecret, otherVersion)
+	reject("cross environment preparation", "23503", `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, other, p.ID, otherSecret, otherVersion)
 	reject("cross environment process", "23503", `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,1,$3,$4,0)`, other, f.session, otherSecret, otherVersion)
 	reject("cross environment command", "23503", `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, other, command, otherSecret, otherVersion)
 	_, err = f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-exposure")
@@ -57,7 +57,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT current_version_id FROM secrets WHERE environment_id=$1 AND id=$2`, f.env, f.secretID).Scan(&next); err != nil {
 		t.Fatal(err)
 	}
-	for _, owner := range []string{"preparation_id", "command_id"} {
+	for _, owner := range []string{"image_build_id", "command_id"} {
 		id := p.ID
 		if owner == "command_id" {
 			id = command

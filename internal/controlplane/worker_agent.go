@@ -9,7 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -238,7 +238,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		var id string
-		var content json.RawMessage
+		var argument json.RawMessage
 		var decodeErr error
 		if method == agentv1.Operation_METHOD_OUTPUT {
 			var input struct {
@@ -246,14 +246,14 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 				Value    json.RawMessage `json:"value"`
 			}
 			decodeErr = decodeAgentPayload(payload, &input)
-			id, content = input.OutputID, input.Value
+			id, argument = input.OutputID, input.Value
 		} else {
 			var input struct {
 				ResponseID string          `json:"responseId"`
 				Value      json.RawMessage `json:"value"`
 			}
 			decodeErr = decodeAgentPayload(payload, &input)
-			id, content = input.ResponseID, input.Value
+			id, argument = input.ResponseID, input.Value
 		}
 		if decodeErr != nil {
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid content arguments"))
@@ -267,12 +267,12 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		value := json.RawMessage("null")
 		if method == agentv1.Operation_METHOD_OUTPUT {
 			var sequence int64
-			sequence, err = agent.RuntimeOutput(r.Context(), server.tx, host, execution, caller.TurnID, operation, content)
+			sequence, err = agent.RuntimeOutput(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
 			if err == nil {
 				value, _ = json.Marshal(map[string]int64{"sequence": sequence})
 			}
 		} else {
-			err = agent.RuntimeRespond(r.Context(), server.tx, host, execution, caller.TurnID, operation, content)
+			err = agent.RuntimeRespond(r.Context(), server.tx, host, execution, caller.TurnID, operation, argument)
 		}
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -353,7 +353,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		if server.slackConfig != nil {
 			preflight = server.slackConfig.Client
 		}
-		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, RetryKey: input.IdempotencyKey, Input: input.Input}
+		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}
 		var receipt agent.Admission
 		if method == agentv1.Operation_METHOD_SPAWN {
 			receipt, err = agent.Spawn(r.Context(), server.tx, server.secretProxy, caller, admission)
@@ -388,7 +388,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.SendTurn(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Message}, turn)
+		receipt, err := agent.SendTurn(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -433,7 +433,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		receipt, err := agent.ControlSession(r.Context(), server.tx, caller, agent.SessionControlRequest{
-			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, RetryKey: input.IdempotencyKey,
+			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, IdempotencyKey: input.IdempotencyKey,
 		})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -467,7 +467,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Input})
+		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -506,13 +506,13 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "root_session_required"
 	case errors.Is(err, agent.ErrMessageClosed):
 		code = "message_closed"
-	case errors.Is(err, conversation.ErrUnsupported):
+	case errors.Is(err, content.ErrUnsupported):
 		code = "content_kind_unsupported"
-	case errors.Is(err, conversation.ErrLimit):
+	case errors.Is(err, content.ErrLimit):
 		code = "content_limit_exceeded"
 	case errors.Is(err, agent.ErrResponseAlreadyStaged):
 		code = "response_already_staged"
-	case errors.Is(err, conversation.ErrInvalid):
+	case errors.Is(err, content.ErrInvalid):
 		code = "invalid_arguments"
 	case errors.Is(err, agent.ErrInvalidInput):
 		code = "invalid_arguments"
@@ -528,7 +528,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		return
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, agent.ErrSourceConversationPending) || errors.Is(err, agent.ErrSourceConversationUnavailable) || errors.Is(err, agent.ErrTargetNotPublished) || errors.Is(err, agent.ErrTargetWorkspaceMismatch) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrStartMessageTooLarge) || errors.Is(err, agent.ErrConversationChanged) || errors.Is(err, agent.ErrRootSessionRequired) || errors.Is(err, conversation.ErrLimit) || errors.Is(err, conversation.ErrUnsupported) || errors.Is(err, agent.ErrResponseAlreadyStaged) {
+	if errors.Is(err, agent.ErrSourceConversationPending) || errors.Is(err, agent.ErrSourceConversationUnavailable) || errors.Is(err, agent.ErrTargetNotPublished) || errors.Is(err, agent.ErrTargetWorkspaceMismatch) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrStartMessageTooLarge) || errors.Is(err, agent.ErrConversationChanged) || errors.Is(err, agent.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, agent.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))

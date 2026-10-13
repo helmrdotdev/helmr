@@ -42,7 +42,7 @@ func lockComputer(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error
 	return tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, computer).Scan(&id)
 }
 
-const leaseColumns = `l.environment_id,l.computer_id,l.computer_instance_id,l.epoch,l.worker_host_id,l.worker_epoch,l.status,l.expires_at,l.fenced_at`
+const leaseColumns = `l.environment_id,l.computer_id,l.allocation_id,l.epoch,l.worker_host_id,l.worker_epoch,l.status,l.expires_at,l.fenced_at`
 
 func readLease(row pgx.Row) (Lease, error) {
 	var l Lease
@@ -52,12 +52,12 @@ func readLease(row pgx.Row) (Lease, error) {
 
 // lockCommandLease reads only the immutable historical assignment. In particular,
 // a pending Command does not acquire whichever newer lease happens to exist.
-func lockCommandLease(ctx context.Context, tx pgx.Tx, target db.GetComputerCommandTargetRow, id uuid.UUID) (Lease, error) {
+func lockCommandLease(ctx context.Context, tx pgx.Tx, target db.GetCommandTargetRow, id uuid.UUID) (Lease, error) {
 	env, computer := uuid.UUID(target.EnvironmentID.Bytes), uuid.UUID(target.ComputerID.Bytes)
 	if err := lockComputer(ctx, tx, env, computer); err != nil {
 		return Lease{}, err
 	}
-	l, err := readLease(tx.QueryRow(ctx, `SELECT `+leaseColumns+` FROM computer_leases l JOIN computer_commands c
+	l, err := readLease(tx.QueryRow(ctx, `SELECT `+leaseColumns+` FROM computer_leases l JOIN commands c
  ON (c.environment_id,c.computer_id,c.computer_lease_epoch)=(l.environment_id,l.computer_id,l.epoch)
  WHERE c.environment_id=$1 AND c.id=$2 FOR NO KEY UPDATE OF l`, env, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -76,7 +76,7 @@ func producerStillAuthorized(ctx context.Context, tx db.DBTX, host workergroup.H
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l
  JOIN worker_hosts h ON h.id=l.worker_host_id AND h.current_epoch=l.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
- WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.computer_instance_id=$4
+ WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.allocation_id=$4
  AND l.worker_host_id=$5 AND l.worker_epoch=$6 AND h.worker_group_id=$7
  AND h.claim_version=$8 AND g.claim_version=$9 AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()
@@ -90,6 +90,6 @@ func producerStillAuthorized(ctx context.Context, tx db.DBTX, host workergroup.H
 	return nil
 }
 
-func lockCommand(ctx context.Context, tx pgx.Tx, env, computer, id uuid.UUID) (db.ComputerCommand, error) {
-	return db.New(tx).LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: pgvalue.UUID(env), ComputerID: pgvalue.UUID(computer), CommandID: pgvalue.UUID(id)})
+func lockCommand(ctx context.Context, tx pgx.Tx, env, computer, id uuid.UUID) (db.Command, error) {
+	return db.New(tx).LockCommand(ctx, db.LockCommandParams{EnvironmentID: pgvalue.UUID(env), ComputerID: pgvalue.UUID(computer), CommandID: pgvalue.UUID(id)})
 }

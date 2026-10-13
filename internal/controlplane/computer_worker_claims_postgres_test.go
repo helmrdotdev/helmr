@@ -148,17 +148,17 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 		{name: "completion", path: "/worker/v1/computer-commands/complete", handler: func(s *Server) http.HandlerFunc { return s.workerCompleteComputerCommand },
 			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				code := int32(0)
-				if err := client.CompleteComputerCommand(t.Context(), workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}); err != nil {
+				if err := client.CompleteComputerCommand(t.Context(), workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), AllocationID: instance.String(), WriterGeneration: generation, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}); err != nil {
 					t.Fatalf("completion across drain: %v", err)
 				}
 				var completed bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM computer_commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.Worker).Scan(&completed); err != nil || !completed {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.Worker).Scan(&completed); err != nil || !completed {
 					t.Fatalf("completion was not durable on the draining host: %v %v", completed, err)
 				}
 			}},
 		{name: "claim", path: "/worker/v1/computer-commands/claim", handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
 			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
+				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), AllocationID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("claim across drain: %v", err)
 				}
@@ -168,7 +168,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			}},
 		{name: "cancellation", path: "/worker/v1/computer-commands/claim", stopping: true, handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
 			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
+				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), AllocationID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("cancellation claim across drain: %v", err)
 				}
@@ -178,7 +178,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			}},
 		{name: "log append", path: "/worker/v1/computer-commands/logs/append", handler: func(s *Server) http.HandlerFunc { return s.workerAppendCommandLogs },
 			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				if _, err := client.AppendCommandLog(t.Context(), workerapi.CommandLogAppendRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}); err != nil {
+				if _, err := client.AppendCommandLog(t.Context(), workerapi.CommandLogAppendRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), AllocationID: instance.String(), WriterGeneration: generation, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}); err != nil {
 					t.Fatalf("log append across drain: %v", err)
 				}
 				var accepted int
@@ -191,7 +191,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			f := agenttest.New(t)
 			command, instance, generation := runningComputerCommand(t, f)
 			if test.stopping {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
 			}
 			server := &Server{db: db.New(f.Pool), tx: f.Pool, diagnosticDB: f.Pool, diagnosticBounds: completeServerConfig(t).DiagnosticBounds, secretDelivery: emptyTestSecretDelivery{}}
 			race := newWorkerClaimsRace(t, f, server, map[string]http.HandlerFunc{test.path: test.handler(server)}, map[string]func(context.Context) error{test.path: drainWorkerHost(f)})
@@ -211,7 +211,7 @@ func TestSecretProxyReauthenticatesAcrossDrain(t *testing.T) {
 			}
 			race := newWorkerClaimsRace(t, f.fixture, f.server, map[string]http.HandlerFunc{path: handler}, map[string]func(context.Context) error{path: drainWorkerHost(f.fixture)})
 			if resolve {
-				resolution, err := race.client.ResolveSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
+				resolution, err := race.client.ResolveSecretProxy(t.Context(), workerapi.SecretProxyRequest{AllocationID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
 				if err != nil {
 					t.Fatalf("resolve across drain: %v", err)
 				}
@@ -219,7 +219,7 @@ func TestSecretProxyReauthenticatesAcrossDrain(t *testing.T) {
 					t.Fatal("replayed resolution returned different material")
 				}
 			} else {
-				preparation, err := race.client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String()})
+				preparation, err := race.client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{AllocationID: f.instance.String()})
 				if err != nil {
 					t.Fatalf("prepare across drain: %v", err)
 				}

@@ -51,7 +51,7 @@ func (i *DiagnosticIngester) Run(ctx context.Context) error {
 	defer func() { cancel(); jobs.Wait() }()
 	for ctx.Err() == nil {
 		started := time.Now()
-		for _, kind := range []string{"session", "computer_preparation", "computer_command"} {
+		for _, kind := range []string{"session", "image_build", "computer_command"} {
 			if err := i.ExportOnce(ctx, kind); err != nil {
 				// Sink error strings can include customer payloads. Keep those out of
 				// platform logs; pending counts and oldest acceptance identify the backlog.

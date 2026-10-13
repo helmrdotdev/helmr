@@ -23,9 +23,9 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 			return err
 		}
 		var checkpoint uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT cp.id FROM computer_leases l JOIN computer_checkpoints cp
+		err := tx.QueryRow(ctx, `SELECT cp.id FROM computer_leases l JOIN checkpoints cp
  ON (cp.environment_id,cp.computer_id,cp.disk_save_id)=(l.environment_id,l.computer_id,l.restored_from_save_id)
- WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.computer_instance_id=$4
+ WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.allocation_id=$4
  AND l.worker_host_id=$5 AND l.worker_epoch=$6 AND l.delivered_at IS NOT NULL
  AND cp.status IN ('ready','restoring')`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&checkpoint)
 		if err != nil {
@@ -63,7 +63,7 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 			return ErrNotReady
 		}
 		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT manifest FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, identity.EnvironmentID, checkpoint).Scan(&raw); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT manifest FROM checkpoints WHERE environment_id=$1 AND id=$2`, identity.EnvironmentID, checkpoint).Scan(&raw); err != nil {
 			return err
 		}
 		if json.Unmarshal(raw, &result) != nil {

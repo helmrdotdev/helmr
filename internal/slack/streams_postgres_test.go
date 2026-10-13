@@ -176,7 +176,7 @@ func observedStream(t *testing.T, f statusFixture, post uuid.UUID, value, native
 		t.Fatal(err)
 	}
 	var message observedMessage
-	if err = f.Pool.QueryRow(t.Context(), `SELECT i.app_id,i.bot_user_id,c.slack_channel_id,t.thread_ts FROM slack_installations i JOIN slack_channels c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id WHERE t.id=$1`, f.thread).Scan(&message.AppID, &message.User, &message.Channel, &message.Thread); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT i.app_id,i.bot_user_id,c.slack_channel_id,t.thread_ts FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id WHERE t.id=$1`, f.thread).Scan(&message.AppID, &message.User, &message.Channel, &message.Thread); err != nil {
 		t.Fatal(err)
 	}
 	message.Timestamp = "123.790"
@@ -460,7 +460,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_payload IS NULL AND inflight_attempt_id IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
 				t.Fatal("confirmed crash left content copy or lost repair", safe, err)
 			}
-			if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", RetryKey: "retire"}); err != nil {
+			if _, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
 				t.Fatal(err)
 			}
 			// The fixture supplies physical fencing and consumed lifecycle events; the
@@ -468,7 +468,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1;
  UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=1,history_eligible_at=statement_timestamp()-interval '2 seconds',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-1 WHERE id=$1;
  UPDATE slack_thread_sources p SET projected_event_seq=s.next_event_seq-1 FROM sessions s WHERE s.environment_id=p.environment_id AND s.id=p.session_id AND s.id=$1;
- UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.Session, f.publication)
+ UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.Session, f.publication)
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			done := make(chan error, 1)
 			go func() {

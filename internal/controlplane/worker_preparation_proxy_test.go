@@ -37,21 +37,21 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.Environment, f.Deployment, secretID, marker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.Environment, f.Deployment, secretID, marker)
 	var now, deadline time.Time
-	if err := f.Pool.QueryRow(t.Context(), `SELECT clock_timestamp(),deadline_at FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.Environment, executor.Identity.OwnerID).Scan(&now, &deadline); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT clock_timestamp(),deadline_at FROM image_builds WHERE environment_id=$1 AND id=$2`, f.Environment, executor.Identity.OwnerID).Scan(&now, &deadline); err != nil {
 		t.Fatal(err)
 	}
 	trust, err := store.GeneratePreparationProxyTrust(f.Environment, uuid.MustParse(executor.Identity.OwnerID), now, deadline)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, f.Environment, executor.Identity.OwnerID, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, f.Environment, executor.Identity.OwnerID, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.SecretProxy = store; cfg.SecretDelivery = store }))
 	defer server.Close()
 	auth := seedHostSecret(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
-	request := workerapi.SecretProxyRequest{ComputerInstanceID: executor.Identity.InstanceID}
+	request := workerapi.SecretProxyRequest{AllocationID: executor.Identity.AllocationID}
 	leaf, err := client.PrepareSecretProxy(t.Context(), request)
 	if err != nil || len(leaf.PrivateKey) == 0 || len(leaf.Origins) != 1 {
 		t.Fatalf("host transport preparation: %v", err)
@@ -94,7 +94,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if response, err := client.ResolveSecretProxy(t.Context(), request); err == nil || len(response.Values) > 0 {
 		t.Fatal("wrong origin resolved")
 	}
-	prepareJSON, _ := json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: executor.Identity.InstanceID})
+	prepareJSON, _ := json.Marshal(workerapi.SecretProxyRequest{AllocationID: executor.Identity.AllocationID})
 	httpResponse := postAgentComputerJSON(t, server, auth, "/worker/v1/run/secret-proxy/prepare", prepareJSON)
 	httpResponse.Body.Close()
 	if httpResponse.StatusCode != http.StatusOK || httpResponse.Header.Get("Cache-Control") != "no-store" {
@@ -107,7 +107,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if response, err := client.ResolveSecretProxy(t.Context(), request); err == nil || len(response.Values) > 0 {
 		t.Fatal("failed attempt resolved")
 	}
-	if response, err := client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: executor.Identity.InstanceID}); err == nil || len(response.PrivateKey) > 0 {
+	if response, err := client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{AllocationID: executor.Identity.AllocationID}); err == nil || len(response.PrivateKey) > 0 {
 		clear(response.PrivateKey)
 		t.Fatal("failed attempt received a leaf")
 	}

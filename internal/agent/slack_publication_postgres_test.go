@@ -20,7 +20,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind == "publication" {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 			} else {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, installation)
 			}
@@ -30,7 +30,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrSourceConversationUnavailable) {
 				t.Fatal(err)
 			}
-			req.RetryKey = "child"
+			req.IdempotencyKey = "child"
 			child, err := Spawn(t.Context(), f.pool, nil, caller, req)
 			if err != nil {
 				t.Fatal(err)

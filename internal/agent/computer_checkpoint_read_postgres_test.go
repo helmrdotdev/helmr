@@ -13,7 +13,7 @@ func TestComputerCheckpointReadRequiresExactLiveRestoreAllocation(t *testing.T) 
 		t.Run(change, func(t *testing.T) {
 			f := newComputerRestoreFixture(t)
 			id := ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, Epoch: f.epoch}
-			if err := f.f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, id.EnvironmentID, id.ComputerID, id.Epoch).Scan(&id.InstanceID); err != nil {
+			if err := f.f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, id.EnvironmentID, id.ComputerID, id.Epoch).Scan(&id.InstanceID); err != nil {
 				t.Fatal(err)
 			}
 			host := f.host
@@ -31,9 +31,9 @@ func TestComputerCheckpointReadRequiresExactLiveRestoreAllocation(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, id.EnvironmentID, id.ComputerID, id.Epoch)
 			case "consumed", "aborting":
-				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_checkpoints SET status=$2 WHERE id=$1`, f.manifest.CheckpointID, change)
+				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status=$2 WHERE id=$1`, f.manifest.CheckpointID, change)
 			case "corrupt":
-				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_checkpoints SET manifest=decode('00','hex') WHERE id=$1`, f.manifest.CheckpointID)
+				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET manifest=decode('00','hex') WHERE id=$1`, f.manifest.CheckpointID)
 			case "revoked":
 				dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='test' WHERE environment_id=$1 AND id=$2`, id.EnvironmentID, id.ComputerID)
 			}

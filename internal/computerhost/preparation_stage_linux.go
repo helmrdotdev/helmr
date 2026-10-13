@@ -23,7 +23,7 @@ func (p *PreparedMachines) stagePreparation(ctx context.Context, stage *preparat
 		return err
 	}
 	stage.disk = file
-	stage.images, err = p.prepareProgramArtifacts(ctx, stage.directory, identity.InstanceID, &start.Program)
+	stage.images, err = p.prepareProgramArtifacts(ctx, stage.directory, identity.AllocationID, &start.Program)
 	if err != nil {
 		return err
 	}

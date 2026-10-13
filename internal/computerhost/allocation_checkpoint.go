@@ -75,7 +75,7 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 		return err
 	}
 	envelope := capture.GetEnvelope()
-	if capture.GetCheckpointId() != id || envelope.GetComputerId() != o.identity.OwnerID || envelope.GetComputerInstanceId() != o.identity.InstanceID || envelope.GetWriterGeneration() != uint64(o.identity.Epoch) || envelope.GetChannelCredential() != delivery.ChannelCredential {
+	if capture.GetCheckpointId() != id || envelope.GetComputerId() != o.identity.OwnerID || envelope.GetComputerInstanceId() != o.identity.AllocationID || envelope.GetWriterGeneration() != uint64(o.identity.Epoch) || envelope.GetChannelCredential() != delivery.ChannelCredential {
 		return errors.New("capture differs from physical allocation")
 	}
 	if _, err := uuid.Parse(response.SaveID); err != nil {
@@ -296,7 +296,7 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 	if err != nil {
 		return m, nil, err
 	}
-	m.InstanceID, err = uuid.Parse(o.identity.InstanceID)
+	m.InstanceID, err = uuid.Parse(o.identity.AllocationID)
 	if err != nil {
 		return m, nil, err
 	}
@@ -317,7 +317,7 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 	if err != nil {
 		return m, nil, err
 	}
-	parent := filepath.Join(o.machines.computerPreparationDirectory(o.identity.InstanceID, o.identity.Epoch), "checkpoint")
+	parent := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "checkpoint")
 	if err = os.MkdirAll(parent, 0700); err != nil {
 		return m, nil, err
 	}

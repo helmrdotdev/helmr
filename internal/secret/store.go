@@ -95,7 +95,7 @@ func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string
 	return secretFromCreate(row), nil
 }
 
-// ErrMutationConflict means a retry key was reused with different content.
+// ErrMutationConflict means a idempotency key was reused with different content.
 var ErrMutationConflict = errors.New("secret retry identity conflicts with its original request")
 var ErrInvalidMutation = errors.New("invalid Secret mutation")
 
@@ -112,7 +112,7 @@ func mutationKey(raw string, required bool) (string, error) {
 
 // Create serializes Environment-owned name and retry identities. Its first
 // encrypted version is the immutable value receipt, even after rotation/revocation.
-func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []byte, retryKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -122,7 +122,7 @@ func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []
 	if err := secretname.Validate(name); err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
-	key, err := mutationKey(retryKey, false)
+	key, err := mutationKey(idempotencyKey, false)
 	if err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
@@ -163,11 +163,11 @@ func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []
 }
 
 // Rotate binds retries to the exact encrypted version and never rewrites pins.
-func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, retryKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	key, err := mutationKey(retryKey, true)
+	key, err := mutationKey(idempotencyKey, true)
 	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
 		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
 	}
@@ -215,11 +215,11 @@ func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, ret
 }
 
 // Revoke records intent, never a claim that physical execution has stopped.
-func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, retryKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	key, err := mutationKey(retryKey, false)
+	key, err := mutationKey(idempotencyKey, false)
 	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
 		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
 	}

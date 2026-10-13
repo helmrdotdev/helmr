@@ -50,9 +50,9 @@ func (p *PreparationPublisher) BeginCapture(ctx context.Context, host workergrou
 		}
 		var complete bool
 		if err := tx.QueryRow(ctx, `SELECT p.write_key_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM computer_secret_bindings binding WHERE binding.environment_id=s.environment_id AND binding.preparation_spec_id=s.id AND NOT EXISTS (
-      SELECT 1 FROM secret_exposures x WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND x.secret_id=binding.secret_id))
-   FROM computer_preparations p JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(p.environment_id,p.preparation_spec_id)
+    SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=s.environment_id AND binding.image_spec_id=s.id AND NOT EXISTS (
+      SELECT 1 FROM secret_exposures x WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id))
+   FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
    WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&complete); err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func (p *PreparationPublisher) BeginCapture(ctx context.Context, host workergrou
 			return ErrNotReady
 		}
 		var capacity int64
-		if err := tx.QueryRow(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,logical_bytes=COALESCE(logical_bytes,$3) WHERE environment_id=$1 AND id=$2 RETURNING logical_bytes`, ref.EnvironmentID, ref.PreparationID, logicalBytes).Scan(&capacity); err != nil {
+		if err := tx.QueryRow(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,logical_bytes=COALESCE(logical_bytes,$3) WHERE environment_id=$1 AND id=$2 RETURNING logical_bytes`, ref.EnvironmentID, ref.PreparationID, logicalBytes).Scan(&capacity); err != nil {
 			return err
 		}
 		if capacity != logicalBytes {
@@ -143,7 +143,7 @@ func (p *PreparationPublisher) Capture(ctx context.Context, host workergroup.Hos
 			return ErrConflict
 		}
 		var prior *string
-		if err = tx.QueryRow(ctx, `SELECT capture_root FROM computer_preparations WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&prior); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT capture_root FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&prior); err != nil {
 			return err
 		}
 		if prior != nil {
@@ -155,7 +155,7 @@ func (p *PreparationPublisher) Capture(ctx context.Context, host workergroup.Hos
 		if done {
 			return ErrConflict
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_preparations SET capture_root=$3,capture_evidence=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, identity, evidence); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE image_builds SET capture_root=$3,capture_evidence=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, identity, evidence); err != nil {
 			return err
 		}
 		return checkPreparationExecutor(ctx, tx, host, ref, true)
@@ -173,7 +173,7 @@ func (p *PreparationPublisher) Publish(ctx context.Context, host workergroup.Hos
 			return err
 		}
 		var captured *string
-		if err = tx.QueryRow(ctx, `SELECT capture_root FROM computer_preparations WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&captured); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT capture_root FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&captured); err != nil {
 			return err
 		}
 		if captured == nil {
@@ -189,7 +189,7 @@ func (p *PreparationPublisher) Publish(ctx context.Context, host workergroup.Hos
 		if err != nil {
 			return ErrConflict
 		}
-		stored, err := db.New(tx).LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: scope.environmentID, Digest: root.Pack.Digest})
+		stored, err := db.New(tx).LockDiskObject(ctx, db.LockDiskObjectParams{EnvironmentID: scope.environmentID, Digest: root.Pack.Digest})
 		if err != nil {
 			return saveObjectMissing(err)
 		}
@@ -214,20 +214,20 @@ func (p *PreparationPublisher) Publish(ctx context.Context, host workergroup.Hos
 		if err != nil {
 			return err
 		}
-		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, params)
+		rootID, err := db.New(tx).RetainDiskRoot(ctx, params)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO computer_images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence)
- SELECT p.environment_id,$5,p.preparation_spec_id,p.id,COALESCE((SELECT max(i.seq) FROM computer_images i WHERE i.environment_id=p.environment_id AND i.preparation_spec_id=p.preparation_spec_id),0)+1,$3,$4
- FROM computer_preparations p WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID, rootID, evidence, uuid.NewV7()); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence)
+ SELECT p.environment_id,$5,p.image_spec_id,p.id,COALESCE((SELECT max(i.seq) FROM images i WHERE i.environment_id=p.environment_id AND i.image_spec_id=p.image_spec_id),0)+1,$3,$4
+ FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID, rootID, evidence, uuid.NewV7()); err != nil {
 			return err
 		}
 		// Recheck expiry after any graph/FK lock waits, before changing status.
 		if err = checkPreparationExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='succeeded' WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID)
+		_, err = tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='succeeded' WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID)
 		return err
 	}))
 }
@@ -251,7 +251,7 @@ func lockPreparationStorage(ctx context.Context, tx pgx.Tx, host workergroup.Hos
 	var state string
 	var capacity *int64
 	var key *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT p.status,p.logical_bytes,p.write_key_id,e.org_id,e.project_id FROM computer_preparations p JOIN environments e ON e.id=p.environment_id WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&state, &capacity, &key, &scope.orgID, &scope.projectID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT p.status,p.logical_bytes,p.write_key_id,e.org_id,e.project_id FROM image_builds p JOIN environments e ON e.id=p.environment_id WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&state, &capacity, &key, &scope.orgID, &scope.projectID); err != nil {
 		return scope, false, err
 	}
 	done := state == "succeeded"

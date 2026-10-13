@@ -13,7 +13,7 @@ import (
 )
 
 func TestCommandOutcomeSeparatesFailureExitAndReconciliation(t *testing.T) {
-	base := db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), ComputerLeaseEpoch: pgtype.Int8{Int64: 1, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now()), Status: db.ComputerCommandStatusFailed, ExitCode: pgtype.Int4{Int32: 0, Valid: true}, FailureReason: pgvalue.Text("scope_termination_failed")}
+	base := db.Command{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), ComputerLeaseEpoch: pgtype.Int8{Int64: 1, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now()), Status: db.ComputerCommandStatusFailed, ExitCode: pgtype.Int4{Int32: 0, Valid: true}, FailureReason: pgvalue.Text("scope_termination_failed")}
 	info, err := publicCommandInfo(base)
 	if err != nil || info.Outcome == nil || info.Outcome.Kind != "system_failed" || info.Outcome.Failure.Reason != "scope_termination_failed" || info.Outcome.ExitCode == nil || *info.Outcome.ExitCode != 0 || info.ProcessReconciled {
 		t.Fatalf("info=%+v err=%v", info, err)
@@ -34,7 +34,7 @@ func TestCommandOutcomeSeparatesFailureExitAndReconciliation(t *testing.T) {
 }
 
 func TestPreparationExhaustedCommandIsDispatchFailure(t *testing.T) {
-	info, err := publicCommandInfo(db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_preparation_exhausted"), FailureReason: pgvalue.Text("dispatch_failed")})
+	info, err := publicCommandInfo(db.Command{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_preparation_exhausted"), FailureReason: pgvalue.Text("dispatch_failed")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,17 +48,17 @@ func TestPreparationExhaustedCommandIsDispatchFailure(t *testing.T) {
 func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		command db.ComputerCommand
+		command db.Command
 	}{
-		{"pending", db.ComputerCommand{Status: db.ComputerCommandStatusPending}},
-		{"starting", db.ComputerCommand{Status: db.ComputerCommandStatusStarting}},
-		{"running", db.ComputerCommand{Status: db.ComputerCommandStatusRunning}},
-		{"stopping", db.ComputerCommand{Status: db.ComputerCommandStatusStopping}},
-		{"exited", db.ComputerCommand{Status: db.ComputerCommandStatusExited, ExitCode: pgtype.Int4{Int32: 17, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now())}},
-		{"timed_out", db.ComputerCommand{Status: db.ComputerCommandStatusTimedOut, TerminalAt: pgvalue.Timestamptz(time.Now())}},
-		{"cancelled", db.ComputerCommand{Status: db.ComputerCommandStatusCancelled, TerminalAt: pgvalue.Timestamptz(time.Now())}},
-		{"lost", db.ComputerCommand{Status: db.ComputerCommandStatusLost, FailureReason: pgvalue.Text("guest_failure"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
-		{"failed", db.ComputerCommand{Status: db.ComputerCommandStatusFailed, FailureReason: pgvalue.Text("dispatch_failed"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"pending", db.Command{Status: db.ComputerCommandStatusPending}},
+		{"starting", db.Command{Status: db.ComputerCommandStatusStarting}},
+		{"running", db.Command{Status: db.ComputerCommandStatusRunning}},
+		{"stopping", db.Command{Status: db.ComputerCommandStatusStopping}},
+		{"exited", db.Command{Status: db.ComputerCommandStatusExited, ExitCode: pgtype.Int4{Int32: 17, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"timed_out", db.Command{Status: db.ComputerCommandStatusTimedOut, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"cancelled", db.Command{Status: db.ComputerCommandStatusCancelled, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"lost", db.Command{Status: db.ComputerCommandStatusLost, FailureReason: pgvalue.Text("guest_failure"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"failed", db.Command{Status: db.ComputerCommandStatusFailed, FailureReason: pgvalue.Text("dispatch_failed"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.command.ID, test.command.ComputerID = pgvalue.NewUUIDv7(), pgvalue.NewUUIDv7()
@@ -77,7 +77,7 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 			}
 		})
 	}
-	if _, err := publicCommandInfo(db.ComputerCommand{ID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, ResultPrunedAt: pgvalue.Timestamptz(time.Now())}); errorStatus(err) != http.StatusGone {
+	if _, err := publicCommandInfo(db.Command{ID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, ResultPrunedAt: pgvalue.Timestamptz(time.Now())}); errorStatus(err) != http.StatusGone {
 		t.Fatalf("pruned result = %v", err)
 	}
 }

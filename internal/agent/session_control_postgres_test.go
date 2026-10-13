@@ -11,7 +11,7 @@ import (
 )
 
 func controlRequest(f fixture, kind, key string) SessionControlRequest {
-	return SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: kind, RetryKey: key}
+	return SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: kind, IdempotencyKey: key}
 }
 
 func ownedFixture(t *testing.T, f fixture) fixture {
@@ -139,7 +139,7 @@ func TestSessionRuntimeControlsCannotEscapeOwnershipOrReleaseExternalHolds(t *te
 			issuerID = f.user
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,$2,$3,'local','requires external recovery',$4,$5)`, f.env, hold, child.session, issuer, issuerID)
-		resume.RetryKey, resume.HoldID = issuer, hold
+		resume.IdempotencyKey, resume.HoldID = issuer, hold
 		if _, err := ControlSession(t.Context(), f.pool, caller, resume); !errors.Is(err, ErrDenied) {
 			t.Fatalf("runtime released %s hold: %v", issuer, err)
 		}
@@ -298,7 +298,7 @@ func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	resume.RetryKey, resume.HoldID = "human", human.HoldID
+	resume.IdempotencyKey, resume.HoldID = "human", human.HoldID
 	if _, err := ControlSession(t.Context(), f.pool, caller, resume); !errors.Is(err, ErrDenied) {
 		t.Fatalf("key released human hold without attribution: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestSessionLocalHoldReleaseDoesNotInvalidateHealthyChild(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, child.session).Scan(&generation); err != nil || generation != 1 {
 		t.Fatalf("local recovery invalidated healthy child: %d %v", generation, err)
 	}
-	resume.RetryKey = "new-noop"
+	resume.IdempotencyKey = "new-noop"
 	if _, err := ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}

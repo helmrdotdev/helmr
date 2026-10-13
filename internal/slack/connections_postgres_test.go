@@ -10,9 +10,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
+func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	if err := store.DisconnectPublication(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+	if err := store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	var erased bool
@@ -21,11 +21,11 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	var wg sync.WaitGroup
-	results := make(chan PublicationSetup, 8)
+	results := make(chan ConnectionSetup, 8)
 	failures := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			setup, err := BeginPublication(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+			setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
 			if err != nil {
 				failures <- err
 			} else {
@@ -36,7 +36,7 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 	wg.Wait()
 	close(results)
 	close(failures)
-	var setup PublicationSetup
+	var setup ConnectionSetup
 	count := 0
 	for value := range results {
 		setup = value
@@ -46,7 +46,7 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 		t.Fatalf("created %d pending connections", count)
 	}
 	for err := range failures {
-		if !errors.Is(err, ErrPublicationUnavailable) {
+		if !errors.Is(err, ErrConnectionUnavailable) {
 			t.Fatal(err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 	if err = store.StoreAppCredentials(t.Context(), org, uuid.NewV7(), setup.RegistrationID, secret); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("nonmember wrote secrets", err)
 	}
-	if err = store.DisconnectPublication(t.Context(), org, f.User, f.Environment, setup.ID); err != nil {
+	if err = store.DisconnectConnection(t.Context(), org, f.User, f.Environment, setup.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.appCredentials(t.Context(), setup.RegistrationID); !errors.Is(err, errCredentialUnavailable) {
@@ -98,7 +98,7 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT retired_at IS NOT NULL AND credential_ciphertext IS NULL AND credential_nonce IS NULL AND credential_revision>0 AND client_id='client' FROM slack_app_registrations WHERE id=$1`, setup.RegistrationID).Scan(&erased); err != nil || !erased {
 		t.Fatal("pending disconnect retained secrets or erased identity", err)
 	}
-	next, err := BeginPublication(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	next, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
 	if err != nil || next.ID == setup.ID || next.RegistrationID == setup.RegistrationID {
 		t.Fatal("discard revived generation", err)
 	}
@@ -108,13 +108,13 @@ func TestPublicationPendingSlotAndCredentialCustody(t *testing.T) {
 	}
 }
 
-func TestPublicationGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
+func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	if err := store.DisconnectPublication(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+	if err := store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	setup, err := BeginPublication(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,34 +122,34 @@ func TestPublicationGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, credentials); err != nil {
 		t.Fatal(err)
 	}
-	observed, err := store.publicationAuthorization(t.Context(), org, f.User, setup.ID)
+	observed, err := store.connectionAuthorization(t.Context(), org, f.User, setup.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant := refreshResult().grant
 	grant.app = "dedicated-app"
-	installation, err := store.attachPublicationGrant(t.Context(), org, f.User, setup.ID, observed, grant)
+	installation, err := store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachPublicationGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrPublicationUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("repeated callback created another installation", err)
 	}
 	var pin bool
-	if err = f.Pool.QueryRow(t.Context(), `SELECT p.slack_installation_id=$2 AND i.app_registration_id=p.slack_app_registration_id AND r.app_id=i.app_id AND r.organization_id=i.organization_id FROM agent_publications p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, setup.ID, installation).Scan(&pin); err != nil || !pin {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT p.slack_installation_id=$2 AND i.app_registration_id=p.slack_app_registration_id AND r.app_id=i.app_id AND r.org_id=i.org_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, setup.ID, installation).Scan(&pin); err != nil || !pin {
 		t.Fatal("grant identity not pinned", err)
 	}
 
-	observed, err = store.publicationAuthorization(t.Context(), org, f.User, setup.ID)
+	observed, err = store.connectionAuthorization(t.Context(), org, f.User, setup.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other := grant
 	other.bot = "another-bot"
-	if _, err = store.attachPublicationGrant(t.Context(), org, f.User, setup.ID, observed, other); !errors.Is(err, ErrPublicationUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, other); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("sender identity replaced", err)
 	}
-	repaired, err := store.attachPublicationGrant(t.Context(), org, f.User, setup.ID, observed, grant)
+	repaired, err := store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant)
 	if err != nil || repaired != installation {
 		t.Fatal("same identity repair changed generation", err)
 	}
@@ -157,7 +157,7 @@ func TestPublicationGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, credentials); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachPublicationGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrPublicationUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("stale registration exchange committed", err)
 	}
 }

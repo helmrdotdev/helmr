@@ -94,13 +94,13 @@ func TestAllocatedSessionsPaginateReconnectAndJoinWithoutRestartingPeers(t *test
 		client := &allocatedSessionTestClient{retainedSessionStartClient: retainedSessionStartClient{t}, terminalControlClient: &terminalControlClient{prepare: func(context.Context, workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
 			return workerapi.AgentControlResponse{}, errors.New("control temporarily unavailable")
 		}}, sequences: make(map[string]int64), processes: []workerapi.ProcessIdentity{{SessionID: first, Epoch: 1}, {SessionID: second, Epoch: 2}}}
-		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 3}, ChannelCredential: "owned-channel"}
+		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 3}, ChannelCredential: "owned-channel"}
 		host := uuid.NewV7().String()
 		var active atomic.Int64
 		machine := sessionTransportMachine(t, func(stream net.Conn, r *agentv1.SessionAttach) {
 			active.Add(1)
 			defer active.Add(-1)
-			if r.Start != nil || r.Grant.ComputerInstanceId != allocation.Identity.InstanceID || r.Grant.ComputerId != allocation.Identity.OwnerID || r.Grant.WorkerHostId != host || r.Grant.ComputerLeaseEpoch != 3 || r.Grant.WriterGeneration != 3 || r.Grant.ChannelCredential != allocation.ChannelCredential {
+			if r.Start != nil || r.Grant.ComputerInstanceId != allocation.Identity.AllocationID || r.Grant.ComputerId != allocation.Identity.OwnerID || r.Grant.WorkerHostId != host || r.Grant.ComputerLeaseEpoch != 3 || r.Grant.WriterGeneration != 3 || r.Grant.ChannelCredential != allocation.ChannelCredential {
 				t.Error("attachment lost physical identity or reran setup")
 			}
 			if r.Grant.Identity.SessionId == first && r.AttachmentSequence == 1 {
@@ -187,7 +187,7 @@ func TestAllocatedSessionsLocalDenialAndFailurePreservePeerRenewal(t *testing.T)
 					}
 					_, _ = io.Copy(io.Discard, stream)
 				}}}
-				allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
+				allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				done := make(chan error, 1)
@@ -312,7 +312,7 @@ func TestAllocatedSessionsRetainedFailureAcknowledgedOnlyAfterDurableReport(t *t
 				return
 			}
 		})}
-		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
+		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
@@ -375,7 +375,7 @@ func TestAllocatedSessionsRetainedReadyOutageBacksOffAfterAttachment(t *testing.
 			acknowledged.Store(true)
 			_, _ = io.Copy(io.Discard, stream)
 		})}
-		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
+		allocation := workerapi.ComputerAllocationDelivery{Identity: workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: "owned"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)

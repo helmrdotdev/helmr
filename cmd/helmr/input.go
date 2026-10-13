@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/spf13/cobra"
 	"os"
 	"strings"
@@ -47,7 +47,7 @@ func parseContentInput(cmd *cobra.Command, file, raw, label string) (json.RawMes
 		if err != nil {
 			return nil, err
 		}
-		return conversation.Input(value)
+		return content.Input(value)
 	}
 	value, err := parseOptionalJSON(file, raw, label)
 	if err != nil {
@@ -56,7 +56,7 @@ func parseContentInput(cmd *cobra.Command, file, raw, label string) (json.RawMes
 	if len(value) == 0 {
 		return nil, fmt.Errorf("--text, %s-file or %s-json is required", label, label)
 	}
-	normalized, err := conversation.Input(value)
+	normalized, err := content.Input(value)
 	if err != nil {
 		return nil, fmt.Errorf("input must be an array of text parts: %w", err)
 	}

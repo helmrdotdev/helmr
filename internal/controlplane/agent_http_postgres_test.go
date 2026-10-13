@@ -28,7 +28,7 @@ import (
 func TestAgentHTTPAdmission(t *testing.T) {
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
+ UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE org_members SET role='owner' WHERE user_id=$3;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.User)
@@ -97,7 +97,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("incomplete receipt: %+v", first)
 	}
 	var pendingPreparation bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT c.preparation_id IS NOT NULL AND c.id<>$2 AND s.deployment_id=$3 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id) FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.id=$1`, first.SessionID, f.Computer, f.Deployment).Scan(&pendingPreparation); err != nil || !pendingPreparation {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.image_build_id IS NOT NULL AND c.id<>$2 AND s.deployment_id=$3 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id) FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.id=$1`, first.SessionID, f.Computer, f.Deployment).Scan(&pendingPreparation); err != nil || !pendingPreparation {
 		t.Fatalf("fresh admission did not queue preparation: %v %v", pendingPreparation, err)
 	}
 	if retry := decode(call(start, owner, input, http.StatusOK)); !reflect.DeepEqual(retry, first) {
@@ -354,7 +354,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}

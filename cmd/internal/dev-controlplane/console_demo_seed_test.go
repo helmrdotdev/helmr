@@ -56,7 +56,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status='failed'),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing'))+
  (SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND active_until IS NULL)+
- (SELECT count(*) FROM computer_preparations WHERE environment_id=$1)+
+ (SELECT count(*) FROM image_builds WHERE environment_id=$1)+
  (SELECT count(*) FROM computer_leases WHERE environment_id=$1)+
  (SELECT count(*) FROM session_processes WHERE environment_id=$1),
  (SELECT count(*) FROM session_events WHERE environment_id=$1)
@@ -76,17 +76,17 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  JOIN trigger_activations trigger ON (trigger.environment_id,trigger.deployment_id)=(d.environment_id,d.id)
- JOIN computer_preparation_specs spec ON spec.environment_id=s.environment_id
+ JOIN image_specs spec ON spec.environment_id=s.environment_id
  WHERE s.environment_id=$1 AND s.id=$2
  GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,d.execution_revoked_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
 		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
 	caller := agent.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", RetryKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
+	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("synthetic Deployment start=%v, want denied", err)
 	}
-	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), RetryKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }

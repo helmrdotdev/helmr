@@ -7,7 +7,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
@@ -16,8 +16,8 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	empty, _ := conversation.Content(json.RawMessage(`""`), true)
-	raw, _ := json.Marshal(strings.Repeat("x", conversation.ContentBytes-len(empty)))
+	empty, _ := content.Content(json.RawMessage(`""`), true)
+	raw, _ := json.Marshal(strings.Repeat("x", content.ContentBytes-len(empty)))
 	operation := uuid.NewV7()
 	var sequence int64
 	for i := range 32 {
@@ -36,7 +36,7 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 	if got, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, operation, raw); err != nil || got != sequence {
 		t.Fatalf("replay %d: %v", got, err)
 	}
-	if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"x"`)); !errors.Is(err, conversation.ErrLimit) {
+	if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"x"`)); !errors.Is(err, content.ErrLimit) {
 		t.Fatalf("budget exceeded: %v", err)
 	}
 	response := uuid.NewV7()
@@ -53,7 +53,7 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 		t.Fatalf("second response: %v", err)
 	}
 	var total int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT progress_bytes FROM turns WHERE id=$1`, a.TurnID).Scan(&total); err != nil || total != conversation.ProgressBytes {
+	if err := f.pool.QueryRow(t.Context(), `SELECT progress_bytes FROM turns WHERE id=$1`, a.TurnID).Scan(&total); err != nil || total != content.ProgressBytes {
 		t.Fatalf("budget changed %d: %v", total, err)
 	}
 }
@@ -122,7 +122,7 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if err := json.Unmarshal(outcome, &parsed); err != nil || parsed.Status != "completed" || parsed.Result != 42 {
 		t.Fatalf("outcome %s %v", outcome, err)
 	}
-	want, _ := conversation.Content(response, false)
+	want, _ := content.Content(response, false)
 	if string(parsed.Response) != string(want) {
 		t.Fatalf("response %s", parsed.Response)
 	}

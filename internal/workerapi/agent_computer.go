@@ -76,7 +76,7 @@ type AgentComputerSourceAbortRequest struct {
 type AgentComputerLeaseRequest struct {
 	EnvironmentID string `json:"environment_id"`
 	ComputerID    string `json:"computer_id"`
-	InstanceID    string `json:"instance_id"`
+	AllocationID  string `json:"allocation_id"`
 	LeaseEpoch    int64  `json:"lease_epoch"`
 }
 

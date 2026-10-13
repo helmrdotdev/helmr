@@ -67,21 +67,21 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after allocationPos
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := a.database.Query(scanCtx, `WITH demand AS (
- SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id FROM computer_preparations p
+ SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id FROM image_builds p
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  UNION ALL
  SELECT c.environment_id,c.id,'computer',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id),0)+1,NULL::uuid FROM computers c
  WHERE c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.recovery_save_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
- AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM computer_commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
+ AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.epoch=9223372036854775807)
  UNION ALL
  SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid
- FROM computer_checkpoints cp WHERE cp.status IN ('ready','restoring')
+ FROM checkpoints cp WHERE cp.status IN ('ready','restoring')
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND (EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
- WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM computer_commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
+ WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+noSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=cp.environment_id AND revoked.computer_id=cp.computer_id)
  UNION ALL
  SELECT s.environment_id,s.id,'process',COALESCE((SELECT max(p.epoch) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id),0)+1,l.worker_host_id
@@ -95,7 +95,7 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after allocationPos
  JOIN worker_hosts h ON h.worker_group_id=g.id AND h.worker_pool_id=pool.id AND h.status='active' AND h.current_epoch IS NOT NULL
  AND h.observed_at>=statement_timestamp()-$5*interval '1 second'
  WHERE (d.host_id IS NULL OR h.id=d.host_id)
- AND (d.kind<>'restore' OR EXISTS(SELECT 1 FROM computer_checkpoints cp
+ AND (d.kind<>'restore' OR EXISTS(SELECT 1 FROM checkpoints cp
  JOIN computer_leases source ON (source.environment_id,source.computer_id,source.epoch)=(cp.environment_id,cp.computer_id,cp.source_lease_epoch)
  JOIN worker_hosts source_host ON source_host.id=source.worker_host_id
  WHERE cp.environment_id=d.environment_id AND cp.id=d.id AND source_host.worker_group_id=g.id))

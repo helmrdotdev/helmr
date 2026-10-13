@@ -95,7 +95,7 @@ func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, 
 	}
 	var managed bool
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE organization_id=$1 AND team_id=$2 AND (bot_user_id=$3 OR app_id=NULLIF($4,'')))`, connection.OrganizationID, connection.TeamID, message.User, message.AppID).Scan(&managed)
+		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE org_id=$1 AND team_id=$2 AND (bot_user_id=$3 OR app_id=NULLIF($4,'')))`, connection.OrganizationID, connection.TeamID, message.User, message.AppID).Scan(&managed)
 	})
 	return !managed, err
 }
@@ -127,9 +127,9 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 		var disposed bool
 		err := tx.QueryRow(ctx, `SELECT t.id,p.id,t.thread_ts,p.inflight_revision,p.status,p.delivery_disposed_at IS NOT NULL
  FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channels c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
- WHERE p.id=$1 AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_publication_key=p.publication_key
- AND c.organization_id=$2 AND c.team_id=$3 AND c.slack_channel_id=$4 AND i.app_id=$5 AND i.bot_user_id=$6
+ JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
+ WHERE p.id=$1 AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key
+ AND c.org_id=$2 AND c.team_id=$3 AND c.slack_channel_id=$4 AND i.app_id=$5 AND i.bot_user_id=$6
  AND (p.inflight_method='chat.postMessage' AND p.inflight_attempt_id IS NOT NULL OR p.message_ts=$7)
  FOR NO KEY UPDATE OF t,p`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&thread, &post, &currentRoot, &revision, &state, &disposed)
 		if errors.Is(err, pgx.ErrNoRows) {

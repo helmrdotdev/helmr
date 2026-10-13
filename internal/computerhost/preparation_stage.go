@@ -49,7 +49,7 @@ func (p *PreparedMachines) preparationDirectory(identity workerapi.AllocationIde
 	if err := os.MkdirAll(p.TempDir, 0700); err != nil {
 		return nil, err
 	}
-	directory, err := os.MkdirTemp(p.TempDir, "preparation-"+identity.InstanceID+"-")
+	directory, err := os.MkdirTemp(p.TempDir, "preparation-"+identity.AllocationID+"-")
 	if err != nil {
 		return nil, err
 	}

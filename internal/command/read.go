@@ -31,10 +31,10 @@ func (r Ref) params() db.GetCommandParams {
 // Get reads the Command in its scope. The read is neutral to result
 // retention: a Command whose result payload was pruned is still returned,
 // with ResultPrunedAt set, so that scope checks outlive the result.
-func Get(ctx context.Context, q db.Querier, ref Ref) (db.ComputerCommand, error) {
+func Get(ctx context.Context, q db.Querier, ref Ref) (db.Command, error) {
 	command, err := q.GetCommand(ctx, ref.params())
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.ComputerCommand{}, ErrNotFound
+		return db.Command{}, ErrNotFound
 	}
 	return command, err
 }

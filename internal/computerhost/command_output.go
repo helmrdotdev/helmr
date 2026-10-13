@@ -92,7 +92,7 @@ func (m commandService) readCommandOutput(ctx context.Context, conn io.ReadWrite
 					return nil, computerBasicExecProtocol(errors.New("command output exceeds terminal frontier"))
 				}
 			}
-			request := workerapi.CommandLogAppendRequest{EnvironmentID: mount.EnvironmentID, CommandID: command.CommandID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStream(chunk.Stream), ObservedSeq: chunk.Sequence, ThroughSequence: chunk.ThroughSequence, ObservedAt: time.Unix(0, chunk.ObservedAtUnixNano).UTC(), Content: chunk.Content, Kind: chunk.Kind, DroppedBytes: chunk.DroppedBytes, Complete: chunk.Complete}
+			request := workerapi.CommandLogAppendRequest{EnvironmentID: mount.EnvironmentID, CommandID: command.CommandID, AllocationID: mount.ComputerInstanceID, WriterGeneration: command.WriterGeneration, Stream: workerapi.LogStream(chunk.Stream), ObservedSeq: chunk.Sequence, ThroughSequence: chunk.ThroughSequence, ObservedAt: time.Unix(0, chunk.ObservedAtUnixNano).UTC(), Content: chunk.Content, Kind: chunk.Kind, DroppedBytes: chunk.DroppedBytes, Complete: chunk.Complete}
 			jobs.Go(func() {
 				receipt, err := m.appendCommandOutput(ctx, client, request)
 				if err != nil {

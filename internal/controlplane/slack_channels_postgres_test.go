@@ -36,14 +36,14 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	f := agenttest.New(t)
 	installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	channel := "C1"
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$5;
  UPDATE org_members SET role='owner' WHERE user_id=$4;
- INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
+ INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $2,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$4 FROM environments WHERE id=$5;
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $1,$2,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$4 FROM environments WHERE id=$5;
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($3,$5,$6,$2,$1,$4);`, pgx.QueryExecModeSimpleProtocol, installation, registration, publication, f.User, f.Environment, f.Agent, definition.ComputerSeedProfile)
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($3,$5,$6,$2,$1,$4);`, pgx.QueryExecModeSimpleProtocol, installation, registration, publication, f.User, f.Environment, f.Agent, definition.ComputerSeedProfile)
 	var orgID, projectID uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&orgID, &projectID); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	expectCode(call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, missing), 409), "idempotency_conflict")
 	expectCode(call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-next","slack":{"channel_id":%q}}`, missing), 409), "idempotency_conflict")
 	before := preflights
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
 	call(http.MethodGet, "/v1/slack/channels/"+channel, key.Raw, "", 404)
 	call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
 	expectCode(call("POST", base+"/sessions", owner, `{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-continue"}`, 409), "idempotency_conflict")

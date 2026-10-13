@@ -27,13 +27,13 @@ func deliveryCandidates(ctx context.Context, pool db.TxBeginner, limit int) ([]d
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `WITH candidates AS (
  SELECT p.id,'post' AS kind,CASE WHEN p.status='sending' THEN p.claimed_until ELSE p.next_attempt_at END AS due,p.created_at AS service_age,
- CASE WHEN t.thread_ts IS NULL AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_publication_key=p.publication_key AND p.continuation_ordinal=0 THEN 1 WHEN p.role='question' THEN 0 ELSE 3 END AS priority
+ CASE WHEN t.thread_ts IS NULL AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0 THEN 1 WHEN p.role='question' THEN 0 ELSE 3 END AS priority
  FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id JOIN slack_threads t ON t.id=s.thread_id
- JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channels c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id JOIN agent_publications r ON r.id=c.publication_id WHERE (t.deleted_at IS NULL OR p.status IN ('sending','uncertain') OR (p.presentation_path='stream' AND p.stream_state='open' AND p.closed_at IS NOT NULL AND p.message_ts IS NOT NULL)) AND
+ JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id JOIN slack_connections r ON r.id=c.connection_id WHERE (t.deleted_at IS NULL OR p.status IN ('sending','uncertain') OR (p.presentation_path='stream' AND p.stream_state='open' AND p.closed_at IS NOT NULL AND p.message_ts IS NOT NULL)) AND
  ((p.status='pending' AND p.next_attempt_at<=clock_timestamp()) OR
  ((p.status='uncertain' OR (p.status='failed' AND p.delivery_disposed_at IS NOT NULL AND p.inflight_attempt_id IS NOT NULL)) AND p.reconciliation_paused_at IS NULL AND p.next_attempt_at<=clock_timestamp()) OR (p.status='sending' AND p.claimed_until<=clock_timestamp()) OR
  (p.presentation_path='stream' AND p.stream_state='open' AND p.closed_at IS NOT NULL AND p.status IN ('posted','suppressed','failed') AND p.next_attempt_at<=clock_timestamp()))
- AND (p.status<>'pending' OR r.revoked_at IS NOT NULL OR i.disconnected_at IS NOT NULL OR i.authorization_lost_at IS NOT NULL OR i.organization_id<>e.org_id OR NOT `+blockingPostPredecessor+`)
+ AND (p.status<>'pending' OR r.revoked_at IS NOT NULL OR i.disconnected_at IS NOT NULL OR i.authorization_lost_at IS NOT NULL OR i.org_id<>e.org_id OR NOT `+blockingPostPredecessor+`)
  UNION ALL
  SELECT id,'status',next_attempt_at,CASE WHEN desired_revision<>confirmed_revision OR status_confirmation='unknown' THEN refresh_at-interval '30 seconds' ELSE refresh_at END,2 FROM slack_threads WHERE thread_ts IS NOT NULL AND deleted_at IS NULL AND next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp())
  ), ranked AS (SELECT id,kind,due,service_age,priority,row_number() OVER (PARTITION BY priority ORDER BY due,id) AS position FROM candidates),

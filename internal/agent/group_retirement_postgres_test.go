@@ -38,9 +38,9 @@ func TestGroupDrainRetainsPhysicalCustodyAcrossEpochs(t *testing.T) {
 	}
 	// An expired allocation owned by an earlier service epoch remains physical custody.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1;
- UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
+ UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
 	assertGroupDrainBlocked(t, f.fixture)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
 	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1)
 	if err != nil || result.Status != "draining" {
 		t.Fatalf("resolved preparation: %+v %v", result, err)
@@ -63,14 +63,14 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			}
 			if state == "restoring" {
 				// Target allocation is fenced too: the source-owned checkpoint must protect the Group on its own.
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
- UPDATE computer_checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
+ UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
 			assertGroupDrainBlocked(t, f)
 			// Terminal disposition is fixture setup here; this test does not prove its operation.
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
 			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, f.group, 1); err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredComputer(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	candidates, err := a.discoverAllocations(t.Context(), allocationPosition{})
@@ -180,13 +180,13 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	f := newFixture(t)
 	setGroupPrimary(t, f)
 	// Closing logical work is not evidence that its Computer has stopped.
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", RetryKey: "close"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 hour' WHERE environment_id=$1`, f.env)
 	assertGroupDrainBlocked(t, f)
 	var instance uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
@@ -200,7 +200,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 func stopGroupFixtureComputer(t *testing.T, f fixture) {
 	t.Helper()
 	var instance uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {

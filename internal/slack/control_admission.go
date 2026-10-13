@@ -8,7 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -43,7 +43,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		var channel uuid.UUID
 		var channelEnabled time.Time
-		err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications pub ON pub.id=c.publication_id
+		err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.connection_id
  WHERE p.id=$1 AND p.thread_id=$2 AND p.environment_id=$3 AND p.session_id=$4 AND c.installation_id=$5 AND t.deleted_at IS NULL`, target.Participant, target.Thread, target.Environment, target.Session, installation).Scan(&channel, &channelEnabled)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("target_unavailable")
@@ -122,7 +122,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				askID = &answer.ID
 				gesture.Receipt, _ = json.Marshal(map[string]any{"ask_id": answer.ID, "status": answer.Status})
 			} else {
-				receipt, err := agent.ControlSession(ctx, coreTx, caller, agent.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", RetryKey: "slack:" + id.String()})
+				receipt, err := agent.ControlSession(ctx, coreTx, caller, agent.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", IdempotencyKey: "slack:" + id.String()})
 				if err != nil {
 					return err
 				}
@@ -158,7 +158,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				return reject("ask_cancelled")
 			case errors.Is(err, agent.ErrConflict):
 				return reject("response_conflict")
-			case errors.Is(err, conversation.ErrAnswerInvalid), errors.Is(err, conversation.ErrLimit), errors.Is(err, agent.ErrInvalidInput):
+			case errors.Is(err, content.ErrAnswerInvalid), errors.Is(err, content.ErrLimit), errors.Is(err, agent.ErrInvalidInput):
 				return reject("answer_invalid")
 			default:
 				return err

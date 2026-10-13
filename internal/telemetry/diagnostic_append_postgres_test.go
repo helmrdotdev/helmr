@@ -39,17 +39,17 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		}
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT 'until_environment_deletion',environment_id,$1,agent_id,deployment_id,computer_id,$1,0 FROM sessions WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) SELECT environment_id,$1,1,computer_id,computer_lease_epoch,'ready' FROM session_processes WHERE environment_id=$2 LIMIT 1`, s.ID, env)
-	case "computer_preparation":
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')`, env, s.ID)
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+	case "image_build":
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')`, env, s.ID)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
    SELECT $1::uuid,$2::uuid,$2::uuid,$2::text,'running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, env, s.ID)
 	case "computer_command":
-		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
+		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
  deployment AS (INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat(replace($2::text,'-',''),2))),
  template AS (INSERT INTO templates(environment_id,id,key) VALUES($1,$2,$2::text)),
- definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$2,$2,$2,1000,536870912,NULL))
- INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,1000,536870912,NULL,34359738368)`, env, s.ID)
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'session',uuidv7())`, env, s.ID)
+ definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$2,$2,$2,1000,536870912,NULL))
+ INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,1000,536870912,NULL,34359738368)`, env, s.ID)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'session',uuidv7())`, env, s.ID)
 	default:
 		t.Fatal("unsupported diagnostic test owner")
 	}

@@ -39,8 +39,8 @@ await verify("computer-seed-reuse", async ({ client, marker, computer }) => {
   // The immutable preparation receipt binds both Computers to the same root.
   // Files written above and checked below prove their mutable disks are private.
   assert(first.id !== second.id, "Computer identity was reused")
-  assert(typeof firstPath.computer.preparation_id === "string", "Preparation receipt missing")
-  assertEqual(firstPath.computer.preparation_id, secondPath.computer.preparation_id, "Same definition did not reuse preparation")
+  assert(typeof firstPath.computer.image_build_id === "string", "Preparation receipt missing")
+  assertEqual(firstPath.computer.image_build_id, secondPath.computer.image_build_id, "Same definition did not reuse preparation")
   assert(/^[0-9a-f]{64}$/.test(firstPath.computer.initial_root_digest), "Invalid initial root digest")
   assertEqual(firstPath.computer.initial_root_digest, secondPath.computer.initial_root_digest, "Computers used different prepared roots")
   assertEqual(firstPath.computer.initial_root_id, secondPath.computer.initial_root_id, "Prepared root was duplicated")

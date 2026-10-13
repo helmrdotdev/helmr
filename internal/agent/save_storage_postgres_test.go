@@ -62,11 +62,11 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	rootIdentity, _ := root.Digest()
 	rootID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `
-      INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,NULL,'test',decode('01','hex')),($11,$2,$3,'test',decode('02','hex'));
+      INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,NULL,'test',decode('01','hex')),($11,$2,$3,'test',decode('02','hex'));
       INSERT INTO cas_blobs(digest,size_bytes) VALUES($4,$5);
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$4,$5,'application/octet-stream' FROM environments WHERE id=$2;
-      INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,$7,clock_timestamp() FROM environments WHERE id=$2;
-      INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
+      INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,$7,clock_timestamp() FROM environments WHERE id=$2;
+      INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
       `+agenttest.DiskRootInsert("$2", "$8", "$9")+`;
       UPDATE computers SET initial_root_id=$8,initial_root_digest=decode(substring($10::text from 8),'hex') WHERE environment_id=$2 AND id=$3;
     `, pgx.QueryExecModeSimpleProtocol, keyID, f.env, f.computer, object.digest, object.size, object.rank, string(object.encoded), rootID, string(rootJSON), rootIdentity, writeKeyID)
@@ -205,15 +205,15 @@ func TestSavePublicationRetainsAuthenticatedGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	var roots, pins, keys int
-	err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves WHERE id=$1 AND root_id IS NOT NULL),(SELECT count(*) FROM computer_object_pins WHERE save_id=$1),(SELECT count(*) FROM computer_object_keys WHERE digest=$2)`, save.ID, root.Pack.Digest).Scan(&roots, &pins, &keys)
+	err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves WHERE id=$1 AND root_id IS NOT NULL),(SELECT count(*) FROM disk_object_pins WHERE save_id=$1),(SELECT count(*) FROM disk_object_keys WHERE digest=$2)`, save.ID, root.Pack.Digest).Scan(&roots, &pins, &keys)
 	if err != nil || roots != 1 || pins < 3 || keys != 1 {
 		t.Fatalf("retention roots=%d pins=%d keys=%d: %v", roots, pins, keys, err)
 	}
 	// Retained bytes and keys cannot be collected while the Save still owns them.
-	if _, err = f.pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.env, root.Pack.Digest); err == nil {
+	if _, err = f.pool.Exec(t.Context(), `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.env, root.Pack.Digest); err == nil {
 		t.Fatal("collected retained root")
 	}
-	if _, err = f.pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, s.writer.ActiveKey); err == nil {
+	if _, err = f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, s.writer.ActiveKey); err == nil {
 		t.Fatal("retired retained key")
 	}
 	if _, err = f.pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE digest=$1`, root.Pack.Digest); err == nil {
@@ -343,7 +343,7 @@ func TestSavePublicationExpiryDoesNotAuthorizeSalvage(t *testing.T) {
 				}
 			}
 			var retained int
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE save_id=$1`, save.ID).Scan(&retained); err != nil || retained != len(inspections) {
+			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE save_id=$1`, save.ID).Scan(&retained); err != nil || retained != len(inspections) {
 				t.Fatalf("uncertainty released pins: %d %v", retained, err)
 			}
 		})
@@ -386,7 +386,7 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 		t.Fatalf("expired certification: %v", certifyErr)
 	}
 	var certified bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT certified FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.env, object.digest).Scan(&certified); err != nil || certified {
+	if err := f.pool.QueryRow(t.Context(), `SELECT certified FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.env, object.digest).Scan(&certified); err != nil || certified {
 		t.Fatalf("stale writer certified bytes: %v", err)
 	}
 }
@@ -404,7 +404,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		t.Fatalf("registered parent with uncertified children: %v", err)
 	}
 	var pins int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE save_id=$1`, save.ID).Scan(&pins); err != nil || pins != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE save_id=$1`, save.ID).Scan(&pins); err != nil || pins != 0 {
 		t.Fatalf("failed registration leaked pins: %d %v", pins, err)
 	}
 	for _, e := range inspections[:len(inspections)-1] {
@@ -499,18 +499,18 @@ func TestComputerLeaseDiskRejectsChangedMountAndKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seedKey uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN computer_data_keys k ON k.id=r.page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN disk_encryption_keys k ON k.id=r.page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, seedKey); !errors.Is(err, ErrDenied) {
 		t.Fatalf("unowned write key: %v", err)
 	}
 	otherKey := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, otherKey, f.env, f.computer)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, otherKey, f.env, f.computer)
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, otherKey); !errors.Is(err, ErrConflict) {
 		t.Fatalf("rebound key: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=(SELECT id FROM computer_disk_roots WHERE environment_id=$1 AND id<>base_root_id LIMIT 1) WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=(SELECT id FROM disk_roots WHERE environment_id=$1 AND id<>base_root_id LIMIT 1) WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, ErrConflict) {
 		t.Fatalf("rebound mount: %v", err)
 	}
@@ -614,8 +614,8 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	replacement := uuid.NewV7()
 	nextSave := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='stopped' WHERE environment_id=$1 AND computer_id=$2;
-      INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$2,'test',decode('02','hex'));
-      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,restored_from_save_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+      INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$2,'test',decode('02','hex'));
+      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,restored_from_save_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
         SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','acquiring',$4,channel_credential_digest,$5::uuid,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
       INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$6,$2,2,2);`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, key, replacement, save.ID, nextSave)
 	bound, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 2, key)
@@ -667,7 +667,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	var keyCount int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_keys WHERE environment_id=$1 AND digest=$2`, f.env, newRoot.Pack.Digest).Scan(&keyCount); err != nil || keyCount != 2 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_keys WHERE environment_id=$1 AND digest=$2`, f.env, newRoot.Pack.Digest).Scan(&keyCount); err != nil || keyCount != 2 {
 		t.Fatalf("transitive keys=%d %v", keyCount, err)
 	}
 	// Publication advanced the recovery head, but never the mounted base binding.
@@ -689,8 +689,8 @@ func TestSaveStorageCannotAdoptUnretainedCertifiedObjects(t *testing.T) {
 	nextSave := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='all publication attempts joined' WHERE environment_id=$1 AND computer_id=$2;
       UPDATE computer_saves SET status='failed',failure_evidence='definitive no committed publication after fencing' WHERE environment_id=$1 AND id=$3;
-      DELETE FROM computer_object_pins WHERE environment_id=$1 AND save_id=$3;
-      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+      DELETE FROM disk_object_pins WHERE environment_id=$1 AND save_id=$3;
+      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
         SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$4,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
       INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$5,$2,2,2);`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, save.ID, uuid.NewV7(), nextSave)
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 2, uuid.MustParse(s.writer.ActiveKey)); err != nil {
@@ -702,7 +702,7 @@ func TestSaveStorageCannotAdoptUnretainedCertifiedObjects(t *testing.T) {
 		t.Fatalf("unretained object adopted: %v", err)
 	}
 	var pins int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE save_id=$1`, nextSave).Scan(&pins); err != nil || pins != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE save_id=$1`, nextSave).Scan(&pins); err != nil || pins != 0 {
 		t.Fatalf("rejection leaked pins: %d %v", pins, err)
 	}
 }
@@ -733,8 +733,8 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
  UPDATE computers SET recovery_save_id=NULL WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET disk_released_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computer_saves SET root_id=NULL,payload_retired_at=clock_timestamp() WHERE environment_id=$1 AND id=$3;
- DELETE FROM computer_object_pins WHERE environment_id=$1 AND save_id=$3;
- DELETE FROM computer_disk_roots WHERE environment_id=$1 AND id=$4;
+ DELETE FROM disk_object_pins WHERE environment_id=$1 AND save_id=$3;
+ DELETE FROM disk_roots WHERE environment_id=$1 AND id=$4;
  `, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, save.ID, rootID)
 	if err := s.publisher.Publish(t.Context(), s.ref(save.ID), root, "retry after retirement"); err != nil {
 		t.Fatalf("published receipt depended on retired payload: %v", err)
@@ -767,7 +767,7 @@ func TestLeaseDiskPinsRequirePhysicalStopAndSettledPublication(t *testing.T) {
 		t.Fatalf("unfenced expired writer released its pins: %v", err)
 	}
 	retireKey := func() error {
-		_, err := f.pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, s.writer.ActiveKey)
+		_, err := f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, s.writer.ActiveKey)
 		return err
 	}
 	if err := retireKey(); err == nil {
@@ -802,7 +802,7 @@ func TestLeaseDiskPinsRetainPendingCheckpointAfterSavePublication(t *testing.T) 
 	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("pending checkpoint lost its source despite published disk: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture settled continuation' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture settled continuation' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
 	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); err != nil {
 		t.Fatalf("settled continuation retained historical lease pins: %v", err)
 	}

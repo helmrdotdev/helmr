@@ -39,7 +39,7 @@ func TestDiskGraphRootAdoptionArbitratesDeletion(t *testing.T) {
 					t.Fatal(err)
 				}
 				// The stale candidate's DELETE meets the still-uncommitted attachment's FK.
-				if err := reclaimComputerGraphRow(t.Context(), f.pool, `DELETE FROM computer_disk_roots WHERE id=$1`, root); err != nil {
+				if err := reclaimComputerGraphRow(t.Context(), f.pool, `DELETE FROM disk_roots WHERE id=$1`, root); err != nil {
 					t.Fatal(err)
 				}
 				if err := tx.Commit(t.Context()); err != nil {
@@ -49,11 +49,11 @@ func TestDiskGraphRootAdoptionArbitratesDeletion(t *testing.T) {
 					t.Fatal(err)
 				}
 				var present bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_disk_roots WHERE id=$1)`, root).Scan(&present); err != nil || !present {
+				if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM disk_roots WHERE id=$1)`, root).Scan(&present); err != nil || !present {
 					t.Fatalf("adopted root collected: %v %v", present, err)
 				}
 			} else {
-				if _, err := tx.Exec(t.Context(), `DELETE FROM computer_disk_roots WHERE id=$1`, root); err != nil {
+				if _, err := tx.Exec(t.Context(), `DELETE FROM disk_roots WHERE id=$1`, root); err != nil {
 					t.Fatal(err)
 				}
 				adopter, err := f.pool.Begin(t.Context())
@@ -85,7 +85,7 @@ func graphRetentionObject(t *testing.T, f fixture, digit int, rank int) string {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$1,1,'application/octet-stream' FROM environments WHERE id=$2;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$1,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',clock_timestamp() FROM environments WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, digest, f.env, kind, rank)
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$1,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',clock_timestamp() FROM environments WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, digest, f.env, kind, rank)
 	return digest
 }
 
@@ -99,7 +99,7 @@ func TestDiskGraphPinsAndEdgesArbitrateDeletion(t *testing.T) {
 				_, save := f.finalize(t, "publication")
 				// The parent itself remains owned, so collection cannot erase the adopter
 				// merely because this test's graph is smaller than a complete disk.
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, parent)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, parent)
 				tx, err := f.pool.Begin(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -107,17 +107,17 @@ func TestDiskGraphPinsAndEdgesArbitrateDeletion(t *testing.T) {
 				defer tx.Rollback(context.Background())
 				adopt := func(tx pgx.Tx) error {
 					if kind == "pin" {
-						_, err := tx.Exec(t.Context(), `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, child)
+						_, err := tx.Exec(t.Context(), `INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3)`, f.env, save.ID, child)
 						return err
 					}
-					_, err := tx.Exec(t.Context(), `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,1,0)`, f.env, parent, child)
+					_, err := tx.Exec(t.Context(), `INSERT INTO disk_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,1,0)`, f.env, parent, child)
 					return err
 				}
 				if adoptFirst {
 					if err := adopt(tx); err != nil {
 						t.Fatal(err)
 					}
-					if err := reclaimComputerGraphRow(t.Context(), f.pool, `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.env, child); err != nil {
+					if err := reclaimComputerGraphRow(t.Context(), f.pool, `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.env, child); err != nil {
 						t.Fatal(err)
 					}
 					if err := tx.Commit(t.Context()); err != nil {
@@ -127,11 +127,11 @@ func TestDiskGraphPinsAndEdgesArbitrateDeletion(t *testing.T) {
 						t.Fatal(err)
 					}
 					var present bool
-					if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2)`, f.env, child).Scan(&present); err != nil || !present {
+					if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2)`, f.env, child).Scan(&present); err != nil || !present {
 						t.Fatalf("adopted object collected: %v %v", present, err)
 					}
 				} else {
-					if _, err := tx.Exec(t.Context(), `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.env, child); err != nil {
+					if _, err := tx.Exec(t.Context(), `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.env, child); err != nil {
 						t.Fatal(err)
 					}
 					adopter, err := f.pool.Begin(t.Context())
@@ -158,8 +158,8 @@ func TestDiskGraphCollectionPreservesSharedChild(t *testing.T) {
 	left := graphRetentionObject(t, f, 111, 1)
 	right := graphRetentionObject(t, f, 112, 1)
 	_, save := f.finalize(t, "shared-child")
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$4,1,0),($1,$3,$4,1,0);
- INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$5,$3)`, pgx.QueryExecModeSimpleProtocol, f.env, left, right, child, save.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$4,1,0),($1,$3,$4,1,0);
+ INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$5,$3)`, pgx.QueryExecModeSimpleProtocol, f.env, left, right, child, save.ID)
 	for range 3 {
 		if err := collectComputerDiskGraph(t.Context(), f.pool); err != nil {
 			t.Fatal(err)
@@ -167,9 +167,9 @@ func TestDiskGraphCollectionPreservesSharedChild(t *testing.T) {
 	}
 	var leftGone, rightRetained, childRetained bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT
- NOT EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2),
- EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$3),
- EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$4)`, f.env, left, right, child).Scan(&leftGone, &rightRetained, &childRetained); err != nil || !leftGone || !rightRetained || !childRetained {
+ NOT EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2),
+ EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$3),
+ EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$4)`, f.env, left, right, child).Scan(&leftGone, &rightRetained, &childRetained); err != nil || !leftGone || !rightRetained || !childRetained {
 		t.Fatalf("left gone=%v right=%v child=%v error=%v", leftGone, rightRetained, childRetained, err)
 	}
 }

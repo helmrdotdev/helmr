@@ -110,7 +110,7 @@ func lockRuntimeProcessAuthority(ctx context.Context, tx pgx.Tx, host workergrou
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND l.epoch=$4 AND l.worker_host_id=$5 AND l.worker_epoch=$6
  AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp() AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL
  AND ((l.status='active' AND ((p.status IN ('ready','starting','stopping') AND p.fenced_at IS NULL) OR ($7 AND p.status='stopped' AND p.fenced_at IS NOT NULL)))
- OR (l.status='acquiring' AND (p.status<>'stopped' OR $7) AND EXISTS(SELECT 1 FROM computer_checkpoints cp JOIN computer_checkpoint_members m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
+ OR (l.status='acquiring' AND (p.status<>'stopped' OR $7) AND EXISTS(SELECT 1 FROM checkpoints cp JOIN checkpoint_processes m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
  WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.target_lease_epoch=l.epoch AND cp.status IN ('restoring','consumed') AND cp.controls_reconciled_at IS NULL
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, e.WorkerHostID, e.WorkerEpoch, allowStopped).Scan(&result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {

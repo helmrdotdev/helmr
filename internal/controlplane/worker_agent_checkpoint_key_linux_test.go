@@ -91,7 +91,7 @@ func qualifyNativeCheckpointKeyMismatch(ctx context.Context, pool *pgxpool.Pool,
 	var host, computer uuid.UUID
 	var sourceWorkerEpoch int64
 	err := pool.QueryRow(ctx, `SELECT l.worker_host_id,l.computer_id,l.worker_epoch
- FROM computer_checkpoints p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+ FROM checkpoints p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE p.environment_id=$1 AND p.id=$2 AND p.status='ready' AND p.target_lease_epoch IS NULL
  AND l.fenced_at>=p.ready_at AND h.resource_id=$3`, env, checkpoint, environment["WORKER_RESOURCE_ID"]).Scan(&host, &computer, &sourceWorkerEpoch)
@@ -148,8 +148,8 @@ func qualifyNativeCheckpointKeyMismatch(ctx context.Context, pool *pgxpool.Pool,
  AND bool_and(bad.fenced_at IS NOT NULL AND bad.initialized_at IS NULL AND bad.fence_evidence='owning worker joined physical VM closure')
  AND h.observed_at>=clock_timestamp()-$4::bigint*interval '1 second' AND h.status='active' AND h.current_epoch=$3 AND h.admission_paused_reason='checkpoint_key_unavailable'
  AND NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL)
- AND (SELECT count(*)=4 FROM computer_checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id))
- FROM computer_checkpoints p JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+ AND (SELECT count(*)=4 FROM checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id))
+ FROM checkpoints p JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN worker_hosts h ON h.id=source.worker_host_id
  LEFT JOIN computer_leases bad ON bad.environment_id=p.environment_id AND bad.computer_id=p.computer_id AND bad.epoch>source.epoch AND bad.worker_host_id=h.id AND bad.worker_epoch=$3
  WHERE p.environment_id=$1 AND p.id=$2 GROUP BY p.environment_id,p.id,h.id`, env, checkpoint, wrongEpoch, workergroup.ObservationFreshnessSeconds).Scan(&raw)
@@ -251,7 +251,7 @@ func verifyNativeCheckpointKeyRecovery(ctx context.Context, pool *pgxpool.Pool, 
  AND (SELECT count(*)=$5 AND bool_and(bad.worker_host_id=$4 AND bad.worker_epoch=$9 AND bad.initialized_at IS NULL
  AND bad.fence_evidence='owning worker joined physical VM closure' AND bad.fenced_at IS NOT NULL AND bad.fenced_at<=target.delivered_at AND bad.restored_from_save_id=p.disk_save_id)
  FROM computer_leases bad WHERE bad.environment_id=p.environment_id AND bad.computer_id=p.computer_id AND bad.epoch>p.source_lease_epoch AND bad.epoch<target.epoch)
- FROM computer_checkpoints p JOIN computer_leases target ON(target.environment_id,target.computer_id,target.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
+ FROM checkpoints p JOIN computer_leases target ON(target.environment_id,target.computer_id,target.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
  WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.id=$3`, env, computer, checkpoint, fault.WorkerHostID, fault.FailedLeaseCount, fault.LastFailureEpoch, fault.Repaired.WorkerEpoch, sourceEpoch, fault.WorkerEpoch).Scan(&valid)
 	if err != nil {
 		return err

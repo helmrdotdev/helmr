@@ -125,7 +125,7 @@ func TestSourceAbortRejectsChangedPhysicalInstallation(t *testing.T) {
 				t.Fatal("changed installation accepted")
 			}
 			var state string
-			if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&state); err != nil || state != "capturing" {
+			if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&state); err != nil || state != "capturing" {
 				t.Fatalf("mutation leaked: %s %v", state, err)
 			}
 		})
@@ -259,7 +259,7 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 			t.Fatal(err)
 		}
 		var scrubbed bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM computer_checkpoints WHERE id=$1`, id).Scan(&scrubbed); err != nil || !scrubbed {
+		if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM checkpoints WHERE id=$1`, id).Scan(&scrubbed); err != nil || !scrubbed {
 			t.Fatalf("completed secret retained: %v", err)
 		}
 		if err := ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {

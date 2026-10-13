@@ -23,7 +23,7 @@ func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.
 	peer.Session, peer.thread, peer.participant = uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $3,$6,$2,$4,organization_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channels WHERE id=$4;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $3,$6,$2,$4,org_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channel_bindings WHERE id=$4;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($5,$3,$6,$2);
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)
 	entered := make(chan struct{}, 1)

@@ -152,7 +152,7 @@ func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env
 
 const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=sessions.environment_id AND a.id=sessions.agent_id),
  (SELECT t.key FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=sessions.environment_id AND d.deployment_id=sessions.deployment_id AND d.agent_id=sessions.agent_id),
- id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,session_key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
+ id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
  (WITH RECURSIVE ancestors AS (
@@ -217,7 +217,7 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
 		return result, ErrInvalidInput
 	}
 	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND ($2::uuid IS NULL OR id<$2)
- AND ($4::text IS NULL OR session_key=$4)
+ AND ($4::text IS NULL OR key=$4)
  AND (cardinality($5::text[]) IS NULL OR cardinality($5::text[])=0 OR status=ANY($5))
  AND ($6::uuid IS NULL OR parent_session_id=$6) AND ($7::uuid IS NULL OR requester_session_id=$7)
  AND ($8::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$8))

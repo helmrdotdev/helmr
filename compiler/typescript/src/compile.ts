@@ -17,7 +17,7 @@ export interface TemplateManifest {
 }
 export interface AgentManifest {
   readonly templateDefinitionId: string
-  readonly setup: boolean
+  readonly hasInit: boolean
   readonly closeAfterIdleMs?: number
   readonly closeAfterIdleNever?: boolean
   readonly maxTurnDurationMs?: number
@@ -109,7 +109,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
       return { kind: "agent", declaredId: definition.id, manifest: {
-        templateDefinitionId: definition.template.id, setup: definition.init !== undefined, triggers,
+        templateDefinitionId: definition.template.id, hasInit: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
       } }

@@ -75,7 +75,7 @@ type ConflictError struct{ ClaimID uuid.UUID }
 func (e ConflictError) Error() string { return "idempotency key conflicts with its original request" }
 
 type Result struct {
-	Claim db.PlatformRetryKey
+	Claim db.IdempotencyReceipt
 	New   bool
 }
 type Target struct{ DeploymentID, SecretID, SecretVersionID, ComputerID, CommandID uuid.UUID }
@@ -132,7 +132,7 @@ func Run(ctx context.Context, caller pgx.Tx, input *Request, fn func(pgx.Tx, Res
 		}
 		claim := acquired.Claim
 		target := completion.Target
-		_, err = db.New(tx).CreatePlatformRetryKey(ctx, db.CreatePlatformRetryKeyParams{
+		_, err = db.New(tx).CreateIdempotencyReceipt(ctx, db.CreateIdempotencyReceiptParams{
 			ID: claim.ID, EnvironmentID: claim.EnvironmentID, Operation: claim.Operation,
 			SlotHash: claim.SlotHash, RequestFingerprint: claim.RequestFingerprint,
 			ScopeSecretName: claim.ScopeSecretName, ScopeSecretID: claim.ScopeSecretID,
@@ -147,9 +147,9 @@ func Run(ctx context.Context, caller pgx.Tx, input *Request, fn func(pgx.Tx, Res
 }
 
 func acquire(ctx context.Context, tx pgx.Tx, r *Request, slot [sha256.Size]byte) (Result, error) {
-	locked, err := db.New(tx).LockPlatformRetryKey(ctx, db.LockPlatformRetryKeyParams{EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:]})
+	locked, err := db.New(tx).LockIdempotencyReceipt(ctx, db.LockIdempotencyReceiptParams{EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:]})
 	if err == nil {
-		claim := locked.PlatformRetryKey
+		claim := locked.IdempotencyReceipt
 		if !bytes.Equal(claim.RequestFingerprint, r.fingerprint[:]) {
 			return Result{}, ConflictError{ClaimID: pgvalue.MustUUIDValue(claim.ID)}
 		}
@@ -159,23 +159,23 @@ func acquire(ctx context.Context, tx pgx.Tx, r *Request, slot [sha256.Size]byte)
 		return Result{Claim: claim}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return Result{}, fmt.Errorf("read platform retry key: %w", err)
+		return Result{}, fmt.Errorf("read idempotency receipt: %w", err)
 	}
 	claim, err := newClaim(r, slot)
 	return Result{Claim: claim, New: true}, err
 }
 
-func newClaim(r *Request, slot [sha256.Size]byte) (db.PlatformRetryKey, error) {
-	params := db.PlatformRetryKey{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:], RequestFingerprint: bytes.Clone(r.fingerprint[:])}
+func newClaim(r *Request, slot [sha256.Size]byte) (db.IdempotencyReceipt, error) {
+	params := db.IdempotencyReceipt{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:], RequestFingerprint: bytes.Clone(r.fingerprint[:])}
 	switch r.operation {
 	case operationSecretCreate:
 		if len(r.scope) < 8 || binary.BigEndian.Uint64(r.scope[:8]) != uint64(len(r.scope)-8) {
-			return db.PlatformRetryKey{}, errors.New("invalid Secret name scope")
+			return db.IdempotencyReceipt{}, errors.New("invalid Secret name scope")
 		}
 		params.ScopeSecretName = pgvalue.Text(string(r.scope[8:]))
 	case operationSecretRotate, operationSecretRevoke, operationComputerDelete, operationComputerCommand, operationCommandCancel:
 		if len(r.scope) != 16 {
-			return db.PlatformRetryKey{}, errors.New("invalid platform object scope")
+			return db.IdempotencyReceipt{}, errors.New("invalid platform object scope")
 		}
 		id := pgvalue.UUID(uuid.UUID(r.scope))
 		switch r.operation {
@@ -189,7 +189,7 @@ func newClaim(r *Request, slot [sha256.Size]byte) (db.PlatformRetryKey, error) {
 	case operationComputerCreate:
 		name, ok := strings.CutPrefix(string(r.scope), "external\x00")
 		if !ok || name == "" {
-			return db.PlatformRetryKey{}, errors.New("invalid external Computer scope")
+			return db.IdempotencyReceipt{}, errors.New("invalid external Computer scope")
 		}
 		params.ScopeCallerKind = pgvalue.Text("external")
 		params.ScopeComputerKey = pgvalue.Text(name)

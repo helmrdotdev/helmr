@@ -66,9 +66,9 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
 		}
 		rows, err := tx.Query(ctx, `SELECT p.id,p.turn_id,p.seq,p.role,p.continuation_ordinal,p.status,p.payload,p.payload_expired_at,p.created_at,
  p.desired_revision,p.confirmed_revision,
- (SELECT sum(v.desired_revision)::bigint FROM slack_posts v WHERE v.thread_source_id=p.thread_source_id AND v.publication_key=p.publication_key),
+ (SELECT sum(v.desired_revision)::bigint FROM slack_posts v WHERE v.thread_source_id=p.thread_source_id AND v.post_key=p.post_key),
  p.inflight_method,p.inflight_attempt_id,p.message_ts,t.thread_ts IS NOT NULL,
- p.role='opening' AND t.front_session_id=p.session_id AND t.opening_publication_key=p.publication_key AND p.continuation_ordinal=0,
+ p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0,
  p.stream_state,p.reconciliation_paused_at,p.delivery_disposed_at,p.delivery_disposed_by,p.error
  FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id JOIN slack_threads t ON t.id=s.thread_id
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.seq>$3 AND (p.status IN ('uncertain','failed','suppressed') OR p.delivery_disposed_at IS NOT NULL)
@@ -117,8 +117,8 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.publication_key
- FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channels c ON c.id=sender.channel_id
+		err := tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.post_key
+ FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.channel_id
  JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND p.session_id=$3 AND e.org_id=$4`, post, environment, session, org).Scan(&installation, &thread, &participant, &publication)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDeliveryUnavailable
@@ -127,7 +127,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 			return err
 		}
 		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 AND organization_id=$2 FOR NO KEY UPDATE`, installation, org).Scan(&id); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, installation, org).Scan(&id); err != nil {
 			return err
 		}
 		if err = tx.QueryRow(ctx, `SELECT id FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&id); err != nil {
@@ -144,7 +144,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		}
 		var revision int64
 		var sending bool
-		if err = tx.QueryRow(ctx, `SELECT sum(desired_revision)::bigint,bool_or(status='sending') FROM slack_posts WHERE thread_source_id=$1 AND publication_key=$2`, participant, publication).Scan(&revision, &sending); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT sum(desired_revision)::bigint,bool_or(status='sending') FROM slack_posts WHERE thread_source_id=$1 AND post_key=$2`, participant, publication).Scan(&revision, &sending); err != nil {
 			return err
 		}
 		if attempt == nil || *attempt != input.AttemptID || revision != input.PublicationRevision || (state != "uncertain" && !(state == "failed" && disposed)) {
@@ -156,7 +156,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 			}
 			var available bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id OR t.id=p.source_thread_id
- JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications pub ON pub.id=c.publication_id
+ JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.connection_id
  JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, post).Scan(&available); err != nil {
 				return err
@@ -199,7 +199,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
  inflight_attempt_id=CASE WHEN status='pending' THEN NULL ELSE inflight_attempt_id END,
  inflight_stream_text=CASE WHEN status='pending' THEN NULL ELSE inflight_stream_text END,
  next_attempt_at=clock_timestamp()
- WHERE thread_source_id=$1 AND publication_key=$2`, participant, publication, user)
+ WHERE thread_source_id=$1 AND post_key=$2`, participant, publication, user)
 		return err
 	})
 }

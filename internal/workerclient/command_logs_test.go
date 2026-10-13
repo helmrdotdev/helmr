@@ -43,7 +43,7 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 	}
 	request := workerapi.CommandLogAppendRequest{
 		EnvironmentID: "019c0225-f0c9-7f66-8a23-7782ca0a8460", CommandID: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
-		ComputerInstanceID: "019c0225-f0c9-7f66-8a23-7782ca0a8462", WriterGeneration: 9,
+		AllocationID: "019c0225-f0c9-7f66-8a23-7782ca0a8462", WriterGeneration: 9,
 		Kind: "data", ThroughSequence: 42, Stream: workerapi.LogStreamStderr, ObservedSeq: 42, ObservedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Content: []byte{0, 255, 128},
 	}
@@ -57,7 +57,7 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 	if err := json.Unmarshal(bodies[1], &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.CommandID != request.CommandID || decoded.ComputerInstanceID != request.ComputerInstanceID ||
+	if decoded.CommandID != request.CommandID || decoded.AllocationID != request.AllocationID ||
 		decoded.WriterGeneration != request.WriterGeneration || decoded.ObservedSeq != request.ObservedSeq ||
 		!decoded.ObservedAt.Equal(request.ObservedAt) || !bytes.Equal(decoded.Content, request.Content) {
 		t.Fatalf("chunk changed: %+v", decoded)

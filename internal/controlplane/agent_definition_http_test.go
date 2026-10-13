@@ -32,7 +32,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE org_members SET role='owner' WHERE user_id=$1;
  INSERT INTO agents(environment_id,id,key) VALUES($2,$3,'zebra');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup) VALUES($2,$3,$4,$4,false);
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($2,$3,$4,$4,false);
  `, pgx.QueryExecModeSimpleProtocol, f.User, f.Environment, uuid.NewV7(), f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
@@ -171,7 +171,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get("/v1/agents"+selected, issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
- UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
+ UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	var resourceList api.ListTemplateDefinitionsResponse

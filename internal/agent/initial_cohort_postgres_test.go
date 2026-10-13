@@ -32,7 +32,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.RetryKey = "later-peer"
+	req.IdempotencyKey = "later-peer"
 	later, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
 	var identity ComputerLeaseIdentity
 	identity.EnvironmentID = f.env
 	identity.Epoch = e.LeaseEpoch
-	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.computer_instance_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.allocation_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
@@ -223,7 +223,7 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 	f, a, computer := freshComputerAllocationFixture(t)
 	session := initialSession(t, f, computer)
-	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", RetryKey: "before-allocation", Reason: "wait"})
+	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "before-allocation", Reason: "wait"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", RetryKey: "after-allocation", HoldID: hold.HoldID}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-allocation", HoldID: hold.HoldID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); !errors.Is(err, ErrNotReady) {
@@ -258,7 +258,7 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", RetryKey: "before-ready"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", IdempotencyKey: "before-ready"}); err != nil {
 		t.Fatal(err)
 	}
 	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
@@ -278,7 +278,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", RetryKey: "after-cohort", Reason: "wait"})
+	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "after-cohort", Reason: "wait"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", RetryKey: "after-stop", HoldID: hold.HoldID}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "resume", IdempotencyKey: "after-stop", HoldID: hold.HoldID}); err != nil {
 		t.Fatal(err)
 	}
 	var holds int

@@ -59,7 +59,7 @@ func (m *agentSaveTestMachine) CaptureComputer(context.Context) (*vm.ComputerSna
 func agentSaveFixture(t *testing.T, failure string) (*agentComputerSaves, *agentSaveTestClient) {
 	t.Helper()
 	f := &saveHostFixture{fail: failure, computer: uuid.NewV7().String(), root: testVersionRoot(4096)}
-	identity := workerapi.AllocationIdentity{Kind: "computer", OwnerID: f.computer, EnvironmentID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 2}
+	identity := workerapi.AllocationIdentity{Kind: "computer", OwnerID: f.computer, EnvironmentID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 2}
 	c := &agentSaveTestClient{fixture: f, save: workerapi.AgentSave{EnvironmentID: identity.EnvironmentID, SaveID: uuid.NewV7().String(), LeaseEpoch: 2}}
 	return &agentComputerSaves{client: c, objects: f, identity: identity, every: time.Minute, machine: &agentSaveTestMachine{fixture: f}}, c
 }

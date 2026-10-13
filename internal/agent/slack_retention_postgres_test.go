@@ -23,7 +23,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			if _, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, uuid.NewV7(), json.RawMessage(`"retained source"`)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 				t.Fatal(err)
 			}
 			fenceHistoryProcess(t, f)
@@ -32,7 +32,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 				body := []byte(`{"text":"retained source"}`)
 				digest := sha256.Sum256(body)
 				post := uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,publication_key,role,turn_id,payload,payload_digest,presentation_path)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,role,turn_id,payload,payload_digest,presentation_path)
  SELECT $1,environment_id,session_id,thread_id,id,1,'content','intermediate',$3,$4,$5,'post' FROM slack_thread_sources WHERE session_id=$2`, post, f.session, turn.TurnID, body, digest[:])
 				switch kind {
 				case "abandoned-post", "abandoned-uncertain-stream", "abandoned-open-stream", "abandoned-stopped-stream":
@@ -72,7 +72,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			body := []byte(`{"message_ts":"123.456","text":"retained input"}`)
 			digest := sha256.Sum256(body)
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,payload,expires_at,status,finished_at,user_id,thread_id,thread_source_id,environment_id,session_id,operation,turn_id)
- SELECT $1,c.installation_id,'retained-input',$2,clock_timestamp(),'human',$3,clock_timestamp()+interval '1 minute','accepted',clock_timestamp(),$4,p.thread_id,p.id,p.environment_id,p.session_id,'enqueue',$5 FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channels c ON c.id=t.channel_id WHERE p.session_id=$6`, request, digest[:], body, f.user, turn.TurnID, f.session)
+ SELECT $1,c.installation_id,'retained-input',$2,clock_timestamp(),'human',$3,clock_timestamp()+interval '1 minute','accepted',clock_timestamp(),$4,p.thread_id,p.id,p.environment_id,p.session_id,'enqueue',$5 FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.channel_id WHERE p.session_id=$6`, request, digest[:], body, f.user, turn.TurnID, f.session)
 			reconcileHistory(t, f)
 			released := kind == "abandoned-post" || kind == "abandoned-stopped-stream" || kind == "stopped-stream" || kind == "posted" || kind == "failed" || kind == "suppressed"
 			if got := historyClock(t, f); (got != nil) != released {
@@ -92,7 +92,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			}
 			if kind != "unprojected" {
 				var contentExpired bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT (payload IS NULL)=$2 AND (payload_expired_at IS NOT NULL)=$2 AND publication_key='content' AND octet_length(payload_digest)=32 AND (NOT $2 OR (confirmed_stream_text='' AND inflight_payload IS NULL AND inflight_attempt_id IS NULL)) FROM slack_posts WHERE session_id=$1`, f.session, released).Scan(&contentExpired); err != nil || !contentExpired {
+				if err := f.pool.QueryRow(t.Context(), `SELECT (payload IS NULL)=$2 AND (payload_expired_at IS NOT NULL)=$2 AND post_key='content' AND octet_length(payload_digest)=32 AND (NOT $2 OR (confirmed_stream_text='' AND inflight_payload IS NULL AND inflight_attempt_id IS NULL)) FROM slack_posts WHERE session_id=$1`, f.session, released).Scan(&contentExpired); err != nil || !contentExpired {
 					t.Fatal("post expiry lost identity or ignored delivery", contentExpired, err)
 				}
 			}
@@ -122,7 +122,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err = ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)

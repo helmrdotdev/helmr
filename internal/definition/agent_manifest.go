@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"regexp"
 
 	"github.com/helmrdotdev/helmr/internal/oci"
@@ -13,7 +13,7 @@ import (
 
 type AgentManifest struct {
 	TemplateDefinitionID string                 `json:"templateDefinitionId"`
-	Setup                bool                   `json:"setup"`
+	HasInit              bool                   `json:"hasInit"`
 	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
 	MaxTurnDurationMs    *int64                 `json:"maxTurnDurationMs,omitempty"`
@@ -74,7 +74,7 @@ func ValidateAgentManifest(m AgentManifest) error {
 		if err := ValidateTimezone(trigger.Timezone); err != nil {
 			return fmt.Errorf("agent trigger %q: %w", id, err)
 		}
-		if _, err := conversation.Input(trigger.Input); err != nil {
+		if _, err := content.Input(trigger.Input); err != nil {
 			return fmt.Errorf("agent trigger %q input: %w", id, err)
 		}
 	}

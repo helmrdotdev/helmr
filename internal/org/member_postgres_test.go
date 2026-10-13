@@ -241,14 +241,14 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	activeSessions := func(userID uuid.UUID) int {
 		t.Helper()
 		var count int
-		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM auth_sessions WHERE user_id = $1 AND revoked_at IS NULL`, userID).Scan(&count); err != nil {
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM login_sessions WHERE user_id = $1 AND revoked_at IS NULL`, userID).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		return count
 	}
 	session := func(userID uuid.UUID) {
 		t.Helper()
-		if _, err := fixture.pool.Exec(ctx, `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')`, uuid.NewV7(), userID, uuid.NewV7().String()); err != nil {
+		if _, err := fixture.pool.Exec(ctx, `INSERT INTO login_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')`, uuid.NewV7(), userID, uuid.NewV7().String()); err != nil {
 			t.Fatal(err)
 		}
 	}

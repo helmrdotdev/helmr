@@ -114,17 +114,6 @@ type APIKey struct {
 	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
 }
 
-type AuthSession struct {
-	ID         pgtype.UUID        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	UserID     pgtype.UUID        `json:"user_id"`
-	TokenHash  []byte             `json:"token_hash"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
-}
-
 type CasObject struct {
 	OrgID                pgtype.UUID        `json:"org_id"`
 	Digest               string             `json:"digest"`
@@ -134,7 +123,7 @@ type CasObject struct {
 	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
 }
 
-type ComputerCommand struct {
+type Command struct {
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	ID                    pgtype.UUID        `json:"id"`
 	ComputerID            pgtype.UUID        `json:"computer_id"`
@@ -188,7 +177,21 @@ type ComputerCommand struct {
 	StderrLastAcceptedAt  pgtype.Timestamptz `json:"stderr_last_accepted_at"`
 }
 
-type ComputerObject struct {
+type DeviceCode struct {
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserCodeHash        []byte             `json:"user_code_hash"`
+	DeviceCodeHash      []byte             `json:"device_code_hash"`
+	DecidedByUserID     pgtype.UUID        `json:"decided_by_user_id"`
+	Status              string             `json:"status"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
+}
+
+type DiskObject struct {
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	Digest               string             `json:"digest"`
 	OrgID                pgtype.UUID        `json:"org_id"`
@@ -202,20 +205,6 @@ type ComputerObject struct {
 	Certified            pgtype.Bool        `json:"certified"`
 	CertifiedOrgID       pgtype.UUID        `json:"certified_org_id"`
 	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
-}
-
-type DeviceCode struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	UserCodeHash        []byte             `json:"user_code_hash"`
-	DeviceCodeHash      []byte             `json:"device_code_hash"`
-	DecidedByUserID     pgtype.UUID        `json:"decided_by_user_id"`
-	Status              string             `json:"status"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
-	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
-	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
 }
 
 type Environment struct {
@@ -245,6 +234,28 @@ type Environment struct {
 	AdmissionRefilledAt      pgtype.Timestamptz `json:"admission_refilled_at"`
 }
 
+type IdempotencyReceipt struct {
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	ID                 pgtype.UUID        `json:"id"`
+	Operation          string             `json:"operation"`
+	SlotHash           []byte             `json:"slot_hash"`
+	RequestFingerprint []byte             `json:"request_fingerprint"`
+	ScopeSecretName    pgtype.Text        `json:"scope_secret_name"`
+	ScopeSecretID      pgtype.UUID        `json:"scope_secret_id"`
+	ScopeComputerID    pgtype.UUID        `json:"scope_computer_id"`
+	ScopeCommandID     pgtype.UUID        `json:"scope_command_id"`
+	ScopeCallerKind    pgtype.Text        `json:"scope_caller_kind"`
+	ScopeComputerKey   pgtype.Text        `json:"scope_computer_key"`
+	DeploymentID       pgtype.UUID        `json:"deployment_id"`
+	SecretID           pgtype.UUID        `json:"secret_id"`
+	SecretVersionID    pgtype.UUID        `json:"secret_version_id"`
+	ComputerID         pgtype.UUID        `json:"computer_id"`
+	CommandID          pgtype.UUID        `json:"command_id"`
+	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
+	Receipt            []byte             `json:"receipt"`
+	ReceiptPrunedAt    pgtype.Timestamptz `json:"receipt_pruned_at"`
+}
+
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
@@ -258,6 +269,17 @@ type Invitation struct {
 	AcceptedByUserID pgtype.UUID        `json:"accepted_by_user_id"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevokedByUserID  pgtype.UUID        `json:"revoked_by_user_id"`
+}
+
+type LoginSession struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	TokenHash  []byte             `json:"token_hash"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type MagicLink struct {
@@ -293,28 +315,6 @@ type Organization struct {
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-}
-
-type PlatformRetryKey struct {
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	ID                 pgtype.UUID        `json:"id"`
-	Operation          string             `json:"operation"`
-	SlotHash           []byte             `json:"slot_hash"`
-	RequestFingerprint []byte             `json:"request_fingerprint"`
-	ScopeSecretName    pgtype.Text        `json:"scope_secret_name"`
-	ScopeSecretID      pgtype.UUID        `json:"scope_secret_id"`
-	ScopeComputerID    pgtype.UUID        `json:"scope_computer_id"`
-	ScopeCommandID     pgtype.UUID        `json:"scope_command_id"`
-	ScopeCallerKind    pgtype.Text        `json:"scope_caller_kind"`
-	ScopeComputerKey   pgtype.Text        `json:"scope_computer_key"`
-	DeploymentID       pgtype.UUID        `json:"deployment_id"`
-	SecretID           pgtype.UUID        `json:"secret_id"`
-	SecretVersionID    pgtype.UUID        `json:"secret_version_id"`
-	ComputerID         pgtype.UUID        `json:"computer_id"`
-	CommandID          pgtype.UUID        `json:"command_id"`
-	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
-	Receipt            []byte             `json:"receipt"`
-	ReceiptPrunedAt    pgtype.Timestamptz `json:"receipt_pruned_at"`
 }
 
 type Project struct {

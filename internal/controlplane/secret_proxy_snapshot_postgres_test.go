@@ -62,7 +62,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 		marker := "hlmr_protected_" + strings.Repeat(name, 64)
 		f.markers = append(f.markers, secret.RuntimeSelector(f.fixture.Environment, "process", f.fixture.Session, 1, marker))
 		f.secrets = append(f.secrets, record.ID)
-		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO computer_secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.computer, f.fixture.Environment, record.ID, "TOKEN_"+name, marker)
+		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.computer, f.fixture.Environment, record.ID, "TOKEN_"+name, marker)
 		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,1,id,current_version_id,revocation_generation FROM secrets WHERE id=$3`, f.fixture.Environment, f.fixture.Session, record.ID)
 	}
 	if root {
@@ -75,9 +75,9 @@ func (f *snapshotFixture) capture(ctx context.Context, database db.DBTX) ([]secr
 	return agent.CaptureComputerProtectedSecrets(ctx, database, f.worker, f.instance, "https://example.com", f.markers)
 }
 func (f *snapshotFixture) invoke(ctx context.Context, resolve bool) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String()})
+	body, _ := json.Marshal(workerapi.SecretProxyRequest{AllocationID: f.instance.String()})
 	if resolve {
-		body, _ = json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
+		body, _ = json.Marshal(workerapi.SecretProxyRequest{AllocationID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
 	}
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(body)).WithContext(context.WithValue(ctx, workerContextKey{}, f.worker))
 	response := httptest.NewRecorder()
@@ -139,9 +139,9 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 					case "process":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE session_processes SET fenced_at=clock_timestamp(),status='lost' WHERE session_id=$1", f.fixture.Session)
 					case "lease":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_instance_id=$1", f.instance)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE allocation_id=$1", f.instance)
 					case "fence":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped',status='lost' WHERE computer_instance_id=$1", f.instance)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped',status='lost' WHERE allocation_id=$1", f.instance)
 					}
 				}
 				hook := &snapshotCaptureHook{TxDB: f.fixture.Pool}
@@ -193,7 +193,7 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 	if _, err := agent.CaptureComputerProtectedSecrets(t.Context(), f.fixture.Pool, f.worker, uuid.NewV7(), "https://example.com", f.markers); err == nil {
 		t.Fatal("wrong instance accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET expires_at=clock_timestamp()+interval '150 milliseconds' WHERE computer_instance_id=$1", f.instance)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_leases SET expires_at=clock_timestamp()+interval '150 milliseconds' WHERE allocation_id=$1", f.instance)
 	tx, err := f.fixture.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestProtectedSnapshotRootExpiryUsesCapturedStatementTime(t *testing.T) {
 func TestProtectedSnapshotMultipleBindingsAndRawExclusion(t *testing.T) {
 	f := newSnapshotFixture(t, 1, true)
 	alias := "hlmr_protected_" + strings.Repeat("d", 64)
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO computer_secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','ALIAS','protected',ARRAY['https://example.com'],$4)", f.computer, f.fixture.Environment, f.secrets[0], alias)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','ALIAS','protected',ARRAY['https://example.com'],$4)", f.computer, f.fixture.Environment, f.secrets[0], alias)
 	alias = secret.RuntimeSelector(f.fixture.Environment, "process", f.fixture.Session, 1, alias)
 	f.markers = append(f.markers, alias)
 	rows, err := f.capture(t.Context(), f.fixture.Pool)
@@ -325,7 +325,7 @@ func TestProtectedSnapshotMultipleBindingsAndRawExclusion(t *testing.T) {
 	if _, err := f.store.OpenProtectedCapture([]secret.ProtectedCapture{rows[0], rows[0]}, f.markers); err == nil {
 		t.Fatal("duplicate result row accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_secret_bindings SET mode='raw',allowed_origins='{}',placeholder=NULL WHERE computer_id=$1 AND placement_target='ALIAS'", f.computer)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE secret_bindings SET mode='raw',allowed_origins='{}',placeholder=NULL WHERE computer_id=$1 AND placement_target='ALIAS'", f.computer)
 	rows, err = f.capture(t.Context(), f.fixture.Pool)
 	if err == nil {
 		if _, err := f.store.OpenProtectedCapture(rows, f.markers); err == nil {

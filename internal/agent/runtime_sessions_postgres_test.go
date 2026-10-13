@@ -96,7 +96,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	unrelated.enqueue(t, "unrelated")
 	// Sending a new Turn to an unrelated target permits exact receipt observation,
 	// not discovery of its Session metadata or other work.
-	if _, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, RetryKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, ErrDenied) {
@@ -105,7 +105,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, uuid.NewV7()); !errors.Is(err, ErrDenied) {
 		t.Fatalf("unknown Session: %v", err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := RuntimeGetSession(t.Context(), f.pool, caller, independent.session)

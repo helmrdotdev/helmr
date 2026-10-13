@@ -40,7 +40,7 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 		var prior *int64
 		var version *int64
 		var raw, capture []byte
-		if err = tx.QueryRow(ctx, `SELECT target_lease_epoch,restore_control_version,manifest,capture_request FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&prior, &version, &raw, &capture); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT target_lease_epoch,restore_control_version,manifest,capture_request FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&prior, &version, &raw, &capture); err != nil {
 			return err
 		}
 		target, err := restoreTargetLease(ctx, tx, host, env, r, epoch)
@@ -95,13 +95,13 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 				return err
 			}
 			version = &next
-			if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='restoring',target_lease_epoch=$3,restore_control_version=$4,restore_identity=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, epoch, next); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE checkpoints SET status='restoring',target_lease_epoch=$3,restore_control_version=$4,restore_identity=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, epoch, next); err != nil {
 				return err
 			}
 		}
 		// No resident may have been admitted outside this captured set.
 		var added bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
 			return err
 		}
 		if added {
@@ -149,7 +149,7 @@ func restoreTargetLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPri
 	if epoch <= r.SourceEpoch {
 		return lease, ErrDenied
 	}
-	err := tx.QueryRow(ctx, `SELECT l.computer_instance_id,l.channel_credential_digest,l.restored_from_save_id::text,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+	err := tx.QueryRow(ctx, `SELECT l.allocation_id,l.channel_credential_digest,l.restored_from_save_id::text,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM computer_leases l
  JOIN computer_saves s ON (s.environment_id,s.computer_id,s.id,s.root_id)=(l.environment_id,l.computer_id,l.restored_from_save_id,l.base_root_id)
  WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5
@@ -177,7 +177,7 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 			return err
 		}
 		var stored []byte
-		if err = tx.QueryRow(ctx, `SELECT restore_identity FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT restore_identity FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
 			return err
 		}
 		if bytes.Equal(stored, identity) {
@@ -189,7 +189,7 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if r.State != "restoring" || observed.GetInstalled() {
 			return ErrConflict
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET restore_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET restore_identity=$3 WHERE environment_id=$1 AND id=$2`, env, checkpoint, identity)
 		return err
 	}))
 }
@@ -223,12 +223,12 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
 		// the delivery identity once, so delayed old receipts also fail to match.
 		// Retain a pending failure until lifecycle reconciliation records it.
 		if _, err = tx.Exec(ctx, `UPDATE session_processes p SET control_kind=NULL,control_acknowledged_at=NULL,control_error=NULL
- FROM computer_checkpoint_members m WHERE m.environment_id=$1 AND m.checkpoint_id=$2
+ FROM checkpoint_processes m WHERE m.environment_id=$1 AND m.checkpoint_id=$2
  AND (p.environment_id,p.session_id,p.epoch)=(m.environment_id,m.session_id,m.process_epoch)
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='consumed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }
@@ -270,14 +270,14 @@ func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, r.Computer, int64(p.GetEnvelope().GetWriterGeneration())); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }
 
 func matchRestoreInstallation(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID, identity []byte) error {
 	var stored []byte
-	if err := tx.QueryRow(ctx, `SELECT restore_identity FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT restore_identity FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
 		return err
 	}
 	if !bytes.Equal(stored, identity) {
@@ -318,7 +318,7 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 	var retained []byte
 	var recordedEpoch, version int64
 	var healthy bool
-	if err = tx.QueryRow(ctx, `SELECT p.capture_digest,p.target_lease_epoch,p.restore_control_version,c.integrity_fault_at IS NULL AND c.deleted_at IS NULL FROM computer_checkpoints p JOIN computers c ON (c.environment_id,c.id)=(p.environment_id,p.computer_id) WHERE p.environment_id=$1 AND p.id=$2`, env, checkpoint).Scan(&retained, &recordedEpoch, &version, &healthy); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT p.capture_digest,p.target_lease_epoch,p.restore_control_version,c.integrity_fault_at IS NULL AND c.deleted_at IS NULL FROM checkpoints p JOIN computers c ON (c.environment_id,c.id)=(p.environment_id,p.computer_id) WHERE p.environment_id=$1 AND p.id=$2`, env, checkpoint).Scan(&retained, &recordedEpoch, &version, &healthy); err != nil {
 		return r, err
 	}
 	if !healthy {
@@ -378,7 +378,7 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 		}
 	}
 	var added bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch))`, env, r.Computer, checkpoint).Scan(&added); err != nil {
 		return r, err
 	}
 	if added {

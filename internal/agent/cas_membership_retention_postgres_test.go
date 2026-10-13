@@ -17,7 +17,7 @@ func TestComputerCollectionRetainsDeploymentDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(t.Context(), `INSERT INTO deployment_objects(environment_id,deployment_id,org_id,project_id,digest,size_bytes,media_type) SELECT environment_id,$3,org_id,project_id,digest,size_bytes,media_type FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.env, digest, f.deployment); err != nil {
+	if _, err := tx.Exec(t.Context(), `INSERT INTO deployment_objects(environment_id,deployment_id,org_id,project_id,digest,size_bytes,media_type) SELECT environment_id,$3,org_id,project_id,digest,size_bytes,media_type FROM disk_objects WHERE environment_id=$1 AND digest=$2`, f.env, digest, f.deployment); err != nil {
 		t.Fatal(err)
 	}
 	// An uncommitted Deployment adoption holds the membership FK. The collector
@@ -26,7 +26,7 @@ func TestComputerCollectionRetainsDeploymentDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	var present bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2)`, f.env, digest).Scan(&present); err != nil || !present {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2)`, f.env, digest).Scan(&present); err != nil || !present {
 		t.Fatalf("failed membership release lost retry owner: %v %v", present, err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
@@ -37,7 +37,7 @@ func TestComputerCollectionRetainsDeploymentDependency(t *testing.T) {
 	}
 	var collected, retained bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT
- NOT EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2),
+ NOT EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2),
  EXISTS(SELECT 1 FROM deployment_objects d JOIN cas_objects c ON c.org_id=d.org_id AND c.digest=d.digest WHERE d.environment_id=$1 AND d.digest=$2)`, f.env, digest).Scan(&collected, &retained); err != nil || !collected || !retained {
 		t.Fatalf("Computer collected=%v Deployment retained=%v error=%v", collected, retained, err)
 	}
@@ -51,8 +51,8 @@ func TestComputerMembershipCollectorsSeeEachOthersCommit(t *testing.T) {
 	digest := graphRetentionObject(t, f, 301, 0)
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other',color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT $2,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at FROM computer_objects WHERE environment_id=$1 AND digest=$3`, pgx.QueryExecModeSimpleProtocol, f.env, other, digest)
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
+ SELECT $2,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at FROM disk_objects WHERE environment_id=$1 AND digest=$3`, pgx.QueryExecModeSimpleProtocol, f.env, other, digest)
 	first, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -64,10 +64,10 @@ func TestComputerMembershipCollectorsSeeEachOthersCommit(t *testing.T) {
 	}
 	defer second.Rollback(context.Background())
 	var org uuid.UUID
-	if err := first.QueryRow(t.Context(), `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2 RETURNING org_id`, f.env, digest).Scan(&org); err != nil {
+	if err := first.QueryRow(t.Context(), `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2 RETURNING org_id`, f.env, digest).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Exec(t.Context(), `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, other, digest); err != nil {
+	if _, err := second.Exec(t.Context(), `DELETE FROM disk_objects WHERE environment_id=$1 AND digest=$2`, other, digest); err != nil {
 		t.Fatal(err)
 	}
 	if err := releaseComputerCASMembership(t.Context(), first, org, digest); err != nil {
@@ -114,14 +114,14 @@ func TestComputerMembershipReleasePreservesOtherOrganization(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations(id,name,slug) VALUES($2,'Other','other');
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$2,'test','other','Other');
  INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$4,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
- INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT $2,digest,size_bytes,media_type FROM computer_objects WHERE environment_id=$1 AND digest=$5;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT $4,digest,$2,$3,size_bytes,media_type,kind,rank,inspection,certified_at FROM computer_objects WHERE environment_id=$1 AND digest=$5`, pgx.QueryExecModeSimpleProtocol, f.env, org, project, env, digest)
+ INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT $2,digest,size_bytes,media_type FROM disk_objects WHERE environment_id=$1 AND digest=$5;
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
+ SELECT $4,digest,$2,$3,size_bytes,media_type,kind,rank,inspection,certified_at FROM disk_objects WHERE environment_id=$1 AND digest=$5`, pgx.QueryExecModeSimpleProtocol, f.env, org, project, env, digest)
 	if err := reclaimComputerObject(t.Context(), f.pool, f.env, digest); err != nil {
 		t.Fatal(err)
 	}
 	var correct bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM cas_objects WHERE digest=$1)=1 AND EXISTS(SELECT 1 FROM cas_objects WHERE org_id=$2 AND digest=$1) AND EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$3 AND digest=$1)`, digest, org, env).Scan(&correct); err != nil || !correct {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM cas_objects WHERE digest=$1)=1 AND EXISTS(SELECT 1 FROM cas_objects WHERE org_id=$2 AND digest=$1) AND EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$3 AND digest=$1)`, digest, org, env).Scan(&correct); err != nil || !correct {
 		t.Fatalf("cross-organization owner lost: %v %v", correct, err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE digest=$1`, digest); err == nil {

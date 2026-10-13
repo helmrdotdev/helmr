@@ -43,13 +43,13 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 		t.Fatal(err)
 	}
 	f.secretID = pgvalue.MustUUIDValue(record.ID)
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM computer_secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2; INSERT INTO computer_secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=$2; INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
 	return f
 }
 func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
 	return id
 }
 func (f preparationFixture) attach(t *testing.T, id uuid.UUID) Preparation {
@@ -144,7 +144,7 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	if _, err := RenewPreparation(t.Context(), f.pool, host, ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("wrong host epoch: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if _, err := RenewPreparation(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired renewal: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 		t.Fatalf("exposure: %+v %v", exposed, err)
 	}
 	var pins int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, f.env, p.ID).Scan(&pins); err != nil || pins != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.env, p.ID).Scan(&pins); err != nil || pins != 1 {
 		t.Fatalf("alias pins=%d: %v", pins, err)
 	}
 	if _, err = f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
@@ -205,7 +205,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 		t.Fatalf("failed commit released material: %+v %v", values, err)
 	}
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, f.env, p.ID).Scan(&count); err != nil || count != 0 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.env, p.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rollback count=%d: %v", count, err)
 	}
 	// Expiry is checked after the spec lock, not at the earlier metadata read.
@@ -214,7 +214,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Rollback(t.Context())
-	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
+	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
 	done := make(chan error, 1)
 	go func() {
 		values, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
@@ -226,7 +226,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var waiting bool
-		if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%computer_preparation_specs%')`).Scan(&waiting); err != nil {
+		if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%image_specs%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
@@ -236,7 +236,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 			t.Fatal("exposure did not reach deciding lock")
 		}
 	}
-	dbtest.MustExec(t, t.Context(), blocker, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+	dbtest.MustExec(t, t.Context(), blocker, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	if err = blocker.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -269,14 +269,14 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 				if err := expirePreparation(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
 			var state string
 			var fenced bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT status,fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&state, &fenced); err != nil || state != "failed" || fenced {
+			if err := f.pool.QueryRow(t.Context(), `SELECT status,fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&state, &fenced); err != nil || state != "failed" || fenced {
 				t.Fatalf("state=%s fence=%v: %v", state, fenced, err)
 			}
 			fresh := f.waiter(t)
@@ -306,7 +306,7 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 			t.Fatal(err)
 		}
 		var stopped bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL AND status='failed' FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL AND status='failed' FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
 			t.Fatalf("provider stop=%v: %v", stopped, err)
 		}
 	})
@@ -322,13 +322,13 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 			t.Fatal(err)
 		}
 		var stopped bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
 			t.Fatalf("quarantine inferred stop=%v: %v", stopped, err)
 		}
 		if err := ObserveRecoveredHostComputers(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
+		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
 			t.Fatalf("recovered stop=%v: %v", stopped, err)
 		}
 	})
@@ -341,7 +341,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	ref := f.claim(t, p)
 	session := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0)`, f.env, session, f.agent, f.deployment, computer)
-	request := EnqueueRequest{EnvironmentID: f.env, SessionID: session, RetryKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
+	request := EnqueueRequest{EnvironmentID: f.env, SessionID: session, IdempotencyKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
 	admitted, err := Enqueue(t.Context(), f.pool, nil, f.caller(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -358,13 +358,13 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); err != nil {
 		t.Fatalf("original admission identity disappeared: %v", err)
 	}
-	request.RetryKey = "new"
+	request.IdempotencyKey = "new"
 	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("failed Computer admitted new work: %v", err)
 	}
 	// Failing a waiter never claims its shared preparation writer stopped.
 	var fenced bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&fenced); err != nil || fenced {
+	if err = f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&fenced); err != nil || fenced {
 		t.Fatalf("false fence=%v: %v", fenced, err)
 	}
 	if _, err = RenewPreparation(t.Context(), f.pool, *f.host(), ref); err != nil {
@@ -392,7 +392,7 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 		t.Fatalf("lifecycle more=%v: %v", more, err)
 	}
 	var code string
-	if err := f.pool.QueryRow(t.Context(), `SELECT error_code FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&code); err != nil || code != "secret_revoked" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT error_code FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&code); err != nil || code != "secret_revoked" {
 		t.Fatalf("code=%s: %v", code, err)
 	}
 }
@@ -424,7 +424,7 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 			if claimed {
 				ref = f.claim(t, p)
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
 			fresh := f.waiter(t)
 			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("expired attach: %v", err)

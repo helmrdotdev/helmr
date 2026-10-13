@@ -22,7 +22,7 @@ func recoveringComputerHost(t *testing.T, f fixture) workergroup.HostPrincipal {
 func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing.T) {
 	f := newFixture(t)
 	instance := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET computer_instance_id=$1`, instance)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET allocation_id=$1`, instance)
 	running := f.enqueue(t, "running")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestComputerHostRecoveryResumesAfterPartialProgress(t *testing.T) {
 	f := newFixture(t)
 	next := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, next)
 	h := recoveringComputerHost(t, f)
 	tx, err := f.pool.Begin(t.Context())
@@ -136,7 +136,7 @@ func TestComputerHostRecoveryExcludesCurrentAndForeignAllocations(t *testing.T) 
 	}{{h.HostID, h.Epoch}, {otherHost, 1}} {
 		computer := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,$3,$4,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computer, owner.host, owner.epoch)
 	}
 	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
@@ -167,7 +167,7 @@ func TestComputerHostRecoverySettlesUnpublishedCaptureAfterFencing(t *testing.T)
 			}
 			var status, failure string
 			var lost bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,COALESCE(s.failure_evidence,''),c.status='lost' AND c.capture_request IS NULL AND l.fenced_at IS NOT NULL FROM computer_saves s JOIN computer_checkpoints c ON c.disk_save_id=s.id JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch) WHERE s.id=$1`, result.SaveID).Scan(&status, &failure, &lost); err != nil {
+			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,COALESCE(s.failure_evidence,''),c.status='lost' AND c.capture_request IS NULL AND l.fenced_at IS NOT NULL FROM computer_saves s JOIN checkpoints c ON c.disk_save_id=s.id JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch) WHERE s.id=$1`, result.SaveID).Scan(&status, &failure, &lost); err != nil {
 				t.Fatal(err)
 			}
 			if !lost || status != "failed" || failure != "publication absent after writer authority ended" {
@@ -181,7 +181,7 @@ func TestComputerHostRecoveryContinuesPastBlockedComputer(t *testing.T) {
 	f := newFixture(t)
 	next := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$3,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, next, uuid.NewV7())
 	h := recoveringComputerHost(t, f)
 	tx, err := f.pool.Begin(t.Context())

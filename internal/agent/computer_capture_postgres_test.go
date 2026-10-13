@@ -57,7 +57,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		}
 	}
 	caller := Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	if _, err = Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
+	if _, err = Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}
 	other := req
@@ -182,7 +182,7 @@ func TestComputerCaptureRejectsActivePeerWithoutAllocatingSave(t *testing.T) {
 		t.Fatalf("active peer captured: %v", err)
 	}
 	var saves, checkpoints int
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves),(SELECT count(*) FROM computer_checkpoints)`).Scan(&saves, &checkpoints); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves),(SELECT count(*) FROM checkpoints)`).Scan(&saves, &checkpoints); err != nil {
 		t.Fatal(err)
 	}
 	if saves != 0 || checkpoints != 0 {
@@ -201,7 +201,7 @@ func TestComputerCaptureAbsentEvidenceMustFollowExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
 	if err = CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("late delivery of old absence accepted: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 		t.Fatalf("disk cut was silently discarded: %v", err)
 	}
 	var state string
-	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&state); err != nil || state != "capturing" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&state); err != nil || state != "capturing" {
 		t.Fatalf("seal changed: %s %v", state, err)
 	}
 }
@@ -231,7 +231,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 func TestComputerCaptureRejectsStaleProcessLease(t *testing.T) {
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source closed'`)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
   SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE epoch=1`, uuid.NewV7())
 	req := f.captureRequest()
 	req.LeaseEpoch = 2
@@ -250,7 +250,7 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 		t.Fatalf("membership drift trapped never-sealed source: %v", err)
 	}
 	var scrubbed bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
+	if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatalf("cancelled source secret retained: %v", err)
 	}
 	f.enqueue(t, "healthy-peer")
@@ -277,7 +277,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 			}
 			var state string
 			var scrubbed bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,c.capture_request IS NULL FROM computer_saves s JOIN computer_checkpoints c ON c.disk_save_id=s.id WHERE s.id=$1`, result.SaveID).Scan(&state, &scrubbed); err != nil {
+			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,c.capture_request IS NULL FROM computer_saves s JOIN checkpoints c ON c.disk_save_id=s.id WHERE s.id=$1`, result.SaveID).Scan(&state, &scrubbed); err != nil {
 				t.Fatal(err)
 			}
 			want := "requested"
@@ -311,7 +311,7 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 	save := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$3,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
  INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT 'until_environment_deletion',environment_id,$4,agent_id,deployment_id,$2,$4,0 FROM sessions WHERE id=$5;
@@ -325,9 +325,9 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 		name, statement string
 		args            []any
 	}{
-		{"save", `UPDATE computer_checkpoints SET disk_save_id=$3 WHERE environment_id=$1 AND id=$2`, []any{f.env, req.CheckpointID, save}},
-		{"process", `INSERT INTO computer_checkpoint_members(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, f.computer, req.CheckpointID, session}},
-		{"checkpoint", `INSERT INTO computer_checkpoint_members(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, other, req.CheckpointID, session}},
+		{"save", `UPDATE checkpoints SET disk_save_id=$3 WHERE environment_id=$1 AND id=$2`, []any{f.env, req.CheckpointID, save}},
+		{"process", `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, f.computer, req.CheckpointID, session}},
+		{"checkpoint", `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, other, req.CheckpointID, session}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := f.pool.Exec(t.Context(), tc.statement, tc.args...)

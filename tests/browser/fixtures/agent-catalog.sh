@@ -33,10 +33,10 @@ WHERE id=:'environment_id' AND slug LIKE 'browser-agent-%';
 INSERT INTO deployments(environment_id,id,bundle_digest)
 SELECT id,:'deployment_id','sha256:'||repeat('b',64) FROM environments
 WHERE id=:'environment_id' AND slug LIKE 'browser-agent-%';
-INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed)
+INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed)
 VALUES(:'environment_id',:'deployment_id','sha256:'||repeat('b',64),'{}','{"profile":"linux-amd64-ext4-v1"}');
 INSERT INTO templates(environment_id,id,key) VALUES(:'environment_id',:'deployment_id','browser-computer');
-INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources)
+INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,resources)
 VALUES(:'environment_id',:'deployment_id',:'deployment_id',:'deployment_id','{"milliCpu":1000,"memoryMiB":512}');
 INSERT INTO agents(environment_id,id,key) VALUES(:'environment_id',:'agent_id','browser-agent');
 INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)

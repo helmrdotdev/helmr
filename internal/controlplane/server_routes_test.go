@@ -35,7 +35,7 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	want := strings.Split(strings.TrimSpace(`
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
-DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}
+DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
 DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
@@ -153,7 +153,7 @@ POST /api/organizations
 POST /api/projects
 POST /api/projects/{project}/environments
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
-POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/authorize
+POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize
 POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
 POST /api/projects/{project}/environments/{environment}/computers
@@ -224,20 +224,20 @@ POST /worker/v1/allocations/computer/deliver
 POST /worker/v1/allocations/computer/processes
 POST /worker/v1/allocations/computer/ready
 POST /worker/v1/allocations/computer/source
+POST /worker/v1/allocations/image-build/capture
+POST /worker/v1/allocations/image-build/capture/begin
+POST /worker/v1/allocations/image-build/deliver
+POST /worker/v1/allocations/image-build/fail
+POST /worker/v1/allocations/image-build/key
+POST /worker/v1/allocations/image-build/logs
+POST /worker/v1/allocations/image-build/objects/certify
+POST /worker/v1/allocations/image-build/objects/register
+POST /worker/v1/allocations/image-build/publish
+POST /worker/v1/allocations/image-build/renew
+POST /worker/v1/allocations/image-build/secrets
+POST /worker/v1/allocations/image-build/start
+POST /worker/v1/allocations/image-build/stopped
 POST /worker/v1/allocations/list
-POST /worker/v1/allocations/preparation/capture
-POST /worker/v1/allocations/preparation/capture/begin
-POST /worker/v1/allocations/preparation/deliver
-POST /worker/v1/allocations/preparation/fail
-POST /worker/v1/allocations/preparation/key
-POST /worker/v1/allocations/preparation/logs
-POST /worker/v1/allocations/preparation/objects/certify
-POST /worker/v1/allocations/preparation/objects/register
-POST /worker/v1/allocations/preparation/publish
-POST /worker/v1/allocations/preparation/renew
-POST /worker/v1/allocations/preparation/secrets
-POST /worker/v1/allocations/preparation/start
-POST /worker/v1/allocations/preparation/stopped
 POST /worker/v1/computer-commands/claim
 POST /worker/v1/computer-commands/complete
 POST /worker/v1/computer-commands/logs/append
@@ -272,7 +272,7 @@ POST /worker/v1/sessions/start/release
 POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
-PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/credentials
+PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {
@@ -431,7 +431,7 @@ func TestProcessDiagnosticsRemainInternal(t *testing.T) {
 		}
 	}
 	for _, route := range []string{
-		"POST /worker/v1/sessions/logs", "POST /worker/v1/allocations/preparation/logs",
+		"POST /worker/v1/sessions/logs", "POST /worker/v1/allocations/image-build/logs",
 		"GET /v1/commands/{commandID}/logs",
 	} {
 		if !registered[route] {

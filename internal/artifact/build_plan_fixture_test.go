@@ -7,7 +7,7 @@ import (
 
 func testBuildPlan() definition.BuildPlan {
 	return definition.BuildPlan{FormatVersion: definition.BuildPlanFormatVersion, Definitions: []definition.Input{
-		{Kind: definition.KindAgent, DeclaredID: "build", Agent: &definition.AgentManifest{TemplateDefinitionID: "repo", Setup: true, Triggers: map[string]definition.CronTrigger{"daily": {Cron: "0 9 * * *", Timezone: "UTC", Input: json.RawMessage(`[]`)}}}},
+		{Kind: definition.KindAgent, DeclaredID: "build", Agent: &definition.AgentManifest{TemplateDefinitionID: "repo", HasInit: true, Triggers: map[string]definition.CronTrigger{"daily": {Cron: "0 9 * * *", Timezone: "UTC", Input: json.RawMessage(`[]`)}}}},
 		{Kind: definition.KindAgent, DeclaredID: "chat", Agent: &definition.AgentManifest{TemplateDefinitionID: "repo", Triggers: map[string]definition.CronTrigger{}}},
 		{Kind: definition.KindTemplate, DeclaredID: "repo", Template: &definition.TemplateInputManifest{
 			ImageBuild: definition.ImageBuild{Root: "repo", Images: []definition.ImageSpec{{Key: "repo", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"}, Steps: []definition.ImageStep{

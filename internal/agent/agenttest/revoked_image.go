@@ -43,22 +43,22 @@ func (f Fixture) PinRevokedImage(t *testing.T, computer uuid.UUID) {
 		t.Fatal(err)
 	}
 	var preparation, spec uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT preparation_id,preparation_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, f.Environment, computer).Scan(&preparation, &spec); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT image_build_id,image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, f.Environment, computer).Scan(&preparation, &spec); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO computer_data_keys(id,environment_id,writer_preparation_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'));
+ INSERT INTO disk_encryption_keys(id,environment_id,writer_image_build_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'));
  INSERT INTO cas_blobs(digest,size_bytes) VALUES($4,$5);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$4,$5,'application/octet-stream' FROM environments WHERE id=$2;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,'{}',clock_timestamp() FROM environments WHERE id=$2;
- INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,'{}',clock_timestamp() FROM environments WHERE id=$2;
+ INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
  `+DiskRootInsert("$2", "$7", "$8")+`;
- UPDATE computer_preparations SET status='succeeded',write_key_id=$1,logical_bytes=1048576,capture_root=$9,capture_evidence='fixture publication' WHERE environment_id=$2 AND id=$3;
- INSERT INTO computer_images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence) VALUES($2,$3,$10,$3,1,$7,'fixture publication');
+ UPDATE image_builds SET status='succeeded',write_key_id=$1,logical_bytes=1048576,capture_root=$9,capture_evidence='fixture publication' WHERE environment_id=$2 AND id=$3;
+ INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence) VALUES($2,$3,$10,$3,1,$7,'fixture publication');
  UPDATE computers SET initial_root_id=$7,initial_root_digest=decode(substring($9::text from 8),'hex'),image_id=$3 WHERE environment_id=$2 AND id=$11;
  INSERT INTO secrets(environment_id,id,name,status,revoked_at) VALUES($2,$12,'image-secret','revoked',clock_timestamp());
  INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($13,$12,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));
- INSERT INTO secret_exposures(id,environment_id,preparation_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$2,$3,$12,$13,0);
+ INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$2,$3,$12,$13,0);
  `, pgx.QueryExecModeSimpleProtocol, key, f.Environment, preparation, fmt.Sprintf("sha256:%x", locator.Pack.Digest), locator.Pack.Size, locator.Pack.Rank, rootID, string(encoded), identity, spec, computer, secretID, versionID)
 	var revoked bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, f.Environment, computer).Scan(&revoked); err != nil || !revoked {

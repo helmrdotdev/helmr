@@ -12,7 +12,7 @@ import (
 func insertRecoveryCommand(t *testing.T, f agenttest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
 	return id
 }
 
@@ -23,14 +23,14 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 	}
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
 	actionable := insertRecoveryCommand(t, f, other, false)
 	position, more, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
 	if err != nil || !more || position.ID != actionable {
 		t.Fatalf("recovery position=%+v more=%v %v", position, more, err)
 	}
 	var lost, unreconciled bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='lost',process_reconciled_at IS NULL FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, actionable).Scan(&lost, &unreconciled); err != nil || !lost || !unreconciled {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='lost',process_reconciled_at IS NULL FROM commands WHERE environment_id=$1 AND id=$2`, f.Environment, actionable).Scan(&lost, &unreconciled); err != nil || !lost || !unreconciled {
 		t.Fatalf("lost Command starved or falsely reconciled: %v %v %v", lost, unreconciled, err)
 	}
 }
@@ -39,11 +39,11 @@ func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 	f := agenttest.New(t)
 	secretID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),2)`, secretID, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
 	for n := 0; n < 3; n++ {
 		id := insertRecoveryCommand(t, f, f.Computer, false)
 		if n == 0 {
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 		}
 		position, _, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
 		if err != nil || position.ID != id {
@@ -51,7 +51,7 @@ func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 		}
 		var status string
 		var terminal, reconciled bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_at IS NOT NULL,process_reconciled_at IS NOT NULL FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&status, &terminal, &reconciled); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_at IS NOT NULL,process_reconciled_at IS NOT NULL FROM commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&status, &terminal, &reconciled); err != nil {
 			t.Fatal(err)
 		}
 		if n == 0 {

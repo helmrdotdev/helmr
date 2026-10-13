@@ -298,7 +298,7 @@ func TestBackgroundSaveThenCheckpointKeepsCoherentRecoveryHead(t *testing.T) {
 		t.Fatalf("optional passed ready checkpoint: %+v %v", save, err)
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT p.status='ready' AND c.recovery_save_id=p.disk_save_id AND p.disk_save_id<>$3 AND (SELECT count(*) FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id)=2 FROM computers c JOIN computer_checkpoints p ON p.environment_id=c.environment_id AND p.computer_id=c.id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer, optional.ID).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT p.status='ready' AND c.recovery_save_id=p.disk_save_id AND p.disk_save_id<>$3 AND (SELECT count(*) FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id)=2 FROM computers c JOIN checkpoints p ON p.environment_id=c.environment_id AND p.computer_id=c.id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer, optional.ID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("coherent checkpoint head: %v %v", valid, err)
 	}
 }

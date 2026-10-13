@@ -152,7 +152,7 @@ printf '%s' "$NEW_GITHUB_TOKEN" | helmr secret rotate GITHUB_TOKEN \
 Protected bindings use the new value on their next request; you do not need to
 recreate Computers. Raw and file values are delivered when work starts, so
 processes that are already running keep the old value. A new Computer prepared
-with this Secret in `buildSecrets` gets a fresh baseline.
+with this Secret in `buildSecrets` gets a freshly prepared image.
 
 ## Revoke the Secret
 

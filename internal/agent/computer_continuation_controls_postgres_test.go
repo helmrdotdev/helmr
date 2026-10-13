@@ -74,7 +74,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			}
 			// The read neither acknowledges physical controls nor releases the seal.
 			var reconciled bool
-			if err := f.pool.QueryRow(ctx, `SELECT controls_reconciled_at IS NOT NULL FROM computer_checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&reconciled); err != nil || reconciled {
+			if err := f.pool.QueryRow(ctx, `SELECT controls_reconciled_at IS NOT NULL FROM checkpoints WHERE id=$1`, p.Capture.CheckpointId).Scan(&reconciled); err != nil || reconciled {
 				t.Fatalf("read admitted business: %v", err)
 			}
 			installed.ActivationStarted = true

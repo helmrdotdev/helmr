@@ -166,7 +166,7 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err != nil {
 			return saveObjectConflict("root capacity differs from mounted source: %v", err)
 		}
-		stored, err := db.New(tx).LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: scope.environmentID, Digest: root.Pack.Digest})
+		stored, err := db.New(tx).LockDiskObject(ctx, db.LockDiskObjectParams{EnvironmentID: scope.environmentID, Digest: root.Pack.Digest})
 		if err != nil {
 			return saveObjectMissing(err)
 		}
@@ -191,7 +191,7 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err != nil {
 			return err
 		}
-		rootID, err := db.New(tx).RetainComputerDiskRoot(ctx, params)
+		rootID, err := db.New(tx).RetainDiskRoot(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
@@ -264,14 +264,14 @@ func (s *saveObjectScope) loadSaveStorage(ctx context.Context, tx pgx.Tx) error 
 	var key uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT e.org_id,e.project_id,d.base_root_id,d.write_key_id,r.logical_bytes
       FROM computer_leases d JOIN environments e ON e.id=d.environment_id
-      JOIN computer_disk_roots r ON (r.environment_id,r.id)=(d.environment_id,d.base_root_id)
+      JOIN disk_roots r ON (r.environment_id,r.id)=(d.environment_id,d.base_root_id)
       WHERE d.environment_id=$1 AND d.computer_id=$2 AND d.epoch=$3 AND d.disk_released_at IS NULL`, s.environmentID, s.computerID, s.leaseEpoch).Scan(&s.orgID, &s.projectID, &s.baseRoot, &key, &s.logicalBytes)
 	if err != nil {
 		return err
 	}
 	s.writeKey = key.String()
 	s.allowedKeys = map[string]bool{s.writeKey: true}
-	rows, err := tx.Query(ctx, `SELECT k.key_id FROM computer_disk_roots r JOIN computer_object_keys k ON (k.environment_id,k.digest)=(r.environment_id,r.pack_digest) WHERE r.environment_id=$1 AND r.id=$2`, s.environmentID, s.baseRoot)
+	rows, err := tx.Query(ctx, `SELECT k.key_id FROM disk_roots r JOIN disk_object_keys k ON (k.environment_id,k.digest)=(r.environment_id,r.pack_digest) WHERE r.environment_id=$1 AND r.id=$2`, s.environmentID, s.baseRoot)
 	if err != nil {
 		return err
 	}

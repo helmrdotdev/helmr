@@ -7,7 +7,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -22,7 +22,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := GetTurn(t.Context(), f.pool, f.caller(), f.env, first.SessionID, first.TurnID)
-	canonical, _ := conversation.Input(req.Input)
+	canonical, _ := content.Input(req.Input)
 	if err != nil || string(view.Input) != string(canonical) {
 		t.Fatalf("input changed %s: %v", view.Input, err)
 	}
@@ -32,11 +32,11 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, other)
 	bad := json.RawMessage(`[{"type":"json","value":null}]`)
 	req.Input = bad
-	req.RetryKey = "json"
-	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, conversation.ErrUnsupported) {
+	req.IdempotencyKey = "json"
+	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("existing start ignored pin: %v", err)
 	}
-	if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, conversation.ErrUnsupported) {
+	if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("enqueue ignored pin: %v", err)
 	}
 	var count int
@@ -44,7 +44,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 		t.Fatalf("rejection admitted work %d: %v", count, err)
 	}
 	for _, invalid := range []string{`{"type":"job","content":12}`, `{"type":"message","content":12}`, `null`, `"hello"`} {
-		if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, conversation.ErrInvalid) {
+		if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, content.ErrInvalid) {
 			t.Fatalf("accepted non-content input %s: %v", invalid, err)
 		}
 	}
@@ -63,7 +63,7 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT t.input FROM turns t JOIN trigger_occurrences o ON o.turn_id=t.id WHERE o.activation_id=$1`, id).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := conversation.Input(input)
+	canonical, _ := content.Input(input)
 	if string(got) != string(canonical) {
 		t.Fatalf("trigger input changed %s", got)
 	}

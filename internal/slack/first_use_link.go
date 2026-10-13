@@ -54,7 +54,7 @@ func decodeFirstUseLink(key []byte, token string) (uuid.UUID, string, error) {
 }
 
 type FirstUseLink struct {
-	OrganizationID   uuid.UUID `json:"organization_id"`
+	OrganizationID   uuid.UUID `json:"org_id"`
 	InstallationID   uuid.UUID `json:"installation_id"`
 	TeamID           string    `json:"team_id"`
 	SlackUserID      string    `json:"slack_user_id"`
@@ -75,14 +75,14 @@ func ResolveFirstUseLink(ctx context.Context, pool db.TxBeginner, key []byte, to
 	}
 	var result FirstUseLink
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT i.organization_id,i.id,i.team_id,r.slack_user_id,i.workspace_name,o.name
+		err := tx.QueryRow(ctx, `SELECT i.org_id,i.id,i.team_id,r.slack_user_id,i.workspace_name,o.name
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- JOIN organizations o ON o.id=i.organization_id
+ JOIN organizations o ON o.id=i.org_id
  WHERE r.id=$1 AND r.status='rejected' AND r.error='identity_unlinked'
  AND r.finished_at>clock_timestamp()-interval '10 minutes'
  AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL
  AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
- AND EXISTS (SELECT 1 FROM agent_publications p JOIN slack_app_registrations a ON a.id=p.slack_app_registration_id WHERE p.slack_installation_id=i.id AND p.revoked_at IS NULL AND a.retired_at IS NULL)
+ AND EXISTS (SELECT 1 FROM slack_connections p JOIN slack_app_registrations a ON a.id=p.slack_app_registration_id WHERE p.slack_installation_id=i.id AND p.revoked_at IS NULL AND a.retired_at IS NULL)
  FOR SHARE OF r,i`, request).Scan(&result.OrganizationID, &result.InstallationID, &result.TeamID, &result.SlackUserID, &result.WorkspaceName, &result.OrganizationName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrFirstUseLink

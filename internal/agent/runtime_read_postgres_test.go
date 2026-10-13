@@ -23,7 +23,7 @@ func TestRuntimeTurnObservationScope(t *testing.T) {
 	caller := runtimeReadCaller(t, f)
 	peer := f.peer(t)
 	unrelated := peer.enqueue(t, "unrelated")
-	own, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
+	own, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
 			peer := f.peer(t)
-			a, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[]`)})
+			a, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,14 +159,14 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 			if err != nil || view.Status != "queued" || view.WaitBlocked != "capacity_wait_blocked" {
 				t.Fatalf("missing dependency %+v %v", view, err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "interrupt", RetryKey: "held-target"}); err != nil {
+			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "interrupt", IdempotencyKey: "held-target"}); err != nil {
 				t.Fatal(err)
 			}
 			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)
 			if err != nil || view.Status != "queued" || view.WaitBlocked != "" {
 				t.Fatalf("held target misclassified %+v %v", view, err)
 			}
-			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "cancel", RetryKey: "cancel-target"}); err != nil {
+			if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "cancel", IdempotencyKey: "cancel-target"}); err != nil {
 				t.Fatal(err)
 			}
 			view, err = RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)

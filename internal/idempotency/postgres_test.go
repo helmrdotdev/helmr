@@ -32,20 +32,20 @@ func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) *retry.Req
 	}
 	return request
 }
-func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target retry.Target) db.PlatformRetryKey {
+func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target retry.Target) db.IdempotencyReceipt {
 	t.Helper()
-	var claim db.PlatformRetryKey
+	var claim db.IdempotencyReceipt
 	if err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
 		claim = r.Claim
 		return retry.Completion{Target: target, Receipt: []byte(`{"accepted":true}`)}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := f.Pool.Query(t.Context(), `SELECT * FROM platform_retry_keys WHERE environment_id=$1 AND id=$2`, claim.EnvironmentID, claim.ID)
+	rows, err := f.Pool.Query(t.Context(), `SELECT * FROM idempotency_receipts WHERE environment_id=$1 AND id=$2`, claim.EnvironmentID, claim.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByPos[db.PlatformRetryKey])
+	stored, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByPos[db.IdempotencyReceipt])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPlatformConcurrentRetryCommitsOneReceipt(t *testing.T) {
 		t.Fatalf("new receipts %d", fresh)
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("receipts %d: %v", count, err)
 	}
 }
@@ -125,7 +125,7 @@ func TestPlatformIncompleteTransactionAndWrongTargetRollBack(t *testing.T) {
 				t.Fatal("incomplete or mistyped result committed")
 			}
 			var count int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("partial claim retained %d: %v", count, err)
 			}
 			var partial bool
@@ -140,12 +140,12 @@ func TestPlatformExpiredIdentityCannotExecuteBeforeOrAfterCollection(t *testing.
 	f := agenttest.New(t)
 	request := deploymentRequest(t, f, "expired")
 	claim := accept(t, f, request, retry.Target{DeploymentID: f.Deployment})
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND id=$2`, f.Environment, claim.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE idempotency_receipts SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND id=$2`, f.Environment, claim.ID)
 	var expired retry.ExpiredError
 	if err := acquireError(t, f, request); !errors.As(err, &expired) {
 		t.Fatalf("uncollected expiry: %v", err)
 	}
-	if count, err := db.New(f.Pool).PruneExpiredPlatformRetryReceipts(t.Context(), 100); err != nil || count != 1 {
+	if count, err := db.New(f.Pool).PruneExpiredIdempotencyReceipts(t.Context(), 100); err != nil || count != 1 {
 		t.Fatalf("prune %d: %v", count, err)
 	}
 	if err := acquireError(t, f, request); !errors.As(err, &expired) {
@@ -221,7 +221,7 @@ func assertNoPartialMutation(t *testing.T, f agenttest.Fixture) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT COALESCE(key='partial',false) FROM computers WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer).Scan(&partial); err != nil || partial {
 		t.Fatalf("domain mutation survived: %v, %v", partial, err)
 	}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("retry records survived: %d, %v", count, err)
 	}
 }
@@ -267,7 +267,7 @@ func TestPlatformSuccessfulInnerMutationFollowsOuterRollback(t *testing.T) {
 			return err
 		}
 		var count int
-		if err := outer.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
+		if err := outer.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("inner receipt not visible: %d, %v", count, err)
 		}
 		return rollback

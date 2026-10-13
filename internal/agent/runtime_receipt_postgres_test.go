@@ -23,10 +23,10 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 					receipt, err := admitSession(t.Context(), f.pool, nil, caller, req, operation)
 					return receipt.TurnID.String(), err
 				case "enqueue":
-					receipt, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, RetryKey: "original-key", Input: []byte(`[]`)})
+					receipt, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, IdempotencyKey: "original-key", Input: []byte(`[]`)})
 					return receipt.TurnID.String(), err
 				default:
-					receipt, err := ControlSession(t.Context(), f.pool, caller, SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", RetryKey: "original-key"})
+					receipt, err := ControlSession(t.Context(), f.pool, caller, SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", IdempotencyKey: "original-key"})
 					return receipt.ID.String(), err
 				}
 			}

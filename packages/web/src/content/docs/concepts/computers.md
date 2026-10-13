@@ -53,44 +53,45 @@ or `"7d"`.
 The disk is 32 GiB in this release. You can omit `disk`; a Computer whose
 definition sets any other size cannot be created.
 
-## The prepared baseline
+## The prepared image
 
-Every Computer starts from a prepared baseline: a disk built from the
-definition's image and, when you declare one, the result of running `prepare`.
-New Computers start from a copy of that baseline, so work that every Computer
-needs (cloning a repository, installing dependencies, warming caches) runs once
-instead of at the start of every Session.
+A template's `image()` is the recipe; an image is the disk Helmr builds from
+that recipe and, when you declare one, the result of running `prepare`.
+Every Computer starts from a prepared image. New Computers start from a copy of
+it, so work that every Computer needs (cloning a repository, installing
+dependencies, warming caches) runs once instead of at the start of every
+Session.
 
-`prepare(build)` runs inside a Computer built from the image. `build.exec`
-runs one command and rejects if it exits with a nonzero status. Pass a string to
-run it through `/bin/sh -c`, or an argv array to run it directly, with optional
-`cwd` and `env`. `build.signal` aborts when preparation is cancelled. When
-`prepare` returns and its commands finish, Helmr saves the disk as the baseline.
-If `prepare` throws or a command fails, no baseline is produced and Computers
-waiting for it report an `unavailable` residency with the error code
-`computer_preparation_failed`.
+`prepare(build)` runs inside a Computer built from the `image()` recipe.
+`build.exec` runs one command and rejects if it exits with a nonzero status.
+Pass a string to run it through `/bin/sh -c`, or an argv array to run it
+directly, with optional `cwd` and `env`. `build.signal` aborts when preparation
+is cancelled. When `prepare` returns and its commands finish, Helmr saves the
+disk as the prepared image. If `prepare` throws or a command fails, no image is
+produced and Computers waiting for it report an `unavailable` residency with the
+error code `computer_preparation_failed`.
 
-Helmr prepares a baseline when a Computer needs one and no usable baseline
-exists. Computers created at the same time share one preparation. A baseline
-belongs to one Template definition in one deployed build; deploying changed
-code or definitions produces a new baseline the next time a Computer needs one.
+Helmr prepares an image when a Computer needs one and no usable image exists.
+Computers created at the same time share one preparation. A prepared image
+belongs to one Template definition in one deployed build; deploying changed code
+or definitions produces a new image the next time a Computer needs one.
 
 ## Refresh
 
-A prepared baseline ages. `refresh` controls how old it may be:
+A prepared image ages. `refresh` controls how old it may be:
 
-- `maxAge`: a new Computer does not start from a baseline older than this.
-  Helmr prepares a new baseline instead.
+- `maxAge`: a new Computer does not start from an image older than this.
+  Helmr prepares a new image instead.
 - `every`: the intended interval between background re-preparations.
 
-Refresh affects only Computers created afterward. A Computer keeps the baseline
-it started from for its whole life, and its disk then changes only through its
-own work.
+Refresh affects only Computers created afterward. A Computer keeps the image it
+started from for its whole life, and its disk then changes only through its own
+work.
 
 In this release, `maxAge` is enforced when a Computer is created. Helmr records
-`every` when a Deployment is promoted, but it does not yet re-prepare baselines
-in the background on that interval; a new baseline is prepared when a Computer
-needs one.
+`every` when a Deployment is promoted, but it does not yet re-prepare images in
+the background on that interval; a new image is prepared when a Computer needs
+one.
 
 ## Build and runtime Secrets
 
@@ -99,10 +100,10 @@ bindings:
 
 | Binding | Available to | Effect of rotation |
 | --- | --- | --- |
-| `buildSecrets` | `prepare` only. | A baseline prepared with an older Secret version is not used for new Computers; Helmr prepares a new one. Existing Computers are unaffected. |
+| `buildSecrets` | `prepare` only. | An image prepared with an older Secret version is not used for new Computers; Helmr prepares a new one. Existing Computers are unaffected. |
 | `secrets` | Processes in Computers created from the definition. | Follows the Secret's own delivery rules. See [Secrets](/docs/concepts/secrets). |
 
-Anything `prepare` writes to disk becomes part of the baseline and is copied
+Anything `prepare` writes to disk becomes part of the prepared image and is copied
 into every new Computer. Do not write build Secret values to files.
 
 Bindings use stable Secret IDs, never values. Runtime bindings are fixed when a
@@ -136,7 +137,7 @@ A Computer's `status` is its resource lifecycle: `available`, `deleting` or
 
 | Residency | Meaning |
 | --- | --- |
-| `starting` | Its baseline is being prepared or a machine is being started for it. |
+| `starting` | Its image is being prepared or a machine is being started for it. |
 | `running` | It is running on a worker. |
 | `cold` | It is not running on a worker. A hibernated Computer is `cold`. |
 | `restoring` | It is resuming from hibernation. |

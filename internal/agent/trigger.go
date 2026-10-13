@@ -8,7 +8,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
@@ -190,7 +190,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	if !allowed {
 		return Admission{}, ErrDenied
 	}
-	input, err := conversation.Input(s.input)
+	input, err := content.Input(s.input)
 	if err != nil {
 		return Admission{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
@@ -220,20 +220,20 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	if err != nil {
 		return Admission{}, fmt.Errorf("trigger input: %w", err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computer, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computer, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
 		return Admission{}, err
 	}
 	if s.slackChannelID != nil {
 		var channel string
 		var publication uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT publication_id,slack_channel_id FROM slack_channels WHERE environment_id=$1 AND id=$2`, s.environment, *s.slackChannelID).Scan(&publication, &channel); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT connection_id,slack_channel_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=$2`, s.environment, *s.slackChannelID).Scan(&publication, &channel); err != nil {
 			return Admission{}, err
 		}
 		connection, err := ReadSlackConnection(ctx, tx, s.environment, s.agent, channel)
 		if err != nil {
 			return Admission{}, err
 		}
-		if connection.PublicationID != publication || at.Before(connection.AuthorizedAt) {
+		if connection.ConnectionID != publication || at.Before(connection.AuthorizedAt) {
 			return Admission{}, ErrSlackChannelUnavailable
 		}
 		opening, _ := json.Marshal(map[string]any{"text": "Started " + connection.AgentName + ".", "mrkdwn": false, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false})

@@ -56,11 +56,11 @@ func (p *SavePublisher) RegisterCheckpoint(ctx context.Context, ref CheckpointPu
 			if size != o.SizeBytes || !available {
 				return ErrConflict
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO computer_checkpoint_objects(environment_id,checkpoint_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`, ref.EnvironmentID, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO checkpoint_objects(environment_id,checkpoint_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`, ref.EnvironmentID, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType); err != nil {
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET manifest=$3,vm_platform_id=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, manifest.CheckpointID, raw, manifest.Runtime.RuntimeID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE checkpoints SET manifest=$3,vm_platform_id=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, manifest.CheckpointID, raw, manifest.Runtime.RuntimeID); err != nil {
 			return err
 		}
 		_, err = currentComputerLease(ctx, tx, ref.Host, ref.EnvironmentID, r.Computer, r.SourceEpoch)
@@ -116,7 +116,7 @@ func (p *SavePublisher) CompleteCheckpoint(ctx context.Context, ref CheckpointPu
 			return nil
 		}
 		var published, head bool
-		if err = tx.QueryRow(ctx, `SELECT s.status='published',COALESCE(c.recovery_save_id=s.id,false) FROM computer_checkpoints p JOIN computer_saves s ON (s.environment_id,s.id)=(p.environment_id,p.disk_save_id) JOIN computers c ON (c.environment_id,c.id)=(p.environment_id,p.computer_id) WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, manifest.CheckpointID).Scan(&published, &head); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT s.status='published',COALESCE(c.recovery_save_id=s.id,false) FROM checkpoints p JOIN computer_saves s ON (s.environment_id,s.id)=(p.environment_id,p.disk_save_id) JOIN computers c ON (c.environment_id,c.id)=(p.environment_id,p.computer_id) WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, manifest.CheckpointID).Scan(&published, &head); err != nil {
 			return err
 		}
 		if !published || !head {
@@ -129,7 +129,7 @@ func (p *SavePublisher) CompleteCheckpoint(ctx context.Context, ref CheckpointPu
 		// Typed pins must still be present with their exact registered descriptors.
 		for _, o := range manifest.Objects() {
 			var pinned bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2 AND role=$3 AND digest=$4 AND size_bytes=$5 AND media_type=$6)`, ref.EnvironmentID, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType).Scan(&pinned); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2 AND role=$3 AND digest=$4 AND size_bytes=$5 AND media_type=$6)`, ref.EnvironmentID, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType).Scan(&pinned); err != nil {
 				return err
 			}
 			if !pinned {
@@ -145,7 +145,7 @@ func (p *SavePublisher) CompleteCheckpoint(ctx context.Context, ref CheckpointPu
 		if err = requireComputerSecretsNotRevoked(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, manifest.CheckpointID)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, manifest.CheckpointID)
 		return err
 	}))
 }
@@ -162,12 +162,12 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPub
 	}
 	var digest []byte
 	var committed bool
-	if err = tx.QueryRow(ctx, `SELECT manifest,capture_digest,ready_at IS NOT NULL FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, m.CheckpointID).Scan(&raw, &digest, &committed); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT manifest,capture_digest,ready_at IS NOT NULL FROM checkpoints WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, m.CheckpointID).Scan(&raw, &digest, &committed); err != nil {
 		return r, nil, false, err
 	}
 	var instance, host uuid.UUID
 	var epoch int64
-	if err = tx.QueryRow(ctx, `SELECT computer_instance_id,worker_host_id,worker_epoch FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, ref.EnvironmentID, r.Computer, r.SourceEpoch).Scan(&instance, &host, &epoch); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT allocation_id,worker_host_id,worker_epoch FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, ref.EnvironmentID, r.Computer, r.SourceEpoch).Scan(&instance, &host, &epoch); err != nil {
 		return r, nil, false, err
 	}
 	if host != ref.Host.HostID || epoch != ref.Host.Epoch {

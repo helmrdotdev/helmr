@@ -10,7 +10,7 @@ import (
 	"net/http"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -113,10 +113,10 @@ func add[I any](server *mcp.Server, invoke Invoke, name, description string) {
 		panic(err)
 	}
 	for _, field := range []string{"input", "message"} {
-		if content := schema.Properties[field]; content != nil {
-			content.Type, content.Types = "array", nil
-			content.MaxItems = new(conversation.ContentParts)
-			content.Items.Properties["type"].Enum = []any{"text"}
+		if property := schema.Properties[field]; property != nil {
+			property.Type, property.Types = "array", nil
+			property.MaxItems = new(content.ContentParts)
+			property.Items.Properties["type"].Enum = []any{"text"}
 		}
 	}
 	if operation := schema.Properties["operation"]; operation != nil {
@@ -172,7 +172,7 @@ func validate(input any) error {
 		if err != nil {
 			return err
 		}
-		if _, err := conversation.Input(raw); err != nil {
+		if _, err := content.Input(raw); err != nil {
 			return err
 		}
 		if value.AgentID == "" || value.IdempotencyKey == "" {
@@ -183,7 +183,7 @@ func validate(input any) error {
 		if err != nil {
 			return err
 		}
-		if _, err := conversation.Input(raw); err != nil {
+		if _, err := content.Input(raw); err != nil {
 			return err
 		}
 		if value.SessionID == "" || value.IdempotencyKey == "" {
@@ -197,7 +197,7 @@ func validate(input any) error {
 		if err != nil {
 			return err
 		}
-		if _, err := conversation.Input(raw); err != nil {
+		if _, err := content.Input(raw); err != nil {
 			return err
 		}
 	case controlInput:

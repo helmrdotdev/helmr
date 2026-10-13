@@ -32,7 +32,7 @@ type ClaimResult struct {
 // keeps the same Command, lease, fingerprint, versions and protected selectors.
 type Start struct {
 	TailOnly           bool
-	Command            db.ComputerCommand
+	Command            db.Command
 	Lease              Lease
 	Secrets            []secret.DeliveryEnvelope
 	ProtectedEnv       map[string]string
@@ -68,7 +68,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 	}
 	var computer uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT l.computer_id FROM computer_leases l
- WHERE l.environment_id=$1 AND l.computer_instance_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5`, request.EnvironmentID, request.InstanceID, request.WriterGeneration, worker.HostID, worker.Epoch).Scan(&computer); err != nil {
+ WHERE l.environment_id=$1 AND l.allocation_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5`, request.EnvironmentID, request.InstanceID, request.WriterGeneration, worker.HostID, worker.Epoch).Scan(&computer); err != nil {
 		return ClaimResult{}, err
 	}
 	bindings, err := lockBindings(ctx, tx, request.EnvironmentID, computer)
@@ -88,7 +88,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 	if err = producerStillAuthorized(ctx, tx, worker, lease, false); err != nil {
 		return ClaimResult{}, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id FROM computer_commands WHERE environment_id=$1 AND computer_id=$2
+	rows, err := tx.Query(ctx, `SELECT id FROM commands WHERE environment_id=$1 AND computer_id=$2
  AND ((computer_lease_epoch=$3 AND (terminal_at IS NULL OR process_reconciled_at IS NULL)) OR (computer_lease_epoch IS NULL AND status='pending'))
  ORDER BY CASE WHEN status='stopping' THEN 0 WHEN terminal_at IS NOT NULL THEN 1 WHEN computer_lease_epoch IS NOT NULL THEN 2 ELSE 3 END,created_at,id`, request.EnvironmentID, computer, lease.Epoch)
 	if err != nil {
@@ -111,7 +111,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 			continue
 		}
 		var fingerprint []byte
-		if err = tx.QueryRow(ctx, `SELECT request_fingerprint FROM platform_retry_keys WHERE environment_id=$1 AND command_id=$2 AND operation='computer.exec'`, request.EnvironmentID, id).Scan(&fingerprint); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT request_fingerprint FROM idempotency_receipts WHERE environment_id=$1 AND command_id=$2 AND operation='computer.exec'`, request.EnvironmentID, id).Scan(&fingerprint); err != nil {
 			return ClaimResult{}, err
 		}
 		if c.Status == "stopping" && !slices.Contains(request.ActiveCancellationIDs, id) {
@@ -156,7 +156,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 				return ClaimResult{}, secret.ErrDeliveryRevoked
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_commands SET computer_lease_epoch=$3,status='running',started_at=COALESCE(started_at,clock_timestamp()),
+		if _, err = tx.Exec(ctx, `UPDATE commands SET computer_lease_epoch=$3,status='running',started_at=COALESCE(started_at,clock_timestamp()),
  revision=revision+CASE WHEN status='running' THEN 0 ELSE 1 END,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2 AND status IN ('pending','starting','running')`, request.EnvironmentID, id, lease.Epoch); err != nil {
 			return ClaimResult{}, err
@@ -196,7 +196,7 @@ func launchAvailable(ctx context.Context, tx db.DBTX, host workergroup.HostPrinc
  WHERE c.environment_id=$1 AND c.id=$2 AND e.retired_at IS NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.computer_lease_epoch<>$3 AND s.status IN ('requested','captured'))
  AND (NOT $4 OR EXISTS(SELECT 1 FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id JOIN worker_pools p ON p.id=h.worker_pool_id
  WHERE h.id=$5 AND h.status='active' AND g.status='active' AND p.status='active' AND h.admission_paused_reason IS NULL)))`, l.EnvironmentID, l.ComputerID, l.Epoch, newLaunch, host.HostID).Scan(&ok)
@@ -217,7 +217,7 @@ func CheckStart(ctx context.Context, txb db.TxBeginner, host workergroup.HostPri
 			return err
 		}
 		if start.TailOnly {
-			target, err := db.New(tx).GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{EnvironmentID: start.Command.EnvironmentID, CommandID: start.Command.ID})
+			target, err := db.New(tx).GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: start.Command.EnvironmentID, CommandID: start.Command.ID})
 			if err != nil {
 				return err
 			}
@@ -268,7 +268,7 @@ type runtimeBinding struct {
 
 func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]runtimeBinding, error) {
 	rows, err := tx.Query(ctx, `SELECT b.secret_id,b.placement_kind,b.placement_target,b.mode,COALESCE(b.placeholder,''),s.status,s.revocation_generation
- FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, env, computer)
 	if err != nil {
 		return nil, err
@@ -279,7 +279,7 @@ func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]ru
 		return b, err
 	})
 }
-func recordExposure(ctx context.Context, tx pgx.Tx, c db.ComputerCommand, bindings []runtimeBinding) ([]secret.DeliveryEnvelope, map[string]string, error) {
+func recordExposure(ctx context.Context, tx pgx.Tx, c db.Command, bindings []runtimeBinding) ([]secret.DeliveryEnvelope, map[string]string, error) {
 	env, id := uuid.UUID(c.EnvironmentID.Bytes), uuid.UUID(c.ID.Bytes)
 	ids := []uuid.UUID{}
 	for _, b := range bindings {

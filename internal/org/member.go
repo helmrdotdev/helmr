@@ -398,7 +398,7 @@ func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail st
 // ErrInvitationNotFound.
 //
 // Paths that write both a membership and login sessions lock org_members rows
-// before auth_sessions rows, as member removal does, so that acceptance and
+// before login_sessions rows, as member removal does, so that acceptance and
 // removal of the same user cannot deadlock.
 func AcceptInvitation(ctx context.Context, q db.Querier, invitation PendingInvitation, userID uuid.UUID, displayName string) error {
 	existing, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{
@@ -433,7 +433,7 @@ func AcceptInvitation(ctx context.Context, q db.Querier, invitation PendingInvit
 	}); err != nil {
 		return fmt.Errorf("add member: %w", err)
 	}
-	if _, err := q.RevokeAuthSessionsForUser(ctx, pgvalue.UUID(userID)); err != nil {
+	if _, err := q.RevokeLoginSessionsForUser(ctx, pgvalue.UUID(userID)); err != nil {
 		return fmt.Errorf("revoke login sessions: %w", err)
 	}
 	return nil

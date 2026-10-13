@@ -18,12 +18,12 @@ func (f statusFixture) post(t *testing.T, seq int64, key, role string, turn *uui
 	id := uuid.NewV7()
 	body := []byte(`{"text":"hello","mrkdwn":false,"parse":"none"}`)
 	digest := sha256.Sum256(body)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,publication_key,role,turn_id,payload,payload_digest,presentation_path) VALUES($1,$2,$3,$4,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$5,$6,$7,$8,$9,$10,'post')`, id, f.Environment, f.Session, f.participant, seq, key, role, turn, body, digest[:])
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,role,turn_id,payload,payload_digest,presentation_path) VALUES($1,$2,$3,$4,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$5,$6,$7,$8,$9,$10,'post')`, id, f.Environment, f.Session, f.participant, seq, key, role, turn, body, digest[:])
 	return id
 }
 func (f statusFixture) opening(t *testing.T) uuid.UUID {
 	t.Helper()
-	turn, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "opening-fixture", Input: json.RawMessage(`[]`)})
+	turn, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *tes
 	turn, ask := f.pendingQuestion(t)
 	progress := f.post(t, 1, "progress", "intermediate", &turn)
 	continuation := f.post(t, 2, "progress-next", "intermediate", &turn)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET publication_key='progress',continuation_ordinal=1 WHERE id=$1`, continuation)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET post_key='progress',continuation_ordinal=1 WHERE id=$1`, continuation)
 	response := f.post(t, 3, "response", "response", &turn)
 	question := f.post(t, 4, "attention", "lifecycle", nil)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='question',turn_id=$2,ask_id=$3 WHERE id=$1`, question, turn, ask)
@@ -167,13 +167,13 @@ func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *tes
 	f.postClaim(t, response)
 }
 
-func TestSlackPostRechecksPublicationAndAuthorizationLoss(t *testing.T) {
+func TestSlackPostRechecksConnectionAndAuthorizationLoss(t *testing.T) {
 	for _, kind := range []string{"publication", "authorization"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStatusFixture(t)
 			post := f.post(t, 1, "content", "lifecycle", nil)
 			if kind == "publication" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			} else {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
@@ -203,7 +203,7 @@ func TestSlackPostRechecksClaimBeforeHTTP(t *testing.T) {
 	if allowed, err := postClaimAuthorized(t.Context(), f.Pool, claim); err != nil || !allowed {
 		t.Fatalf("fresh claim not authorized: %v %v", allowed, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 	if allowed, err := postClaimAuthorized(t.Context(), f.Pool, claim); err != nil || allowed {
 		t.Fatalf("revoked claim authorized: %v %v", allowed, err)
 	}

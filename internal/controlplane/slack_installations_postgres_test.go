@@ -87,7 +87,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	base := "/api/projects/project/environments/test/agents/agent/slack"
 	created := call("POST", base, owner, nil, nil)
 	var result struct {
-		Publication slack.PublicationView `json:"publication"`
+		Publication slack.ConnectionView `json:"connection"`
 	}
 	if created.Code != 201 || json.Unmarshal(created.Body.Bytes(), &result) != nil {
 		t.Fatal("setup failed", created.Code, created.Body.String())

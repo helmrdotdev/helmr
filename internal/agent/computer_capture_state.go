@@ -28,10 +28,10 @@ type captureRecord struct {
 // lockable after loss/fencing; their immutable membership owns recovery holds.
 func lockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (captureRecord, error) {
 	var r captureRecord
-	if err := tx.QueryRow(ctx, `SELECT computer_id FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&r.Computer); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&r.Computer); err != nil {
 		return r, err
 	}
-	rows, err := tx.Query(ctx, `SELECT session_id,process_epoch FROM computer_checkpoint_members WHERE environment_id=$1 AND checkpoint_id=$2 ORDER BY session_id`, env, checkpoint)
+	rows, err := tx.Query(ctx, `SELECT session_id,process_epoch FROM checkpoint_processes WHERE environment_id=$1 AND checkpoint_id=$2 ORDER BY session_id`, env, checkpoint)
 	if err != nil {
 		return r, err
 	}
@@ -56,7 +56,7 @@ func lockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (cap
 	if _, err = lockSessions(ctx, tx, env, ids); err != nil {
 		return r, err
 	}
-	err = tx.QueryRow(ctx, `SELECT source_lease_epoch,target_lease_epoch,control_version,disk_save_id,status,capture_expires_at,controls_reconciled_at IS NOT NULL FROM computer_checkpoints WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, checkpoint).Scan(&r.SourceEpoch, &r.TargetEpoch, &r.Version, &r.Save, &r.State, &r.Expires, &r.ControlsReconciled)
+	err = tx.QueryRow(ctx, `SELECT source_lease_epoch,target_lease_epoch,control_version,disk_save_id,status,capture_expires_at,controls_reconciled_at IS NOT NULL FROM checkpoints WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, checkpoint).Scan(&r.SourceEpoch, &r.TargetEpoch, &r.Version, &r.Save, &r.State, &r.Expires, &r.ControlsReconciled)
 	return r, err
 }
 
@@ -113,7 +113,7 @@ func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergr
 		if err = r.requireMembers(ctx, tx, env); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='sealed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='sealed' WHERE environment_id=$1 AND id=$2`, env, checkpoint)
 		return err
 	}))
 }
@@ -166,7 +166,7 @@ func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host
 		if tag.RowsAffected() != 1 {
 			return ErrConflict
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
+		_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
 		return err
 	}))
 }

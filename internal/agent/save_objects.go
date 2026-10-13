@@ -122,7 +122,7 @@ func (r saveObjectRetention) verifyRegistered(ctx context.Context, tx pgx.Tx, in
 		return err
 	}
 	q := db.New(tx)
-	row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.environmentID, Digest: object.digest})
+	row, err := q.LockDiskObject(ctx, db.LockDiskObjectParams{EnvironmentID: r.environmentID, Digest: object.digest})
 	if err != nil {
 		return saveObjectMissing(err)
 	}
@@ -145,7 +145,7 @@ func (r saveObjectRetention) verifyCertified(ctx context.Context, tx pgx.Tx, ins
 		return err
 	}
 	var certified bool
-	if err = tx.QueryRow(ctx, `SELECT certified FROM computer_objects WHERE environment_id=$1 AND digest=$2`, r.environmentID, object.digest).Scan(&certified); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT certified FROM disk_objects WHERE environment_id=$1 AND digest=$2`, r.environmentID, object.digest).Scan(&certified); err != nil {
 		return err
 	}
 	if !certified {
@@ -166,7 +166,7 @@ func (s saveObjectScope) registerObject(ctx context.Context, tx pgx.Tx, inspecti
 	if _, err = tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, object.digest, object.size); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,'application/octet-stream',$6,$7,$8) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, s.orgID, s.projectID, object.size, object.kind, object.rank, object.encoded); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,'application/octet-stream',$6,$7,$8) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, s.orgID, s.projectID, object.size, object.kind, object.rank, object.encoded); err != nil {
 		return err
 	}
 	row, err := s.lockMatching(ctx, tx, object, inspection)
@@ -222,7 +222,7 @@ func (s saveObjectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspectio
 		if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: s.orgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
 			return err
 		}
-		n, err := q.CertifyComputerObject(ctx, db.CertifyComputerObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
+		n, err := q.CertifyDiskObject(ctx, db.CertifyDiskObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
 		if err != nil {
 			return err
 		}
@@ -257,28 +257,28 @@ func (s saveObjectScope) admit(inspection blockformat.ObjectInspection) (saveObj
 
 // lockMatching locks the Computer object and requires its stored facts to be
 // exactly the described object.
-func (s saveObjectScope) lockMatching(ctx context.Context, tx pgx.Tx, object saveObject, inspection blockformat.ObjectInspection) (db.ComputerObject, error) {
-	row, err := db.New(tx).LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
+func (s saveObjectScope) lockMatching(ctx context.Context, tx pgx.Tx, object saveObject, inspection blockformat.ObjectInspection) (db.DiskObject, error) {
+	row, err := db.New(tx).LockDiskObject(ctx, db.LockDiskObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
 	if err != nil {
-		return db.ComputerObject{}, saveObjectMissing(err)
+		return db.DiskObject{}, saveObjectMissing(err)
 	}
 	var stored blockformat.ObjectInspection
 	if err = json.Unmarshal(row.Inspection, &stored); err != nil {
-		return db.ComputerObject{}, err
+		return db.DiskObject{}, err
 	}
 	// JSONB normalizes representation, so compare decoded typed facts.
 	if row.SizeBytes != object.size || row.Rank != int32(object.rank) || row.Kind != object.kind || row.MediaType != "application/octet-stream" || !reflect.DeepEqual(stored, inspection) {
-		return db.ComputerObject{}, saveObjectConflict("object differs from registered inspection")
+		return db.DiskObject{}, saveObjectConflict("object differs from registered inspection")
 	}
 	return row, nil
 }
 
 func (s saveObjectScope) pin(ctx context.Context, tx pgx.Tx, object saveObject) error {
 	if s.preparationID.Valid {
-		_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(id,environment_id,preparation_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
+		_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,image_build_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
+	_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
 	return err
 }
 
@@ -286,9 +286,9 @@ func (r saveObjectRetention) requireRetained(ctx context.Context, tx pgx.Tx, obj
 	var retained bool
 	var err error
 	if r.preparationID.Valid {
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE environment_id=$1 AND preparation_id=$2 AND digest=$3)`, r.environmentID, r.preparationID, object.digest).Scan(&retained)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2 AND digest=$3)`, r.environmentID, r.preparationID, object.digest).Scan(&retained)
 	} else {
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE environment_id=$1 AND save_id=$2 AND digest=$3)`, r.environmentID, r.saveID, object.digest).Scan(&retained)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND save_id=$2 AND digest=$3)`, r.environmentID, r.saveID, object.digest).Scan(&retained)
 	}
 	if err != nil {
 		return err
@@ -348,7 +348,7 @@ func (s saveObjectScope) recordGraph(ctx context.Context, tx pgx.Tx, object save
 		}
 	}
 	for _, id := range object.keys {
-		if _, err := tx.Exec(ctx, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,true) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, id); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,true) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, id); err != nil {
 			return err
 		}
 	}
@@ -358,7 +358,7 @@ func (s saveObjectScope) recordGraph(ctx context.Context, tx pgx.Tx, object save
 // checkKeyClosure requires every key the object depends on to be retained by
 // the publishing Computer lease.
 func (s saveObjectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object saveObject) error {
-	rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND digest=$2`, s.environmentID, object.digest)
+	rows, err := tx.Query(ctx, `SELECT key_id FROM disk_object_keys WHERE environment_id=$1 AND digest=$2`, s.environmentID, object.digest)
 	if err != nil {
 		return err
 	}
@@ -381,7 +381,7 @@ func (s saveObjectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string
 	var storedRank int
 	var certified bool
 	// KEY SHARE prevents collection until the edge's restrictive FK takes over.
-	err := tx.QueryRow(ctx, `SELECT inspection,size_bytes,rank,certified FROM computer_objects WHERE environment_id=$1 AND digest=$2 FOR KEY SHARE`, s.environmentID, digest).Scan(&raw, &storedSize, &storedRank, &certified)
+	err := tx.QueryRow(ctx, `SELECT inspection,size_bytes,rank,certified FROM disk_objects WHERE environment_id=$1 AND digest=$2 FOR KEY SHARE`, s.environmentID, digest).Scan(&raw, &storedSize, &storedRank, &certified)
 	if err != nil {
 		return blockformat.ObjectInspection{}, saveObjectMissing(err)
 	}
@@ -402,7 +402,7 @@ func (s saveObjectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string
 }
 
 func (s saveObjectScope) insertEdge(ctx context.Context, tx pgx.Tx, parent saveObject, digest string, rank int) error {
-	_, err := tx.Exec(ctx, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, s.environmentID, parent.digest, digest, parent.rank, rank)
+	_, err := tx.Exec(ctx, `INSERT INTO disk_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, s.environmentID, parent.digest, digest, parent.rank, rank)
 	return err
 }
 
@@ -419,15 +419,15 @@ func (s saveObjectScope) requireAdmittedObject(ctx context.Context, tx pgx.Tx, d
 	}
 	var admitted bool
 	err := tx.QueryRow(ctx, `WITH RECURSIVE retained(digest,rank) AS (
-      SELECT pack_digest,pack_rank FROM computer_disk_roots WHERE environment_id=$1 AND id=$5
+      SELECT pack_digest,pack_rank FROM disk_roots WHERE environment_id=$1 AND id=$5
     ), ancestors(digest) AS (
-      SELECT $2::text UNION SELECT e.parent_digest FROM computer_object_edges e JOIN ancestors a ON e.child_digest=a.digest WHERE e.environment_id=$1
+      SELECT $2::text UNION SELECT e.parent_digest FROM disk_object_edges e JOIN ancestors a ON e.child_digest=a.digest WHERE e.environment_id=$1
     ), source(digest,rank) AS (
       SELECT digest,rank FROM retained
-      UNION SELECT e.child_digest,e.child_rank FROM computer_object_edges e JOIN source p ON e.parent_digest=p.digest
-      WHERE e.environment_id=$1 AND p.rank>(SELECT rank FROM computer_objects WHERE environment_id=$1 AND digest=$2)
+      UNION SELECT e.child_digest,e.child_rank FROM disk_object_edges e JOIN source p ON e.parent_digest=p.digest
+      WHERE e.environment_id=$1 AND p.rank>(SELECT rank FROM disk_objects WHERE environment_id=$1 AND digest=$2)
     ) SELECT CASE
-      WHEN EXISTS(SELECT 1 FROM computer_object_pins p JOIN computer_saves v ON (v.environment_id,v.id)=(p.environment_id,p.save_id)
+      WHEN EXISTS(SELECT 1 FROM disk_object_pins p JOIN computer_saves v ON (v.environment_id,v.id)=(p.environment_id,p.save_id)
         WHERE p.environment_id=$1 AND p.digest=$2 AND v.computer_id=$3 AND v.computer_lease_epoch=$4) THEN true
       WHEN EXISTS(SELECT 1 FROM (SELECT digest FROM ancestors LIMIT 128) a JOIN retained r ON r.digest=a.digest) THEN true
       ELSE EXISTS(SELECT 1 FROM source WHERE digest=$2) END`, s.environmentID, digest, s.computerID, s.leaseEpoch, s.baseRoot).Scan(&admitted)
