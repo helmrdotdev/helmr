@@ -7,12 +7,13 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	if err := store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+	if err := store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	var erased bool
@@ -51,7 +52,7 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 		}
 	}
 	secret := AppCredentials{ClientID: "client", ClientSecret: "private-client-secret", SigningSecret: "private-signing-secret"}
-	if err := store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, secret); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, secret); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.appCredentials(t.Context(), setup.RegistrationID)
@@ -78,18 +79,18 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	}
 	changed := secret
 	changed.ClientID = "different-client"
-	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, changed); !errors.Is(err, errInstallationAuthority) {
+	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, changed); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("client identity replaced", err)
 	}
 	changed = secret
 	changed.SigningSecret = "rotated-signing-secret"
-	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, changed); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, changed); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.StoreAppCredentials(t.Context(), org, uuid.NewV7(), setup.RegistrationID, secret); !errors.Is(err, errInstallationAuthority) {
+	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, uuid.NewV7(), setup.RegistrationID, secret); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("nonmember wrote secrets", err)
 	}
-	if err = store.DisconnectConnection(t.Context(), org, f.User, f.Environment, setup.ID); err != nil {
+	if err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, setup.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.appCredentials(t.Context(), setup.RegistrationID); !errors.Is(err, errCredentialUnavailable) {
@@ -110,7 +111,7 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 
 func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	if err := store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+	if err := store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
@@ -119,7 +120,7 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	credentials := AppCredentials{ClientID: "dedicated-client", ClientSecret: "client-secret", SigningSecret: "signing-secret"}
-	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, credentials); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, credentials); err != nil {
 		t.Fatal(err)
 	}
 	observed, err := store.connectionAuthorization(t.Context(), org, f.User, setup.ID)
@@ -128,11 +129,11 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	}
 	grant := refreshResult().grant
 	grant.app = "dedicated-app"
-	installation, err := store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant)
+	installation, err := store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, setup.ID, observed, grant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("repeated callback created another installation", err)
 	}
 	var pin bool
@@ -146,18 +147,18 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	}
 	other := grant
 	other.bot = "another-bot"
-	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, other); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, setup.ID, observed, other); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("sender identity replaced", err)
 	}
-	repaired, err := store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant)
+	repaired, err := store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, setup.ID, observed, grant)
 	if err != nil || repaired != installation {
 		t.Fatal("same identity repair changed generation", err)
 	}
 	credentials.SigningSecret = "rotated-secret"
-	if err = store.StoreAppCredentials(t.Context(), org, f.User, setup.RegistrationID, credentials); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, credentials); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachConnectionGrant(t.Context(), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("stale registration exchange committed", err)
 	}
 }

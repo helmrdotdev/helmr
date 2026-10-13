@@ -10,6 +10,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -67,7 +68,7 @@ func (s *CredentialStore) openApp(org, registration uuid.UUID, revision int64, c
 
 // StoreAppCredentials rotates secrets for one registration. Once enrolled, the
 // OAuth client is immutable: changing app identity requires new setup.
-func (s *CredentialStore) StoreAppCredentials(ctx context.Context, org, user, registration uuid.UUID, credentials AppCredentials) error {
+func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.Actor, org, user, registration uuid.UUID, credentials AppCredentials) error {
 	if !credentials.valid() {
 		return errCredentialUnavailable
 	}
@@ -93,7 +94,10 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, org, user, re
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET client_id=$2,credential_revision=$3,credential_ciphertext=$4,credential_nonce=$5 WHERE id=$1`, registration, credentials.ClientID, revision, ciphertext, nonce)
-		return err
+		if err != nil {
+			return err
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, Action: "slack_app.credentials_configured", TargetKind: "slack_app_registration", TargetID: registration})
 	})
 }
 

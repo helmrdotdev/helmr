@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -313,7 +314,7 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(slack.ErrUserIdentity))
 		return
 	}
-	err = slack.LinkUser(r.Context(), s.tx, p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID})
+	err = slack.LinkUser(r.Context(), s.tx, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID})
 	if err != nil {
 		s.writeSlackLinkError(w, err)
 		return
@@ -327,7 +328,7 @@ func (s *Server) unlinkSlackUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	err = slack.UnlinkUser(r.Context(), s.tx, p.OrgID, p.UserID, chi.URLParam(r, "teamID"), chi.URLParam(r, "slackUserID"))
+	err = slack.UnlinkUser(r.Context(), s.tx, audit.FromPrincipal(p), p.OrgID, p.UserID, chi.URLParam(r, "teamID"), chi.URLParam(r, "slackUserID"))
 	if err != nil {
 		s.writeSlackLinkError(w, err)
 		return

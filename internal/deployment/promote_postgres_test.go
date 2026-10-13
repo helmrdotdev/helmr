@@ -17,7 +17,7 @@ import (
 )
 
 func (f deploymentFinalizePostgresFixture) principal() auth.Principal {
-	return auth.Principal{OrgID: f.request.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: pgvalue.UUIDString(f.request.projectID), EnvironmentID: pgvalue.UUIDString(f.request.environmentID), Permissions: []auth.Permission{auth.PermissionDeploymentsWrite}}
+	return auth.Principal{OrgID: f.request.orgID, Kind: auth.PrincipalKindAPIKey, APIKeyID: uuid.NewV7(), Role: auth.RoleDeveloper, ProjectID: pgvalue.UUIDString(f.request.projectID), EnvironmentID: pgvalue.UUIDString(f.request.environmentID), Permissions: []auth.Permission{auth.PermissionDeploymentsWrite}}
 }
 func (f deploymentFinalizePostgresFixture) scope() auth.Scope {
 	p := f.principal()
@@ -268,5 +268,31 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
 		t.Fatalf("same instant recorded under another deployment's activation: %v", err)
+	}
+}
+
+func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	record, err := register(t.Context(), f.pool, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := f.principal()
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_promotion_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_promotion_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_promotion_audit()`)
+	if _, err = Promote(t.Context(), f.pool, principal, f.scope(), record.ID, nil); err == nil {
+		t.Fatal("audit failure allowed promotion")
+	}
+	var unchanged bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL FROM environments WHERE id=$1`, f.request.environmentID).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("promotion survived rollback", unchanged, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_promotion_audit ON audit_events`)
+	if _, err = Promote(t.Context(), f.pool, principal, f.scope(), record.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.promoted' AND target_id=$1 AND actor_kind='api_key' AND actor_credential_id=$2 AND actor_user_id IS NULL AND org_id=$3 AND project_id=$4 AND environment_id=$5 AND outcome='succeeded'`, record.ID, principal.APIKeyID, principal.OrgID, f.request.projectID, f.request.environmentID).Scan(&count); err != nil || count != 1 {
+		t.Fatal("promotion fact differs", count, err)
 	}
 }

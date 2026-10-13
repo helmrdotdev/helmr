@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -67,14 +68,14 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(errors.New("invalid app credentials")))
 			return
 		}
-		if err = s.slackConfig.Credentials.StoreAppCredentials(r.Context(), principal.OrgID, principal.UserID, view.RegistrationID, credentials); err != nil {
+		if err = s.slackConfig.Credentials.StoreAppCredentials(r.Context(), audit.FromPrincipal(principal), principal.OrgID, principal.UserID, view.RegistrationID, credentials); err != nil {
 			s.writeSlackError(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case http.MethodDelete:
-		if err = s.slackConfig.Credentials.DisconnectConnection(r.Context(), principal.OrgID, principal.UserID, env, connection); err != nil {
+		if err = s.slackConfig.Credentials.DisconnectConnection(r.Context(), audit.FromPrincipal(principal), principal.OrgID, principal.UserID, env, connection); err != nil {
 			s.writeSlackError(w, err)
 			return
 		}

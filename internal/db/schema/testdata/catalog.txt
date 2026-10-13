@@ -31,6 +31,30 @@ column api_keys.project_id uuid not null
 column api_keys.revoked_at timestamp with time zone
 column api_keys.role org_member_role not null
 column api_keys.token_hash bytea not null
+column audit_events.action text not null
+column audit_events.actor_credential_id uuid
+column audit_events.actor_kind text not null
+column audit_events.actor_source text not null default ''::text
+column audit_events.actor_user_id uuid
+column audit_events.environment_id uuid
+column audit_events.expires_at timestamp with time zone
+column audit_events.id uuid not null
+column audit_events.new_retention_mode text not null default ''::text
+column audit_events.new_retention_seconds bigint
+column audit_events.new_role text not null default ''::text
+column audit_events.occurred_at timestamp with time zone not null default clock_timestamp()
+column audit_events.old_retention_mode text not null default ''::text
+column audit_events.old_retention_seconds bigint
+column audit_events.old_role text not null default ''::text
+column audit_events.org_id uuid
+column audit_events.outcome text not null default 'succeeded'::text
+column audit_events.permissions text[]
+column audit_events.project_id uuid
+column audit_events.slack_team_id text not null default ''::text
+column audit_events.slack_user_id text not null default ''::text
+column audit_events.target_id uuid
+column audit_events.target_kind text not null
+column audit_events.target_user_id uuid
 column auth_identities.created_at timestamp with time zone not null default now()
 column auth_identities.email text
 column auth_identities.id uuid not null
@@ -1039,6 +1063,15 @@ constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_i
 constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE CASCADE
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (token_hash)
+constraint audit_events c CHECK (action <> ''::text)
+constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
+constraint audit_events c CHECK (actor_kind = ANY (ARRAY['login'::text, 'api_key'::text, 'verified_login'::text, 'capacity'::text, 'system'::text]))
+constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
+constraint audit_events c CHECK (outcome = 'succeeded'::text)
+constraint audit_events c CHECK (project_id IS NULL OR org_id IS NOT NULL)
+constraint audit_events c CHECK (target_id IS NOT NULL OR target_kind = 'slack_user_link'::text AND target_user_id IS NOT NULL AND slack_team_id <> ''::text AND slack_user_id <> ''::text)
+constraint audit_events c CHECK (target_kind <> ''::text)
+constraint audit_events p PRIMARY KEY (id)
 constraint auth_identities c CHECK (btrim(provider) <> ''::text)
 constraint auth_identities c CHECK (btrim(subject) <> ''::text)
 constraint auth_identities f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -1883,6 +1916,7 @@ enum org_member_role (owner,admin,developer,viewer)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
+index CREATE INDEX audit_events_scope_time ON public.audit_events USING btree (org_id, occurred_at, id)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)
 index CREATE INDEX commands_unreconciled ON public.commands USING btree (environment_id, computer_id, computer_lease_epoch) WHERE ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))
 index CREATE INDEX computer_leases_expiring ON public.computer_leases USING btree (expires_at, environment_id, computer_id, epoch) WHERE ((fenced_at IS NULL) AND (status = ANY (ARRAY['active'::text, 'acquiring'::text, 'releasing'::text])))

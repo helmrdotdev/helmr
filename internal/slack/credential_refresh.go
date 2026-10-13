@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -53,7 +54,7 @@ func (s *CredentialStore) claimRefresh(ctx context.Context, installation uuid.UU
 			if _, err = tx.Exec(ctx, `UPDATE slack_installations SET refresh_error='credential_unavailable' WHERE id=$1`, installation); err != nil {
 				return err
 			}
-			return recordAuthorizationLoss(ctx, tx, installation, c.revision, c.authorized)
+			return recordAuthorizationLoss(ctx, tx, audit.System("slack-credential-refresh"), installation, c.revision, c.authorized)
 		}
 		c.attempt = uuid.NewV7()
 		if err = tx.QueryRow(ctx, `UPDATE slack_installations SET refresh_attempt_id=$2,refresh_deadline=clock_timestamp()+interval '60 seconds',refresh_error=NULL WHERE id=$1 RETURNING refresh_deadline`, installation, c.attempt).Scan(&c.deadline); err != nil {
@@ -165,5 +166,5 @@ func loseRefresh(ctx context.Context, tx pgx.Tx, installation, attempt uuid.UUID
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
-	return recordAuthorizationLoss(ctx, tx, installation, revision, authorized)
+	return recordAuthorizationLoss(ctx, tx, audit.System("slack-credential-refresh"), installation, revision, authorized)
 }
