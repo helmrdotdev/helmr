@@ -553,7 +553,7 @@ func TestPreparationConcurrentClaimsSelectOneExecutor(t *testing.T) {
 
 func TestPreparationAllocationCommitPrecedesEnrollmentCustodyCheck(t *testing.T) {
 	f, p, _ := preparationAllocationFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture stopped' WHERE worker_host_id=$1`, f.worker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture stopped' WHERE worker_host_id=$1`, f.worker)
 	tx, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

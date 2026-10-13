@@ -64,7 +64,7 @@ func (r *computerRestoreFixture) newTarget(t *testing.T) {
 	r.credential = uuid.NewV7().String()
 	digest := sha256.Sum256([]byte(r.credential))
 	// Acquisition/fencing and capacity are fixture setup, not a VM or allocator proof.
-	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL;
+	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL;
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($1,$2,$3,$4,1,clock_timestamp()+interval '1 hour',$5,$6,$7,'acquiring',1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),NULL)`, pgx.QueryExecModeSimpleProtocol, r.f.env, r.f.computer, r.epoch, r.host.HostID, uuid.NewV7(), digest[:], r.save)
 	if _, err := bindComputerLeaseDiskForTest(t.Context(), r.f.pool, r.host, r.f.env, r.f.computer, r.epoch, uuid.MustParse(r.writer.ActiveKey)); err != nil {
 		t.Fatal(err)

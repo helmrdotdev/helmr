@@ -303,7 +303,7 @@ func TestCommandExpiryNeverReconcilesPhysicalScope(t *testing.T) {
 	if err := Recover(t.Context(), f.Pool, candidate); !errors.Is(err, ErrChanged) {
 		t.Fatalf("stale recovery: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='test physical VM stopped' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.Environment, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='test physical VM stopped' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.Environment, f.Computer)
 	candidate.ExpectedRevision = c.Revision
 	if err := Recover(t.Context(), f.Pool, candidate); err != nil {
 		t.Fatal(err)

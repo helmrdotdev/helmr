@@ -135,7 +135,7 @@ func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	// This fixture supplies an already-certified checkpoint; this test exercises
 	// supplier retirement, not VM capture or manifest certification.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
- UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
+ UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
 	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
 		t.Fatal(err)
 	}

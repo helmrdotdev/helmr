@@ -19,10 +19,11 @@ type ImageBuildStart struct {
 	RootfsDigest string
 }
 
-// ReadImageBuildStart resolves executable inputs from the admitted immutable
+// StartImageBuild records the executor's first authenticated start and resolves
+// executable inputs from the admitted immutable
 // spec. A deployment is only a container for its verified bundle; no Session
 // or caller-selected Program can replace the preparation's content identity.
-func ReadImageBuildStart(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildStart, error) {
+func StartImageBuild(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildStart, error) {
 	if !ref.Valid() {
 		return ImageBuildStart{}, ErrInvalidInput
 	}
@@ -58,7 +59,11 @@ func ReadImageBuildStart(ctx context.Context, database db.TxBeginner, host worke
 		if err != nil {
 			return err
 		}
-		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
+		if err := CheckImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE image_builds SET started_at=COALESCE(started_at,clock_timestamp()) WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID)
+		return err
 	})
 	if err != nil {
 		return ImageBuildStart{}, hideMissing(err)

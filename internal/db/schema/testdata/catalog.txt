@@ -409,6 +409,7 @@ column image_builds.proxy_ca_private_key_nonce bytea
 column image_builds.reserved_cpu_millis bigint
 column image_builds.reserved_memory_bytes bigint
 column image_builds.reserved_scratch_bytes bigint
+column image_builds.started_at timestamp with time zone
 column image_builds.status text not null default 'queued'::text
 column image_builds.stderr_accepted_through bigint not null default 0
 column image_builds.stderr_byte_offset bigint not null default 0
@@ -1140,8 +1141,7 @@ constraint computer_leases c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_mi
 constraint computer_leases c CHECK (reserved_memory_bytes > 0)
 constraint computer_leases c CHECK (reserved_scratch_bytes > 0)
 constraint computer_leases c CHECK (status <> 'active'::text OR initialized_at IS NOT NULL)
-constraint computer_leases c CHECK (status <> 'released'::text OR fenced_at IS NOT NULL)
-constraint computer_leases c CHECK (status = ANY (ARRAY['acquiring'::text, 'active'::text, 'releasing'::text, 'lost'::text, 'released'::text]))
+constraint computer_leases c CHECK (status = ANY (ARRAY['acquiring'::text, 'active'::text, 'releasing'::text, 'lost'::text]))
 constraint computer_leases c CHECK (vm_vcpu_count > 0)
 constraint computer_leases c CHECK (worker_epoch > 0)
 constraint computer_leases f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
@@ -1341,6 +1341,7 @@ constraint image_builds c CHECK (proxy_ca_certificate IS NULL OR status = 'runni
 constraint image_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint image_builds c CHECK (reserved_memory_bytes > 0)
 constraint image_builds c CHECK (reserved_scratch_bytes > 0)
+constraint image_builds c CHECK (started_at IS NULL OR delivered_at IS NOT NULL)
 constraint image_builds c CHECK (status <> 'queued'::text OR worker_host_id IS NULL)
 constraint image_builds c CHECK (status <> 'running'::text OR worker_host_id IS NOT NULL)
 constraint image_builds c CHECK (status <> 'succeeded'::text OR capture_root IS NOT NULL)

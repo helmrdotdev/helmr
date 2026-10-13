@@ -671,6 +671,7 @@ CREATE TABLE image_builds (
     channel_credential_digest bytea CHECK (octet_length(channel_credential_digest)=32),
     executor_expires_at timestamptz,
     delivered_at timestamptz,
+    started_at timestamptz,
     reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
     reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
@@ -730,6 +731,7 @@ CREATE TABLE image_builds (
     CHECK ((worker_host_id IS NULL AND executor_epoch=0 AND worker_epoch IS NULL AND allocation_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL)
         OR (worker_host_id IS NOT NULL AND executor_epoch>0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)),
     CHECK ((delivered_at IS NULL)=(executor_expires_at IS NULL)),
+    CHECK (started_at IS NULL OR delivered_at IS NOT NULL),
     CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
         OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000)),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
@@ -972,7 +974,7 @@ CREATE TABLE computer_leases (
     vm_platform_id text NOT NULL REFERENCES vm_platforms(id),
     vm_vcpu_count integer NOT NULL CHECK (vm_vcpu_count>0),
     cpu_config_digest text NOT NULL CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'),
-    status text NOT NULL CHECK (status IN ('acquiring', 'active', 'releasing', 'lost', 'released')),
+    status text NOT NULL CHECK (status IN ('acquiring', 'active', 'releasing', 'lost')),
     fenced_at timestamptz,
     fence_evidence text,
     restored_published boolean GENERATED ALWAYS AS (true) STORED,
@@ -990,7 +992,6 @@ CREATE TABLE computer_leases (
     CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL),
     CHECK (status<>'active' OR initialized_at IS NOT NULL),
     CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL)),
-    CHECK (status <> 'released' OR fenced_at IS NOT NULL),
     CHECK (status NOT IN ('active', 'acquiring') OR fenced_at IS NULL),
     CHECK ((base_root_id IS NULL)=(write_key_id IS NULL)),
     CHECK (disk_released_at IS NULL OR (fenced_at IS NOT NULL AND base_root_id IS NOT NULL)),

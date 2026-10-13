@@ -65,9 +65,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 		// incarnation of this resource, including lost host rows.
 		var custody bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts h
- WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND (
- EXISTS(SELECT 1 FROM computer_leases l WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM image_builds p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)))`, group, enrollment.ResourceID).Scan(&custody); err != nil {
+ WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=h.id))`, group, enrollment.ResourceID).Scan(&custody); err != nil {
 			return err
 		}
 		if custody {

@@ -623,7 +623,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	key := uuid.NewV7()
 	replacement := uuid.NewV7()
 	nextSave := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='stopped' WHERE environment_id=$1 AND computer_id=$2;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='stopped' WHERE environment_id=$1 AND computer_id=$2;
       INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$2,'test',decode('02','hex'));
       INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,restored_from_save_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
         SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','acquiring',$4,channel_credential_digest,$5::uuid,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
@@ -697,7 +697,7 @@ func TestSaveStorageCannotAdoptUnretainedCertifiedObjects(t *testing.T) {
 	// Dispose the old, fenced publication owner, then prepare another lease from
 	// the initial source. Its predecessor's orphan graph is not that source.
 	nextSave := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='all publication attempts joined' WHERE environment_id=$1 AND computer_id=$2;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='all publication attempts joined' WHERE environment_id=$1 AND computer_id=$2;
       UPDATE computer_saves SET status='failed',failure_evidence='definitive no committed publication after fencing' WHERE environment_id=$1 AND id=$3;
       DELETE FROM disk_object_pins WHERE environment_id=$1 AND save_id=$3;
       INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
@@ -739,7 +739,7 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 	// Fixture the retention owner's eligible transition after physical stop.
 	// Completed/retry evidence remains; usable payload and mounted source do not.
 	dbtest.MustExec(t, t.Context(), f.pool, `
- UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2;
+ UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computers SET recovery_save_id=NULL WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET disk_released_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computer_saves SET root_id=NULL,payload_retired_at=clock_timestamp() WHERE environment_id=$1 AND id=$3;
@@ -808,7 +808,7 @@ func TestLeaseDiskPinsRequirePhysicalStopAndSettledPublication(t *testing.T) {
 
 func TestLeaseDiskPinsRetainPendingCheckpointAfterSavePublication(t *testing.T) {
 	f := readyCheckpointFixture(t)
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
 	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("pending checkpoint lost its source despite published disk: %v", err)
 	}

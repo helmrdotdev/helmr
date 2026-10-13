@@ -259,7 +259,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	host := workerFromContext(r.Context())
-	start, err := computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
+	start, err := computer.StartImageBuild(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -300,7 +300,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	_, err = computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
+	_, err = computer.StartImageBuild(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

@@ -57,16 +57,15 @@ UPDATE worker_hosts
    AND worker_pools.worker_group_id = worker_hosts.worker_group_id
    AND worker_pools.status IN ('active', 'draining')
    AND NOT EXISTS (
-       SELECT 1 FROM computer_leases
-        WHERE computer_leases.worker_host_id = worker_hosts.id
-          AND computer_leases.worker_epoch < worker_hosts.current_epoch
-          AND computer_leases.fenced_at IS NULL
-   )
-   AND NOT EXISTS (
-       SELECT 1 FROM image_builds p
-        WHERE p.worker_host_id = worker_hosts.id
-          AND p.worker_epoch < worker_hosts.current_epoch
-          AND p.fenced_at IS NULL
+       SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch<worker_hosts.current_epoch
    )
    AND (
        worker_hosts.status = 'registering'
@@ -184,11 +183,15 @@ WITH target AS (
 )
 UPDATE worker_hosts SET updated_at=now() FROM target
  WHERE worker_hosts.id=target.id AND NOT EXISTS (
- SELECT 1 FROM computer_leases l WHERE l.worker_host_id=target.id AND l.worker_epoch<target.current_epoch
- AND l.fenced_at IS NULL AND l.allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
- AND NOT EXISTS (
- SELECT 1 FROM image_builds p WHERE p.worker_host_id=target.id AND p.worker_epoch<target.current_epoch
- AND p.fenced_at IS NULL AND p.allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
+ SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=target.id AND worker_epoch<target.current_epoch AND allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
  RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
@@ -253,12 +256,15 @@ SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, 
                - $1::bigint * interval '1 second'
            AND worker_hosts.admission_paused_reason IS NULL
        ), false)::boolean AS admission_ready,
-       (SELECT count(*)::int FROM computer_leases i
-          WHERE i.worker_host_id=worker_hosts.id AND i.worker_epoch=worker_hosts.current_epoch
-            AND i.fenced_at IS NULL)
-       + (SELECT count(*)::int FROM image_builds p
-          WHERE p.worker_host_id=worker_hosts.id AND p.worker_epoch=worker_hosts.current_epoch
-            AND p.fenced_at IS NULL) AS active_instances
+       (SELECT count(*)::int FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch=worker_hosts.current_epoch) AS active_instances
   FROM worker_hosts
   JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
   LEFT JOIN vm_platforms ON vm_platforms.id = worker_hosts.vm_platform_id

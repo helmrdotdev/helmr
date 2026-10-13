@@ -179,7 +179,7 @@ func TestRuntimeAttachmentRejectsOtherAndSupersededOwners(t *testing.T) {
 	if !errors.Is(err, session.ErrNotReady) || attachment != (session.RuntimeAttachment{}) {
 		t.Fatalf("other host acquired: %+v %v", attachment, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='source closed' WHERE epoch=1`)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source closed' WHERE epoch=1`)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT $1,$2,2,$3,1,clock_timestamp()+interval '1 hour','active',$4,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer, other, uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET computer_lease_epoch=2`)
 	// Original host authentication remains valid after physical takeover.
@@ -212,7 +212,7 @@ func TestRuntimeAttachmentReportsStoppedWithoutGrant(t *testing.T) {
 			case "wrong-host":
 				e.WorkerHostID = uuid.NewV7()
 			case "fenced-lease":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET fenced_at=clock_timestamp(),status='released',fence_evidence='physical closure'`)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET fenced_at=clock_timestamp(),status='lost',fence_evidence='physical closure'`)
 			}
 			for range 2 {
 				result, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)

@@ -45,13 +45,7 @@ func ListHostAllocations(ctx context.Context, database db.TxBeginner, host worke
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT kind,environment_id,owner_id,epoch,allocation_id FROM (
- SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id allocation_id FROM computer_leases
- WHERE worker_host_id=$1 AND worker_epoch=$2 AND fenced_at IS NULL
- UNION ALL
- SELECT 'preparation',environment_id,id,executor_epoch,allocation_id FROM image_builds
- WHERE worker_host_id=$1 AND worker_epoch=$2 AND fenced_at IS NULL
- ) assignments WHERE (kind,environment_id,owner_id,epoch)>($3,$4,$5,$6)
+		rows, err := tx.Query(ctx, `SELECT kind,environment_id,owner_id,epoch,allocation_id FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=$1 AND worker_epoch=$2 AND (kind,environment_id,owner_id,epoch)>($3,$4,$5,$6)
  ORDER BY kind,environment_id,owner_id,epoch LIMIT 100`, host.HostID, host.Epoch, cursor.Kind, cursor.EnvironmentID, cursor.OwnerID, cursor.Epoch)
 		if err != nil {
 			return err

@@ -17,19 +17,23 @@ type AllocationShape struct {
 }
 
 // Allocation is a durable placement receipt, not permission to start a VM.
-// Only delivery to its authenticated Host can issue the channel credential.
+// Its identity binds the credential digest; only delivery to its authenticated
+// Host issues the secret credential. The kinds retain their own lifecycle and
+// fence transitions. Cross-table allocation identity uniqueness is provided by
+// server-issued UUIDv7 generation, not a relational constraint.
 type Allocation struct {
-	EnvironmentID uuid.UUID
-	OwnerID       uuid.UUID
-	InstanceID    uuid.UUID
-	Epoch         int64
-	HostID        uuid.UUID
-	HostEpoch     int64
-	Shape         AllocationShape
-	Status        string
-	DeliveredAt   *time.Time
-	ExpiresAt     *time.Time
-	FencedAt      *time.Time
+	EnvironmentID    uuid.UUID
+	OwnerID          uuid.UUID
+	InstanceID       uuid.UUID
+	Epoch            int64
+	HostID           uuid.UUID
+	HostEpoch        int64
+	CredentialDigest []byte
+	Shape            AllocationShape
+	Status           string
+	DeliveredAt      *time.Time
+	ExpiresAt        *time.Time
+	FencedAt         *time.Time
 }
 
 type ComputerAllocation struct {

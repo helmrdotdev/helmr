@@ -96,8 +96,15 @@ const getCapacityWorkerHost = `-- name: GetCapacityWorkerHost :one
 SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
        draining_at, drain_reason, termination_ready_at, lost_at,
        created_at, updated_at,
-       ((SELECT count(*) FROM computer_leases l WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL)
-        + (SELECT count(*) FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id)::bigint AS unreclaimed_instances,
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
   FROM worker_hosts
  WHERE worker_hosts.id = $1
@@ -150,20 +157,30 @@ WITH current_instances AS (
            id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
            draining_at, drain_reason, termination_ready_at, lost_at,
            created_at, updated_at,
-       ((SELECT count(*) FROM computer_leases l WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL)
-        + (SELECT count(*) FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL))::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id)::bigint AS unreclaimed_instances,
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
      FROM worker_hosts
      WHERE ($3::uuid IS NULL OR worker_group_id = $3)
        AND (
            NOT $4::boolean
            OR EXISTS (
-               SELECT 1
-                 FROM computer_leases
-                WHERE computer_leases.worker_host_id = worker_hosts.id
-                  AND computer_leases.fenced_at IS NULL
-           )
-           OR EXISTS (SELECT 1 FROM image_builds p WHERE p.worker_host_id=worker_hosts.id AND p.fenced_at IS NULL)
+               SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id)
        )
        AND (
            cardinality($5::text[]) = 0

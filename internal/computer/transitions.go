@@ -17,12 +17,12 @@ import (
 
 // AssignImageBuild places a queued image build on an allocation and reports
 // whether the build was still assignable.
-func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, credentialDigest []byte, spec uuid.UUID) (bool, error) {
+func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, spec uuid.UUID) (bool, error) {
 	changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_cpu_millis=$7,reserved_memory_bytes=$8,reserved_scratch_bytes=$9,vm_platform_id=$10,vm_vcpu_count=$11,cpu_config_digest=$12
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
  SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.image_spec_id=$13 AND s.status='revoked')`, a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, credentialDigest, a.Shape.CPUMillis, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, spec)
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$13 AND s.status='revoked')`, a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.CPUMillis, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, spec)
 	if err != nil {
 		return false, err
 	}
@@ -65,10 +65,10 @@ func FailRevokedImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID)
 }
 
 // InsertLease records a new lease allocation in the acquiring state.
-func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation, credentialDigest []byte) error {
+func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation) error {
 	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,status,
  reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,restored_from_save_id)
- VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, credentialDigest, r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom)
+ VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, r.CredentialDigest, r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom)
 	return err
 }
 
