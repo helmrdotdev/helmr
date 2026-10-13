@@ -102,7 +102,7 @@ VALUES (
     $5,
     $6
 )
-RETURNING history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+RETURNING id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
 `
 
 type CreateProjectParams struct {
@@ -125,13 +125,13 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 	)
 	var i Project
 	err := row.Scan(
-		&i.HistoryRetentionSeconds,
 		&i.ID,
 		&i.OrgID,
 		&i.DefaultRegionID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
+		&i.HistoryRetentionSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -153,7 +153,7 @@ WITH project AS (
              WHERE projects.org_id = $2
         )
     )
-    RETURNING history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+    RETURNING id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
 ),
 environment AS (
     INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,
@@ -168,7 +168,7 @@ environment AS (
       ) AS initial_environment(id, slug, name, color_hex, is_default)
     RETURNING id
 )
-SELECT project.history_retention_seconds, project.id, project.org_id, project.default_region_id, project.slug, project.name, project.is_default, project.created_at, project.updated_at
+SELECT project.id, project.org_id, project.default_region_id, project.slug, project.name, project.is_default, project.history_retention_seconds, project.created_at, project.updated_at
   FROM project
  WHERE (SELECT count(*) FROM environment) = 2
 `
@@ -194,13 +194,13 @@ type CreateProjectWithDefaultEnvironmentParams struct {
 }
 
 type CreateProjectWithDefaultEnvironmentRow struct {
-	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
 	ID                      pgtype.UUID        `json:"id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	DefaultRegionID         string             `json:"default_region_id"`
 	Slug                    string             `json:"slug"`
 	Name                    string             `json:"name"`
 	IsDefault               bool               `json:"is_default"`
+	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
@@ -227,13 +227,13 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 	)
 	var i CreateProjectWithDefaultEnvironmentRow
 	err := row.Scan(
-		&i.HistoryRetentionSeconds,
 		&i.ID,
 		&i.OrgID,
 		&i.DefaultRegionID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
+		&i.HistoryRetentionSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -326,7 +326,7 @@ func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBy
 }
 
 const getProject = `-- name: GetProject :one
-SELECT history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+SELECT id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
   FROM projects
  WHERE org_id = $1
    AND id = $2
@@ -341,13 +341,13 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 	row := q.db.QueryRow(ctx, getProject, arg.OrgID, arg.ID)
 	var i Project
 	err := row.Scan(
-		&i.HistoryRetentionSeconds,
 		&i.ID,
 		&i.OrgID,
 		&i.DefaultRegionID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
+		&i.HistoryRetentionSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -355,7 +355,7 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (Project
 }
 
 const getProjectBySlug = `-- name: GetProjectBySlug :one
-SELECT history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+SELECT id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
   FROM projects
  WHERE org_id = $1
    AND slug = $2
@@ -370,13 +370,13 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugPara
 	row := q.db.QueryRow(ctx, getProjectBySlug, arg.OrgID, arg.Slug)
 	var i Project
 	err := row.Scan(
-		&i.HistoryRetentionSeconds,
 		&i.ID,
 		&i.OrgID,
 		&i.DefaultRegionID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
+		&i.HistoryRetentionSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -439,7 +439,7 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+SELECT id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
   FROM projects
  WHERE org_id = $1
    AND (
@@ -477,13 +477,13 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 	for rows.Next() {
 		var i Project
 		if err := rows.Scan(
-			&i.HistoryRetentionSeconds,
 			&i.ID,
 			&i.OrgID,
 			&i.DefaultRegionID,
 			&i.Slug,
 			&i.Name,
 			&i.IsDefault,
+			&i.HistoryRetentionSeconds,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -557,7 +557,7 @@ UPDATE projects
        updated_at = now()
  WHERE org_id = $2
    AND id = $3
-RETURNING history_retention_seconds, id, org_id, default_region_id, slug, name, is_default, created_at, updated_at
+RETURNING id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
 `
 
 type UpdateProjectDetailsParams struct {
@@ -570,13 +570,13 @@ func (q *Queries) UpdateProjectDetails(ctx context.Context, arg UpdateProjectDet
 	row := q.db.QueryRow(ctx, updateProjectDetails, arg.Name, arg.OrgID, arg.ID)
 	var i Project
 	err := row.Scan(
-		&i.HistoryRetentionSeconds,
 		&i.ID,
 		&i.OrgID,
 		&i.DefaultRegionID,
 		&i.Slug,
 		&i.Name,
 		&i.IsDefault,
+		&i.HistoryRetentionSeconds,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -315,13 +315,13 @@ type Organization struct {
 }
 
 type Project struct {
-	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
 	ID                      pgtype.UUID        `json:"id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	DefaultRegionID         string             `json:"default_region_id"`
 	Slug                    string             `json:"slug"`
 	Name                    string             `json:"name"`
 	IsDefault               bool               `json:"is_default"`
+	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }

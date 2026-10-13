@@ -72,13 +72,13 @@ CREATE TABLE org_members (
 CREATE INDEX org_members_user_active ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 
 CREATE TABLE projects (
-    history_retention_seconds bigint DEFAULT 2592000 CHECK (history_retention_seconds > 0),
     id uuid PRIMARY KEY,
     org_id uuid NOT NULL,
     default_region_id text NOT NULL,
     slug text NOT NULL CHECK (btrim(slug) <> ''),
     name text NOT NULL CHECK (btrim(name) <> ''),
     is_default boolean NOT NULL DEFAULT false,
+    history_retention_seconds bigint DEFAULT 2592000 CHECK (history_retention_seconds > 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
