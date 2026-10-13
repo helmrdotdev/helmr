@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -252,5 +253,74 @@ func TestDiagnosticAcceptanceFixedPipesAndMonotonicClock(t *testing.T) {
 	var offset int64
 	if err := pool.QueryRow(t.Context(), `SELECT stdout_byte_offset FROM session_processes WHERE session_id=$1`, source.ID).Scan(&offset); err != nil || offset != 6 {
 		t.Fatalf("offset=%d %v", offset, err)
+	}
+}
+
+// The shared admission protocol may update its selected stream cursor, but not
+// the producer lifecycle, another pipe, or another producer's state.
+func TestDiagnosticAdmissionPreservesProducerState(t *testing.T) {
+	for _, producer := range []struct{ kind, table, idColumn string }{
+		{"session", "session_processes", "session_id"},
+		{"image_build", "image_builds", "id"},
+		{"computer_command", "commands", "id"},
+	} {
+		for _, stream := range []string{"stdout", "stderr"} {
+			t.Run(producer.kind+"/"+stream, func(t *testing.T) {
+				pool := diagnosticDatabase(t)
+				source := diagnosticTestSource(t, pool, producer.kind, uuid.Nil())
+				diagnosticTestSource(t, pool, producer.kind, source.EnvironmentID)
+				columns := []string{}
+				for _, suffix := range []string{"accepted_through", "byte_offset", "ended", "end_complete", "gapped", "last_sequence", "last_digest", "last_accepted_at", "expired_through"} {
+					columns = append(columns, stream+"_"+suffix)
+				}
+				snapshot := func(omitCursor bool) string {
+					t.Helper()
+					omitted := []string{}
+					if omitCursor {
+						omitted = columns
+					}
+					var state string
+					query := fmt.Sprintf(`SELECT jsonb_agg(CASE WHEN p.%[1]s=$1 AND p.environment_id=$2 THEN to_jsonb(p)-$3::text[] ELSE to_jsonb(p) END ORDER BY p.environment_id,p.%[1]s)::text FROM %[2]s p`, producer.idColumn, producer.table)
+					if err := pool.QueryRow(t.Context(), query, source.ID, source.EnvironmentID, omitted).Scan(&state); err != nil {
+						t.Fatal(err)
+					}
+					return state
+				}
+				untouched, entire := snapshot(true), snapshot(false)
+				record := diagnostic.Record{Stream: stream, Kind: "data", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: 1, Data: []byte("abc")}
+				rejected := errors.New("producer authority changed before commit")
+				err := db.RunTx(t.Context(), pool, func(tx pgx.Tx) error {
+					if _, err := appendDiagnosticTx(t, tx, source, record, diagnosticTestBounds()); err != nil {
+						return err
+					}
+					return rejected
+				})
+				if !errors.Is(err, rejected) || snapshot(false) != entire {
+					t.Fatalf("rollback changed producer state: %v", err)
+				}
+				var count int
+				if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks`).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("rollback chunks=%d: %v", count, err)
+				}
+				if _, err := appendDiagnosticTest(t, pool, source, record, diagnosticTestBounds()); err != nil {
+					t.Fatal(err)
+				}
+				if snapshot(true) != untouched || snapshot(false) == entire {
+					t.Fatal("acceptance did not change only the selected cursor")
+				}
+				if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM diagnostic_chunks WHERE environment_id=$1 AND source_kind=$2 AND source_id=$3 AND stream=$4 AND sequence=1 AND data=$5`, source.EnvironmentID, source.Kind, source.ID, stream, record.Data).Scan(&count); err != nil || count != 1 {
+					t.Fatalf("accepted chunks=%d: %v", count, err)
+				}
+				dbtest.MustExec(t, t.Context(), pool, fmt.Sprintf(`UPDATE %s SET %s_last_accepted_at=clock_timestamp()-interval '2200 hours' WHERE %s=$1 AND environment_id=$2`, producer.table, stream, producer.idColumn), source.ID, source.EnvironmentID)
+				expired, err := appendDiagnosticTest(t, pool, source, record, diagnosticTestBounds())
+				if err != nil || !expired.Expired || snapshot(true) != untouched {
+					t.Fatalf("expiry changed producer state: %+v %v", expired, err)
+				}
+				var cleared bool
+				if err := pool.QueryRow(t.Context(), fmt.Sprintf(`SELECT %s_last_digest IS NULL AND %s_expired_through=1 FROM %s WHERE %s=$1 AND environment_id=$2`, stream, stream, producer.table, producer.idColumn), source.ID, source.EnvironmentID).Scan(&cleared); err != nil || !cleared {
+					t.Fatalf("expiry cursor=%v: %v", cleared, err)
+				}
+			})
+		}
 	}
 }

@@ -66,14 +66,13 @@ func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch 
 func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
 	changed, err := tx.Exec(ctx, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
  SELECT s.environment_id,s.id,$3,c.id,l.epoch,'starting' FROM sessions s
- JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  JOIN computer_leases l ON (l.environment_id,l.computer_id)=(c.environment_id,c.id)
  WHERE s.environment_id=$1 AND s.id=$2 AND s.status IN ('open','closing')
  AND l.worker_host_id=$4 AND l.worker_epoch=$5 AND l.fenced_at IS NULL
  AND (($6::bigint=0 AND l.status='active' AND l.expires_at>clock_timestamp())
  OR ($6::bigint>0 AND l.epoch=$6 AND l.status='acquiring' AND l.delivered_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL))
- AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND d.execution_revoked_at IS NULL
+ AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL
  AND `+NoSessionHoldsSQL+`
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1

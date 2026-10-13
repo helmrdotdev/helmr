@@ -21,7 +21,7 @@ const computerProxyAuthority = `WITH authority AS (
  COALESCE(h.claim_version=$5 AND g.claim_version=$6,false) AS claims_current
  FROM computer_leases l
  JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
- JOIN environments e ON e.id=c.environment_id AND e.retired_at IS NULL
+ JOIN environments e ON e.id=c.environment_id
  JOIN worker_hosts h ON h.id=l.worker_host_id AND h.current_epoch=l.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
  WHERE l.allocation_id=$1 AND l.worker_host_id=$2 AND l.worker_epoch=$3 AND h.worker_group_id=$4
@@ -83,8 +83,7 @@ func CaptureProtectedSecrets(ctx context.Context, database db.DBTX, host workerg
  SELECT p.environment_id,p.computer_id,p.session_id AS owner_id,p.epoch AS owner_epoch,'process'::text AS kind
  FROM authority a JOIN session_processes p ON p.environment_id=a.environment_id AND p.computer_id=a.id AND p.computer_lease_epoch=a.epoch
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
- JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
- WHERE p.status IN ('starting','ready') AND p.fenced_at IS NULL AND p.failure_recorded_at IS NULL AND d.execution_revoked_at IS NULL AND s.status IN ('open','closing')
+ WHERE p.status IN ('starting','ready') AND p.fenced_at IS NULL AND p.failure_recorded_at IS NULL AND s.status IN ('open','closing')
  UNION ALL
  SELECT c.environment_id,c.computer_id,c.id,0::bigint,'command'::text FROM authority a
  JOIN commands c ON c.environment_id=a.environment_id AND c.computer_id=a.id AND c.computer_lease_epoch=a.epoch

@@ -157,51 +157,31 @@ func TestSessionRuntimeFailureSurvivesControlReattachment(t *testing.T) {
 	}
 }
 
-func TestSessionRuntimeFailureRespectsLeaseExpiryAndRevocation(t *testing.T) {
-	for _, expired := range []bool{false, true} {
-		name := "revoked"
-		if expired {
-			name = "expired"
-		}
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t)
-			active := f.enqueue(t, "active")
-			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
-				t.Fatal(err)
-			}
-			a, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if expired {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-			} else {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
-			}
-			err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
-			if expired && !errors.Is(err, session.ErrDenied) {
-				t.Fatalf("expired failure accepted: %v", err)
-			}
-			if !expired && err != nil {
-				t.Fatal(err)
-			}
-			var recorded, unfenced bool
-			var state string
-			if err = f.pool.QueryRow(t.Context(), `SELECT failure_recorded_at IS NOT NULL,fenced_at IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&recorded, &unfenced); err != nil || recorded == expired || !unfenced {
-				t.Fatalf("failure state %v %v: %v", recorded, unfenced, err)
-			}
-			want := "interrupted"
-			if expired {
-				want = "running"
-			}
-			if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, active.TurnID).Scan(&state); err != nil || state != want {
-				t.Fatalf("turn %s: %v", state, err)
-			}
-			var holds int
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
-				t.Fatalf("unnecessary/unauthorized hold %d: %v", holds, err)
-			}
-		})
+func TestSessionRuntimeFailureRejectsExpiredLease(t *testing.T) {
+	f := newFixture(t)
+	active := f.enqueue(t, "active")
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
+		t.Fatal(err)
+	}
+	a, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
+	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("expired failure accepted: %v", err)
+	}
+	var recorded, unfenced bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT failure_recorded_at IS NOT NULL,fenced_at IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&recorded, &unfenced); err != nil || recorded || !unfenced {
+		t.Fatalf("failure state %v %v: %v", recorded, unfenced, err)
+	}
+	var state string
+	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, active.TurnID).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("turn %s: %v", state, err)
+	}
+	var holds int
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
+		t.Fatalf("unauthorized hold %d: %v", holds, err)
 	}
 }
 

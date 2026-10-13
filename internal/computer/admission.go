@@ -40,7 +40,7 @@ func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, 
 func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
 	var limits Limits
 	if err := tx.QueryRow(ctx, `SELECT max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms
- FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&limits.MaxCPU, &limits.MaxMemory, &limits.MaxStorage, &limits.PreparationTimeout); err != nil {
+ FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&limits.MaxCPU, &limits.MaxMemory, &limits.MaxStorage, &limits.PreparationTimeout); err != nil {
 		return uuid.Nil(), err
 	}
 	if bindings == nil {

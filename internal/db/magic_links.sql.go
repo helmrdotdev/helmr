@@ -276,10 +276,9 @@ WITH upserted_user AS (
           WHERE auth_identity.provider = $6
             AND auth_identity.subject = $7
      )
-    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL DO UPDATE
        SET primary_email = users.primary_email
-     WHERE users.disabled_at IS NULL
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 target_user AS (
     SELECT auth_identity.user_id AS id
@@ -319,16 +318,16 @@ updated_user AS (
            primary_email = $4,
            updated_at = now()
      WHERE id IN (SELECT user_id FROM upserted_identity)
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 selected_user AS (
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM updated_user
     UNION ALL
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at
       FROM upserted_user
      WHERE NOT EXISTS (SELECT 1 FROM updated_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM selected_user
 `
 
 type UpsertMagicLinkAuthIdentityParams struct {
@@ -347,7 +346,6 @@ type UpsertMagicLinkAuthIdentityRow struct {
 	DisplayName     string             `json:"display_name"`
 	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
-	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
@@ -369,7 +367,6 @@ func (q *Queries) UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMag
 		&i.DisplayName,
 		&i.ProfileImageURL,
 		&i.PrimaryEmail,
-		&i.DisabledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

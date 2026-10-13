@@ -304,7 +304,7 @@ func UpdateEnvironment(ctx context.Context, database db.TxBeginner, actor audit.
 			if environment.HistoryRetentionSeconds.Valid {
 				after = &environment.HistoryRetentionSeconds.Int64
 			}
-			return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: orgID, EnvironmentID: environmentID, Action: "environment.retention_changed", TargetKind: "environment", TargetID: environmentID, OldRetentionMode: oldMode, NewRetentionMode: environment.HistoryRetentionMode, OldRetentionSeconds: before, NewRetentionSeconds: after})
+			return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: orgID, EnvironmentID: environmentID, Action: "environment.retention_changed", TargetKind: "environment", TargetID: environmentID, Details: audit.RetentionChangedDetails{OldRetentionMode: oldMode, NewRetentionMode: environment.HistoryRetentionMode, OldRetentionSeconds: before, NewRetentionSeconds: after}})
 		}
 		return nil
 	})

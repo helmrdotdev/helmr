@@ -19,7 +19,6 @@ WITH locked_active_owners AS (
      WHERE org_members.org_id = $1
        AND org_members.role = 'owner'
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
      FOR UPDATE OF org_members
 )
 UPDATE org_members
@@ -120,7 +119,6 @@ SELECT org_members.org_id,
        org_members.display_name,
        users.primary_email,
        org_members.disabled_at,
-       users.disabled_at AS user_disabled_at,
        org_members.created_at,
        org_members.updated_at
   FROM org_members
@@ -135,15 +133,14 @@ type GetOrgMemberForManagementParams struct {
 }
 
 type GetOrgMemberForManagementRow struct {
-	OrgID          pgtype.UUID        `json:"org_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	Role           OrgMemberRole      `json:"role"`
-	DisplayName    pgtype.Text        `json:"display_name"`
-	PrimaryEmail   pgtype.Text        `json:"primary_email"`
-	DisabledAt     pgtype.Timestamptz `json:"disabled_at"`
-	UserDisabledAt pgtype.Timestamptz `json:"user_disabled_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Role         OrgMemberRole      `json:"role"`
+	DisplayName  pgtype.Text        `json:"display_name"`
+	PrimaryEmail pgtype.Text        `json:"primary_email"`
+	DisabledAt   pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error) {
@@ -156,7 +153,6 @@ func (q *Queries) GetOrgMemberForManagement(ctx context.Context, arg GetOrgMembe
 		&i.DisplayName,
 		&i.PrimaryEmail,
 		&i.DisabledAt,
-		&i.UserDisabledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -170,7 +166,6 @@ SELECT org_members.org_id,
        COALESCE(org_members.display_name, users.display_name) AS display_name,
        users.primary_email,
        org_members.disabled_at,
-       users.disabled_at AS user_disabled_at,
        org_members.created_at,
        org_members.updated_at
   FROM org_members
@@ -181,15 +176,14 @@ SELECT org_members.org_id,
 `
 
 type ListOrgMembersRow struct {
-	OrgID          pgtype.UUID        `json:"org_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	Role           OrgMemberRole      `json:"role"`
-	DisplayName    string             `json:"display_name"`
-	PrimaryEmail   pgtype.Text        `json:"primary_email"`
-	DisabledAt     pgtype.Timestamptz `json:"disabled_at"`
-	UserDisabledAt pgtype.Timestamptz `json:"user_disabled_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Role         OrgMemberRole      `json:"role"`
+	DisplayName  string             `json:"display_name"`
+	PrimaryEmail pgtype.Text        `json:"primary_email"`
+	DisabledAt   pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error) {
@@ -208,7 +202,6 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 			&i.DisplayName,
 			&i.PrimaryEmail,
 			&i.DisabledAt,
-			&i.UserDisabledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -230,7 +223,6 @@ WITH locked_active_owners AS (
      WHERE org_members.org_id = $2
        AND org_members.role = 'owner'
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
      FOR UPDATE OF org_members
 )
 UPDATE org_members

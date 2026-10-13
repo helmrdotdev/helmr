@@ -558,7 +558,7 @@ func TestHistoryRetentionPolicyRequiredAndAtomic(t *testing.T) {
 	if err != nil || updated.HistoryRetentionMode != "until_environment_deletion" || updated.HistoryRetentionSeconds.Valid {
 		t.Fatalf("explicit policy update failed: %+v %v", updated, err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='environment.retention_changed' AND target_id=$1 AND old_retention_mode='duration' AND old_retention_seconds=$2 AND new_retention_mode='until_environment_deletion' AND new_retention_seconds IS NULL`, env.ID, positive).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='environment.retention_changed' AND target_id=$1 AND details->>'old_retention_mode'='duration' AND (details->>'old_retention_seconds')::bigint=$2 AND details->>'new_retention_mode'='until_environment_deletion' AND details->'new_retention_seconds'='null'::jsonb`, env.ID, positive).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("retention facts: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_retention_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)

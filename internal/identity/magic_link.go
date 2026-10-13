@@ -294,9 +294,9 @@ func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, externa
 		return signedInUser{}, fmt.Errorf("record magic link identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, true) {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, NewRole: "admin"}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
-	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
+	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
 }

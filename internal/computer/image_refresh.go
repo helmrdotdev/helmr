@@ -23,7 +23,7 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 			return err
 		}
 		var timeout int64
-		if err := tx.QueryRow(ctx, `SELECT preparation_timeout_ms FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&timeout); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT preparation_timeout_ms FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&timeout); err != nil {
 			return err
 		}
 		if err := LockImageSpecSecrets(ctx, tx, env, spec); err != nil {

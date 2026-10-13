@@ -26,9 +26,9 @@ func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment
 		return uuid.Nil(), "identity_unlinked", nil
 	}
 	var member bool
-	err = tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL AND u.disabled_at IS NULL AND (m.role IN ('owner','admin','developer') OR ($3 AND m.role='viewer'))
- FROM org_members m JOIN users u ON u.id=m.user_id JOIN environments e ON e.org_id=m.org_id
- WHERE e.id=$1 AND m.user_id=$2 FOR SHARE OF m,u`, environment, user, answer).Scan(&member)
+	err = tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL AND (m.role IN ('owner','admin','developer') OR ($3 AND m.role='viewer'))
+ FROM org_members m JOIN environments e ON e.org_id=m.org_id
+ WHERE e.id=$1 AND m.user_id=$2 FOR SHARE OF m`, environment, user, answer).Scan(&member)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil(), "permission_denied", nil
 	}

@@ -23,13 +23,13 @@ func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal aut
 	routes := map[triggerRouteKey]slackroute.Connection{}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var allowed bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE e.id=$1 AND e.project_id=$2 AND e.org_id=$3 AND e.retired_at IS NULL AND d.id=$4 AND d.execution_revoked_at IS NULL)`, env, project, principal.OrgID, deployment).Scan(&allowed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE e.id=$1 AND e.project_id=$2 AND e.org_id=$3 AND d.id=$4)`, env, project, principal.OrgID, deployment).Scan(&allowed); err != nil {
 			return err
 		}
 		if !allowed {
 			return ErrNotDeployable
 		}
-		rows, err := tx.Query(ctx, `SELECT DISTINCT agent_id,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 AND slack_destination IS NOT NULL ORDER BY agent_id,slack_destination`, env, deployment)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT agent_id,slack_channel_id FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 AND slack_channel_id IS NOT NULL ORDER BY agent_id,slack_channel_id`, env, deployment)
 		if err != nil {
 			return err
 		}

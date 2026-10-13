@@ -307,11 +307,11 @@ func authorizeExternalControl(ctx context.Context, tx pgx.Tx, caller Caller, env
 	var err error
 	switch caller.Kind {
 	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id JOIN users u ON u.id=m.user_id
- WHERE e.id=$1 AND e.retired_at IS NULL AND m.user_id=$2 AND m.disabled_at IS NULL AND u.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id
+ WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
 	case "api_key":
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id)
- WHERE e.id=$1 AND e.retired_at IS NULL AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+ WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
  AND k.role IN ('owner','admin','developer') AND $3=ANY(k.permissions))`, env, caller.ID, "sessions."+kind).Scan(&allowed)
 	default:
 		return ErrDenied

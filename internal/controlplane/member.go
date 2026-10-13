@@ -210,9 +210,6 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 	}
 	status := api.MemberStatusActive
 	disabledAt := row.DisabledAt
-	if row.UserDisabledAt.Valid && (!disabledAt.Valid || row.UserDisabledAt.Time.Before(disabledAt.Time)) {
-		disabledAt = row.UserDisabledAt
-	}
 	if disabledAt.Valid {
 		status = api.MemberStatusDisabled
 	}

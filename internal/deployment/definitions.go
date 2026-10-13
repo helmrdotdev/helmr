@@ -281,7 +281,7 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 		Cron        string  `json:"cron"`
 		Timezone    string  `json:"timezone"`
 		Input       []byte  `json:"input"`
-		Destination *string `json:"slack_destination"`
+		Destination *string `json:"slack_channel_id"`
 	}
 	inputs := make([]agentInput, 0, len(output.Metadata.Definitions))
 	triggers := []triggerInput{}
@@ -327,9 +327,9 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	if err != nil {
 		return err
 	}
-	inserted, err = tx.Exec(ctx, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input,slack_destination)
- SELECT $1,a.id,$2,v.key,v.cron,v.timezone,decode(v.input,'base64'),v.slack_destination
- FROM jsonb_to_recordset($3::jsonb) AS v(agent text,key text,cron text,timezone text,input text,slack_destination text)
+	inserted, err = tx.Exec(ctx, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input,slack_channel_id)
+ SELECT $1,a.id,$2,v.key,v.cron,v.timezone,decode(v.input,'base64'),v.slack_channel_id
+ FROM jsonb_to_recordset($3::jsonb) AS v(agent text,key text,cron text,timezone text,input text,slack_channel_id text)
  JOIN agents a ON a.environment_id=$1 AND a.key=v.agent`, env, deployment, rawTriggers)
 	if err != nil {
 		return err

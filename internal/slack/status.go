@@ -33,7 +33,7 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var channel, env, installation uuid.UUID
 		var team, slackChannel string
-		err := tx.QueryRow(ctx, `SELECT c.id,c.environment_id,c.installation_id,c.team_id,c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id WHERE t.id=$1`, thread).Scan(&channel, &env, &installation, &team, &slackChannel)
+		err := tx.QueryRow(ctx, `SELECT c.id,c.environment_id,c.installation_id,c.team_id,c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE t.id=$1`, thread).Scan(&channel, &env, &installation, &team, &slackChannel)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -186,7 +186,7 @@ func ReconcileStatus(ctx context.Context, pool db.TxBeginner, client Caller, thr
 func statusClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim StatusClaim) (bool, error) {
 	var allowed bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id
+		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id
  JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id
  WHERE t.id=$1 AND t.claim_epoch=$2 AND t.inflight_attempt_id=$3 AND t.claimed_until>clock_timestamp() AND t.deleted_at IS NULL

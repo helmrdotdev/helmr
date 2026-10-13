@@ -15,7 +15,7 @@ func queuedTurn(t *testing.T, f sessiontest.Fixture) {
  VALUES($1,$2,$3,$4,1,'user',$5,'slack_route',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
 }
 
-func TestQueuedDemandRespectsRegionHoldsAndRevocation(t *testing.T) {
+func TestQueuedDemandRespectsRegionHoldsAndProcessState(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change string
@@ -27,8 +27,6 @@ func TestQueuedDemandRespectsRegionHoldsAndRevocation(t *testing.T) {
 		{name: "local hold", change: `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$3,$2,'local','paused')`},
 		{name: "released hold", change: `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,released_at) VALUES($1,$3,$2,'local','paused',clock_timestamp())`, want: true},
 		{name: "closed", change: `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$2`},
-		{name: "revoked", change: `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1`},
-		{name: "retired", change: `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`},
 		{name: "other region", change: `INSERT INTO regions(id,display_name) VALUES('elsewhere','Elsewhere'); UPDATE projects SET default_region_id='elsewhere' WHERE id=(SELECT project_id FROM environments WHERE id=$1)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

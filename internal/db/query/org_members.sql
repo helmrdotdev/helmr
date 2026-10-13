@@ -20,7 +20,6 @@ SELECT org_members.org_id,
        COALESCE(org_members.display_name, users.display_name) AS display_name,
        users.primary_email,
        org_members.disabled_at,
-       users.disabled_at AS user_disabled_at,
        org_members.created_at,
        org_members.updated_at
   FROM org_members
@@ -36,7 +35,6 @@ SELECT org_members.org_id,
        org_members.display_name,
        users.primary_email,
        org_members.disabled_at,
-       users.disabled_at AS user_disabled_at,
        org_members.created_at,
        org_members.updated_at
   FROM org_members
@@ -52,7 +50,6 @@ WITH locked_active_owners AS (
      WHERE org_members.org_id = sqlc.arg(org_id)
        AND org_members.role = 'owner'
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
      FOR UPDATE OF org_members
 )
 UPDATE org_members
@@ -87,7 +84,6 @@ WITH locked_active_owners AS (
      WHERE org_members.org_id = sqlc.arg(org_id)
        AND org_members.role = 'owner'
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
      FOR UPDATE OF org_members
 )
 UPDATE org_members

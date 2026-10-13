@@ -52,7 +52,7 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 			return err
 		}
 		var selected *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT CASE WHEN $3='spawn' THEN s.deployment_id ELSE e.current_deployment_id END FROM sessions s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2 AND e.retired_at IS NULL`, caller.Execution.EnvironmentID, caller.ID, operation).Scan(&selected); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT CASE WHEN $3='spawn' THEN s.deployment_id ELSE e.current_deployment_id END FROM sessions s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2`, caller.Execution.EnvironmentID, caller.ID, operation).Scan(&selected); err != nil {
 			return err
 		}
 		if selected == nil {

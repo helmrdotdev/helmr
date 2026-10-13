@@ -67,7 +67,7 @@ func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='slack_connection.authorized' AND target_id=$1 AND actor_user_id=$2 AND actor_credential_id=$3 AND org_id=$4 AND environment_id=$5 AND permissions=$6 AND expires_at IS NULL`, f.publication, f.User, actor.CredentialID, org, f.Environment, grant.scopes).Scan(&count); err != nil || count != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='slack_connection.authorized' AND target_id=$1 AND actor_user_id=$2 AND actor_credential_id=$3 AND org_id=$4 AND environment_id=$5 AND details->'permissions'=to_jsonb($6::text[]) AND NOT (details ? 'expires_at')`, f.publication, f.User, actor.CredentialID, org, f.Environment, grant.scopes).Scan(&count); err != nil || count != 1 {
 		t.Fatal("grant fact differs", count, err)
 	}
 }

@@ -102,7 +102,7 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 }
 
 func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
-	for _, change := range []string{"generation", "lease", "host", "hold", "processing", "deadline", "deployment"} {
+	for _, change := range []string{"generation", "lease", "host", "hold", "processing", "deadline"} {
 		t.Run(change, func(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
@@ -126,8 +126,6 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 				}
 			case "deadline":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, caller.TurnID)
-			case "deployment":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
 			}
 			expected := session.ErrDenied
 			if change == "host" {

@@ -31,13 +31,6 @@ func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, 
 		input                              json.RawMessage
 	}{start.EnvironmentID, start.ActivationID, start.AgentID, start.DeploymentID, start.Input}
 	at := start.At
-	var allowed bool
-	if err := tx.QueryRow(ctx, `SELECT execution_revoked_at IS NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, s.environment, s.deployment).Scan(&allowed); err != nil {
-		return Admission{}, err
-	}
-	if !allowed {
-		return Admission{}, ErrDenied
-	}
 	input, err := content.Input(s.input)
 	if err != nil {
 		return Admission{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)

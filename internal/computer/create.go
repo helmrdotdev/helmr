@@ -71,7 +71,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 	var result Created
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		var deployment *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, retry, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -87,13 +87,6 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 				return idempotency.Completion{}, nil
 			}
 			if deployment == nil {
-				return idempotency.Completion{}, ErrNotDeployed
-			}
-			var live bool
-			if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, request.Scope.EnvironmentID, *deployment).Scan(&live); err != nil {
-				return idempotency.Completion{}, err
-			}
-			if !live {
 				return idempotency.Completion{}, ErrNotDeployed
 			}
 			id, err := CreateStandalone(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)

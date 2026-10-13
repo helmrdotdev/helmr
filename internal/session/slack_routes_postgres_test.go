@@ -42,7 +42,7 @@ func slackRouteFixture(t *testing.T, f fixture) (uuid.UUID, uuid.UUID) {
 func bindFixtureSlackRoot(t *testing.T, f fixture, channel uuid.UUID) {
 	t.Helper()
 	thread := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,recipient_team_id,recipient_user_id)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,recipient_team_id,recipient_user_id)
  SELECT $1,$2,$3,id,org_id,team_id,slack_channel_id,'123.456',team_id,'human' FROM slack_channel_bindings WHERE id=$4;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($5,$1,$2,$3)`, pgx.QueryExecModeSimpleProtocol, thread, f.env, f.session, channel, uuid.NewV7())
 }
@@ -161,7 +161,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	// The route authority is the thread row, and only a root Session may own
 	// one: the schema rejects a thread fronted by the child.
 	var violation *pgconn.PgError
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.org_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channel_bindings c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.org_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channel_bindings c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
 		t.Fatalf("child owned a Slack route: %v", err)
 	}
 	req.IdempotencyKey = "independent"

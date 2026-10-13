@@ -39,7 +39,7 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 	}
 	var count int
 	var principal, scope, target bool
-	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='api_key' AND actor_credential_id=$1 AND actor_user_id IS NULL),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded') FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
+	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='api_key' AND actor_credential_id=$1 AND actor_user_id IS NULL),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded' AND details='{}'::jsonb) FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
 		t.Fatalf("audit count=%d actor=%v scope=%v target=%v err=%v", count, principal, scope, target, err)
 	}
 	before := currentSecretVersion(t, d.Pool, env, created.ID)

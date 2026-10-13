@@ -90,7 +90,7 @@ func TestImageRefreshConcurrentAdmissionAndCadenceCoalescing(t *testing.T) {
 }
 
 func TestImageRefreshInactivePolicyAndSecretCannotAdmit(t *testing.T) {
-	for _, mode := range []string{"future", "unpromoted", "retired", "revoked Secret"} {
+	for _, mode := range []string{"future", "unpromoted", "revoked Secret"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPreparationFixture(t)
 			due := dueImageRefresh(t, f)
@@ -100,8 +100,6 @@ func TestImageRefreshInactivePolicyAndSecretCannotAdmit(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET next_refresh_at=$3 WHERE environment_id=$1 AND id=$2`, f.env, f.deployment, due)
 			case "unpromoted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET refresh_every_ms=NULL,next_refresh_at=NULL WHERE environment_id=$1 AND id=$2`, f.env, f.deployment)
-			case "retired":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env)
 			case "revoked Secret":
 				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "before-refresh"); err != nil {
 					t.Fatal(err)
@@ -172,7 +170,7 @@ func TestImageRefreshAdvanceAndAdmissionRollbackTogether(t *testing.T) {
 }
 
 func TestImageRefreshRechecksPolicyAfterEnvironmentWait(t *testing.T) {
-	for _, change := range []string{"promotion", "retirement", "Secret revocation"} {
+	for _, change := range []string{"promotion", "Secret revocation"} {
 		t.Run(change, func(t *testing.T) {
 			f := newPreparationFixture(t)
 			dueImageRefresh(t, f)
@@ -189,8 +187,6 @@ func TestImageRefreshRechecksPolicyAfterEnvironmentWait(t *testing.T) {
 			waitSessionLifecycleLock(t, f.fixture)
 			if change == "promotion" {
 				dbtest.MustExec(t, ctx, tx, `UPDATE image_specs SET refresh_every_ms=NULL,next_refresh_at=NULL WHERE environment_id=$1 AND id=$2`, f.env, f.deployment)
-			} else if change == "retirement" {
-				dbtest.MustExec(t, ctx, tx, `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env)
 			} else if _, err := f.secrets.Revoke(ctx, audit.System("test-fixture"), f.env, f.secretID, "while-refresh-waits"); err != nil {
 				t.Fatal(err)
 			}

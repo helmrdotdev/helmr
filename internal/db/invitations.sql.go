@@ -44,7 +44,6 @@ WITH active_invitee AS (
      WHERE org_members.org_id = $2
        AND lower(users.primary_email) = $3
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
     UNION
     SELECT 1
       FROM invitations AS accepted_invitation
@@ -56,7 +55,6 @@ WITH active_invitee AS (
        AND accepted_invitation.invitee_email = $3
        AND accepted_invitation.accepted_at IS NOT NULL
        AND org_members.disabled_at IS NULL
-       AND users.disabled_at IS NULL
 )
 INSERT INTO invitations (id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
 SELECT

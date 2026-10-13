@@ -119,10 +119,9 @@ WITH upserted_user AS (
           WHERE auth_identity.provider = sqlc.arg(identity_provider)
             AND auth_identity.subject = sqlc.arg(identity_subject)
      )
-    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL DO UPDATE
        SET primary_email = users.primary_email
-     WHERE users.disabled_at IS NULL
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 target_user AS (
     SELECT auth_identity.user_id AS id
@@ -162,13 +161,13 @@ updated_user AS (
            primary_email = sqlc.arg(email),
            updated_at = now()
      WHERE id IN (SELECT user_id FROM upserted_identity)
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 selected_user AS (
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_user
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM updated_user
     UNION ALL
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at
       FROM upserted_user
      WHERE NOT EXISTS (SELECT 1 FROM updated_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user;
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM selected_user;

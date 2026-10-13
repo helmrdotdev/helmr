@@ -296,8 +296,6 @@ func identityError(err error) error {
 		return badRequest(codedError{code: "wrong_account", message: err.Error()})
 	case errors.Is(err, identity.ErrAlreadyMember):
 		return conflict(codedError{code: "already_member", message: err.Error()})
-	case errors.Is(err, identity.ErrInactiveMember):
-		return conflict(codedError{code: "disabled_member", message: err.Error()})
 	case errors.Is(err, identity.ErrUserNotFound):
 		return unauthorized(errors.New("authentication is required"))
 	case errors.Is(err, identity.ErrOrganizationRequired),

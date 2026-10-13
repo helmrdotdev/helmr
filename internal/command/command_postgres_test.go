@@ -205,7 +205,6 @@ func TestCommandClaimUsesOneLeaseAndPreservesPeer(t *testing.T) {
 	f := commandFixture(t)
 	start := f.start(t, "claim")
 	id := uuid.UUID(start.Command.ID.Bytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)
 	r, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
 	if err != nil || r.Start == nil || r.Start.Command.ID != start.Command.ID || !bytes.Equal(r.Start.RequestFingerprint, start.RequestFingerprint) {
 		t.Fatalf("lost reply: %+v %v", r, err)

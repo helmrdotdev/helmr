@@ -117,9 +117,8 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 
 // signedInUser is the user an identity upsert selected.
 type signedInUser struct {
-	actor    audit.Actor
-	id       pgtype.UUID
-	disabled bool
+	actor audit.Actor
+	id    pgtype.UUID
 }
 
 func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
@@ -144,21 +143,18 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, NewRole: "admin"}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
-	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
+	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
 }
 
-// startLoginSession issues a login session for an enabled user. With an
+// startLoginSession issues a login session for the authenticated user. With an
 // invitation, the user first joins its organization and the session selects
 // that organization.
 func startLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
 	q := db.New(tx)
-	if user.disabled {
-		return "", ErrInactiveMember
-	}
 	orgID := pgtype.UUID{}
 	if invitation != nil {
 		userID, err := pgvalue.UUIDValue(user.id)
@@ -181,8 +177,6 @@ func acceptanceError(err error) error {
 		return ErrInvalidToken
 	case errors.Is(err, org.ErrAlreadyMember):
 		return ErrAlreadyMember
-	case errors.Is(err, org.ErrUserDisabled):
-		return ErrInactiveMember
 	default:
 		return err
 	}
@@ -213,7 +207,7 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 
 // AuthenticateLoginSession resolves a raw login session token to its
 // principal and extends the session's lifetime. An unknown, revoked or expired
-// session, a disabled user, or a session whose selected membership is no
+// session or a session whose selected membership is no
 // longer active is auth.ErrUnauthenticated. A session that selects no
 // organization takes the user's first active membership.
 func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) (auth.Principal, error) {

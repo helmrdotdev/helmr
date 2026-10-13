@@ -260,17 +260,6 @@ func TestComputerRestoreRetainsStopsAndHolds(t *testing.T) {
 		t.Fatal("restore released user hold")
 	}
 }
-func TestRuntimeControlRenewalSurvivesDeploymentRevocation(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	if _, err := session.RenewRuntimeAuthority(ctx, f.pool, *f.host(), f.execution()); err != nil {
-		t.Fatalf("revocation blocked control delivery: %v", err)
-	}
-	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("revoked business admission: %v", err)
-	}
-}
 
 func TestComputerRestoreRejectsChangedPhysicalMembership(t *testing.T) {
 	for _, which := range []string{"added", "fenced", "stale-generation", "stale-terminal-set", "foreign-invalid-identity"} {

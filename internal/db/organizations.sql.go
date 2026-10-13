@@ -65,7 +65,6 @@ SELECT
   FROM users
   LEFT JOIN organizations ON organizations.id = $1
  WHERE users.id = $2
-   AND users.disabled_at IS NULL
 `
 
 type GetUserOnboardingStateParams struct {

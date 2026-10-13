@@ -151,7 +151,7 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 		t.Fatalf("initial owner admin = %t, err = %v", admin, err)
 	}
 	member, err := queries.GetOrgMemberForManagement(t.Context(), db.GetOrgMemberForManagementParams{OrgID: created.ID, UserID: pgvalue.UUID(userID)})
-	if err != nil || member.DisabledAt.Valid || member.UserDisabledAt.Valid || member.Role != db.OrgMemberRoleOwner {
+	if err != nil || member.DisabledAt.Valid || member.Role != db.OrgMemberRoleOwner {
 		t.Fatalf("owner member = %+v, err = %v", member, err)
 	}
 	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "second", OwnerUserID: userID, InitialSetup: true}); !errors.Is(err, org.ErrOrganizationExists) {
@@ -318,7 +318,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(fixture.owner.OrgID), UserID: pgvalue.UUID(joiner)})
-	if err != nil || member.DisabledAt.Valid || member.UserDisabledAt.Valid || member.Role != db.OrgMemberRoleDeveloper || member.DisplayName.String != "Joiner" {
+	if err != nil || member.DisabledAt.Valid || member.Role != db.OrgMemberRoleDeveloper || member.DisplayName.String != "Joiner" {
 		t.Fatalf("member = %+v, err = %v", member, err)
 	}
 	if activeSessions(joiner) != 0 {
@@ -339,8 +339,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatal("rejected acceptance revoked sessions")
 	}
 
-	// A disabled membership is re-enabled with the invited role; a disabled
-	// user with an active membership is reported as disabled.
+	// A disabled membership is re-enabled with the invited role.
 	if _, err := fixture.pool.Exec(ctx, `UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2`, fixture.owner.OrgID, joiner); err != nil {
 		t.Fatal(err)
 	}
@@ -348,18 +347,12 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	if err := accept(reinvitation, joiner, ""); err != nil {
 		t.Fatal(err)
 	}
-	if member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(fixture.owner.OrgID), UserID: pgvalue.UUID(joiner)}); err != nil || member.DisabledAt.Valid || member.UserDisabledAt.Valid || member.Role != db.OrgMemberRoleViewer {
+	if member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(fixture.owner.OrgID), UserID: pgvalue.UUID(joiner)}); err != nil || member.DisabledAt.Valid || member.Role != db.OrgMemberRoleViewer {
 		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
 	}
 	var newGrant bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT old_role='' AND new_role='viewer' AND actor_kind='verified_login' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
+	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND details->>'new_role'='viewer' AND actor_kind='verified_login' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
 		t.Fatal("reinvitation recorded disabled membership as active authority", newGrant, err)
-	}
-	if _, err := fixture.pool.Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, joiner); err != nil {
-		t.Fatal(err)
-	}
-	if err := accept(invite("third@example.test", "viewer"), joiner, ""); !errors.Is(err, org.ErrUserDisabled) {
-		t.Fatalf("disabled user error = %v", err)
 	}
 }
 
@@ -374,7 +367,7 @@ func TestMemberAuditFactsNoOpAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='member.role_changed' AND actor_user_id=$1 AND actor_credential_id=$2 AND org_id=$3 AND target_id=$4 AND old_role='developer' AND new_role='viewer'`, manager.UserID, manager.Actor.CredentialID, manager.OrgID, f.developer.UserID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='member.role_changed' AND actor_user_id=$1 AND actor_credential_id=$2 AND org_id=$3 AND target_id=$4 AND details->>'old_role'='developer' AND details->>'new_role'='viewer'`, manager.UserID, manager.Actor.CredentialID, manager.OrgID, f.developer.UserID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("role fact count=%d err=%v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_member_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)

@@ -130,7 +130,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 	var result db.GetSecretSnapshotRow
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
 		}
 		var request *idempotency.Request
@@ -262,7 +262,7 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 }
 func lockMutationSecret(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (db.Secret, error) {
 	var locked uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT s.id FROM secrets s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2 AND e.retired_at IS NULL FOR UPDATE OF s`, env, id).Scan(&locked); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT s.id FROM secrets s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2 FOR UPDATE OF s`, env, id).Scan(&locked); err != nil {
 		return db.Secret{}, err
 	}
 	return db.New(tx).GetSecret(ctx, db.GetSecretParams{EnvironmentID: pgvalue.UUID(env), ID: pgvalue.UUID(id)})

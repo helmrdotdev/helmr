@@ -45,7 +45,7 @@ func suppressInstallationPosts(ctx context.Context, tx pgx.Tx, installation uuid
  inflight_revision=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_revision END,
  inflight_stream_text=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_stream_text END,
  inflight_attempt_id=CASE WHEN p.status='pending' THEN NULL ELSE p.inflight_attempt_id END
- FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  WHERE (p.thread_id=t.id OR p.source_thread_id=t.id) AND c.installation_id=$1 `, installation)
 	if err != nil {
 		return err

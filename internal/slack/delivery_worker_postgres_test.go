@@ -34,7 +34,7 @@ func TestSlackDeliveryWorkerRotatesBlockedRootToIndependentThread(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET thread_ts=NULL WHERE id=$1;
  INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$3,agent_id,deployment_id,computer_id,$3,0 FROM sessions WHERE id=$2;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$7,$3,$5,org_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channel_bindings WHERE id=$5;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$7,$3,$5,org_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($6,$4,$7,$3);
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)
 	independent := peer.post(t, 1, "independent", "lifecycle", nil)
@@ -182,7 +182,7 @@ func TestSlackDeliveryWorkerFairBatchDoesNotStarveQuestionBehindIdleStatus(t *te
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH ids AS (SELECT gen_random_uuid() id,n FROM generate_series(1,80) n),
  added_sessions AS (INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT s.history_retention_mode,s.environment_id,i.id,s.agent_id,s.deployment_id,s.computer_id,i.id,0 FROM sessions s CROSS JOIN ids i WHERE s.id=$1 RETURNING id),
- added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
+ added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
  SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'123.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;
@@ -241,7 +241,7 @@ func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T)
 		peer.Session, peer.thread, peer.participant = uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,opening_post_key) SELECT $3,$6,$2,$4,org_id,team_id,slack_channel_id,$2::uuid::text FROM slack_channel_bindings WHERE id=$4;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,opening_post_key) SELECT $3,$6,$2,$4,org_id,team_id,slack_channel_id,$2::uuid::text FROM slack_channel_bindings WHERE id=$4;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($5,$3,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)
 		peer.post(t, int64(n+1), peer.Session.String(), "lifecycle", nil)
 	}
@@ -316,7 +316,7 @@ func TestSlackDeliveryWorkerWaitingContentPrecedesPeriodicRefreshPopulation(t *t
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH ids AS (SELECT gen_random_uuid() id,n FROM generate_series(1,12) n),
  added_sessions AS (INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT s.history_retention_mode,s.environment_id,i.id,s.agent_id,s.deployment_id,s.computer_id,i.id,0 FROM sessions s CROSS JOIN ids i WHERE s.id=$1 RETURNING id),
- added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
+ added_threads AS (INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key)
  SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'456.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;

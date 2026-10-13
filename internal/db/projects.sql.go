@@ -26,7 +26,7 @@ VALUES (
     $9,
     $10, $11, $12, $13, $14, $15, $16, $17, $18::bigint, $18::bigint::numeric, clock_timestamp()
 )
-RETURNING id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
+RETURNING id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
 `
 
 type CreateEnvironmentParams struct {
@@ -85,7 +85,6 @@ func (q *Queries) CreateEnvironment(ctx context.Context, arg CreateEnvironmentPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentDeploymentID,
-		&i.RetiredAt,
 		&i.MaxOutstandingAdmissions,
 		&i.MaxCausalDepth,
 		&i.MaxResidentComputers,
@@ -251,7 +250,7 @@ func (q *Queries) CreateProjectWithDefaultEnvironment(ctx context.Context, arg C
 }
 
 const getEnvironment = `-- name: GetEnvironment :one
-SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
+SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -280,7 +279,6 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentDeploymentID,
-		&i.RetiredAt,
 		&i.MaxOutstandingAdmissions,
 		&i.MaxCausalDepth,
 		&i.MaxResidentComputers,
@@ -297,11 +295,10 @@ func (q *Queries) GetEnvironment(ctx context.Context, arg GetEnvironmentParams) 
 }
 
 const getEnvironmentBySlug = `-- name: GetEnvironmentBySlug :one
-SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at FROM environments
+SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at FROM environments
  WHERE org_id = $1
    AND project_id = $2
    AND slug = $3
-   AND retired_at IS NULL
 `
 
 type GetEnvironmentBySlugParams struct {
@@ -326,7 +323,6 @@ func (q *Queries) GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBy
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentDeploymentID,
-		&i.RetiredAt,
 		&i.MaxOutstandingAdmissions,
 		&i.MaxCausalDepth,
 		&i.MaxResidentComputers,
@@ -399,7 +395,7 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugPara
 }
 
 const listEnvironments = `-- name: ListEnvironments :many
-SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
+SELECT id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
   FROM environments
  WHERE org_id = $1
    AND project_id = $2
@@ -433,7 +429,6 @@ func (q *Queries) ListEnvironments(ctx context.Context, arg ListEnvironmentsPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CurrentDeploymentID,
-			&i.RetiredAt,
 			&i.MaxOutstandingAdmissions,
 			&i.MaxCausalDepth,
 			&i.MaxResidentComputers,
@@ -524,7 +519,7 @@ UPDATE environments
  WHERE org_id = $5
    AND project_id = $6
    AND id = $7
-RETURNING id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, retired_at, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
+RETURNING id, history_retention_mode, history_retention_seconds, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
 `
 
 type UpdateEnvironmentDetailsParams struct {
@@ -561,7 +556,6 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentDeploymentID,
-		&i.RetiredAt,
 		&i.MaxOutstandingAdmissions,
 		&i.MaxCausalDepth,
 		&i.MaxResidentComputers,

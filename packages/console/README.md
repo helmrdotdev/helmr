@@ -52,11 +52,11 @@ on fresh initialization.
 ### Demo environment fixtures
 
 Production and Staging are empty by default (CLI onboarding on Overview). A third **Demo**
-environment contains a synthetic Agent definition, a revoked Deployment, a Computer with
+environment contains a synthetic Agent definition, an unpromoted Deployment, a Computer with
 failed preparation, and a closed Session with one failed Turn. Select **Demo** under
 Settings → Environments to browse its retained input and events.
 
 These fixtures are illustrative terminal history. They have no executable bundle,
-VM, process, Save or checkpoint. The Deployment is revoked and its schedule has ended,
+VM, process, Save or checkpoint. The Deployment is unpromoted and its schedule has ended,
 so browsing the fixtures cannot create Worker demand. Deploy a real Agent in an empty
 environment to start new work.

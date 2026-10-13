@@ -194,7 +194,7 @@ func launchAvailable(ctx context.Context, tx db.DBTX, host workergroup.HostPrinc
 	}
 	var ok bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
- WHERE c.environment_id=$1 AND c.id=$2 AND e.retired_at IS NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
+ WHERE c.environment_id=$1 AND c.id=$2 AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))

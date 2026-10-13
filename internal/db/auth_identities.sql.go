@@ -38,10 +38,9 @@ WITH upserted_user AS (
           WHERE auth_identity.provider = $7
             AND auth_identity.subject = $8
      )
-    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
+    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL DO UPDATE
        SET primary_email = users.primary_email
-     WHERE users.disabled_at IS NULL
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 target_user AS (
     SELECT auth_identity.user_id AS id
@@ -81,16 +80,16 @@ updated_existing_user AS (
            primary_email = CASE WHEN $4::bool THEN $5 ELSE users.primary_email END,
            updated_at = now()
      WHERE id IN (SELECT user_id FROM upserted_identity)
-    RETURNING id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
 ),
 selected_user AS (
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM updated_existing_user
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM updated_existing_user
     UNION ALL
-    SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at
+    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at
       FROM upserted_user
      WHERE NOT EXISTS (SELECT 1 FROM updated_existing_user)
 )
-SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_at, updated_at FROM selected_user
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM selected_user
 `
 
 type UpsertAuthIdentityParams struct {
@@ -110,7 +109,6 @@ type UpsertAuthIdentityRow struct {
 	DisplayName     string             `json:"display_name"`
 	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
-	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
@@ -133,7 +131,6 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 		&i.DisplayName,
 		&i.ProfileImageURL,
 		&i.PrimaryEmail,
-		&i.DisabledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

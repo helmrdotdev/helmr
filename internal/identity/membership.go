@@ -28,7 +28,7 @@ func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.O
 				return fmt.Errorf("grant initial administrator: %w", err)
 			}
 			if changed > 0 {
-				if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, Action: "installation_admin.granted", TargetKind: "user", TargetID: input.OwnerUserID, NewRole: "admin"}); err != nil {
+				if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, Action: "installation_admin.granted", TargetKind: "user", TargetID: input.OwnerUserID, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 					return err
 				}
 			}

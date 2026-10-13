@@ -213,7 +213,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 	rows, err := database.Query(scanCtx, `WITH candidates AS (
   SELECT environment_id,id,'waiter'::text AS kind FROM computers WHERE initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at<=statement_timestamp()
   UNION
-  SELECT c.environment_id,c.id,'unattached' FROM computers c JOIN environments e ON e.id=c.environment_id WHERE e.retired_at IS NULL AND c.initial_root_digest IS NULL AND image_build_id IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>statement_timestamp()
+  SELECT c.environment_id,c.id,'unattached' FROM computers c JOIN environments e ON e.id=c.environment_id WHERE c.initial_root_digest IS NULL AND image_build_id IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>statement_timestamp()
   UNION
   SELECT c.environment_id,c.id,'image' FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
    WHERE c.initial_root_digest IS NULL AND p.status='succeeded' AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>statement_timestamp()
@@ -223,7 +223,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
    WHERE p.fenced_at IS NULL AND (p.status IN ('starting','ready') OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=p.environment_id AND t.session_id=p.session_id AND t.process_epoch=p.epoch AND t.status='running'))
   UNION
   SELECT s.environment_id,s.id,'refresh' FROM image_specs s JOIN environments e ON e.id=s.environment_id
-   WHERE e.retired_at IS NULL AND s.next_refresh_at<=statement_timestamp()
+   WHERE s.next_refresh_at<=statement_timestamp()
    AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets x ON (x.environment_id,x.id)=(b.environment_id,b.secret_id)
      WHERE b.environment_id=s.environment_id AND b.image_spec_id=s.id AND x.status='revoked')
    AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=s.environment_id AND p.image_spec_id=s.id

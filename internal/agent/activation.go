@@ -12,11 +12,11 @@ import (
 // Activation starts a declared trigger at a promotion cutover with its next
 // occurrence and, when applicable, its pinned Slack channel binding.
 type Activation struct {
-	SlackChannelID *uuid.UUID `json:"slack_channel_id"`
-	Agent          uuid.UUID  `json:"agent"`
-	Key            string     `json:"key"`
-	Next           time.Time  `json:"next"`
-	ID             uuid.UUID  `json:"id"`
+	SlackChannelBindingID *uuid.UUID `json:"slack_channel_binding_id"`
+	Agent                 uuid.UUID  `json:"agent"`
+	Key                   string     `json:"key"`
+	Next                  time.Time  `json:"next"`
+	ID                    uuid.UUID  `json:"id"`
 }
 
 // ReplaceActivations closes the preceding promotion's intervals and opens the
@@ -32,9 +32,9 @@ func ReplaceActivations(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUI
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at,slack_channel_id)
- SELECT $1,v.id,v.agent,$2,v.key,$3,v.next,v.slack_channel_id
- FROM jsonb_to_recordset($4::jsonb) AS v(id uuid,agent uuid,key text,next timestamptz,slack_channel_id uuid)`, env, deployment, cutover, raw)
+		_, err = tx.Exec(ctx, `INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at,slack_channel_binding_id)
+ SELECT $1,v.id,v.agent,$2,v.key,$3,v.next,v.slack_channel_binding_id
+ FROM jsonb_to_recordset($4::jsonb) AS v(id uuid,agent uuid,key text,next timestamptz,slack_channel_binding_id uuid)`, env, deployment, cutover, raw)
 		if err != nil {
 			return err
 		}

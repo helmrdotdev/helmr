@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -43,29 +42,26 @@ func CapacityAuthority() Actor   { return Actor{Kind: "capacity"} }
 // arbitrary request metadata. Environment scope is resolved from authoritative
 // parent IDs before insertion; installation events leave all scope IDs empty.
 type Event struct {
-	Actor               Actor
-	OrgID               uuid.UUID
-	EnvironmentID       uuid.UUID
-	Action              string
-	TargetKind          string
-	TargetID            uuid.UUID
-	TargetUserID        uuid.UUID
-	SlackTeamID         string
-	SlackUserID         string
-	OldRole             string
-	NewRole             string
-	Permissions         []string
-	ExpiresAt           *time.Time
-	OldRetentionSeconds *int64
-	OldRetentionMode    string
-	NewRetentionMode    string
-	NewRetentionSeconds *int64
+	Actor         Actor
+	OrgID         uuid.UUID
+	EnvironmentID uuid.UUID
+	Action        string
+	TargetKind    string
+	TargetID      uuid.UUID
+	TargetUserID  uuid.UUID
+	SlackTeamID   string
+	SlackUserID   string
+	Details       Details
 }
 
 // Append joins the mutation transaction: failure must prevent its commit.
 func Append(ctx context.Context, tx pgx.Tx, e Event) error {
 	if tx == nil || e.Action == "" || e.TargetKind == "" {
 		return errors.New("incomplete audit event")
+	}
+	details, err := marshalDetails(e.Action, e.Details)
+	if err != nil {
+		return err
 	}
 	a := e.Actor
 	valid := false
@@ -95,15 +91,13 @@ func Append(ctx context.Context, tx pgx.Tx, e Event) error {
 		}
 		e.OrgID = org
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO audit_events (
+	_, err = tx.Exec(ctx, `INSERT INTO audit_events (
  id,actor_kind,actor_user_id,actor_credential_id,actor_source,org_id,project_id,environment_id,
- action,target_kind,target_id,target_user_id,slack_team_id,slack_user_id,old_role,new_role,
- permissions,expires_at,old_retention_seconds,new_retention_seconds,old_retention_mode,new_retention_mode)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+ action,target_kind,target_id,target_user_id,slack_team_id,slack_user_id,details)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		uuid.NewV7(), a.Kind, optionalUUID(a.UserID), optionalUUID(a.CredentialID), a.Source,
 		optionalUUID(e.OrgID), optionalUUID(project), optionalUUID(e.EnvironmentID),
-		e.Action, e.TargetKind, optionalUUID(e.TargetID), optionalUUID(e.TargetUserID), e.SlackTeamID, e.SlackUserID,
-		e.OldRole, e.NewRole, e.Permissions, e.ExpiresAt, e.OldRetentionSeconds, e.NewRetentionSeconds, e.OldRetentionMode, e.NewRetentionMode)
+		e.Action, e.TargetKind, optionalUUID(e.TargetID), optionalUUID(e.TargetUserID), e.SlackTeamID, e.SlackUserID, details)
 	if err != nil {
 		return fmt.Errorf("append audit event: %w", err)
 	}

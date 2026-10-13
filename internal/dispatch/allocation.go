@@ -88,7 +88,7 @@ type allocationSupply struct {
 func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, primary bool) (allocationSupply, error) {
 	s := allocationSupply{host: host}
 	var region string
-	if err := tx.QueryRow(ctx, `SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1 AND e.retired_at IS NULL`, env).Scan(&region); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, env).Scan(&region); err != nil {
 		return s, err
 	}
 	if err := tx.QueryRow(ctx, `SELECT worker_group_id,current_epoch FROM worker_hosts WHERE id=$1 AND current_epoch IS NOT NULL`, host).Scan(&s.group, &s.epoch); err != nil {

@@ -193,18 +193,3 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 
 }
-
-func TestPreparationUnattachedDemandInRetiredEnvironmentIsNotPolled(t *testing.T) {
-	f := newPreparationFixture(t)
-	fresh := f.waiter(t)
-	if _, err := f.pool.Exec(t.Context(), `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
-		t.Fatal(err)
-	}
-	var pending bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id IS NULL AND preparation_failed_at IS NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&pending); err != nil || !pending {
-		t.Fatalf("retired environment created work: %v %v", pending, err)
-	}
-}

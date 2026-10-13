@@ -137,7 +137,7 @@ func TestWorkerAgentRejectsCallerSubstitution(t *testing.T) {
 }
 
 func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
-	for _, change := range []string{"hold", "generation", "origin-ended", "deployment-revoked"} {
+	for _, change := range []string{"hold", "generation", "origin-ended"} {
 		t.Run(change, func(t *testing.T) {
 			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
@@ -165,8 +165,6 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 				if err = closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 					t.Fatal(err)
 				}
-			case "deployment-revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE deployments SET execution_revoked_at=clock_timestamp()")
 			}
 			if change == "generation" {
 				var stale workerapi.AgentOperationResponse

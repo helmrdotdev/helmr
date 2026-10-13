@@ -528,7 +528,6 @@ VALUES ($1, 'Local Developer', 'dev@helmr.local')
 ON CONFLICT (id) DO UPDATE
    SET display_name = EXCLUDED.display_name,
        primary_email = EXCLUDED.primary_email,
-       disabled_at = NULL,
        updated_at = now()
 `, pgvalue.UUID(userID)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

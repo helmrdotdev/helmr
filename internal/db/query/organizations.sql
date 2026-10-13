@@ -32,8 +32,7 @@ SELECT
     ) AS has_projects
   FROM users
   LEFT JOIN organizations ON organizations.id = sqlc.narg(org_id)
- WHERE users.id = sqlc.arg(user_id)
-   AND users.disabled_at IS NULL;
+ WHERE users.id = sqlc.arg(user_id);
 
 -- name: ListOrganizationIDs :many
 SELECT id

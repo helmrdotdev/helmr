@@ -128,7 +128,7 @@ func (f *Finalizer) Finalize(ctx context.Context, database db.TxDB, finalization
 // avoid re-reading large objects. Missing or changed objects must verify again.
 func (f *Finalizer) available(ctx context.Context, database db.DBTX, request Finalization) (bool, error) {
 	var registered bool
-	err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.environment_id=$1 AND d.bundle_digest=$2 AND e.org_id=$3 AND e.project_id=$4 AND e.retired_at IS NULL)`, request.environmentID, request.bundle.root.Digest, request.orgID, request.projectID).Scan(&registered)
+	err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.environment_id=$1 AND d.bundle_digest=$2 AND e.org_id=$3 AND e.project_id=$4)`, request.environmentID, request.bundle.root.Digest, request.orgID, request.projectID).Scan(&registered)
 	if err != nil || !registered {
 		return false, err
 	}
@@ -145,10 +145,10 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 	var record Record
 	env, project := pgvalue.MustUUIDValue(f.environmentID), pgvalue.MustUUIDValue(f.projectID)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		// The Environment serializes finalization, promotion and retirement. Check
+		// The Environment serializes finalization and promotion. Check
 		// scope again while locked, before any definitions or retry receipts exist.
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, env, f.orgID, project).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, env, f.orgID, project).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
