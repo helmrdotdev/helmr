@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -166,10 +167,16 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipa
 			if err != nil {
 				return err
 			}
-			if _, err := q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
+			selected, err := q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
 				WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerPoolID: poolID,
-			}); err != nil {
+			})
+			if err != nil {
 				return err
+			}
+			if !group.PrimaryPoolID.Valid && selected.PrimaryPoolID.Valid {
+				if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
+					return err
+				}
 			}
 		case "active", "draining":
 			shapes, err := q.ListWorkerPoolCPUShapes(ctx, poolID)

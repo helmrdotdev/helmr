@@ -344,11 +344,16 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	if _, err := fixture.pool.Exec(ctx, `UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2`, fixture.owner.OrgID, joiner); err != nil {
 		t.Fatal(err)
 	}
-	if err := accept(invite("second@example.test", "viewer"), joiner, ""); err != nil {
+	reinvitation := invite("second@example.test", "viewer")
+	if err := accept(reinvitation, joiner, ""); err != nil {
 		t.Fatal(err)
 	}
 	if member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(fixture.owner.OrgID), UserID: pgvalue.UUID(joiner)}); err != nil || member.DisabledAt.Valid || member.UserDisabledAt.Valid || member.Role != db.OrgMemberRoleViewer {
 		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
+	}
+	var newGrant bool
+	if err := fixture.pool.QueryRow(ctx, `SELECT old_role='' AND new_role='viewer' AND actor_kind='verified_login' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
+		t.Fatal("reinvitation recorded disabled membership as active authority", newGrant, err)
 	}
 	if _, err := fixture.pool.Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, joiner); err != nil {
 		t.Fatal(err)

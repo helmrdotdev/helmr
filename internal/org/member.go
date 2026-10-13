@@ -117,9 +117,6 @@ func CreateInvitation(ctx context.Context, database db.TxBeginner, tokenKey []by
 }
 func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter ManagingMember, input InvitationInput) (db.Invitation, string, error) {
 	q := db.New(tx)
-	if err := inviter.authorize(); err != nil {
-		return db.Invitation{}, "", err
-	}
 	email, err := NormalizeEmail(input.Email)
 	if err != nil {
 		return db.Invitation{}, "", err
@@ -222,9 +219,6 @@ func RevokeInvitation(ctx context.Context, database db.TxBeginner, manager Manag
 }
 func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, invitationID uuid.UUID) error {
 	q := db.New(tx)
-	if err := manager.authorize(); err != nil {
-		return err
-	}
 	invitation, err := q.GetRevocableInvitation(ctx, db.GetRevocableInvitationParams{
 		OrgID: pgvalue.UUID(manager.OrgID),
 		ID:    pgvalue.UUID(invitationID),
@@ -269,9 +263,6 @@ func UpdateMemberRole(ctx context.Context, database db.TxBeginner, manager Manag
 }
 func updateMemberRole(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetUserID uuid.UUID, role string, expectedRole string) (UpdatedMember, error) {
 	q := db.New(tx)
-	if err := manager.authorize(); err != nil {
-		return UpdatedMember{}, err
-	}
 	newRole, err := parseMemberRole(role, "role")
 	if err != nil {
 		return UpdatedMember{}, err
@@ -487,5 +478,5 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, actor audit.Actor, invitat
 		return fmt.Errorf("add member: %w", err)
 	}
 
-	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, OldRole: string(existing.Role), NewRole: string(invitation.Role)})
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, NewRole: string(invitation.Role)})
 }

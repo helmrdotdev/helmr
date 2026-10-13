@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -367,5 +368,39 @@ func TestIssueHostCredentialIssuesAfterAuthentication(t *testing.T) {
 	// The lock wait does not shorten the advertised lifetime.
 	if _, err := verifyHostCredential(cfg.signingKey, credential.Value, authenticated.Add(credential.ExpiresIn-2*time.Second)); err != nil {
 		t.Fatalf("credential expired before its advertised lifetime: %v", err)
+	}
+}
+
+func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
+	f := newSupplyFixture(t)
+	cfg := testHostAuthConfig(t)
+	enrolled := f.enroll(t, cfg, "first", "i-initial-primary")
+	credential := f.exchange(t, cfg, enrolled, uuid.NewV7().String())
+	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, credential)
+	if err := RecordStartupRecovery(t.Context(), f.q, recovering, startupEvidence(t)); err != nil {
+		t.Fatal(err)
+	}
+	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, credential)
+	activation := Activation{Template: validHostTemplate(t), CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest}
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_primary_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_primary_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_primary_audit()`)
+	if err := ActivateHost(t.Context(), f.pool, activating, activation); err == nil {
+		t.Fatal("audit failure allowed primary selection")
+	}
+	var intact bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT g.primary_pool_id IS NULL AND p.status='pending' AND h.status='registering' FROM worker_groups g JOIN worker_pools p ON p.worker_group_id=g.id JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$1`, enrolled.HostID).Scan(&intact); err != nil || !intact {
+		t.Fatal("initial activation survived rollback", intact, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_primary_audit ON audit_events`)
+	if err := ActivateHost(t.Context(), f.pool, activating, activation); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t, cfg, "second", "i-second-pool", validHostTemplate(t))
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.primary_selected'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("primary selection missing or repeated", count, err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT target_id=$1 AND actor_kind='system' AND actor_source='worker-pool-bootstrap' AND actor_user_id IS NULL AND actor_credential_id IS NULL FROM audit_events WHERE action='worker_pool.primary_selected'`, enrolled.PoolID).Scan(&intact); err != nil || !intact {
+		t.Fatal("incorrect bootstrap primary fact", intact, err)
 	}
 }
