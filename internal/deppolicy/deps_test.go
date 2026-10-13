@@ -39,7 +39,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"email":              {"email/resend"},
 		"frameio":            {"api", "db", "proto/agent/v1", "proto/computer/v0", "wire"},
 		"httpclient":         {"controlplane", "db", "workerapi"},
-		"deployment":         {"api", "controlplane", "dispatch", "identity", "org", "workerapi"},
+		"deployment":         {"api", "controlplane", "dispatch", "identity", "workerapi"},
 		"dispatch":           {"api", "command", "controlplane", "deployment", "identity", "slack", "slackroute", "workerapi"},
 		"identity":           {"session", "api", "controlplane", "deployment", "workerapi"},
 		"org":                {"session", "api", "computer", "controlplane", "deployment", "dispatch", "identity", "workerapi"},

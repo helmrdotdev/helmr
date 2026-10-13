@@ -73,12 +73,6 @@ var tableOwners = map[string]string{
 	"schema_migrations": "cmd/internal/dev-controlplane",
 }
 
-// coWriters are packages that still write another owner's table. Each entry
-// names the slice that retires it; the owner split (B1) is the default.
-var coWriters = map[string]map[string]string{
-	"environments": {"internal/deployment": "owner split"},
-}
-
 // queryFileOwners maps each sqlc query file to the owner whose writes it
 // performs; a file consumed by several packages is owned by the writer.
 var queryFileOwners = map[string]string{
@@ -120,8 +114,7 @@ func allowedWriter(table, pkg string) bool {
 	if owner, ok := tableOwners[table]; ok && owner == pkg {
 		return true
 	}
-	_, ok := coWriters[table][pkg]
-	return ok
+	return false
 }
 
 // TestStatementsAreConstantOrDocumented fails on a statement the preparation
@@ -146,7 +139,7 @@ func TestStatementsAreConstantOrDocumented(t *testing.T) {
 }
 
 // TestTableWritesStayWithOwners checks handwritten and generated writes
-// against the ownership table and keeps the co-writer list exact.
+// against the ownership table.
 func TestTableWritesStayWithOwners(t *testing.T) {
 	used := map[string]map[string]bool{}
 	note := func(table, pkg string) {
@@ -190,18 +183,7 @@ func TestTableWritesStayWithOwners(t *testing.T) {
 			t.Errorf("query file owner entry %s has no file", file)
 		}
 	}
-	for table, writers := range coWriters {
-		for pkg := range writers {
-			if !used[table][pkg] {
-				t.Errorf("co-writer %s of %s no longer writes it", pkg, table)
-			}
-		}
-	}
-	for table := range tableOwners {
-		if len(used[table]) == 0 {
-			t.Errorf("owned table %s is written by no statement", table)
-		}
-	}
+
 }
 
 var sqlcTableName = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)`)

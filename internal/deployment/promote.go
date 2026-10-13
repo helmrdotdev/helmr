@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/org"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -68,7 +69,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if err := reconcileImageRefresh(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE environments SET current_deployment_id=$2,updated_at=$3 WHERE id=$1`, env, id, cutover); err != nil {
+		if err := org.SetCurrentDeployment(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
 			return err
 		}
 		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
