@@ -268,3 +268,23 @@ func TestImageRefreshYieldsToAttachedRotationSuccessor(t *testing.T) {
 		t.Fatalf("refresh did not share admitted successor: %+v %v", shared, err)
 	}
 }
+
+func TestImageRefreshLifecycleSkipsPermanentlyRevokedSecret(t *testing.T) {
+	f := newPreparationFixture(t)
+	due := dueImageRefresh(t, f)
+	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "no-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	dbtest.MustExec(t, t.Context(), tx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, f.env)
+	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(ctx, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+		t.Fatal(err)
+	}
+	assertRefreshUnchanged(t, f, due, 0)
+}

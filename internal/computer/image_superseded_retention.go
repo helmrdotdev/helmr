@@ -32,11 +32,16 @@ const retirableSupersededImage = `i.root_id IS NOT NULL
 
 // retireSupersededImages drops only payload ownership. Image/build identities
 // and exposure lineage remain; graph collection independently proves unreachability.
+// Discovery skips busy Secret owners before applying the batch bound. Mutation
+// reacquires every lock and rechecks eligibility in its own transaction.
 func retireSupersededImages(ctx context.Context, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT i.environment_id,i.image_spec_id,i.id FROM images i
  JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
  JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
- WHERE `+retirableSupersededImage+` ORDER BY i.environment_id,i.id LIMIT 100 FOR NO KEY UPDATE OF spec,i SKIP LOCKED`)
+ WHERE `+retirableSupersededImage+`
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings b WHERE b.environment_id=i.environment_id AND b.image_spec_id=i.image_spec_id
+   AND NOT EXISTS(SELECT 1 FROM secrets s WHERE (s.environment_id,s.id)=(b.environment_id,b.secret_id) FOR SHARE SKIP LOCKED))
+ ORDER BY i.environment_id,i.id LIMIT 100 FOR NO KEY UPDATE OF spec,i SKIP LOCKED`)
 	if err != nil {
 		return err
 	}

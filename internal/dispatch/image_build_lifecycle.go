@@ -224,6 +224,8 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
   UNION
   SELECT s.environment_id,s.id,'refresh' FROM image_specs s JOIN environments e ON e.id=s.environment_id
    WHERE e.retired_at IS NULL AND s.next_refresh_at<=statement_timestamp()
+   AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets x ON (x.environment_id,x.id)=(b.environment_id,b.secret_id)
+     WHERE b.environment_id=s.environment_id AND b.image_spec_id=s.id AND x.status='revoked')
    AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=s.environment_id AND p.image_spec_id=s.id
      AND p.status NOT IN ('queued','running') AND p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL)
   UNION

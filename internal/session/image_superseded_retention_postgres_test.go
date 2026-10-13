@@ -4,10 +4,12 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/jackc/pgx/v5"
 )
 
 func publishRetentionImage(t *testing.T, f preparationFixture) (*preparationPublicationTest, uuid.UUID, uuid.UUID) {
@@ -133,6 +135,9 @@ func TestSupersededImageRetainsPinCommittedBeforeConcurrentPublication(t *testin
 	if err != nil || got.ID != oldImage {
 		t.Fatalf("pin before publication: %+v %v", got, err)
 	}
+	// Retirement must skip the spec while the new pin is still uncommitted.
+	reconcileImageRetention(t, f)
+	assertImagePayload(t, f, oldImage, true)
 	done := make(chan error, 1)
 	wg.Go(func() { done <- second.publisher.Publish(ctx, *f.host(), second.ref, root, "concurrent publication") })
 	waitSessionLifecycleLock(t, f.fixture)
@@ -192,4 +197,44 @@ func TestSupersededImageKeepsAttachedSuccessorBehindNewerRefresh(t *testing.T) {
 	assertImagePayload(t, f, oldImage, false)
 	assertImagePayload(t, f, successorImage, true)
 	assertImagePayload(t, f, newestImage, true)
+}
+
+func TestSupersededImageDiscoverySkipsBusySecretBeforeBatchBound(t *testing.T) {
+	f := newPreparationFixture(t)
+	var blocked uuid.UUID
+	for n := 0; n < 101; n++ {
+		p, image, waiter := publishRetentionImage(t, f)
+		stopRetentionBuild(t, p)
+		if n == 0 {
+			blocked = image
+		}
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, waiter)
+	}
+	independent := f.fixture
+	independent.deployment = uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$3,'sha256:'||repeat('9',64) FROM deployments WHERE environment_id=$1 AND id=$2;
+ INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT environment_id,$3,'sha256:'||repeat('9',64),spec,seed FROM image_specs WHERE environment_id=$1 AND id=$2;
+ INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'independent-retention');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,$3,$3,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, independent.deployment)
+	later := preparationFixtureFor(t, independent)
+	p, old, waiter := publishRetentionImage(t, later)
+	stopRetentionBuild(t, p)
+	dbtest.MustExec(t, t.Context(), later.pool, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, later.env, waiter)
+	newest, _, _ := publishRetentionImage(t, later)
+	stopRetentionBuild(t, newest)
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	dbtest.MustExec(t, t.Context(), tx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.secretID)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	for range 2 {
+		if err := computer.ReconcileDiskRetention(ctx, f.pool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertImagePayload(t, f, blocked, true)
+	assertImagePayload(t, later, old, false)
 }
