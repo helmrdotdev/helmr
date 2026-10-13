@@ -216,13 +216,6 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 			deployment = *policy.Deployment
 		}
-		var revoked bool
-		if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NOT NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, req.EnvironmentID, deployment).Scan(&revoked); err != nil {
-			return err
-		}
-		if revoked {
-			return ErrDenied
-		}
 		var templateKey string
 		var duration *int64
 		var never bool
@@ -425,7 +418,7 @@ func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID
 	var err error
 	switch caller.Kind {
 	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id JOIN users u ON u.id=m.user_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND u.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
 	case "api_key":
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin','developer') AND 'sessions.create'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
 	default:

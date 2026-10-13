@@ -72,7 +72,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal(calls, err)
 			}
 			var pin uuid.UUID
-			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channel_bindings c ON c.id=s.slack_channel_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.connection_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
+			if err = f.pool.QueryRow(t.Context(), `SELECT c.id FROM trigger_activations s JOIN slack_channel_bindings c ON c.id=s.slack_channel_binding_id WHERE s.deployment_id=$1 AND s.trigger_key='tick' AND c.connection_id=$2 AND c.slack_channel_id='C1'`, registered.ID, publication).Scan(&pin); err != nil {
 				t.Fatal("promotion lost destination", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication)

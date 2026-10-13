@@ -37,10 +37,10 @@ func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID)
 	err = tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.connection_id,r.id,i.id,c.org_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND t.deleted_at IS NULL,
  EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.role='opening' AND (post.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND post.status IN ('failed','suppressed'))))
- FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections p ON p.id=c.connection_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections p ON p.id=c.connection_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=i.app_registration_id
  JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
- WHERE t.environment_id=$1 AND t.front_session_id=$2 AND t.channel_id=$3`, env, caller, *route).Scan(&source.ThreadID, &root, &c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.ChannelID, &c.AppID, &c.BotUserID, &c.AgentID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt, &active, &abandoned)
+ WHERE t.environment_id=$1 AND t.front_session_id=$2 AND t.slack_channel_binding_id=$3`, env, caller, *route).Scan(&source.ThreadID, &root, &c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.ChannelID, &c.AppID, &c.BotUserID, &c.AgentID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt, &active, &abandoned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSourceConversationUnavailable
 	}
@@ -104,7 +104,7 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 	} else {
 		opening = "opening:" + session.String()
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,recipient_team_id,recipient_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser)
+	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,recipient_team_id,recipient_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser)
 	if err != nil {
 		return err
 	}

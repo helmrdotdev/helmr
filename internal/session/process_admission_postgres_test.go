@@ -112,37 +112,27 @@ func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T
 }
 
 func TestProcessReadinessSupersededByShutdown(t *testing.T) {
-	for _, revoke := range []bool{false, true} {
-		t.Run(map[bool]string{false: "cancel", true: "revocation"}[revoke], func(t *testing.T) {
-			f, _, e := startingSessionFixture(t)
-			attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if revoke {
-				if _, err = f.pool.Exec(t.Context(), `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err = session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, session.ErrNotReady) {
-				t.Fatalf("superseded wrong attachment accepted: %v", err)
-			}
-			if err = session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, session.ErrConflict) {
-				t.Fatalf("late readiness did not retire safely: %v", err)
-			}
-			var status string
-			if err = f.pool.QueryRow(t.Context(), `SELECT status FROM session_processes WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&status); err != nil || status == "ready" {
-				t.Fatalf("late readiness changed execution: %s %v", status, err)
-			}
-			delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
-			if err != nil || delivery.Kind != "shutdown" {
-				t.Fatalf("late Ready prevented shutdown: %+v %v", delivery, err)
-			}
-		})
+	f, _, e := startingSessionFixture(t)
+	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("superseded wrong attachment accepted: %v", err)
+	}
+	if err = session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, session.ErrConflict) {
+		t.Fatalf("late readiness did not retire safely: %v", err)
+	}
+	var status string
+	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM session_processes WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&status); err != nil || status == "ready" {
+		t.Fatalf("late readiness changed execution: %s %v", status, err)
+	}
+	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+	if err != nil || delivery.Kind != "shutdown" {
+		t.Fatalf("late Ready prevented shutdown: %+v %v", delivery, err)
 	}
 }
 

@@ -27,7 +27,7 @@ type LinkWorkspace struct {
 
 func lockLinkUser(ctx context.Context, tx pgx.Tx, org, user uuid.UUID) error {
 	var active bool
-	err := tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL AND u.disabled_at IS NULL FROM org_members m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 FOR SHARE OF m,u`, org, user).Scan(&active)
+	err := tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 FOR SHARE OF m`, org, user).Scan(&active)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && !active {
 		return ErrUserLinkDenied
 	}

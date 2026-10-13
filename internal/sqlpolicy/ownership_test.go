@@ -13,9 +13,12 @@ import (
 // Data-access rule: every statement a production package sends to PostgreSQL
 // is a compile-time constant at its call site (so TestStatementsPrepareAgainstSchema
 // parses it against the fresh schema), or a documented exception below; and
-// every table has one owning package that writes it. Generated sqlc queries
-// belong to the owner that calls them. Reads cross owners freely; the owner
-// split narrows writers further.
+// each domain owner controls its lifecycle writes and transaction authority.
+// Telemetry's fixed admission helper maintains inline diagnostic cursor/replay
+// fields on producer rows in the owner's transaction. Its generated statements
+// are exercised by telemetry PostgreSQL tests, not this static SQL collector.
+// Generated sqlc queries belong to the owner that calls them. Reads cross owners
+// freely.
 
 // dynamicStatementSites are the call sites whose statement is not a constant,
 // keyed as package:declaration, each with the reason the rule tolerates it.
@@ -24,11 +27,12 @@ var dynamicStatementSites = map[string]string{
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/computer:reclaimComputerGraphRow":     "statement is a constant at each caller, which the preparation test covers",
 	"internal/slackroute:lockConnections":           "two constant lock statements selected by lock strength",
-	"internal/telemetry:BeginDiagnosticAdmission":   "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
-	"internal/telemetry:DiagnosticAdmission.Append": "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
+	"internal/telemetry:BeginDiagnosticAdmission":   "reads inline diagnostic cursors on session_processes, image_builds and commands; all producer kinds are exercised on PostgreSQL",
+	"internal/telemetry:DiagnosticAdmission.Append": "writes only diagnostic cursor/replay fields on session_processes, image_builds and commands in the authorizing owner's transaction; PostgreSQL tests cover both streams, unchanged lifecycle state and atomic rollback",
 }
 
-// tableOwners maps each written table to the package that owns its writes.
+// tableOwners maps tables to their domain writer for statically collected SQL.
+// The shared diagnostic protocol's dynamic writes are documented above.
 // Owner names are import paths without the module prefix.
 var tableOwners = map[string]string{
 	"audit_events": "internal/audit",
@@ -139,9 +143,9 @@ func TestStatementsAreConstantOrDocumented(t *testing.T) {
 	}
 }
 
-// TestTableWritesStayWithOwners checks handwritten and generated writes
-// against the ownership table.
-func TestTableWritesStayWithOwners(t *testing.T) {
+// TestConstantTableWritesStayWithOwners checks constant handwritten and sqlc
+// writes against the ownership table. Dynamic sites have separate coverage.
+func TestConstantTableWritesStayWithOwners(t *testing.T) {
 	used := map[string]bool{}
 	for _, s := range collectStatements(t) {
 		for _, table := range writtenTables(s.sql) {

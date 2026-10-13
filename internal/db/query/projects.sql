@@ -123,5 +123,4 @@ SELECT *
 SELECT * FROM environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
-   AND slug = sqlc.arg(slug)
-   AND retired_at IS NULL;
+   AND slug = sqlc.arg(slug);

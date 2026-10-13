@@ -12,7 +12,7 @@ column agent_triggers.deployment_id uuid not null
 column agent_triggers.environment_id uuid not null
 column agent_triggers.input bytea not null
 column agent_triggers.key text not null
-column agent_triggers.slack_destination text
+column agent_triggers.slack_channel_id text
 column agent_triggers.timezone text not null
 column agents.environment_id uuid not null
 column agents.id uuid not null
@@ -264,7 +264,6 @@ column deployment_objects.size_bytes bigint not null
 column deployments.bundle_digest text not null
 column deployments.created_at timestamp with time zone not null default clock_timestamp()
 column deployments.environment_id uuid not null
-column deployments.execution_revoked_at timestamp with time zone
 column deployments.id uuid not null
 column device_codes.consumed_at timestamp with time zone
 column device_codes.created_at timestamp with time zone not null default now()
@@ -386,7 +385,6 @@ column environments.name text not null
 column environments.org_id uuid not null
 column environments.preparation_timeout_ms bigint not null
 column environments.project_id uuid not null
-column environments.retired_at timestamp with time zone
 column environments.slug text not null
 column environments.updated_at timestamp with time zone not null default now()
 column idempotency_receipts.accepted_at timestamp with time zone not null default clock_timestamp()
@@ -803,7 +801,6 @@ column slack_thread_sources.id uuid not null
 column slack_thread_sources.projected_event_seq bigint not null default 0
 column slack_thread_sources.session_id uuid not null
 column slack_thread_sources.thread_id uuid not null
-column slack_threads.channel_id uuid not null
 column slack_threads.claim_epoch bigint not null default 0
 column slack_threads.claimed_until timestamp with time zone
 column slack_threads.confirmed_revision bigint not null default 0
@@ -827,6 +824,7 @@ column slack_threads.org_id uuid not null
 column slack_threads.recipient_team_id text
 column slack_threads.recipient_user_id text
 column slack_threads.refresh_at timestamp with time zone not null default clock_timestamp()
+column slack_threads.slack_channel_binding_id uuid not null
 column slack_threads.slack_channel_id text not null
 column slack_threads.status_confirmation text not null default 'unknown'::text
 column slack_threads.stream_status_repair boolean not null default false
@@ -857,7 +855,7 @@ column trigger_activations.deployment_id uuid not null
 column trigger_activations.environment_id uuid not null
 column trigger_activations.id uuid not null
 column trigger_activations.next_fire_at timestamp with time zone not null
-column trigger_activations.slack_channel_id uuid
+column trigger_activations.slack_channel_binding_id uuid
 column trigger_activations.trigger_key text not null
 column trigger_occurrences.activation_id uuid not null
 column trigger_occurrences.agent_id uuid not null
@@ -947,7 +945,6 @@ column turns.target_id uuid not null
 column turns.terminal_at timestamp with time zone
 column users.admin boolean not null default false
 column users.created_at timestamp with time zone not null default now()
-column users.disabled_at timestamp with time zone
 column users.display_name text not null
 column users.id uuid not null
 column users.primary_email text
@@ -1046,7 +1043,7 @@ constraint agent_definitions f FOREIGN KEY (environment_id, template_id, deploym
 constraint agent_definitions p PRIMARY KEY (environment_id, agent_id, deployment_id)
 constraint agent_triggers c CHECK (cron <> ''::text)
 constraint agent_triggers c CHECK (octet_length(key) >= 1 AND octet_length(key) <= 256)
-constraint agent_triggers c CHECK (slack_destination ~ '^[CG][A-Z0-9]{1,99}$'::text)
+constraint agent_triggers c CHECK (slack_channel_id ~ '^[CG][A-Z0-9]{1,99}$'::text)
 constraint agent_triggers c CHECK (timezone <> ''::text)
 constraint agent_triggers f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint agent_triggers p PRIMARY KEY (environment_id, agent_id, deployment_id, key)
@@ -1720,13 +1717,13 @@ constraint slack_threads c CHECK (opening_post_key <> ''::text)
 constraint slack_threads c CHECK (status_confirmation = ANY (ARRAY['unknown'::text, 'acknowledged'::text]))
 constraint slack_threads c CHECK (thread_ts <> ''::text)
 constraint slack_threads c CHECK (thread_ts IS NOT NULL OR opening_post_key IS NOT NULL)
-constraint slack_threads f FOREIGN KEY (channel_id, environment_id, org_id, team_id, slack_channel_id) REFERENCES slack_channel_bindings(id, environment_id, org_id, team_id, slack_channel_id)
 constraint slack_threads f FOREIGN KEY (environment_id, front_session_id, front_root_session_id) REFERENCES sessions(environment_id, id, root_session_id)
+constraint slack_threads f FOREIGN KEY (slack_channel_binding_id, environment_id, org_id, team_id, slack_channel_id) REFERENCES slack_channel_bindings(id, environment_id, org_id, team_id, slack_channel_id)
 constraint slack_threads p PRIMARY KEY (id)
-constraint slack_threads u UNIQUE (channel_id, opening_post_key)
 constraint slack_threads u UNIQUE (environment_id, front_session_id)
 constraint slack_threads u UNIQUE (id, environment_id)
 constraint slack_threads u UNIQUE (org_id, team_id, slack_channel_id, thread_ts)
+constraint slack_threads u UNIQUE (slack_channel_binding_id, opening_post_key)
 constraint slack_user_links c CHECK (slack_user_id <> ''::text)
 constraint slack_user_links c CHECK (team_id <> ''::text)
 constraint slack_user_links f FOREIGN KEY (user_id) REFERENCES users(id)
@@ -1750,7 +1747,7 @@ constraint templates u UNIQUE (environment_id, key)
 constraint trigger_activations c CHECK (active_until IS NULL OR active_until >= active_from)
 constraint trigger_activations c CHECK (next_fire_at >= active_from)
 constraint trigger_activations f FOREIGN KEY (environment_id, agent_id, deployment_id, trigger_key) REFERENCES agent_triggers(environment_id, agent_id, deployment_id, key)
-constraint trigger_activations f FOREIGN KEY (slack_channel_id, environment_id) REFERENCES slack_channel_bindings(id, environment_id)
+constraint trigger_activations f FOREIGN KEY (slack_channel_binding_id, environment_id) REFERENCES slack_channel_bindings(id, environment_id)
 constraint trigger_activations p PRIMARY KEY (environment_id, id)
 constraint trigger_activations u UNIQUE (environment_id, id, agent_id, trigger_key)
 constraint trigger_occurrences c CHECK (disposition = 'admitted'::text AND session_id IS NOT NULL AND turn_id IS NOT NULL OR disposition <> 'admitted'::text AND session_id IS NULL AND turn_id IS NULL AND reason IS NOT NULL)
@@ -1971,7 +1968,7 @@ index CREATE INDEX slack_requests_due ON public.slack_requests USING btree (next
 index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE ((status = 'rejected'::text) AND (payload_expired_at IS NULL))
 index CREATE INDEX slack_requests_gesture ON public.slack_requests USING btree (installation_id, request_digest)
 index CREATE INDEX slack_requests_input_source ON public.slack_requests USING btree (environment_id, turn_id, message_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text])))
-index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, channel_id) WHERE (thread_ts IS NOT NULL)
+index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, slack_channel_binding_id) WHERE (thread_ts IS NOT NULL)
 index CREATE INDEX slack_threads_status_due ON public.slack_threads USING btree (next_attempt_at, refresh_at, id)
 index CREATE INDEX template_definitions_deployment ON public.template_definitions USING btree (environment_id, deployment_id, template_id)
 index CREATE INDEX template_definitions_image_spec ON public.template_definitions USING btree (environment_id, image_spec_id)
@@ -2009,7 +2006,7 @@ index CREATE UNIQUE INDEX slack_posts_one_opening ON public.slack_posts USING bt
 index CREATE UNIQUE INDEX trigger_activations_current ON public.trigger_activations USING btree (environment_id, agent_id, trigger_key) WHERE (active_until IS NULL)
 index CREATE UNIQUE INDEX turn_messages_one_started ON public.turn_messages USING btree (environment_id, turn_id) WHERE (status = 'started'::text)
 index CREATE UNIQUE INDEX turns_one_active ON public.turns USING btree (environment_id, session_id) WHERE (status = ANY (ARRAY['running'::text, 'finalizing'::text]))
-index CREATE UNIQUE INDEX users_primary_email_lower_idx ON public.users USING btree (lower(primary_email)) WHERE ((primary_email IS NOT NULL) AND (disabled_at IS NULL))
+index CREATE UNIQUE INDEX users_primary_email_lower_idx ON public.users USING btree (lower(primary_email)) WHERE (primary_email IS NOT NULL)
 index CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx ON public.worker_groups USING btree (region_id) WHERE (status = ANY (ARRAY['active'::text, 'paused'::text]))
 index CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON public.worker_host_secrets USING btree (worker_host_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX worker_hosts_live_resource ON public.worker_hosts USING btree (worker_group_id, resource_id) WHERE (status = ANY (ARRAY['registering'::text, 'active'::text, 'draining'::text]))

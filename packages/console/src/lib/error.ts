@@ -5,7 +5,6 @@ const MESSAGES: Record<string, string> = {
     "Signed in with an account that does not match this invite email.",
   access_denied: "Sign in was cancelled.",
   magic_link_token_missing: "This sign-in link is missing its token.",
-  disabled_member: "Membership is no longer active.",
   already_member: "You are already a member of this organization.",
   unauthenticated: "Please sign in.",
 };

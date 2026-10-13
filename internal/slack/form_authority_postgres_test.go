@@ -11,7 +11,7 @@ import (
 )
 
 func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
-	for _, scenario := range []string{"viewer", "unlinked", "disabled_member", "disabled_user", "revoked_publication", "retired_app", "disconnected", "reauthorized", "reenabled", "wrong_app", "wrong_team", "bot", "wrong_session", "wrong_turn", "wrong_ask", "expired"} {
+	for _, scenario := range []string{"viewer", "unlinked", "disabled_member", "revoked_publication", "retired_app", "disconnected", "reauthorized", "reenabled", "wrong_app", "wrong_team", "bot", "wrong_session", "wrong_turn", "wrong_ask", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newStatusFixture(t)
 			f.link(t)
@@ -26,8 +26,6 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links`)
 			case "disabled_member":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
-			case "disabled_user":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET disabled_at=clock_timestamp() WHERE id=$1`, f.User)
 			case "revoked_publication":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "retired_app":

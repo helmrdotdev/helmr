@@ -39,7 +39,7 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
 		}
 		p, err := ReadImageBuild(ctx, tx, env, predecessor)

@@ -51,7 +51,7 @@ func AdvanceProjection(ctx context.Context, tx pgx.Tx, member uuid.UUID, seq int
 func SkipInstallationProjection(ctx context.Context, tx pgx.Tx, installation uuid.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE slack_thread_sources p SET projected_event_seq=GREATEST(p.projected_event_seq,s.next_event_seq-1)
  FROM sessions s,slack_threads t,slack_channel_bindings c WHERE p.environment_id=s.environment_id AND p.session_id=s.id
- AND t.id=p.thread_id AND c.id=t.channel_id AND c.installation_id=$1`, installation)
+ AND t.id=p.thread_id AND c.id=t.slack_channel_binding_id AND c.installation_id=$1`, installation)
 	return err
 }
 
@@ -59,7 +59,7 @@ func SkipInstallationProjection(ctx context.Context, tx pgx.Tx, installation uui
 // owns, or nil when it owns none. The thread row is the route authority.
 func ChannelOf(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (*uuid.UUID, error) {
 	var route uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT channel_id FROM slack_threads WHERE environment_id=$1 AND front_session_id=$2`, env, session).Scan(&route)
+	err := tx.QueryRow(ctx, `SELECT slack_channel_binding_id FROM slack_threads WHERE environment_id=$1 AND front_session_id=$2`, env, session).Scan(&route)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

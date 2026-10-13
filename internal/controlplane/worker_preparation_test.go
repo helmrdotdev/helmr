@@ -317,7 +317,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3,execution_revoked_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
 			store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
 			switch mode {
 			case "changed bytes":

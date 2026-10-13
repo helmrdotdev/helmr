@@ -134,6 +134,8 @@ func diagnosticOwner(source DiagnosticSource) (table, predicate string) {
 
 // Append authenticates no producer itself: the owner must validate its exact
 // writer after BeginDiagnosticAdmission and recheck timed authority before commit.
+// Telemetry owns the inline stream cursor/replay fields, while the producer's
+// owner retains lifecycle and authorization responsibility in the same transaction.
 // One immutable head per pipe is replayable until its successor or original expiry.
 func (a *DiagnosticAdmission) Append(ctx context.Context, record diagnostic.Record) (DiagnosticReceipt, error) {
 	if a == nil || a.tx == nil || a.source.Validate() != nil || record.Validate(a.bounds.ChunkBytes) != nil {

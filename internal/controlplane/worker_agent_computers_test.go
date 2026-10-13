@@ -201,8 +201,4 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	if response := call(cursor); response.Error != nil {
 		t.Fatalf("after Turn: %+v", response)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE id=$1`, f.Deployment)
-	if response := call(cursor); response.Error == nil || response.Error.Code != "authority_changed" {
-		t.Fatalf("revoked page: %+v", response)
-	}
 }

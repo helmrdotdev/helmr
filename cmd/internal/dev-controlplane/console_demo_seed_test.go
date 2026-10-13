@@ -71,20 +71,20 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  AND t.processing_closed_at=t.terminal_at
  AND max(e.created_at)=t.terminal_at
  AND d.created_at<=trigger.active_from AND d.created_at<=s.created_at
- AND d.execution_revoked_at>=d.created_at AND spec.created_at<=s.created_at
+ AND spec.created_at<=s.created_at
  FROM sessions s JOIN session_events e ON (e.environment_id,e.session_id)=(s.environment_id,s.id)
  JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  JOIN trigger_activations trigger ON (trigger.environment_id,trigger.deployment_id)=(d.environment_id,d.id)
  JOIN image_specs spec ON spec.environment_id=s.environment_id
  WHERE s.environment_id=$1 AND s.id=$2
- GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,d.execution_revoked_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
+ GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
 		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
 	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("synthetic Deployment start=%v, want denied", err)
+	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("unpromoted synthetic Deployment start=%v, want not ready", err)
 	}
 	if _, err := session.Enqueue(ctx, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)

@@ -85,7 +85,7 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  WHERE s.status IN ('open','closing') AND `+session.NoSessionHoldsSQL+` AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND (p.fenced_at IS NULL OR p.epoch=9223372036854775807))
- ) SELECT d.environment_id,d.kind,d.id,h.id,d.epoch FROM demand d JOIN environments e ON e.id=d.environment_id AND e.retired_at IS NULL
+ ) SELECT d.environment_id,d.kind,d.id,h.id,d.epoch FROM demand d JOIN environments e ON e.id=d.environment_id
  JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.status='active'
  JOIN worker_pools pool ON pool.worker_group_id=g.id AND (d.kind IN ('process','restore') OR pool.id=g.primary_pool_id) AND pool.status='active'
  JOIN worker_hosts h ON h.worker_group_id=g.id AND h.worker_pool_id=pool.id AND h.status='active' AND h.current_epoch IS NOT NULL

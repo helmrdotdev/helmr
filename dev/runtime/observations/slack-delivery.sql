@@ -17,5 +17,5 @@ SELECT jsonb_build_object(
  'installation', (SELECT jsonb_build_object('id',i.id,'credential_revision',i.credential_revision,'credential_expires_at',i.credential_expires_at,
  'authorized_at',i.authorized_at,'refresh_next_at',i.refresh_next_at,'refresh_error',i.refresh_error,
  'authorization_lost_at',i.authorization_lost_at,'disconnected_at',i.disconnected_at,'delivery_next_at',i.delivery_next_at)
- FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id JOIN target s ON s.thread_id=t.id),
+ FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.slack_channel_binding_id=c.id JOIN target s ON s.thread_id=t.id),
  'posts', COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.seq) FROM posts p),'[]'::jsonb));

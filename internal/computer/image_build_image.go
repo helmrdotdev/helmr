@@ -56,7 +56,7 @@ func PinImage(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) 
 func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (Image, error) {
 	var result Image
 	var locked uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 		return result, err
 	}
 	var spec *uuid.UUID

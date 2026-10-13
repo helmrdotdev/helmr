@@ -29,7 +29,6 @@ func TestIdentityErrorMapsHTTPContract(t *testing.T) {
 		{identity.ErrInvalidToken, http.StatusBadRequest, "invalid_token", "token is invalid or expired"},
 		{identity.ErrWrongAccount, http.StatusBadRequest, "wrong_account", "verified email does not match invitation"},
 		{identity.ErrAlreadyMember, http.StatusConflict, "already_member", "identity is already a member of this organization"},
-		{identity.ErrInactiveMember, http.StatusConflict, "disabled_member", "membership is no longer active"},
 		{identity.ErrUserNotFound, http.StatusUnauthorized, "unauthorized", "authentication is required"},
 		{identity.ErrOrganizationRequired, http.StatusForbidden, "forbidden", "organization is required"},
 		{identity.ErrAPIKeyManagementRequired, http.StatusForbidden, "forbidden", identity.ErrAPIKeyManagementRequired.Error()},

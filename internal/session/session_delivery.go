@@ -106,9 +106,9 @@ func desiredSessionControl(ctx context.Context, tx pgx.Tx, e Execution) (string,
 	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
  SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
  UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-) SELECT s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),
+) SELECT s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),
  EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
- FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
+ FROM sessions s
  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&stopped, &held)
 	if err != nil {
@@ -224,7 +224,6 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  ) SELECT p.control_sequence,p.control_generation,p.control_kind,p.control_acknowledged_at IS NOT NULL,COALESCE(p.control_error,''),p.stop_sequence,p.stop_turn_id,p.stop_deadline_at,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM session_processes p
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
- JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
  JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
  JOIN worker_hosts h ON h.id=l.worker_host_id
@@ -238,7 +237,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.target_lease_epoch=l.epoch AND cp.status IN ('restoring','consumed') AND cp.controls_reconciled_at IS NULL
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation
- AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped') THEN 'shutdown'
+ AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped') THEN 'shutdown'
  WHEN EXISTS(SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id WHERE hold.environment_id=$1 AND hold.released_at IS NULL AND (hold.session_id=$2 OR hold.scope='subtree')) THEN 'suspend' ELSE 'resume' END`,
 		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.StopSequence, &result.StopTurnID, &result.StopDeadline, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {

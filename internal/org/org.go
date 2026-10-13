@@ -34,7 +34,6 @@ var (
 	ErrInvitationPending        = errors.New("pending invitation already exists for email")
 	ErrInvitationActiveMember   = errors.New("active member already exists for email")
 	ErrAlreadyMember            = errors.New("user is already an active member of the organization")
-	ErrUserDisabled             = errors.New("user is disabled")
 )
 
 // InputError reports a caller-supplied value that the organization domain

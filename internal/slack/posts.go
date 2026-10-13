@@ -41,8 +41,8 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation, channel, targetChannel, env, thread uuid.UUID
 		var team, slackChannel string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.channel_id,p.thread_id,c.team_id,c.slack_channel_id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.channel_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel)
+		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -334,9 +334,9 @@ func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClai
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p
  JOIN slack_threads t ON t.id=p.thread_id AND (t.deleted_at IS NULL OR (p.inflight_method='chat.stopStream' AND p.message_ts IS NOT NULL AND p.closed_at IS NOT NULL))
  JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
+ JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
  JOIN slack_connections publication ON publication.id=c.connection_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
- JOIN slack_channel_bindings target_channel ON target_channel.id=t.channel_id JOIN slack_connections target_publication ON target_publication.id=target_channel.connection_id
+ JOIN slack_channel_bindings target_channel ON target_channel.id=t.slack_channel_binding_id JOIN slack_connections target_publication ON target_publication.id=target_channel.connection_id
  JOIN slack_installations target_installation ON target_installation.id=target_channel.installation_id
  JOIN slack_app_registrations target_registration ON target_registration.id=target_publication.slack_app_registration_id
  WHERE p.id=$1 AND p.status='sending' AND p.claim_epoch=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()

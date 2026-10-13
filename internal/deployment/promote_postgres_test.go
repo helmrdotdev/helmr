@@ -120,19 +120,13 @@ func TestTriggerCutoverOwnsExactBoundary(t *testing.T) {
 	}
 }
 
-func TestPromoteRejectsRevokedAndRollsBackInvalidTrigger(t *testing.T) {
+func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	r, err := register(t.Context(), f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.pool.Exec(t.Context(), `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE id=$1`, r.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), r.ID, nil); !errors.Is(err, ErrNotDeployable) {
-		t.Fatalf("revoked promote: %v", err)
-	}
-	if _, err = f.pool.Exec(t.Context(), `UPDATE deployments SET execution_revoked_at=NULL WHERE id=$1; INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) SELECT environment_id,agent_id,deployment_id,'bad','invalid','UTC','null' FROM agent_definitions WHERE deployment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, r.ID); err != nil {
+	if _, err = f.pool.Exec(t.Context(), `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) SELECT environment_id,agent_id,deployment_id,'bad','invalid','UTC','null' FROM agent_definitions WHERE deployment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), r.ID, nil)

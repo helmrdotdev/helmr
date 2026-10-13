@@ -176,7 +176,7 @@ func observedStream(t *testing.T, f statusFixture, post uuid.UUID, value, native
 		t.Fatal(err)
 	}
 	var message observedMessage
-	if err = f.Pool.QueryRow(t.Context(), `SELECT i.app_id,i.bot_user_id,c.slack_channel_id,t.thread_ts FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.channel_id=c.id WHERE t.id=$1`, f.thread).Scan(&message.AppID, &message.User, &message.Channel, &message.Thread); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT i.app_id,i.bot_user_id,c.slack_channel_id,t.thread_ts FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.slack_channel_binding_id=c.id WHERE t.id=$1`, f.thread).Scan(&message.AppID, &message.User, &message.Channel, &message.Thread); err != nil {
 		t.Fatal(err)
 	}
 	message.Timestamp = "123.790"

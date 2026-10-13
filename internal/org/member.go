@@ -356,7 +356,7 @@ func activeMember(ctx context.Context, q db.Querier, orgID uuid.UUID, userID uui
 	if err != nil {
 		return db.GetOrgMemberForManagementRow{}, fmt.Errorf("load member: %w", err)
 	}
-	if member.DisabledAt.Valid || member.UserDisabledAt.Valid {
+	if member.DisabledAt.Valid {
 		return db.GetOrgMemberForManagementRow{}, ErrMemberNotFound
 	}
 	return member, nil
@@ -453,9 +453,6 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, actor audit.Actor, invitat
 		return fmt.Errorf("load member: %w", err)
 	}
 	if err == nil && !existing.DisabledAt.Valid {
-		if existing.UserDisabledAt.Valid {
-			return ErrUserDisabled
-		}
 		return ErrAlreadyMember
 	}
 	accepted, err := q.AcceptInvitation(ctx, db.AcceptInvitationParams{

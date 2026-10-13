@@ -127,8 +127,8 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 	reserved := false
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var env, sourceChannel, targetChannel uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT p.environment_id,t.channel_id,source.channel_id,c.installation_id,c.org_id,c.team_id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads source ON source.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=source.channel_id WHERE p.id=$1`, post).Scan(&env, &targetChannel, &sourceChannel, &sender, &organization, &team)
+		err := tx.QueryRow(ctx, `SELECT p.environment_id,t.slack_channel_binding_id,source.slack_channel_binding_id,c.installation_id,c.org_id,c.team_id
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads source ON source.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=source.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&env, &targetChannel, &sourceChannel, &sender, &organization, &team)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

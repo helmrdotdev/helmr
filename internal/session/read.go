@@ -116,8 +116,8 @@ func authorizeRead(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID)
 	switch caller.Kind {
 	case "user":
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e
-   JOIN org_members m ON m.org_id=e.org_id JOIN users u ON u.id=m.user_id
-   WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND u.disabled_at IS NULL
+   JOIN org_members m ON m.org_id=e.org_id
+   WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL
    AND m.role IN ('owner','admin','developer','viewer'))`, env, caller.ID).Scan(&allowed)
 	case "api_key":
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k
@@ -152,7 +152,7 @@ func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env
 
 const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=sessions.environment_id AND a.id=sessions.agent_id),
  (SELECT t.key FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=sessions.environment_id AND d.deployment_id=sessions.deployment_id AND d.agent_id=sessions.agent_id),
- id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
+ id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
  (WITH RECURSIVE ancestors AS (

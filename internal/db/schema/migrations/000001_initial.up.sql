@@ -37,12 +37,11 @@ CREATE TABLE users (
     profile_image_url text CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''),
     primary_email text,
     admin boolean NOT NULL DEFAULT false,
-    disabled_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX users_primary_email_lower_idx ON users (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL;
+CREATE UNIQUE INDEX users_primary_email_lower_idx ON users (lower(primary_email)) WHERE primary_email IS NOT NULL;
 
 CREATE TABLE auth_identities (
     id uuid PRIMARY KEY,
@@ -102,7 +101,6 @@ CREATE TABLE environments (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     current_deployment_id uuid,
-    retired_at timestamptz,
     max_outstanding_admissions bigint NOT NULL CHECK (max_outstanding_admissions > 0),
     max_causal_depth integer NOT NULL CHECK (max_causal_depth > 0),
     max_resident_computers bigint NOT NULL CHECK (max_resident_computers>0),
@@ -527,7 +525,6 @@ CREATE TABLE deployments (
     id uuid NOT NULL,
     bundle_digest text NOT NULL CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    execution_revoked_at timestamptz,
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, bundle_digest)
 );
@@ -1269,7 +1266,7 @@ CREATE TABLE agent_triggers (
     cron text NOT NULL CHECK (cron<>''),
     timezone text NOT NULL CHECK (timezone<>''),
     input bytea NOT NULL,
-    slack_destination text CHECK (slack_destination ~ '^[CG][A-Z0-9]{1,99}$'),
+    slack_channel_id text CHECK (slack_channel_id ~ '^[CG][A-Z0-9]{1,99}$'),
     PRIMARY KEY (environment_id, agent_id, deployment_id, key),
     FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 );
@@ -1285,13 +1282,13 @@ CREATE TABLE trigger_activations (
     active_from timestamptz NOT NULL,
     active_until timestamptz,
     next_fire_at timestamptz NOT NULL,
-    slack_channel_id uuid,
+    slack_channel_binding_id uuid,
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, id, agent_id, trigger_key),
     FOREIGN KEY (environment_id, agent_id, deployment_id, trigger_key) REFERENCES agent_triggers(environment_id, agent_id, deployment_id, key),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (next_fire_at >= active_from),
-    FOREIGN KEY (slack_channel_id, environment_id) REFERENCES slack_channel_bindings(id, environment_id)
+    FOREIGN KEY (slack_channel_binding_id, environment_id) REFERENCES slack_channel_bindings(id, environment_id)
 );
 
 CREATE UNIQUE INDEX trigger_activations_current ON trigger_activations(environment_id, agent_id, trigger_key) WHERE active_until IS NULL;
@@ -1869,7 +1866,7 @@ CREATE INDEX deployment_events_accepted ON deployment_events(accepted_at, id);
 CREATE TABLE slack_threads (
     id uuid PRIMARY KEY,
     deleted_at timestamptz,
-    channel_id uuid NOT NULL,
+    slack_channel_binding_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     front_session_id uuid NOT NULL,
     -- Only a root Session owns a Slack route: the carrier equals the front
@@ -1901,15 +1898,15 @@ CREATE TABLE slack_threads (
     CHECK (thread_ts IS NOT NULL OR opening_post_key IS NOT NULL),
     UNIQUE (id, environment_id),
     UNIQUE (environment_id, front_session_id),
-    FOREIGN KEY (channel_id, environment_id, org_id, team_id, slack_channel_id) REFERENCES slack_channel_bindings(id, environment_id, org_id, team_id, slack_channel_id),
+    FOREIGN KEY (slack_channel_binding_id, environment_id, org_id, team_id, slack_channel_id) REFERENCES slack_channel_bindings(id, environment_id, org_id, team_id, slack_channel_id),
     FOREIGN KEY (environment_id, front_session_id, front_root_session_id) REFERENCES sessions(environment_id, id, root_session_id),
     UNIQUE (org_id, team_id, slack_channel_id, thread_ts),
-    UNIQUE (channel_id, opening_post_key),
+    UNIQUE (slack_channel_binding_id, opening_post_key),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),
     CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id, claimed_until) IN (0, 6))
 );
 
-CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, channel_id) WHERE thread_ts IS NOT NULL;
+CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
 
 CREATE INDEX slack_threads_status_due ON slack_threads(next_attempt_at, refresh_at, id);
 

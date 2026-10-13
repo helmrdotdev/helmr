@@ -69,14 +69,12 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
     ) SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
       FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
       JOIN computers target ON (target.environment_id,target.id)=(s.environment_id,s.computer_id)
-      JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
       JOIN environments env ON env.id=s.environment_id
       JOIN session_processes p ON p.environment_id=$1 AND p.session_id=$4 AND p.epoch=$5
       JOIN computer_leases own ON (own.environment_id,own.computer_id,own.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
       WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3 AND t.status='queued' AND s.status IN ('open','closing')
         AND target.id<>own.computer_id
         AND target.preparation_failed_at IS NULL AND target.integrity_fault_at IS NULL AND target.deleted_at IS NULL
-        AND d.execution_revoked_at IS NULL
         AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=$1 AND revoked.computer_id=target.id)
         AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=target.id AND l.fenced_at IS NULL)
         AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)

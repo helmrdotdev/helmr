@@ -87,7 +87,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var route *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT slack_channel_id FROM trigger_activations WHERE environment_id=$1 AND id=$2`, env, id).Scan(&route); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT slack_channel_binding_id FROM trigger_activations WHERE environment_id=$1 AND id=$2`, env, id).Scan(&route); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}

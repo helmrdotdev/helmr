@@ -74,7 +74,6 @@ SELECT
  WHERE login_sessions.token_hash = $1
    AND login_sessions.revoked_at IS NULL
    AND login_sessions.expires_at > now()
-   AND users.disabled_at IS NULL
    AND (login_sessions.org_id IS NULL OR selected_member.org_id IS NOT NULL)
 `
 

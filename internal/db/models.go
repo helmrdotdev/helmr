@@ -220,7 +220,6 @@ type Environment struct {
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 	CurrentDeploymentID      pgtype.UUID        `json:"current_deployment_id"`
-	RetiredAt                pgtype.Timestamptz `json:"retired_at"`
 	MaxOutstandingAdmissions int64              `json:"max_outstanding_admissions"`
 	MaxCausalDepth           int32              `json:"max_causal_depth"`
 	MaxResidentComputers     int64              `json:"max_resident_computers"`

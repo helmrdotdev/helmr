@@ -19,12 +19,12 @@ type AdmissionPolicy struct {
 }
 
 // LockAdmission takes the Environment admission lock (step 4 of the global
-// order) and reads its bounds. A retired Environment reads as pgx.ErrNoRows.
+// order) and reads its bounds. A missing Environment reads as pgx.ErrNoRows.
 func LockAdmission(ctx context.Context, tx pgx.Tx, env uuid.UUID) (AdmissionPolicy, error) {
 	var p AdmissionPolicy
 	err := tx.QueryRow(ctx, `SELECT current_deployment_id,max_outstanding_admissions,max_causal_depth,
  max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,max_resident_computers
- FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&p.Deployment, &p.MaxOutstanding, &p.MaxCausal, &p.MaxCPU, &p.MaxMemory, &p.MaxStorage, &p.PreparationTimeout, &p.MaxResident)
+ FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&p.Deployment, &p.MaxOutstanding, &p.MaxCausal, &p.MaxCPU, &p.MaxMemory, &p.MaxStorage, &p.PreparationTimeout, &p.MaxResident)
 	return p, err
 }
 

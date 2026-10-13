@@ -34,7 +34,7 @@ const imageBuildProxyAuthority = `WITH authority AS (
  statement_timestamp() AS authorized_at,
  COALESCE(h.claim_version=$5 AND g.claim_version=$6,false) AS claims_current
  FROM image_builds p
- JOIN environments e ON e.id=p.environment_id AND e.retired_at IS NULL
+ JOIN environments e ON e.id=p.environment_id
  JOIN worker_hosts h ON h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
  WHERE p.allocation_id=$1 AND p.worker_host_id=$2 AND p.worker_epoch=$3 AND h.worker_group_id=$4

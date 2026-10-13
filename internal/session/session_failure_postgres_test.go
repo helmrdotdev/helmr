@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/session"
 
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -188,26 +187,6 @@ func TestUnexpectedSessionStopRejectsSupersededAttachment(t *testing.T) {
 	var unchanged bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT p.status='ready' AND p.fenced_at IS NULL AND s.authority_generation=1 AND NOT EXISTS(SELECT 1 FROM session_holds) FROM session_processes p JOIN sessions s ON s.id=p.session_id WHERE s.id=$1`, f.session).Scan(&unchanged); err != nil || !unchanged {
 		t.Fatalf("rejected stop changed state: %v %v", unchanged, err)
-	}
-}
-
-func TestRevokedSessionStopInterruptsRunningTurn(t *testing.T) {
-	f := newFixture(t)
-	active := f.enqueue(t, "active")
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
-		t.Fatal(err)
-	}
-	a, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp()`)
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, active.TurnID).Scan(&state); err != nil || state != "interrupted" {
-		t.Fatalf("revoked running Turn: %s %v", state, err)
 	}
 }
 

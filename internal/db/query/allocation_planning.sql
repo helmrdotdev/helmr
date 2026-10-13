@@ -49,7 +49,7 @@ WITH RECURSIVE held AS (
 SELECT d.*, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
  (e.max_memory_bytes-usage.memory)::bigint remaining_memory_bytes,
  (e.max_resident_computers-usage.residents)::bigint remaining_residents
-FROM demand d JOIN environments e ON e.id=d.environment_id AND e.retired_at IS NULL
+FROM demand d JOIN environments e ON e.id=d.environment_id
 JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=sqlc.arg(region_id)
 CROSS JOIN LATERAL (
  SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,

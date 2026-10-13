@@ -40,7 +40,7 @@ func projectionRecipient(ctx context.Context, tx pgx.Tx, o projectionOwner, turn
  JOIN slack_installations i ON i.id=$4 JOIN environments e ON e.id=t.environment_id AND e.org_id=i.org_id
  JOIN slack_user_links l ON l.user_id=t.caller_id AND l.team_id=i.team_id
  JOIN org_members m ON m.org_id=e.org_id AND m.user_id=l.user_id JOIN users u ON u.id=l.user_id
- WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3 AND t.caller_kind='user' AND m.disabled_at IS NULL AND u.disabled_at IS NULL
+ WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3 AND t.caller_kind='user' AND m.disabled_at IS NULL
  FOR SHARE OF l,m,u`, o.environment, o.session, turn, o.installation).Scan(&team, &user)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil

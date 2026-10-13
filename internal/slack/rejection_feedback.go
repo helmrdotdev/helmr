@@ -61,7 +61,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if !validControl(*c) || c.Target.Installation != installation {
 				return nil
 			}
-			err = tx.QueryRow(ctx, `SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_requests r ON r.id=$1
+			err = tx.QueryRow(ctx, `SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_requests r ON r.id=$1
  WHERE t.id=$2 AND c.installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at`, id, c.Target.Thread).Scan(&channel)
 		} else {
 			err = tx.QueryRow(ctx, `SELECT $2::text FROM slack_connections pub JOIN slack_requests r ON r.id=$1

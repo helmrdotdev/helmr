@@ -185,12 +185,12 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 			due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorized_at=$2 WHERE id=$1`, installation, due.Add(-time.Minute))
 			trigger := seedTrigger(t, f, due)
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET slack_channel_id=$3,active_until=$4 WHERE environment_id=$1 AND id=$2`, f.env, trigger, channel, due.Add(time.Minute))
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET slack_channel_binding_id=$3,active_until=$4 WHERE environment_id=$1 AND id=$2`, f.env, trigger, channel, due.Add(time.Minute))
 			if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, trigger); err != nil {
 				t.Fatal(err)
 			}
 			var pinned bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=s.id AND t.channel_id=$3 AND t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=o.turn_id AND p.source_thread_id IS NULL) FROM trigger_occurrences o JOIN sessions s ON (s.environment_id,s.id)=(o.environment_id,o.session_id) WHERE o.environment_id=$1 AND o.activation_id=$2 AND o.disposition='admitted'`, f.env, trigger, channel).Scan(&pinned); err != nil || !pinned {
+			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=s.id AND t.slack_channel_binding_id=$3 AND t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=o.turn_id AND p.source_thread_id IS NULL) FROM trigger_occurrences o JOIN sessions s ON (s.environment_id,s.id)=(o.environment_id,o.session_id) WHERE o.environment_id=$1 AND o.activation_id=$2 AND o.disposition='admitted'`, f.env, trigger, channel).Scan(&pinned); err != nil || !pinned {
 				t.Fatalf("scheduled route missing: %v %v", pinned, err)
 			}
 			switch revocation {

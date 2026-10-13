@@ -102,8 +102,8 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	}
 }
 
-func TestRegisterPostgresRechecksScopeAndRetirement(t *testing.T) {
-	for _, kind := range []string{"organization", "project", "retired"} {
+func TestRegisterPostgresRechecksScope(t *testing.T) {
+	for _, kind := range []string{"organization", "project"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newDeploymentFinalizePostgresFixture(t)
 			switch kind {
@@ -111,10 +111,6 @@ func TestRegisterPostgresRechecksScopeAndRetirement(t *testing.T) {
 				f.request.orgID = uuid.NewV7()
 			case "project":
 				f.request.projectID = pgvalue.UUID(uuid.NewV7())
-			case "retired":
-				if _, err := f.pool.Exec(t.Context(), `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.request.environmentID); err != nil {
-					t.Fatal(err)
-				}
 			}
 			if _, err := register(t.Context(), f.pool, f.request); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("scope check: %v", err)

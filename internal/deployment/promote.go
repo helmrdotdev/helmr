@@ -43,22 +43,18 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 			return err
 		}
 		var locked uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, env, principal.OrgID, project).Scan(&locked)
+		err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, env, principal.OrgID, project).Scan(&locked)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotDeployable
 		}
 		if err != nil {
 			return err
 		}
-		// Hold the deployment against concurrent revocation through the cutover.
-		var allowed bool
-		if err := tx.QueryRow(ctx, `SELECT execution_revoked_at IS NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, env, id).Scan(&allowed); errors.Is(err, pgx.ErrNoRows) {
+		// Verify that the selected Deployment belongs to this Environment.
+		if err := tx.QueryRow(ctx, `SELECT id FROM deployments WHERE environment_id=$1 AND id=$2`, env, id).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotDeployable
 		} else if err != nil {
 			return err
-		}
-		if !allowed {
-			return ErrNotDeployable
 		}
 		var cutover time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cutover); err != nil {
@@ -89,7 +85,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 }
 
 func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
+	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_channel_id FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
 	if err != nil {
 		return err
 	}
@@ -120,7 +116,7 @@ func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID
 			}
 			pin = &value
 		}
-		entries = append(entries, agent.Activation{SlackChannelID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
+		entries = append(entries, agent.Activation{SlackChannelBindingID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
 	}
 	return agent.ReplaceActivations(ctx, tx, env, deployment, cutover, entries)
 }

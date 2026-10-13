@@ -298,5 +298,5 @@ func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, externa
 			return signedInUser{}, err
 		}
 	}
-	return signedInUser{id: user.ID, disabled: user.DisabledAt.Valid, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
+	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
 }

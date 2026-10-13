@@ -45,23 +45,6 @@ func TestSignInPostgres(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT users.admin FROM users JOIN auth_identities ON auth_identities.user_id = users.id WHERE auth_identities.subject = '2'`).Scan(&unverifiedAdmin); err != nil || unverifiedAdmin {
 		t.Fatalf("unverified configured address admin = %t, err = %v", unverifiedAdmin, err)
 	}
-
-	fixture.exec(t, `UPDATE users SET disabled_at = now() WHERE id = $1`, adminID)
-	renamedAdmin := admin
-	renamedAdmin.DisplayName = "renamed admin"
-	if _, err := SignIn(ctx, fixture.pool, fixture.cfg, renamedAdmin); !errors.Is(err, ErrInactiveMember) {
-		t.Fatalf("disabled sign-in error = %v", err)
-	}
-	var disabledName string
-	if err := fixture.pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, adminID).Scan(&disabledName); err != nil || disabledName != "admin" {
-		t.Fatalf("disabled user display name = %q, err = %v, want admin", disabledName, err)
-	}
-	if count := fixture.activeSessions(t, adminID); count != 1 {
-		t.Fatalf("disabled user sessions = %d, want the earlier one", count)
-	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); !errors.Is(err, auth.ErrUnauthenticated) {
-		t.Fatalf("disabled user session error = %v", err)
-	}
 }
 
 func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
@@ -299,5 +282,44 @@ func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='installation_admin.granted' AND actor_kind='system' AND actor_source='initial-admin-config' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("initial grant count=%d err=%v", count, err)
+	}
+}
+
+func TestVerifiedIdentitiesShareCaseInsensitiveEmail(t *testing.T) {
+	f := newIdentityFixture(t)
+	var userID uuid.UUID
+	for i, email := range []string{"member@example.test", "MEMBER@example.test"} {
+		raw, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: email, DisplayName: "Member", Email: email, EmailVerified: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			userID = principal.UserID
+		} else if principal.UserID != userID {
+			t.Fatal("verified email created a second user")
+		}
+	}
+	link, created, err := CreateMagicLink(t.Context(), f.pool, f.cfg, MagicLinkRecipient{Purpose: db.MagicLinkPurposeLogin, Email: "member@example.test"}, "/")
+	if err != nil || !created {
+		t.Fatalf("create link: %t %v", created, err)
+	}
+	if err := MarkMagicLinkSent(t.Context(), f.pool, link); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := CompleteMagicLink(t.Context(), f.pool, f.cfg, link.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, completed.Session)
+	if err != nil || principal.UserID != userID {
+		t.Fatalf("magic link changed user identity: %v", err)
+	}
+	var users, identities int
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM users WHERE lower(primary_email)='member@example.test'),(SELECT count(*) FROM auth_identities WHERE user_id=$1)`, userID).Scan(&users, &identities); err != nil || users != 1 || identities != 3 {
+		t.Fatalf("users=%d identities=%d: %v", users, identities, err)
 	}
 }

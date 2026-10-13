@@ -20,13 +20,12 @@ const (
 )
 
 // This is illustrative terminal history, not an executable Deployment. It has
-// no bundle bytes, VM, lease, process, Save or checkpoint. Revocation and the
-// ended trigger prevent synthetic inputs from becoming Worker demand.
+// no bundle bytes, VM, lease, process, Save or checkpoint. Leaving it unpromoted
+// and ending its trigger prevents synthetic inputs from becoming Worker demand.
 func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, `
-INSERT INTO deployments(environment_id,id,bundle_digest,created_at,execution_revoked_at)
-VALUES($1::uuid,$2::uuid,$9::text,now()-interval '3 days',now());
-UPDATE environments SET current_deployment_id=$2::uuid WHERE id=$1::uuid;
+INSERT INTO deployments(environment_id,id,bundle_digest,created_at)
+VALUES($1::uuid,$2::uuid,$9::text,now()-interval '3 days');
 INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed,created_at)
 VALUES($1::uuid,$3::uuid,$9::text,'{}','{}',now()-interval '3 days');
 INSERT INTO templates(environment_id,id,key) VALUES($1::uuid,$3::uuid,'demo-computer');

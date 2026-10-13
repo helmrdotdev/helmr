@@ -72,9 +72,9 @@ func ReadComputerContinuationControls(ctx context.Context, pool db.TxBeginner, h
 			if err = tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
     SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
     UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-   ) SELECT s.authority_generation,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),
+   ) SELECT s.authority_generation,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),
     EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
-   FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, member.Session, member.Epoch).Scan(&control.AuthorityGeneration, &control.Stopped, &control.Held); err != nil {
+   FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, member.Session, member.Epoch).Scan(&control.AuthorityGeneration, &control.Stopped, &control.Held); err != nil {
 				return err
 			}
 			control.Held = control.Held || control.Stopped

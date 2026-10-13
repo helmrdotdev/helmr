@@ -11,7 +11,7 @@ import (
 )
 
 func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
-	for _, mode := range []string{"current", "stale attachment", "held", "cancelled", "revoked", "ready", "stopping", "failed", "expired", "acquiring", "deleted"} {
+	for _, mode := range []string{"current", "stale attachment", "held", "cancelled", "ready", "stopping", "failed", "expired", "acquiring", "deleted"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _, e := startingSessionFixture(t)
 			attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
@@ -26,8 +26,6 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,gen_random_uuid(),$2,'local','test')`, f.env, e.SessionID)
 			case "cancelled":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.env, e.SessionID)
-			case "revoked":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 			case "ready", "stopping":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status=$3 WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID, mode)
 			case "failed":

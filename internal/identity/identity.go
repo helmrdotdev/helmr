@@ -20,7 +20,6 @@ var (
 	ErrInvalidToken             = errors.New("token is invalid or expired")
 	ErrWrongAccount             = errors.New("verified email does not match invitation")
 	ErrAlreadyMember            = errors.New("identity is already a member of this organization")
-	ErrInactiveMember           = errors.New("membership is no longer active")
 	ErrUserNotFound             = errors.New("user not found")
 	ErrOrganizationRequired     = errors.New("organization is required")
 	ErrInvalidDeviceCode        = errors.New("invalid device code")

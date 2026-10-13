@@ -78,7 +78,6 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
  `+sessiontest.DiskRootInsert("$1", "$9", "$10")+`;
  UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),image_spec_id=$12 WHERE environment_id=$1 AND id=$2;
  UPDATE image_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
- UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1;
 	`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, keyID, envelope.WrappingKeyID, envelope.Ciphertext, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, uuid.NewV7(), string(raw), digest, f.Deployment, string(seed))
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper }))
 	defer server.Close()

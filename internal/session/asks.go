@@ -189,7 +189,7 @@ func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.
 	var err error
 	switch caller.Kind {
 	case "user":
-		err = tx.QueryRow(ctx, `SELECT m.user_id FROM environments e JOIN org_members m ON m.org_id=e.org_id JOIN users u ON u.id=m.user_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND u.disabled_at IS NULL AND m.role IN ('owner','admin','developer','viewer') FOR SHARE OF m,u`, env, caller.ID).Scan(&id)
+		err = tx.QueryRow(ctx, `SELECT m.user_id FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer','viewer') FOR SHARE OF m`, env, caller.ID).Scan(&id)
 	case "api_key":
 		err = tx.QueryRow(ctx, `SELECT k.id FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin') AND 'asks.respond'=ANY(k.permissions) FOR SHARE OF k`, env, caller.ID).Scan(&id)
 	default:

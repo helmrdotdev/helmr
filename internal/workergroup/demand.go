@@ -14,16 +14,15 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
 	var present bool
 	err := database.QueryRow(ctx, `SELECT EXISTS(
  SELECT 1 FROM image_builds preparation
- JOIN environments e ON e.id=preparation.environment_id AND e.retired_at IS NULL
+ JOIN environments e ON e.id=preparation.environment_id
  JOIN projects project ON project.id=e.project_id
  JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
  WHERE preparation.status='queued' AND preparation.worker_host_id IS NULL AND preparation.deadline_at>clock_timestamp()
  ) OR EXISTS(
  SELECT 1 FROM sessions s
- JOIN environments e ON e.id=s.environment_id AND e.retired_at IS NULL
+ JOIN environments e ON e.id=s.environment_id
  JOIN projects project ON project.id=e.project_id
  JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
- JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) AND d.execution_revoked_at IS NULL
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  WHERE s.status IN ('open','closing') AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
@@ -43,7 +42,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
        AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL OR l.epoch=9223372036854775807))))
  ) OR EXISTS(
  SELECT 1 FROM commands cmd JOIN computers c ON (c.environment_id,c.id)=(cmd.environment_id,cmd.computer_id)
- JOIN environments e ON e.id=c.environment_id AND e.retired_at IS NULL
+ JOIN environments e ON e.id=c.environment_id
  JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.id=$1
  WHERE cmd.status='pending' AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)

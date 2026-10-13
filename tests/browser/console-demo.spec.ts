@@ -20,7 +20,7 @@ test("console demo shows retained history in current navigation", async ({ page 
   await login(page);
   await selectDemoEnvironment(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Current Deployment" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Set up your first Agent" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent Sessions" })).toBeVisible();
   await expect(page.getByRole("link", { name: "000000000701", exact: true })).toBeVisible();
   const navigation = page.getByRole("navigation", { name: "Sections" });
