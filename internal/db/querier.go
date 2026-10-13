@@ -25,7 +25,6 @@ type Querier interface {
 	// The data-modifying CTE always runs in the same statement. Certification does
 	// not depend on its inserted row count: every inherited key may already be direct.
 	CertifyComputerObject(ctx context.Context, arg CertifyComputerObjectParams) (int64, error)
-	ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error)
 	// Claim only scheduling responsibility, not permission to adopt the digest.
 	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
 	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
@@ -39,7 +38,6 @@ type Querier interface {
 	ConfirmWorkerHostProviderAbsent(ctx context.Context, workerHostID pgtype.UUID) (ConfirmWorkerHostProviderAbsentRow, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
-	ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	CountReadyWorkerPoolHosts(ctx context.Context, arg CountReadyWorkerPoolHostsParams) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
@@ -57,9 +55,6 @@ type Querier interface {
 	CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error)
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error)
-	DeadLetterControlOutbox(ctx context.Context, arg DeadLetterControlOutboxParams) (ControlOutbox, error)
-	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
-	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
@@ -155,7 +150,6 @@ type Querier interface {
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error)
-	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneExpiredComputerCommandResults(ctx context.Context, rowLimit int32) (int64, error)
 	PruneExpiredPlatformRetryReceipts(ctx context.Context, rowLimit int32) (int64, error)
 	// Host loss revokes credentials without confirming physical absence.
@@ -170,7 +164,6 @@ type Querier interface {
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
-	RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeAuthSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)

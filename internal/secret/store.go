@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -243,14 +242,6 @@ func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, retryKey string) 
 				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedRevision: record.Revision}); err != nil {
 					return idempotency.Completion{}, err
 				}
-				payload, err := json.Marshal(secretRevocationPayload{EnvironmentID: env.String(), SecretID: id.String(), RevocationGeneration: record.RevocationGeneration + 1})
-				if err != nil {
-					return idempotency.Completion{}, err
-				}
-				if _, err = tx.Exec(ctx, `INSERT INTO control_outbox(id,topic,payload) VALUES($1,'secret.revoked',$2)`, uuid.NewV7(), payload); err != nil {
-					return idempotency.Completion{}, err
-				}
-
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
 			return idempotency.Completion{Target: idempotency.Target{SecretID: id}, Receipt: []byte(`{}`)}, err

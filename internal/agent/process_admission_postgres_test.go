@@ -174,7 +174,7 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 		}
 	}
 	if err := CompleteComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, true)); err != nil {
-		t.Fatalf("Ready/control outbox cannot complete restoration: %v", err)
+		t.Fatalf("Ready control cannot complete restoration: %v", err)
 	}
 	var active bool
 	if err := r.f.pool.QueryRow(ctx, `SELECT status='active' FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&active); err != nil || !active {

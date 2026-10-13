@@ -10,7 +10,6 @@ DROP TABLE IF EXISTS
     slack_installations,
     slack_app_registrations,
     platform_retry_keys,
-    control_outbox,
     agent_schedule_occurrences,
     deployment_events,
     diagnostic_chunks,
