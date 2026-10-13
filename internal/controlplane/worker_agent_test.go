@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -24,7 +23,7 @@ func runtimeTestSession(f sessiontest.Fixture) workerapi.RuntimeSession {
 }
 func runtimeEnqueue(f sessiontest.Fixture, key string) workerapi.AgentOperationRequest {
 	payload, _ := json.Marshal(map[string]any{"tool": "enqueue", "arguments": map[string]any{"sessionId": f.Session.String(), "input": json.RawMessage(`[{"type":"text","text":"hello"}]`), "idempotencyKey": key}})
-	return workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.New().String(), AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: payload}
+	return workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.New().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload}
 }
 
 func TestWorkerAgentClientAuthorityAndRetry(t *testing.T) {

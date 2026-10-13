@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/runtimemcp"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -45,7 +44,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"tool": "inspect_turn", "arguments": map[string]string{"sessionId": f.Session.String(), "turnId": receipt.TurnID}})
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: body}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
 	observed, err := client.AgentOperation(t.Context(), request)
 	if err != nil || observed.Error != nil {
 		t.Fatalf("observe %+v %v", observed, err)
@@ -63,7 +62,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		payload, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 		req := request
 		req.TurnID = ""
-		req.Method = int32(agentv1.Operation_METHOD_RUNTIME_MCP)
+		req.Method = workerapi.AgentMethodRuntimeMCP
 		req.Payload = payload
 		req.RequestID = uuid.NewV7().String()
 		response, err := client.AgentOperation(ctx, req)

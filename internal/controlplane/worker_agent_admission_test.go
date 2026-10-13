@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -37,11 +36,11 @@ func runtimeAdmissionOrigin(t *testing.T) (sessiontest.Fixture, session.Admissio
 }
 
 func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
-	for _, method := range []agentv1.Operation_Method{agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN} {
+	for _, method := range []workerapi.AgentOperationMethod{workerapi.AgentMethodStart, workerapi.AgentMethodSpawn} {
 		for _, placed := range []bool{false, true} {
-			name := method.String() + "/fresh"
+			name := string(method) + "/fresh"
 			if placed {
-				name = method.String() + "/placed"
+				name = string(method) + "/placed"
 			}
 			t.Run(name, func(t *testing.T) {
 				f, origin, execution := runtimeAdmissionOrigin(t)
@@ -72,11 +71,11 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 				if placed {
 					payload["computerId"] = f.Computer.String()
 				}
-				tool := strings.ToLower(strings.TrimPrefix(method.String(), "METHOD_"))
+				tool := strings.ToLower(string(method))
 				body, _ := json.Marshal(map[string]any{"tool": tool, "arguments": payload})
-				request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "retained-request", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: body}
+				request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "retained-request", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
 				// Spawn remains pinned even when no current Deployment is selected.
-				if method == agentv1.Operation_METHOD_SPAWN {
+				if method == workerapi.AgentMethodSpawn {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
 				}
 				lose.Store(true)
@@ -101,7 +100,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
  AND CASE WHEN $5 THEN s.parent_session_id=$4 AND s.root_session_id=$4 ELSE s.parent_session_id IS NULL AND s.root_session_id=s.id END
  AND CASE WHEN $6 THEN s.computer_id=$7 ELSE s.computer_id<>$7 AND c.image_build_id IS NOT NULL END
  AND (SELECT count(*) FROM turns WHERE environment_id=$1)=2
- FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.Environment, receipt.SessionID, f.Deployment, f.Session, method == agentv1.Operation_METHOD_SPAWN, placed, f.Computer).Scan(&valid)
+ FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.Environment, receipt.SessionID, f.Deployment, f.Session, method == workerapi.AgentMethodSpawn, placed, f.Computer).Scan(&valid)
 				if err != nil || !valid {
 					t.Fatalf("admission ownership/placement/count: %v %v", valid, err)
 				}
@@ -128,7 +127,7 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	for _, method := range []agentv1.Operation_Method{agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN} {
+	for _, method := range []workerapi.AgentOperationMethod{workerapi.AgentMethodStart, workerapi.AgentMethodSpawn} {
 		for _, test := range []struct{ name, payload, turn, code string }{
 			{"missing key", `{"agent":"agent","input":[{"type":"text","text":"work"}]}`, "", "invalid_arguments"},
 			{"foreign origin", `{"agent":"agent","input":[{"type":"text","text":"work"}]}`, uuid.NewV7().String(), "invalid_arguments"},
@@ -140,14 +139,14 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 			{"environment override", `{"agent":"agent","input":[{"type":"text","text":"work"}],"environmentId":"other"}`, "", "invalid_arguments"},
 			{"conversation key", `{"agent":"agent","input":[{"type":"text","text":"work"}],"sessionKey":"shared"}`, "", "invalid_arguments"},
 		} {
-			t.Run(method.String()+"/"+test.name, func(t *testing.T) {
+			t.Run(string(method)+"/"+test.name, func(t *testing.T) {
 				var arguments map[string]any
 				json.Unmarshal([]byte(test.payload), &arguments)
 				if test.name != "missing key" {
 					arguments["idempotencyKey"] = "decision"
 				}
-				body, _ := json.Marshal(map[string]any{"tool": strings.ToLower(strings.TrimPrefix(method.String(), "METHOD_")), "arguments": arguments})
-				response, err := client.AgentOperation(t.Context(), workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: test.turn, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: body})
+				body, _ := json.Marshal(map[string]any{"tool": strings.ToLower(string(method)), "arguments": arguments})
+				response, err := client.AgentOperation(t.Context(), workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: test.turn, Method: workerapi.AgentMethodRuntimeMCP, Payload: body})
 				if err != nil || response.Error == nil || response.Error.Code != test.code {
 					t.Fatalf("rejection=%+v err=%v", response, err)
 				}
@@ -172,7 +171,7 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
 				b, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 				return b
 			}
-			request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "first-rpc", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP), Payload: payload()}
+			request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "first-rpc", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload()}
 			first, err := client.AgentOperation(t.Context(), request)
 			if err != nil || first.Error != nil {
 				t.Fatalf("first %+v %v", first, err)
@@ -234,8 +233,8 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
 func TestWorkerAgentRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 	f, origin, _ := runtimeAdmissionOrigin(t)
 	client := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.Worker)
-	for _, method := range []agentv1.Operation_Method{agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN, agentv1.Operation_METHOD_ENQUEUE, agentv1.Operation_METHOD_SEND_MESSAGE, agentv1.Operation_METHOD_CONTROL_SESSION, agentv1.Operation_METHOD_WAIT_TURN, agentv1.Operation_METHOD_INSPECT_SESSION, agentv1.Operation_METHOD_LIST_SESSIONS} {
-		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: method.String(), AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: int32(method), Payload: json.RawMessage(`{}`)}
+	for _, method := range []workerapi.AgentOperationMethod{workerapi.AgentMethodStart, workerapi.AgentMethodSpawn, workerapi.AgentMethodEnqueue, workerapi.AgentMethodSendMessage, workerapi.AgentMethodControlSession, workerapi.AgentMethodWaitTurn, workerapi.AgentMethodInspectSession, workerapi.AgentMethodListSessions} {
+		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: string(method), AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: method, Payload: json.RawMessage(`{}`)}
 		var response workerapi.AgentOperationResponse
 		client.post(t, "/worker/v1/sessions/operations", request, 200, &response)
 		if response.Error == nil || response.Error.Code != "unsupported_operation" {

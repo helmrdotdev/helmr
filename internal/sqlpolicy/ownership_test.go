@@ -141,16 +141,8 @@ func TestStatementsAreConstantOrDocumented(t *testing.T) {
 // TestTableWritesStayWithOwners checks handwritten and generated writes
 // against the ownership table.
 func TestTableWritesStayWithOwners(t *testing.T) {
-	used := map[string]map[string]bool{}
-	note := func(table, pkg string) {
-		if used[table] == nil {
-			used[table] = map[string]bool{}
-		}
-		used[table][pkg] = true
-	}
 	for _, s := range collectStatements(t) {
 		for _, table := range writtenTables(s.sql) {
-			note(table, s.pkg)
 			if !allowedWriter(table, s.pkg) {
 				t.Errorf("%s: %s writes %s owned by %q", s.position, s.pkg, table, tableOwners[table])
 			}
@@ -172,7 +164,6 @@ func TestTableWritesStayWithOwners(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, table := range writtenTables(string(content)) {
-			note(table, owner)
 			if !allowedWriter(table, owner) {
 				t.Errorf("query/%s (%s) writes %s owned by %q", entry.Name(), owner, table, tableOwners[table])
 			}
@@ -183,7 +174,6 @@ func TestTableWritesStayWithOwners(t *testing.T) {
 			t.Errorf("query file owner entry %s has no file", file)
 		}
 	}
-
 }
 
 var sqlcTableName = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)`)

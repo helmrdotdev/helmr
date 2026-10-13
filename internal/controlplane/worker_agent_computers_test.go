@@ -11,7 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -44,7 +43,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP)}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()
 		request.Payload, _ = json.Marshal(map[string]any{"tool": "list_computers", "arguments": map[string]string{"cursor": cursor}})
@@ -130,7 +129,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: int32(agentv1.Operation_METHOD_RUNTIME_MCP)}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	operation := "spawn"
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()

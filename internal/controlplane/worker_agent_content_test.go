@@ -6,7 +6,6 @@ import (
 	"testing"
 	"uuid"
 
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -30,7 +29,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "output", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_OUTPUT)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "output", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: workerapi.AgentMethodOutput}
 	output := map[string]any{"outputId": uuid.NewV7().String(), "value": "progress\x00"}
 	request.Payload, _ = json.Marshal(output)
 	first, err := client.AgentOperation(t.Context(), request)
@@ -45,7 +44,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error == nil || response.Error.Code != "content_kind_unsupported" {
 		t.Fatalf("file admission: %+v %v", response, err)
 	}
-	request.Method = int32(agentv1.Operation_METHOD_RESPOND)
+	request.Method = workerapi.AgentMethodRespond
 	request.Payload, _ = json.Marshal(map[string]any{"responseId": uuid.NewV7().String(), "value": []any{}})
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error != nil || string(response.Value) != "null" {
 		t.Fatalf("response: %+v %v", response, err)
@@ -53,11 +52,11 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error != nil {
 		t.Fatalf("response replay: %+v %v", response, err)
 	}
-	request.Method, request.Payload = int32(agentv1.Operation_METHOD_CLOSE_PROCESSING), json.RawMessage(`null`)
+	request.Method, request.Payload = workerapi.AgentMethodCloseProcessing, json.RawMessage(`null`)
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error != nil {
 		t.Fatalf("close: %+v %v", response, err)
 	}
-	request.Method, request.Payload, request.DrainEvidence = int32(agentv1.Operation_METHOD_FAIL), json.RawMessage(`{"error":{"code":"application_error","message":"failure"}}`), "joined"
+	request.Method, request.Payload, request.DrainEvidence = workerapi.AgentMethodFail, json.RawMessage(`{"error":{"code":"application_error","message":"failure"}}`), "joined"
 	response, err := client.AgentOperation(t.Context(), request)
 	if err != nil || response.Error != nil {
 		t.Fatalf("failure: %+v %v", response, err)

@@ -6,7 +6,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -14,17 +13,17 @@ import (
 func TestWorkerAgentSessionControls(t *testing.T) {
 	f, origin, execution := runtimeAdmissionOrigin(t)
 	client := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.Worker)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "spawn", AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: int32(agentv1.Operation_METHOD_SPAWN)}
+	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "spawn", AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: workerapi.AgentMethodSpawn}
 	call := func(r workerapi.AgentOperationRequest, body any, code string) map[string]string {
 		t.Helper()
 		raw, _ := json.Marshal(body)
 		var arguments map[string]any
 		json.Unmarshal(raw, &arguments)
 		tool := "spawn"
-		switch agentv1.Operation_Method(r.Method) {
-		case agentv1.Operation_METHOD_START:
+		switch r.Method {
+		case workerapi.AgentMethodStart:
 			tool = "start"
-		case agentv1.Operation_METHOD_CONTROL_SESSION:
+		case workerapi.AgentMethodControlSession:
 			tool, _ = arguments["kind"].(string)
 			if tool == "turn_interrupt" {
 				tool = "interrupt_turn"
@@ -36,7 +35,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 		if _, ok := arguments["idempotencyKey"]; !ok {
 			arguments["idempotencyKey"] = r.RequestID
 		}
-		r.Method = int32(agentv1.Operation_METHOD_RUNTIME_MCP)
+		r.Method = workerapi.AgentMethodRuntimeMCP
 		r.TurnID = ""
 		r.Payload, _ = json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 		var response workerapi.AgentOperationResponse
@@ -65,11 +64,11 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	}
 	admission := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String()}
 	child := call(request, admission, "")
-	request.Method = int32(agentv1.Operation_METHOD_START)
+	request.Method = workerapi.AgentMethodStart
 	request.RequestID = "independent"
 	independent := call(request, admission, "")
 	exactRequest := request
-	exactRequest.Method = int32(agentv1.Operation_METHOD_SPAWN)
+	exactRequest.Method = workerapi.AgentMethodSpawn
 	exactRequest.RequestID = "exact-child"
 	exactChild := call(exactRequest, admission, "")
 	exactID, err := uuid.Parse(exactChild["sessionId"])
@@ -82,7 +81,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if _, err := dispatchRuntimeTurn(t, f.Pool, exactExecution); err != nil {
 		t.Fatal(err)
 	}
-	exactRequest.Method = int32(agentv1.Operation_METHOD_CONTROL_SESSION)
+	exactRequest.Method = workerapi.AgentMethodControlSession
 	exactRequest.RequestID = "exact-interrupt"
 	exactBody := map[string]any{"sessionId": exactChild["sessionId"], "turnId": exactChild["turnId"], "kind": "turn_interrupt"}
 	exactReceipt := call(exactRequest, exactBody, "")
@@ -99,7 +98,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	for _, target := range []map[string]string{{"sessionId": f.Session.String(), "turnId": origin.TurnID.String()}, independent} {
 		call(exactRequest, map[string]any{"sessionId": target["sessionId"], "turnId": target["turnId"], "kind": "turn_interrupt"}, "authority_changed")
 	}
-	request.Method = int32(agentv1.Operation_METHOD_CONTROL_SESSION)
+	request.Method = workerapi.AgentMethodControlSession
 	request.RequestID = "interrupt"
 	body := map[string]any{"sessionId": child["sessionId"], "kind": "interrupt"}
 	first := call(request, body, "")

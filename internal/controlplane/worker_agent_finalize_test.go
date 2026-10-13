@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -33,12 +32,12 @@ func TestWorkerAgentFinalizeRetainsPendingSaveAcrossLostReply(t *testing.T) {
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_CLOSE_PROCESSING), Payload: json.RawMessage(`null`)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: workerapi.AgentMethodCloseProcessing, Payload: json.RawMessage(`null`)}
 	closed, err := client.AgentOperation(t.Context(), request)
 	if err != nil || closed.Error != nil || string(closed.Value) != "null" {
 		t.Fatalf("close processing: %+v %v", closed, err)
 	}
-	request.RequestID, request.Method, request.Payload, request.DrainEvidence = "finalize", int32(agentv1.Operation_METHOD_FINALIZE), json.RawMessage(`{"result":{"saved":true}}`), "native scopes joined"
+	request.RequestID, request.Method, request.Payload, request.DrainEvidence = "finalize", workerapi.AgentMethodFinalize, json.RawMessage(`{"result":{"saved":true}}`), "native scopes joined"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)

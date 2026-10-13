@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -43,7 +42,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	op := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "register", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_REGISTER_MESSAGES), Payload: json.RawMessage(`null`)}
+	op := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "register", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: workerapi.AgentMethodRegisterMessages, Payload: json.RawMessage(`null`)}
 	if response, err := client.AgentOperation(t.Context(), op); err != nil || response.Error != nil {
 		t.Fatalf("register: %+v %v", response, err)
 	}
@@ -55,7 +54,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	sendOp := op
 	sendOp.Session = runtimeTestSession(parent)
 	sendOp.TurnID = ""
-	sendOp.Method, sendOp.RequestID = int32(agentv1.Operation_METHOD_RUNTIME_MCP), "send"
+	sendOp.Method, sendOp.RequestID = workerapi.AgentMethodRuntimeMCP, "send"
 	sendOp.Payload, _ = json.Marshal(map[string]any{"tool": "send_turn", "arguments": map[string]any{"sessionId": f.Session.String(), "turnId": a.TurnID.String(), "message": json.RawMessage(`[{"type":"text","text":"steer"}]`), "idempotencyKey": "parent-steer"}})
 	sent, err := client.AgentOperation(t.Context(), sendOp)
 	if err != nil || sent.Error != nil {
@@ -113,12 +112,12 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if err != nil || repeated == nil || repeated.MessageID != next.MessageID {
 		t.Fatalf("reattachment changed callback: %+v %v", repeated, err)
 	}
-	op.Method, op.Payload = int32(agentv1.Operation_METHOD_CLOSE_PROCESSING), json.RawMessage(`null`)
+	op.Method, op.Payload = workerapi.AgentMethodCloseProcessing, json.RawMessage(`null`)
 	if response, err := client.AgentOperation(t.Context(), op); err != nil || response.Error != nil {
 		t.Fatalf("close: %+v %v", response, err)
 	}
 	runSDK("closed")
-	op.Method, op.Payload, op.DrainEvidence = int32(agentv1.Operation_METHOD_FINALIZE), json.RawMessage(`{"result":null}`), "joined"
+	op.Method, op.Payload, op.DrainEvidence = workerapi.AgentMethodFinalize, json.RawMessage(`{"result":null}`), "joined"
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

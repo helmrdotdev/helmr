@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -29,11 +28,11 @@ func TestWorkerAgentFailureHasOneObservableOutcome(t *testing.T) {
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: sessionID, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: int32(agentv1.Operation_METHOD_CLOSE_PROCESSING), Payload: json.RawMessage(`null`)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "close", AuthorityGeneration: attachment.AuthorityGeneration, TurnID: a.TurnID.String(), Method: workerapi.AgentMethodCloseProcessing, Payload: json.RawMessage(`null`)}
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error != nil {
 		t.Fatalf("close: %+v %v", response, err)
 	}
-	request.RequestID, request.Method, request.Payload = "failure", int32(agentv1.Operation_METHOD_FAIL), json.RawMessage(`{"error":{"code":"application_error","message":"bad\u0000input"}}`)
+	request.RequestID, request.Method, request.Payload = "failure", workerapi.AgentMethodFail, json.RawMessage(`{"error":{"code":"application_error","message":"bad\u0000input"}}`)
 	if response, err := client.AgentOperation(t.Context(), request); err != nil || response.Error == nil {
 		t.Fatalf("missing drainage accepted: %+v %v", response, err)
 	}
@@ -68,7 +67,7 @@ func TestWorkerAgentHoldBeforeTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "hold", AuthorityGeneration: attachment.AuthorityGeneration, Method: int32(agentv1.Operation_METHOD_HOLD), Payload: json.RawMessage(`{"reason":"setup_failed"}`)}
+	request := workerapi.AgentOperationRequest{Session: sessionID, RequestID: "hold", AuthorityGeneration: attachment.AuthorityGeneration, Method: workerapi.AgentMethodHold, Payload: json.RawMessage(`{"reason":"setup_failed"}`)}
 	for range 2 {
 		response, err := client.AgentOperation(t.Context(), request)
 		if err != nil || response.Error != nil || string(response.Value) != "null" {
