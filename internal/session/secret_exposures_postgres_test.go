@@ -5,6 +5,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -41,7 +42,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	reject("unknown command", "23503", `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, f.env, uuid.NewV7(), f.secretID, version)
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$2,org_id,project_id,'other-exposure','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, other)
-	if _, err = f.secrets.Create(t.Context(), other, "OTHER", []byte("other"), "other-exposure"); err != nil {
+	if _, err = f.secrets.Create(t.Context(), audit.System("test-fixture"), other, "OTHER", []byte("other"), "other-exposure"); err != nil {
 		t.Fatal(err)
 	}
 	var otherSecret, otherVersion uuid.UUID
@@ -51,7 +52,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	reject("cross environment preparation", "23503", `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, other, p.ID, otherSecret, otherVersion)
 	reject("cross environment process", "23503", `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,1,$3,$4,0)`, other, f.session, otherSecret, otherVersion)
 	reject("cross environment command", "23503", `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,$3,$4,0)`, other, command, otherSecret, otherVersion)
-	_, err = f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-exposure")
+	_, err = f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "rotate-exposure")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=3 AND bool_and(version_id=$2 AND revocation_generation=0) FROM secret_exposures WHERE environment_id=$1`, f.env, version).Scan(&pinned); err != nil || !pinned {
 		t.Fatalf("pinned versions: %v %v", pinned, err)
 	}
-	if _, err = f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-exposure"); err != nil {
+	if _, err = f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke-exposure"); err != nil {
 		t.Fatal(err)
 	}
 	var older bool

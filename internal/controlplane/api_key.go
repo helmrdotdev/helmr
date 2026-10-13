@@ -125,7 +125,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	issued, err := identity.IssueAPIKey(r.Context(), s.db, principal, scope, identity.APIKeyInput{
+	issued, err := identity.IssueAPIKey(r.Context(), s.tx, principal, scope, identity.APIKeyInput{
 		Name:          input.Name,
 		Permissions:   permissions,
 		ExpiresInDays: input.ExpiresInDays,
@@ -155,7 +155,7 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := identity.RevokeAPIKey(r.Context(), s.db, principal, scope, id); err != nil {
+	if err := identity.RevokeAPIKey(r.Context(), s.tx, principal, scope, id); err != nil {
 		writeError(w, identityError(err))
 		return
 	}

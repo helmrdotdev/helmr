@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -114,7 +115,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := secrets.Create(t.Context(), f.Environment, "START_TOKEN", []byte("first-value"), "start-create")
+	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_TOKEN", []byte("first-value"), "start-create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		}
 	}
 	assertDelivery(first)
-	if _, err = secrets.Rotate(t.Context(), f.Environment, id, []byte("second-value"), "start-rotate"); err != nil {
+	if _, err = secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, id, []byte("second-value"), "start-rotate"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := client.AuthorizeAgentStart(t.Context(), request)
@@ -186,7 +187,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("logical exposure count %d: %v", count, err)
 	}
-	if _, err = secrets.Revoke(t.Context(), f.Environment, id, "start-revoke"); err != nil {
+	if _, err = secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, id, "start-revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = client.AuthorizeAgentStart(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {

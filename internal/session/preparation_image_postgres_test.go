@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -31,7 +32,7 @@ func TestPreparationImagePinCurrentVersionAndReplay(t *testing.T) {
 	if err != nil || got.ImageBuildID != p.ref.ImageBuildID {
 		t.Fatalf("pin: %v %v", got, err)
 	}
-	if _, err = p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
+	if _, err = p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
 	replay, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID)
@@ -82,7 +83,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	waiting := p.f.waiter(t)
 	original := p.f.attach(t, waiting)
 	root := p.capture(t, key)
-	if _, err := p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
+	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
@@ -145,7 +146,7 @@ func TestPreparationSuccessorOnePerChain(t *testing.T) {
 	if receipt := p.f.attach(t, waiting); receipt.ID != original.ID {
 		t.Fatal("pin changed original receipt")
 	}
-	if _, err = p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v3"), "rotate-again"); err != nil {
+	if _, err = p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v3"), "rotate-again"); err != nil {
 		t.Fatal(err)
 	}
 	if err = computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
@@ -194,7 +195,7 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 				t.Fatal(err)
 			}
 			if reason != "current" && reason != "age" {
-				if _, err := p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
+				if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -202,7 +203,7 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 			case "age", "rotation-and-age":
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE images SET published_at=clock_timestamp()-interval '2 days' WHERE environment_id=$1; UPDATE computers SET preparation_max_age_ms=86400000 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, p.f.env)
 			case "revoked":
-				if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
+				if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			case "expired-waiters":
@@ -259,9 +260,9 @@ func TestPreparationImagePinSerializesSecretMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mutation == "rotate" {
-				_, err = store.Rotate(ctx, p.f.env, p.f.secretID, []byte("v2"), "rotate")
+				_, err = store.Rotate(ctx, audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate")
 			} else {
-				_, err = store.Revoke(ctx, p.f.env, p.f.secretID, "revoke")
+				_, err = store.Revoke(ctx, audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -285,7 +286,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := p.capture(t, key)
-	if _, err := p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
+	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
@@ -320,7 +321,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err = p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,i.image_build_id,c.preparation_deadline_at FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, computerID).Scan(&attached, &producer, &retained); err != nil || attached != original.ID || producer != next.ID || !retained.Equal(deadline) {
 		t.Fatalf("lineage/deadline: %v %v %v %v", attached, producer, retained, err)
 	}
-	if _, err = p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err = p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	var revoked bool
@@ -356,7 +357,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, other.ref.ImageBuildID).Scan(&otherComputer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke"); err != nil {
+	if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := p.f.pool.Begin(t.Context())

@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
@@ -103,7 +104,7 @@ func TestSupersededImageKeepsEligibleAttachedWaiter(t *testing.T) {
 func TestSupersededImageRetiresExpiredWaiterButRequiresPhysicalStop(t *testing.T) {
 	f := newPreparationFixture(t)
 	p, image, waiter := publishRetentionImage(t, f)
-	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "obsolete-image"); err != nil {
+	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "obsolete-image"); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, waiter)
@@ -159,7 +160,7 @@ func TestSupersededImageKeepsAttachedSuccessorBehindNewerRefresh(t *testing.T) {
 	f := newPreparationFixture(t)
 	p, oldImage, waiter := publishRetentionImage(t, f)
 	stopRetentionBuild(t, p)
-	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "successor-inputs"); err != nil {
+	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "successor-inputs"); err != nil {
 		t.Fatal(err)
 	}
 	next, err := computer.EnsureImageBuildSuccessor(t.Context(), f.pool, f.env, p.ref.ImageBuildID)

@@ -12,84 +12,37 @@ import (
 )
 
 const issueAPIKey = `-- name: IssueAPIKey :one
-WITH revoked AS (
-    UPDATE api_keys
-       SET revoked_at = now()
-     WHERE api_keys.org_id = $1
-       AND api_keys.project_id = $2
-       AND api_keys.environment_id = $3
-       AND api_keys.name = $4
-       AND api_keys.token_hash <> $5
-       AND api_keys.revoked_at IS NULL
-     RETURNING 1
-),
-input AS (
-    SELECT
-        $6::uuid AS id,
-        $1::uuid AS org_id,
-        $2::uuid AS project_id,
-        $3::uuid AS environment_id,
-        $7::uuid AS created_by_user_id,
-        $8::org_member_role AS role,
-        $9::text[] AS permissions,
-        $4::text AS name,
-        $10::text AS key_prefix,
-        $5::bytea AS token_hash,
-        $11::timestamptz AS expires_at
-)
-INSERT INTO api_keys (id, org_id, project_id, environment_id, created_by_user_id, role, permissions, name, key_prefix, token_hash, expires_at)
-SELECT input.id,
-       input.org_id,
-       input.project_id,
-       input.environment_id,
-       input.created_by_user_id,
-       input.role,
-       input.permissions,
-       input.name,
-       input.key_prefix,
-       input.token_hash,
-       input.expires_at
-  FROM input
- -- Force same-scope revocation before insert so the active-name partial unique index cannot race the replacement key.
- CROSS JOIN (SELECT count(*) FROM revoked) AS revoked_count
-ON CONFLICT (token_hash) DO UPDATE SET
-    role = EXCLUDED.role,
-    permissions = EXCLUDED.permissions,
-    name = EXCLUDED.name,
-    key_prefix = EXCLUDED.key_prefix,
-    project_id = EXCLUDED.project_id,
-    environment_id = EXCLUDED.environment_id,
-    expires_at = EXCLUDED.expires_at,
-    revoked_at = NULL
+INSERT INTO api_keys (id,org_id,project_id,environment_id,created_by_user_id,role,permissions,name,key_prefix,token_hash,expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING id, org_id, project_id, environment_id, created_by_user_id, role, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
+	ID              pgtype.UUID        `json:"id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	Name            string             `json:"name"`
-	TokenHash       []byte             `json:"token_hash"`
-	ID              pgtype.UUID        `json:"id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	Role            OrgMemberRole      `json:"role"`
 	Permissions     []string           `json:"permissions"`
+	Name            string             `json:"name"`
 	KeyPrefix       string             `json:"key_prefix"`
+	TokenHash       []byte             `json:"token_hash"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error) {
 	row := q.db.QueryRow(ctx, issueAPIKey,
+		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.Name,
-		arg.TokenHash,
-		arg.ID,
 		arg.CreatedByUserID,
 		arg.Role,
 		arg.Permissions,
+		arg.Name,
 		arg.KeyPrefix,
+		arg.TokenHash,
 		arg.ExpiresAt,
 	)
 	var i APIKey
@@ -238,6 +191,44 @@ func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeNamedAPIKeys = `-- name: RevokeNamedAPIKeys :many
+UPDATE api_keys SET revoked_at=now()
+ WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND name=$4 AND revoked_at IS NULL
+ RETURNING id
+`
+
+type RevokeNamedAPIKeysParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+}
+
+func (q *Queries) RevokeNamedAPIKeys(ctx context.Context, arg RevokeNamedAPIKeysParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, revokeNamedAPIKeys,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const touchActiveAPIKeyByTokenHash = `-- name: TouchActiveAPIKeyByTokenHash :one

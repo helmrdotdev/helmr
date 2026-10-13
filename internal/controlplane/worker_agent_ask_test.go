@@ -77,11 +77,11 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
+	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(name string, permissions ...auth.Permission) (string, uuid.UUID) {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: name, Permissions: permissions})
+		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: name, Permissions: permissions})
 		if err != nil {
 			t.Fatal(err)
 		}

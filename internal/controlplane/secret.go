@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -61,7 +62,7 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.secrets.Create(
-		r.Context(),
+		r.Context(), audit.FromPrincipal(principal),
 		pgvalue.MustUUIDValue(environmentID),
 		request.Secret,
 		[]byte(request.Value),
@@ -228,7 +229,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
 	rotated, err := s.secrets.Rotate(
-		r.Context(),
+		r.Context(), audit.FromPrincipal(principal),
 		pgvalue.MustUUIDValue(environmentID),
 		secretID,
 		[]byte(request.Value),
@@ -288,7 +289,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
 	revoked, err := s.secrets.Revoke(
-		r.Context(),
+		r.Context(), audit.FromPrincipal(principal),
 		pgvalue.MustUUIDValue(environmentID),
 		secretID,
 		idempotencyKey,

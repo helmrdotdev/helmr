@@ -11,6 +11,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -28,7 +29,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Create(t.Context(), f.Environment, "BUILD_TOKEN", []byte("protected-first"), "create-protected")
+	record, err := store.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("protected-first"), "create-protected")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if err != nil || bytes.Contains(raw, []byte("protected-first")) || bytes.Contains(raw, []byte("PRIVATE KEY")) {
 		t.Fatal("guest delivery exposed private material")
 	}
-	if _, err := store.Rotate(t.Context(), f.Environment, secretID, []byte("protected-second"), "rotate-protected"); err != nil {
+	if _, err := store.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("protected-second"), "rotate-protected"); err != nil {
 		t.Fatal(err)
 	}
 	response, err := client.ResolveSecretProxy(t.Context(), request)

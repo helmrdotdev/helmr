@@ -5,6 +5,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -36,7 +37,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 					t.Fatal(err)
 				}
 			}
-			if _, err := p.f.secrets.Revoke(t.Context(), p.f.env, p.f.secretID, "revoke-image"); err != nil {
+			if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke-image"); err != nil {
 				t.Fatal(err)
 			}
 			reconcile()

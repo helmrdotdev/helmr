@@ -18,14 +18,15 @@ var ownerImports = map[string][]string{
 	"computer":    {"secret", "workergroup"},
 	"session":     {"computer", "slackroute", "secret", "org", "workergroup"},
 	"dispatch":    {"session", "computer", "secret", "org", "workergroup"},
-	"slack":       {"session", "slackroute", "computer"},
-	"slackroute":  {},
-	"deployment":  {"agent", "computer", "slackroute", "org"},
+	"slack":       {"session", "slackroute", "computer", "audit"},
+	"slackroute":  {"audit"},
+	"deployment":  {"agent", "computer", "slackroute", "org", "audit"},
 	"command":     {"computer", "secret", "workergroup"},
-	"identity":    {"org"},
-	"org":         {},
-	"secret":      {},
-	"workergroup": {},
+	"identity":    {"org", "audit"},
+	"org":         {"audit"},
+	"secret":      {"audit"},
+	"workergroup": {"audit"},
+	"audit":       {},
 }
 
 func TestDurableOwnerDependencies(t *testing.T) {

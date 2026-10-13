@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -102,7 +103,7 @@ func TestImageRefreshInactivePolicyAndSecretCannotAdmit(t *testing.T) {
 			case "retired":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env)
 			case "revoked Secret":
-				if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "before-refresh"); err != nil {
+				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "before-refresh"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -190,7 +191,7 @@ func TestImageRefreshRechecksPolicyAfterEnvironmentWait(t *testing.T) {
 				dbtest.MustExec(t, ctx, tx, `UPDATE image_specs SET refresh_every_ms=NULL,next_refresh_at=NULL WHERE environment_id=$1 AND id=$2`, f.env, f.deployment)
 			} else if change == "retirement" {
 				dbtest.MustExec(t, ctx, tx, `UPDATE environments SET retired_at=clock_timestamp() WHERE id=$1`, f.env)
-			} else if _, err := f.secrets.Revoke(ctx, f.env, f.secretID, "while-refresh-waits"); err != nil {
+			} else if _, err := f.secrets.Revoke(ctx, audit.System("test-fixture"), f.env, f.secretID, "while-refresh-waits"); err != nil {
 				t.Fatal(err)
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -230,7 +231,7 @@ func TestImageRefreshYieldsToAttachedRotationSuccessor(t *testing.T) {
 	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.f.secrets.Rotate(t.Context(), p.f.env, p.f.secretID, []byte("v2"), "before-refresh"); err != nil {
+	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "before-refresh"); err != nil {
 		t.Fatal(err)
 	}
 	due := dueImageRefresh(t, p.f)

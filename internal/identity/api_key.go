@@ -7,10 +7,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -96,9 +98,9 @@ func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scop
 }
 
 // IssueAPIKey issues an API key for the environment that acts with the
-// issuer's role, limited to the given permissions. An active key of the
-// environment with the same name is revoked by the same statement.
-func IssueAPIKey(ctx context.Context, q db.Querier, issuer auth.Principal, scope auth.Scope, input APIKeyInput) (IssuedAPIKey, error) {
+// issuer's role, limited to the given permissions. Active keys of the
+// environment with the same name are revoked in the same transaction.
+func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Principal, scope auth.Scope, input APIKeyInput) (IssuedAPIKey, error) {
 	if err := authorizeAPIKeyManagement(issuer); err != nil {
 		return IssuedAPIKey{}, err
 	}
@@ -133,27 +135,45 @@ func IssueAPIKey(ctx context.Context, q db.Querier, issuer auth.Principal, scope
 	if err != nil {
 		return IssuedAPIKey{}, fmt.Errorf("generate api key: %w", err)
 	}
-	record, err := q.IssueAPIKey(ctx, db.IssueAPIKeyParams{
-		ID:              pgvalue.UUID(uuid.NewV7()),
-		OrgID:           pgvalue.UUID(issuer.OrgID),
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		CreatedByUserID: pgvalue.UUID(issuer.UserID),
-		Role:            db.OrgMemberRole(issuer.Role),
-		Permissions:     permissions,
-		Name:            name,
-		KeyPrefix:       generated.KeyPrefix,
-		TokenHash:       generated.TokenHash,
-		ExpiresAt:       expiresAt,
+	var record db.APIKey
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		revoked, err := q.RevokeNamedAPIKeys(ctx, db.RevokeNamedAPIKeysParams{OrgID: pgvalue.UUID(issuer.OrgID), ProjectID: projectID, EnvironmentID: environmentID, Name: name})
+		if err != nil {
+			return fmt.Errorf("replace api keys: %w", err)
+		}
+		for _, id := range revoked {
+			if err := audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.revoked", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(id)}); err != nil {
+				return err
+			}
+		}
+		record, err = q.IssueAPIKey(ctx, db.IssueAPIKeyParams{
+			ID:              pgvalue.UUID(uuid.NewV7()),
+			OrgID:           pgvalue.UUID(issuer.OrgID),
+			ProjectID:       projectID,
+			EnvironmentID:   environmentID,
+			CreatedByUserID: pgvalue.UUID(issuer.UserID),
+			Role:            db.OrgMemberRole(issuer.Role),
+			Permissions:     permissions,
+			Name:            name,
+			KeyPrefix:       generated.KeyPrefix,
+			TokenHash:       generated.TokenHash,
+			ExpiresAt:       expiresAt,
+		})
+		if err != nil {
+			return fmt.Errorf("create api key: %w", err)
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), NewRole: string(record.Role), Permissions: record.Permissions, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)})
 	})
 	if err != nil {
-		return IssuedAPIKey{}, fmt.Errorf("create api key: %w", err)
+		return IssuedAPIKey{}, err
 	}
+
 	return IssuedAPIKey{Record: record, Raw: generated.Raw}, nil
 }
 
 // RevokeAPIKey revokes an API key of the environment.
-func RevokeAPIKey(ctx context.Context, q db.Querier, manager auth.Principal, scope auth.Scope, id uuid.UUID) error {
+func RevokeAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Principal, scope auth.Scope, id uuid.UUID) error {
 	if err := authorizeAPIKeyManagement(manager); err != nil {
 		return err
 	}
@@ -161,19 +181,22 @@ func RevokeAPIKey(ctx context.Context, q db.Querier, manager auth.Principal, sco
 	if err != nil {
 		return err
 	}
-	revoked, err := q.RevokeAPIKey(ctx, db.RevokeAPIKeyParams{
-		OrgID:         pgvalue.UUID(manager.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(id),
+	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		revoked, err := q.RevokeAPIKey(ctx, db.RevokeAPIKeyParams{
+			OrgID:         pgvalue.UUID(manager.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			ID:            pgvalue.UUID(id),
+		})
+		if err != nil {
+			return fmt.Errorf("revoke api key: %w", err)
+		}
+		if revoked == 0 {
+			return ErrAPIKeyNotFound
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(manager), OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.revoked", TargetKind: "api_key", TargetID: id})
 	})
-	if err != nil {
-		return fmt.Errorf("revoke api key: %w", err)
-	}
-	if revoked == 0 {
-		return ErrAPIKeyNotFound
-	}
-	return nil
 }
 
 func environmentIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {

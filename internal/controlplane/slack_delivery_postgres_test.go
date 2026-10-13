@@ -103,8 +103,8 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	viewer := h.session(t, viewerID, org)
 	call(http.MethodGet, base, viewer, "", 200)
 	call(http.MethodPost, action+"/abandon", viewer, string(input), 403)
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
-	key, err := identity.IssueAPIKey(t.Context(), queries, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "delivery read", Permissions: []auth.Permission{auth.PermissionSessionsRead}})
+	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
+	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "delivery read", Permissions: []auth.Permission{auth.PermissionSessionsRead}})
 	if err != nil {
 		t.Fatal(err)
 	}

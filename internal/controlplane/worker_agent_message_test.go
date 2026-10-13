@@ -14,7 +14,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -76,7 +75,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	key, err := identity.IssueAPIKey(t.Context(), db.New(f.Pool), auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK messages", Permissions: []auth.Permission{auth.PermissionSessionsSend}})
+	key, err := identity.IssueAPIKey(t.Context(), f.Pool, auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK messages", Permissions: []auth.Permission{auth.PermissionSessionsSend}})
 	if err != nil {
 		t.Fatal(err)
 	}

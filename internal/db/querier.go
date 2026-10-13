@@ -170,6 +170,7 @@ type Querier interface {
 	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error
 	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
+	RevokeNamedAPIKeys(ctx context.Context, arg RevokeNamedAPIKeysParams) ([]pgtype.UUID, error)
 	RevokeOpenMagicLinksForRecipient(ctx context.Context, arg RevokeOpenMagicLinksForRecipientParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)

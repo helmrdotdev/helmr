@@ -31,6 +31,7 @@ var dynamicStatementSites = map[string]string{
 // tableOwners maps each written table to the package that owns its writes.
 // Owner names are import paths without the module prefix.
 var tableOwners = map[string]string{
+	"audit_events": "internal/audit",
 	// identity
 	"api_keys": "internal/identity", "auth_identities": "internal/identity", "login_sessions": "internal/identity",
 	"device_codes": "internal/identity", "magic_links": "internal/identity", "users": "internal/identity",
