@@ -143,7 +143,7 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 		return db.Invitation{}, "", fmt.Errorf("expire invitations: %w", err)
 	}
 	for _, old := range expired {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("invitation-expiry"), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old.ID), OldRole: string(old.Role)}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("invitation-expiry"), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old.ID), Details: audit.RoleRemovedDetails{OldRole: string(old.Role)}}); err != nil {
 			return db.Invitation{}, "", err
 		}
 	}
@@ -190,7 +190,7 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 	if err != nil {
 		return db.Invitation{}, "", fmt.Errorf("create invitation: %w", err)
 	}
-	if err := audit.Append(ctx, tx, audit.Event{Actor: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), NewRole: string(invitation.Role), ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}); err != nil {
+	if err := audit.Append(ctx, tx, audit.Event{Actor: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{NewRole: string(invitation.Role), ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
 		return db.Invitation{}, "", err
 	}
 	return invitation, rawToken, nil
@@ -243,7 +243,7 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 	if revoked == 0 {
 		return ErrInvitationNotFound
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, OldRole: string(invitation.Role)})
+	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, Details: audit.RoleRemovedDetails{OldRole: string(invitation.Role)}})
 }
 
 // UpdateMemberRole changes an active member's role when it still holds
@@ -301,7 +301,7 @@ func updateMemberRole(ctx context.Context, tx pgx.Tx, manager ManagingMember, ta
 		return UpdatedMember{}, fmt.Errorf("update member role: %w", err)
 	}
 	if currentRole != newRole {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.role_changed", TargetKind: "member", TargetID: targetUserID, OldRole: string(currentRole), NewRole: string(newRole)}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.role_changed", TargetKind: "member", TargetID: targetUserID, Details: audit.RoleChangedDetails{OldRole: string(currentRole), NewRole: string(newRole)}}); err != nil {
 			return UpdatedMember{}, err
 		}
 	}
@@ -341,7 +341,7 @@ func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targe
 	if err != nil {
 		return fmt.Errorf("remove member: %w", err)
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetUserID, OldRole: string(target.Role)})
+	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetUserID, Details: audit.RoleRemovedDetails{OldRole: string(target.Role)}})
 }
 
 // activeMember loads a member whose membership and user are both enabled.
@@ -475,5 +475,5 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, actor audit.Actor, invitat
 		return fmt.Errorf("add member: %w", err)
 	}
 
-	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, NewRole: string(invitation.Role)})
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.RoleGrantedDetails{NewRole: string(invitation.Role)}})
 }

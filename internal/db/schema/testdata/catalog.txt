@@ -36,19 +36,12 @@ column audit_events.actor_credential_id uuid
 column audit_events.actor_kind text not null
 column audit_events.actor_source text not null default ''::text
 column audit_events.actor_user_id uuid
+column audit_events.details jsonb not null default '{}'::jsonb
 column audit_events.environment_id uuid
-column audit_events.expires_at timestamp with time zone
 column audit_events.id uuid not null
-column audit_events.new_retention_mode text not null default ''::text
-column audit_events.new_retention_seconds bigint
-column audit_events.new_role text not null default ''::text
 column audit_events.occurred_at timestamp with time zone not null default clock_timestamp()
-column audit_events.old_retention_mode text not null default ''::text
-column audit_events.old_retention_seconds bigint
-column audit_events.old_role text not null default ''::text
 column audit_events.org_id uuid
 column audit_events.outcome text not null default 'succeeded'::text
-column audit_events.permissions text[]
 column audit_events.project_id uuid
 column audit_events.slack_team_id text not null default ''::text
 column audit_events.slack_user_id text not null default ''::text
@@ -1064,6 +1057,7 @@ constraint audit_events c CHECK (action <> ''::text)
 constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
 constraint audit_events c CHECK (actor_kind = ANY (ARRAY['login'::text, 'api_key'::text, 'verified_login'::text, 'capacity'::text, 'system'::text]))
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
+constraint audit_events c CHECK (jsonb_typeof(details) = 'object'::text)
 constraint audit_events c CHECK (outcome = 'succeeded'::text)
 constraint audit_events c CHECK (project_id IS NULL OR org_id IS NOT NULL)
 constraint audit_events c CHECK (target_id IS NOT NULL OR target_kind = 'slack_user_link'::text AND target_user_id IS NOT NULL AND slack_team_id <> ''::text AND slack_user_id <> ''::text)

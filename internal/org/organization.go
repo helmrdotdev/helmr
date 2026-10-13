@@ -69,7 +69,7 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
 		return db.Organization{}, err
 	}
-	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: input.OwnerUserID, NewRole: "owner"}); err != nil {
+	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: input.OwnerUserID, Details: audit.RoleGrantedDetails{NewRole: "owner"}}); err != nil {
 		return db.Organization{}, err
 	}
 	return organization, nil

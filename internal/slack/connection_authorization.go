@@ -151,7 +151,7 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit
 		if err = slackroute.AttachInstallation(ctx, tx, connection, installation); err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Permissions: grant.scopes})
+		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Details: audit.PermissionsDetails{Permissions: grant.scopes}})
 	})
 	if err != nil {
 		return uuid.Nil(), err

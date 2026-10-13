@@ -163,7 +163,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 		if err != nil {
 			return fmt.Errorf("create api key: %w", err)
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), NewRole: string(record.Role), Permissions: record.Permissions, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)})
+		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), Details: audit.APIKeyIssuedDetails{NewRole: string(record.Role), Permissions: record.Permissions, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)}})
 	})
 	if err != nil {
 		return IssuedAPIKey{}, err

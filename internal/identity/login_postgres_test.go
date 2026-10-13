@@ -274,7 +274,7 @@ func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_kind='verified_login' AND actor_source='github' AND actor_user_id=$1 AND actor_credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND new_role='developer'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_kind='verified_login' AND actor_source='github' AND actor_user_id=$1 AND actor_credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND details->>'new_role'='developer'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("pre-session acceptance actor count=%d err=%v", count, err)
 	}
 	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {

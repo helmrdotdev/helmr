@@ -301,7 +301,7 @@ func TestAPIKeyAuditRecordsReplacementAndRollsBackOnAppendFailure(t *testing.T) 
 		t.Fatalf("audit count=%d facts=%v err=%v", count, facts, err)
 	}
 	var revoked, issued bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.revoked' AND target_id=$1),EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.issued' AND target_id=$2 AND new_role='owner' AND permissions=ARRAY['sessions.read','sessions.create'] AND expires_at IS NULL)`, first.Record.ID, second.Record.ID).Scan(&revoked, &issued); err != nil || !revoked || !issued {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.revoked' AND target_id=$1),EXISTS(SELECT 1 FROM audit_events WHERE action='api_key.issued' AND target_id=$2 AND details->>'new_role'='owner' AND details->'permissions'='["sessions.read","sessions.create"]'::jsonb AND details->'expires_at'='null'::jsonb)`, first.Record.ID, second.Record.ID).Scan(&revoked, &issued); err != nil || !revoked || !issued {
 		t.Fatalf("replacement grants revoked=%v issued=%v err=%v", revoked, issued, err)
 	}
 	f.exec(t, `CREATE FUNCTION reject_key_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='api_key.issued' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`)

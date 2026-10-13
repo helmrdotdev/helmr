@@ -143,7 +143,7 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, NewRole: "admin"}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
