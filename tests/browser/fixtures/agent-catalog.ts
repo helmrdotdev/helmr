@@ -11,7 +11,7 @@ export async function createAgentCatalog(page: Page) {
   }
   const slug = `browser-agent-${crypto.randomUUID()}`;
   const response = await page.request.post(`/api/projects/${projectID}/environments`, {
-    data: { environment: slug, name: slug, color_hex: "#008000", history_retention_mode: "until_environment_deletion" },
+    data: { environment: slug, name: slug, color_hex: "#008000" },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
   const environment = await response.json() as { environment: string };

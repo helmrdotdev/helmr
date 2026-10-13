@@ -183,7 +183,7 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	developer := askKey(t, f, "developer", []string{"asks.respond"})
 	cross := askKey(t, f, "admin", []string{"asks.respond"})
 	otherEnv := uuid.NewV7()
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE api_keys SET environment_id=$2 WHERE id=$1`, cross.ID, otherEnv); err != nil {

@@ -39,8 +39,8 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		VALUES ($1, $2, $3, $4, 'Project')
 	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug)
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
-		VALUES ('until_environment_deletion',$1, $2, $3, $4, 'Environment', '#3366ff',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
+		VALUES ($1, $2, $3, $4, 'Environment', '#3366ff',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
 	dbtest.MustExec(t, ctx, pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, ids.environmentID, ids.deploymentID, dbtest.Digest("deployment-"+ids.deploymentID.String()))
 	return ids

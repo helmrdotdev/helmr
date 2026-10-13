@@ -364,8 +364,6 @@ column environments.admission_tokens numeric not null
 column environments.color_hex text not null
 column environments.created_at timestamp with time zone not null default now()
 column environments.current_deployment_id uuid
-column environments.history_retention_mode text not null
-column environments.history_retention_seconds bigint
 column environments.id uuid not null
 column environments.is_default boolean not null default false
 column environments.max_causal_depth integer not null
@@ -520,6 +518,7 @@ column organizations.slug text not null
 column organizations.updated_at timestamp with time zone not null default now()
 column projects.created_at timestamp with time zone not null default now()
 column projects.default_region_id text not null
+column projects.history_retention_seconds bigint default 2592000
 column projects.id uuid not null
 column projects.is_default boolean not null default false
 column projects.name text not null
@@ -649,9 +648,6 @@ column sessions.deployment_id uuid not null
 column sessions.environment_id uuid not null
 column sessions.history_eligible_at timestamp with time zone
 column sessions.history_expired_at timestamp with time zone
-column sessions.history_expires_at numeric
-column sessions.history_retention_mode text not null
-column sessions.history_retention_seconds bigint
 column sessions.id uuid not null
 column sessions.idle_since timestamp with time zone
 column sessions.key text
@@ -1311,8 +1307,6 @@ constraint environments c CHECK (admission_tokens >= 0::numeric)
 constraint environments c CHECK (btrim(name) <> ''::text)
 constraint environments c CHECK (btrim(slug) <> ''::text)
 constraint environments c CHECK (color_hex ~ '^#[0-9A-Fa-f]{6}$'::text)
-constraint environments c CHECK (history_retention_mode = 'duration'::text AND history_retention_seconds IS NOT NULL AND history_retention_seconds > 0 OR history_retention_mode = 'until_environment_deletion'::text AND history_retention_seconds IS NULL)
-constraint environments c CHECK (history_retention_mode = ANY (ARRAY['duration'::text, 'until_environment_deletion'::text]))
 constraint environments c CHECK (max_causal_depth > 0)
 constraint environments c CHECK (max_cpu_millis > 0)
 constraint environments c CHECK (max_memory_bytes > 0)
@@ -1438,6 +1432,7 @@ constraint organizations p PRIMARY KEY (id)
 constraint organizations u UNIQUE (slug)
 constraint projects c CHECK (btrim(name) <> ''::text)
 constraint projects c CHECK (btrim(slug) <> ''::text)
+constraint projects c CHECK (history_retention_seconds > 0)
 constraint projects f FOREIGN KEY (default_region_id) REFERENCES regions(id) ON DELETE RESTRICT
 constraint projects f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint projects p PRIMARY KEY (id)
@@ -1546,11 +1541,8 @@ constraint sessions c CHECK (creation_caller_kind = ANY (ARRAY['user'::text, 'ap
 constraint sessions c CHECK (creation_idempotency_key IS NULL OR creation_digest IS NOT NULL)
 constraint sessions c CHECK (creation_method = ANY (ARRAY['create'::text, 'spawn'::text]))
 constraint sessions c CHECK (creation_turn_id IS NULL OR creation_digest IS NOT NULL AND computer_id IS NOT NULL)
-constraint sessions c CHECK (history_eligible_at IS NULL AND history_expires_at IS NULL OR history_eligible_at IS NOT NULL AND (history_retention_mode = 'duration'::text AND history_expires_at IS NOT NULL AND history_expires_at = (EXTRACT(epoch FROM history_eligible_at) + history_retention_seconds::numeric) OR history_retention_mode = 'until_environment_deletion'::text AND history_expires_at IS NULL))
 constraint sessions c CHECK (history_eligible_at IS NULL OR (status = ANY (ARRAY['closed'::text, 'cancelled'::text])))
-constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at IS NOT NULL AND history_expires_at IS NOT NULL AND EXTRACT(epoch FROM history_expired_at) >= history_expires_at)
-constraint sessions c CHECK (history_retention_mode = 'duration'::text AND history_retention_seconds IS NOT NULL AND history_retention_seconds > 0 OR history_retention_mode = 'until_environment_deletion'::text AND history_retention_seconds IS NULL)
-constraint sessions c CHECK (history_retention_mode = ANY (ARRAY['duration'::text, 'until_environment_deletion'::text]))
+constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at IS NOT NULL AND history_expired_at >= history_eligible_at)
 constraint sessions c CHECK (next_event_seq > 0)
 constraint sessions c CHECK (next_turn_seq > 0)
 constraint sessions c CHECK (num_nonnulls(creation_caller_kind, creation_caller_id, creation_method, creation_digest) = ANY (ARRAY[0, 4]))

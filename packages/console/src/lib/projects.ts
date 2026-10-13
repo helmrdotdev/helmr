@@ -1,8 +1,8 @@
 import { postJson, request } from "./api";
 
-export type HistoryRetentionPolicy = { history_retention_mode: "duration"; history_retention_seconds: number } | { history_retention_mode: "until_environment_deletion"; history_retention_seconds?: never };
+export type ProjectSettings = { history_retention: string };
 
-export type Environment = HistoryRetentionPolicy & {
+export type Environment = {
   environment: string;
   project: string;
   name: string;
@@ -53,7 +53,7 @@ type CreateEnvironmentInput = {
   color_hex: string;
 };
 
-type UpdateEnvironmentInput = Partial<HistoryRetentionPolicy> & {
+type UpdateEnvironmentInput = {
   name: string;
   color_hex: string;
 };
@@ -132,4 +132,11 @@ export async function updateEnvironment(
     `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}`,
     { method: "PATCH", body: JSON.stringify(input) },
   );
+}
+
+export function getProjectSettings(project: string): Promise<ProjectSettings> {
+  return request<ProjectSettings>(`/api/projects/${encodeURIComponent(project)}/settings`);
+}
+export function updateProjectSettings(project: string, input: ProjectSettings): Promise<ProjectSettings> {
+  return request<ProjectSettings>(`/api/projects/${encodeURIComponent(project)}/settings`, { method: "PATCH", body: JSON.stringify(input) });
 }

@@ -40,8 +40,8 @@ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger
 VALUES($1::uuid,$5::uuid,$4::uuid,$2::uuid,'daily',now()-interval '2 days',now()-interval '1 day',now());
 INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes,image_spec_id,preparation_deadline_at,preparation_failed_at)
 VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,1000,536870912,34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
-INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at)
-VALUES('until_environment_deletion',$1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours');
+INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at)
+VALUES($1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours');
 INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,processing_closed_at,terminal_at)
 VALUES($1::uuid,$8::uuid,$7::uuid,$6::uuid,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$4::uuid,'demo-create',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Demo input"}]',now()-interval '1 hour',now()-interval '1 hour');
 INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,created_at) VALUES

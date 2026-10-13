@@ -4,7 +4,7 @@ test("Console IDs remain usable through API operations and display-name edits", 
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/dev/login");
   const project = `identity-${crypto.randomUUID()}`;
-  const created = await page.request.post("/api/projects", { data: { project, name: "Identity example", history_retention_mode: "until_environment_deletion" } });
+  const created = await page.request.post("/api/projects", { data: { project, name: "Identity example" } });
   expect(created.ok(), await created.text()).toBeTruthy();
   const body = await created.json();
   expect(body.project).toBe(project);

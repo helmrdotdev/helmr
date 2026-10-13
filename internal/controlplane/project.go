@@ -144,10 +144,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	project, environments, err := org.CreateProject(r.Context(), s.tx, principal.OrgID, org.ProjectInput{
-		ExecutionLimits:  s.environmentExecutionLimits,
-		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
-		ProjectDetails:   org.ProjectDetails{Slug: request.Project, Name: request.Name},
-		DefaultRegionID:  request.DefaultRegionID,
+		ExecutionLimits: s.environmentExecutionLimits,
+		ProjectDetails:  org.ProjectDetails{Slug: request.Project, Name: request.Name},
+		DefaultRegionID: request.DefaultRegionID,
 	})
 	if err != nil {
 		writeError(w, orgError(err))
@@ -199,7 +198,6 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	environment, err := org.CreateEnvironment(r.Context(), s.tx, principal.OrgID, projectID, org.EnvironmentDetails{
 		Slug: request.Environment, Name: request.Name, ColorHex: colorHex,
-		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	}, s.environmentExecutionLimits)
 	if err != nil {
 		writeError(w, orgError(err))
@@ -247,9 +245,8 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.UpdateEnvironment(r.Context(), s.tx, audit.FromPrincipal(principal), principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
+	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
 		Name: request.Name, ColorHex: colorHex,
-		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	})
 	if err != nil {
 		writeError(w, orgError(err))
@@ -289,19 +286,54 @@ func projectResponseWithEnvironments(project db.Project, environments []db.Envir
 }
 
 func environmentResponse(environment db.Environment, project string) api.EnvironmentSummary {
-	var seconds *int64
-	if environment.HistoryRetentionSeconds.Valid {
-		value := environment.HistoryRetentionSeconds.Int64
-		seconds = &value
-	}
 	return api.EnvironmentSummary{
-		HistoryRetentionPolicy: api.HistoryRetentionPolicy{HistoryRetentionMode: environment.HistoryRetentionMode, HistoryRetentionSeconds: seconds},
-		Environment:            environment.Slug,
-		Project:                project,
-		Name:                   environment.Name,
-		ColorHex:               environment.ColorHex,
-		IsDefault:              environment.IsDefault,
-		CreatedAt:              pgvalue.Time(environment.CreatedAt),
-		UpdatedAt:              pgvalue.Time(environment.UpdatedAt),
+		Environment: environment.Slug,
+		Project:     project,
+		Name:        environment.Name,
+		ColorHex:    environment.ColorHex,
+		IsDefault:   environment.IsDefault,
+		CreatedAt:   pgvalue.Time(environment.CreatedAt),
+		UpdatedAt:   pgvalue.Time(environment.UpdatedAt),
 	}
+}
+
+func projectSettingsResponse(project db.Project) api.ProjectSettings {
+	var seconds *int64
+	if project.HistoryRetentionSeconds.Valid {
+		seconds = &project.HistoryRetentionSeconds.Int64
+	}
+	return api.ProjectSettings{HistoryRetention: api.FormatHistoryRetention(seconds)}
+}
+
+func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
+	project, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
+	if err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, projectSettingsResponse(project))
+}
+
+func (s *Server) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "project"))
+	if err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	var request api.ProjectSettings
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid project settings JSON: %w", err))
+		return
+	}
+	seconds, err := api.ParseHistoryRetention(request.HistoryRetention)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if err := org.UpdateProjectHistoryRetention(r.Context(), s.tx, audit.FromPrincipal(principal), principal.OrgID, pgvalue.MustUUIDValue(project.ID), seconds); err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ProjectSettings{HistoryRetention: api.FormatHistoryRetention(seconds)})
 }

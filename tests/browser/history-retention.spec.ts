@@ -1,70 +1,50 @@
 import { expect, test, type Page } from "@playwright/test";
+
 const projectID = "console-demo";
-const environmentID = "demo";
 const now = "2026-10-07T00:00:00Z";
-async function scope(page: Page) {
-  let environment = { environment: environmentID, project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now, history_retention_mode: "until_environment_deletion" };
+async function scope(page: Page, options: { policy?: string; manage?: boolean; failRead?: boolean; failWrite?: boolean } = {}) {
+  let policy = options.policy ?? "30d";
+  let environment = { environment: "demo", project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
   const project = () => ({ project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now });
-  const writes: Record<string, unknown>[] = [];
+  const writes: { path: string; body: Record<string, unknown> }[] = [];
   await page.route("**/api/**", async route => {
-    const endpoint = new URL(route.request().url()).pathname;
+    const path = new URL(route.request().url()).pathname;
     if (["POST", "PATCH"].includes(route.request().method())) {
-      const body = route.request().postDataJSON(); writes.push(body);
-      if (endpoint === "/api/projects") await route.fulfill({ json: { ...project(), ...body } });
-      else { environment = { ...environment, ...body }; await route.fulfill({ json: environment }); }
-    } else if (endpoint === "/api/me") await route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", permissions: ["projects.manage"], admin: false, organization_required: false, project_required: false } });
-    else if (endpoint === "/api/projects") await route.fulfill({ json: { projects: [project()] } });
-    else if (endpoint === `/api/projects/${projectID}`) await route.fulfill({ json: project() });
-    else if (endpoint === "/api/regions") await route.fulfill({ json: { regions: [{ id: "local", display_name: "Local" }] } });
-    else if (endpoint.endsWith("/tokens")) await route.fulfill({ json: { tokens: [] } });
-    else await route.fulfill({ status: 404, json: { error: { code: "not_found", message: endpoint } } });
+      const body = route.request().postDataJSON(); writes.push({ path, body });
+      if (path.endsWith("/settings")) {
+        if (options.failWrite) return route.fulfill({ status: 500, json: { error: { code: "internal_error", message: "Could not save policy." } } });
+        policy = body.history_retention;
+        return route.fulfill({ json: { history_retention: policy } });
+      }
+      if (path === "/api/projects") return route.fulfill({ json: { ...project(), ...body } });
+      environment = { ...environment, ...body }; return route.fulfill({ json: environment });
+    }
+    if (path === "/api/me") return route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", permissions: options.manage === false ? [] : ["projects.manage"], admin: false, organization_required: false, project_required: false } });
+    if (path === "/api/projects") return route.fulfill({ json: { projects: [project()] } });
+    if (path === `/api/projects/${projectID}`) return route.fulfill({ json: project() });
+    if (path.endsWith("/settings")) {
+      if (options.failRead) return route.fulfill({ status: 500, json: { error: { code: "internal_error", message: "Read failed." } } });
+      return route.fulfill({ json: { history_retention: policy } });
+    }
+    if (path === "/api/regions") return route.fulfill({ json: { regions: [{ id: "local", display_name: "Local" }] } });
+    return route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } });
   });
-  return { writes, setPolicy: (seconds: number) => { environment = { ...environment, history_retention_mode: "duration", ...{ history_retention_seconds: seconds } }; } };
+  return { writes };
 }
-test("Project creation does not ask for retention", async ({ page }) => {
+
+const mode = (page: Page) => page.getByRole("combobox", { name: "History retention", exact: true });
+const period = (page: Page) => page.getByLabel("Retention period", { exact: true });
+const save = (page: Page) => page.getByRole("button", { name: "Save history retention", exact: true });
+
+test("Project creation discloses the default without asking for a policy", async ({ page }) => {
   const { writes } = await scope(page);
   await page.goto("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("New project");
-  await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
+  await expect(mode(page)).toHaveCount(0);
+  await expect(page.getByText("Session history is retained for 30 days.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).not.toHaveProperty("history_retention_mode");
-  expect(writes[0]).not.toHaveProperty("history_retention_seconds");
-});
-
-test("Environment settings edit retention and creation uses the default", async ({ page }) => {
-  const { writes } = await scope(page);
-  await page.goto("/settings/environments");
-  await expect(page.getByRole("cell", { name: "No expiry", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "History retention", exact: true })).toHaveValue("until_environment_deletion");
-  await expect(page.getByText("Changes apply only to new Sessions.", { exact: false })).toBeVisible();
-  await page.getByRole("combobox", { name: "History retention", exact: true }).selectOption("duration");
-  await page.getByLabel("Retention period", { exact: true }).fill("0");
-  expect(await page.getByLabel("Retention period", { exact: true }).evaluate((input: HTMLInputElement) => input.validity.rangeUnderflow)).toBe(true);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  expect(writes).toHaveLength(0);
-  await page.getByLabel("Retention period", { exact: true }).fill("30");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).toMatchObject({ history_retention_mode: "duration", history_retention_seconds: 2592000 });
-  await expect(page.getByRole("cell", { name: "30 days", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(page.getByLabel("Retention period", { exact: true })).toHaveValue("30");
-  await expect(page.getByRole("combobox", { name: "Unit", exact: true })).toHaveValue("86400");
-  await page.getByRole("combobox", { name: "History retention", exact: true }).selectOption("until_environment_deletion");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect.poll(() => writes.length).toBe(2);
-  expect(writes[1]).toMatchObject({ history_retention_mode: "until_environment_deletion" });
-  expect(writes[1]).not.toHaveProperty("history_retention_seconds");
-  await expect(page.getByRole("cell", { name: "No expiry", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "New environment", exact: true }).click();
-  await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Name", { exact: true }).fill("Preview");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect.poll(() => writes.length).toBe(3);
-  expect(writes[2]).not.toHaveProperty("history_retention_mode");
-  expect(writes[2]).not.toHaveProperty("history_retention_seconds");
+  expect(writes[0]!.body).not.toHaveProperty("history_retention");
 });
 
 for (const kind of ["project", "environment"] as const) {
@@ -74,76 +54,133 @@ for (const kind of ["project", "environment"] as const) {
     await page.getByRole("button", { name: "Project Test / Env Production" }).click();
     await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name: `New ${kind}`, exact: true }).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText("Session history retention", { exact: true })).toHaveCount(0);
+    await expect(mode(page)).toHaveCount(0);
     await dialog.getByLabel("Name", { exact: true }).fill("Preview");
     await dialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
-    expect(writes[0]).not.toHaveProperty("history_retention_mode");
-    expect(writes[0]).not.toHaveProperty("history_retention_seconds");
+    expect(writes[0]!.body).not.toHaveProperty("history_retention");
   });
 }
 
-test("an ordinary edit preserves a policy changed while its modal was open", async ({ page }) => {
-  const { writes, setPolicy } = await scope(page);
+test("Environment metadata editing has no retention policy", async ({ page }) => {
+  const { writes } = await scope(page);
   await page.goto("/settings/environments");
+  await expect(page.getByRole("columnheader", { name: "History retention" })).toHaveCount(0);
   await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "History retention", exact: true })).toHaveValue("until_environment_deletion");
-  setPolicy(900);
+  await expect(mode(page)).toHaveCount(0);
   await page.getByLabel("Name", { exact: true }).fill("Renamed");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).not.toHaveProperty("history_retention_mode");
-  expect(writes[0]).not.toHaveProperty("history_retention_seconds");
-  await expect(page.getByRole("cell", { name: "15 minutes" })).toBeVisible();
+  expect(writes[0]!.body).toEqual({ name: "Renamed", color_hex: "#008000" });
 });
 
+test("Project settings shorten with confirmation, persist, and disable expiry", async ({ page }) => {
+  const { writes } = await scope(page);
+  await page.goto("/settings/projects");
+  await expect(period(page)).toHaveValue("30");
+  await expect(page.getByText("Applies to all remaining Session history in every Environment of this Project.")).toBeVisible();
+  await expect(save(page)).toBeDisabled();
+  await period(page).fill("7");
+  page.once("dialog", dialog => dialog.dismiss());
+  await save(page).click();
+  expect(writes).toHaveLength(0);
+  page.once("dialog", async dialog => { expect(dialog.message()).toContain("permanently deleted"); await dialog.accept(); });
+  await save(page).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ path: `/api/projects/${projectID}/settings`, body: { history_retention: "7d" } });
+  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await page.reload();
+  await expect(period(page)).toHaveValue("7");
+  await mode(page).selectOption("never");
+  await save(page).click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]!.body).toEqual({ history_retention: "never" });
+  await page.reload();
+  await expect(mode(page)).toHaveValue("never");
+  await expect(period(page)).toHaveCount(0);
+});
 
-test("real Project and Environment creation persist no expiry and settings update it", async ({ page }) => {
+test("custom seconds round-trip exactly and hours normalize", async ({ page }) => {
+  const { writes } = await scope(page, { policy: "3601s" });
+  await page.goto("/settings/projects");
+  await expect(period(page)).toHaveValue("3601");
+  await expect(page.getByRole("combobox", { name: "Unit", exact: true })).toHaveValue("1");
+  await expect(save(page)).toBeDisabled();
+  await period(page).fill("48");
+  await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption("3600");
+  await save(page).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]!.body).toEqual({ history_retention: "2d" });
+});
+
+test("invalid durations are rejected before a request", async ({ page }) => {
+  const { writes } = await scope(page);
+  await page.goto("/settings/projects");
+  await period(page).fill("0");
+  await save(page).click();
+  expect(writes).toHaveLength(0);
+  await period(page).fill("1.5");
+  await save(page).click();
+  expect(writes).toHaveLength(0);
+});
+
+test("viewers can read but cannot edit Project retention", async ({ page }) => {
+  await scope(page, { manage: false });
+  await page.goto("/settings/projects");
+  await expect(period(page)).toHaveValue("30");
+  await expect(mode(page)).toBeDisabled();
+  await expect(period(page)).toBeDisabled();
+  await expect(save(page)).toHaveCount(0);
+});
+
+test("failed settings read does not present an editable default", async ({ page }) => {
+  await scope(page, { failRead: true });
+  await page.goto("/settings/projects");
+  await expect(page.getByRole("alert")).toContainText("Could not load history retention.");
+  await expect(mode(page)).toHaveCount(0);
+});
+
+test("failed save preserves the draft and shows the error", async ({ page }) => {
+  await scope(page, { failWrite: true });
+  await page.goto("/settings/projects");
+  await mode(page).selectOption("never");
+  await save(page).click();
+  await expect(page.getByRole("alert")).toHaveText("Could not save policy.");
+  await expect(mode(page)).toHaveValue("never");
+  await expect(save(page)).toBeEnabled();
+});
+
+test("real Project defaults to 30d and settings persist across all Environments", async ({ page }) => {
   await page.goto("/dev/login");
-  const projectID = `retention-${crypto.randomUUID()}`;
+  const project = `retention-${crypto.randomUUID()}`;
   await page.goto("/projects/new");
-  await page.getByLabel("Name", { exact: true }).fill(projectID);
-  await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Name", { exact: true }).fill(project);
   const creation = page.waitForResponse(response => response.url().endsWith("/api/projects") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Create", exact: true }).click();
   const response = await creation;
   expect(response.ok(), await response.text()).toBeTruthy();
-  const project = await response.json();
-  expect(project.environments).toHaveLength(2);
-  for (const environment of project.environments) {
-    expect(environment.history_retention_mode).toBe("until_environment_deletion");
-    expect(environment).not.toHaveProperty("history_retention_seconds");
-  }
-  await page.goto(`/settings/environments?project=${projectID}&environment=production`);
-  await page.getByRole("button", { name: "New environment", exact: true }).click();
-  await page.getByRole("dialog").getByLabel("Name", { exact: true }).fill("Preview");
-  await page.getByRole("dialog").getByRole("button", { name: "Create", exact: true }).click();
-  const row = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Copy preview", exact: true }) });
-  await expect(row.getByRole("cell", { name: "No expiry", exact: true })).toBeVisible();
-  await row.getByRole("button", { name: "Edit", exact: true }).click();
-  await page.getByRole("combobox", { name: "History retention", exact: true }).selectOption("duration");
-  await page.getByLabel("Retention period", { exact: true }).fill("7");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(row.getByRole("cell", { name: "7 days", exact: true })).toBeVisible();
-  const saved = await page.request.get(`/api/projects/${projectID}`);
+  const created = await response.json();
+  expect(created.environments).toHaveLength(2);
+  for (const environment of created.environments) expect(environment).not.toHaveProperty("history_retention_mode");
+  await page.goto(`/settings/projects?project=${project}&environment=production`);
+  await expect(period(page)).toHaveValue("30");
+  await period(page).fill("7");
+  page.once("dialog", dialog => dialog.accept());
+  await save(page).click();
+  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await page.goto(`/settings/projects?project=${project}&environment=staging`);
+  await expect(period(page)).toHaveValue("7");
+  const saved = await page.request.get(`/api/projects/${project}/settings`);
   expect(saved.ok()).toBeTruthy();
-  const environments = (await saved.json()).environments;
-  expect(environments.find((env: { environment: string }) => env.environment === "preview")).toMatchObject({ history_retention_mode: "duration", history_retention_seconds: 604800 });
-  expect(environments.find((env: { environment: string }) => env.environment === "production").history_retention_mode).toBe("until_environment_deletion");
-});
-
-
-test("duration settings preserve custom seconds and allow hours", async ({ page }) => {
-  const { writes, setPolicy } = await scope(page);
-  setPolicy(3601);
-  await page.goto("/settings/environments");
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(page.getByLabel("Retention period", { exact: true })).toHaveValue("3601");
-  await expect(page.getByRole("combobox", { name: "Unit", exact: true })).toHaveValue("1");
-  await page.getByLabel("Retention period", { exact: true }).fill("2");
-  await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption("3600");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).toMatchObject({ history_retention_mode: "duration", history_retention_seconds: 7200 });
-  await expect(page.getByRole("cell", { name: "2 hours", exact: true })).toBeVisible();
+  expect(await saved.json()).toEqual({ history_retention: "7d" });
+  await mode(page).selectOption("never");
+  await save(page).click();
+  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await page.reload();
+  await expect(mode(page)).toHaveValue("never");
+  const env = await page.request.post(`/api/projects/${project}/environments`, { data: { environment: "preview", name: "Preview", color_hex: "#123456" } });
+  expect(env.ok()).toBeTruthy();
+  expect(await env.json()).not.toHaveProperty("history_retention");
+  const after = await page.request.get(`/api/projects/${project}/settings`);
+  expect(await after.json()).toEqual({ history_retention: "never" });
 });

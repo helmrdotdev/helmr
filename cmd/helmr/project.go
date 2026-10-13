@@ -26,6 +26,7 @@ func projectCommand() *cobra.Command {
 		projectGetCommand(),
 		projectCreateCommand(),
 		projectUpdateCommand(),
+		projectSettingsCommand(),
 	)
 	return project
 }
@@ -117,13 +118,9 @@ func projectCreateCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "create PROJECT",
-		Short: "Create a project.",
+		Short: "Create a project with 30-day Session history retention.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd)
-			if err != nil {
-				return err
-			}
 			slug := strings.TrimSpace(args[0])
 			if name == "" {
 				name = slug
@@ -132,7 +129,7 @@ func projectCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{HistoryRetentionPolicy: retention, Project: slug, Name: name})
+			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{Project: slug, Name: name})
 			if err != nil {
 				return err
 			}
@@ -145,7 +142,6 @@ func projectCreateCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Display name. Defaults to the identifier.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -267,10 +263,6 @@ func envCreateCommand() *cobra.Command {
 		Short: "Create an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd)
-			if err != nil {
-				return err
-			}
 			projectRef, err := requireProjectFlag(cmd)
 			if err != nil {
 				return err
@@ -294,7 +286,7 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.Project, api.CreateEnvironmentRequest{HistoryRetentionPolicy: retention, Environment: slug, Name: name, ColorHex: colorHex})
+			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.Project, api.CreateEnvironmentRequest{Environment: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
@@ -309,7 +301,6 @@ func envCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Display name. Defaults to the identifier.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB. Defaults from the Environment ID.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -323,16 +314,12 @@ func envUpdateCommand() *cobra.Command {
 		Short: "Update an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd)
-			if err != nil {
-				return err
-			}
 			projectRef, err := requireProjectFlag(cmd)
 			if err != nil {
 				return err
 			}
-			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("color") && !cmd.Flags().Changed("history-retention-mode") && !cmd.Flags().Changed("history-retention-seconds") {
-				return errors.New("environment update requires a name, color, or history retention change")
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("color") {
+				return errors.New("environment update requires a name or color change")
 			}
 			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
@@ -357,7 +344,7 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.Project, environment.Environment, api.UpdateEnvironmentRequest{HistoryRetentionPolicy: retention, Name: name, ColorHex: colorHex})
+			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.Project, environment.Environment, api.UpdateEnvironmentRequest{Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
@@ -372,7 +359,6 @@ func envUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Environment name.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -428,10 +414,6 @@ func writeEnvironment(w io.Writer, environment api.EnvironmentSummary) error {
 	fmt.Fprintf(w, "Project: %s\n", environment.Project)
 	fmt.Fprintf(w, "Name: %s\n", environment.Name)
 	fmt.Fprintf(w, "Color: %s\n", environment.ColorHex)
-	fmt.Fprintf(w, "History retention: %s\n", environment.HistoryRetentionMode)
-	if environment.HistoryRetentionSeconds != nil {
-		fmt.Fprintf(w, "History retention seconds: %d\n", *environment.HistoryRetentionSeconds)
-	}
 	return nil
 }
 
@@ -475,24 +457,57 @@ func customEnvironmentColorHex(slug string) string {
 	return palette[int(hash%uint32(len(palette)))]
 }
 
-func addHistoryRetentionFlags(cmd *cobra.Command) {
-	cmd.Flags().String("history-retention-mode", "", "Session history policy: duration or until_environment_deletion. New Environments default to until_environment_deletion.")
-	cmd.Flags().Int64("history-retention-seconds", 0, "Positive seconds after Session termination and obligation release; required only for duration mode.")
+func projectSettingsCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "settings", Short: "Manage project settings.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	cmd.AddCommand(projectSettingsGetCommand(), projectSettingsUpdateCommand())
+	return cmd
 }
-func historyRetentionFlags(cmd *cobra.Command) (api.HistoryRetentionPolicy, error) {
-	mode, _ := cmd.Flags().GetString("history-retention-mode")
-	seconds, _ := cmd.Flags().GetInt64("history-retention-seconds")
-	hasSeconds := cmd.Flags().Changed("history-retention-seconds")
-	p := api.HistoryRetentionPolicy{HistoryRetentionMode: mode}
-	if !cmd.Flags().Changed("history-retention-mode") && !hasSeconds {
-		return p, nil
-	}
-	if mode == "until_environment_deletion" && !hasSeconds {
-		return p, nil
-	}
-	if mode == "duration" && hasSeconds && seconds > 0 {
-		p.HistoryRetentionSeconds = &seconds
-		return p, nil
-	}
-	return p, errors.New("choose --history-retention-mode duration with positive --history-retention-seconds, or --history-retention-mode until_environment_deletion without seconds")
+func projectSettingsGetCommand() *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "get PROJECT", Short: "Show project settings.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := sessionControlPlaneClient(cmd)
+		if err != nil {
+			return err
+		}
+		settings, err := c.GetProjectSettings(cmd.Context(), strings.TrimSpace(args[0]))
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), settings)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "History retention: %s\n", settings.HistoryRetention)
+		return err
+	}}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+func projectSettingsUpdateCommand() *cobra.Command {
+	var retention string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "update PROJECT --history-retention DURATION|never", Short: "Update project settings for all Environments.", Long: "Update history retention for all remaining Session history in every Environment. Shortening the period can permanently delete older content on the next cleanup pass. Extending it cannot restore expired content.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !cmd.Flags().Changed("history-retention") {
+			return errors.New("project settings update requires --history-retention")
+		}
+		seconds, err := api.ParseHistoryRetention(retention)
+		if err != nil {
+			return err
+		}
+		c, err := sessionControlPlaneClient(cmd)
+		if err != nil {
+			return err
+		}
+		settings, err := c.UpdateProjectSettings(cmd.Context(), strings.TrimSpace(args[0]), api.ProjectSettings{HistoryRetention: api.FormatHistoryRetention(seconds)})
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), settings)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "History retention: %s\n", settings.HistoryRetention)
+		return err
+	}}
+	cmd.Flags().StringVar(&retention, "history-retention", "", "Positive duration (s, m, h, d; e.g. 30d), or never. Applies to existing history.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
 }

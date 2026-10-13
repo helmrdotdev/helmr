@@ -26,7 +26,7 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		{"api_key.issued", APIKeyIssuedDetails{NewRole: "owner", Permissions: []string{"sessions.read"}}, `{"new_role":"owner","permissions":["sessions.read"],"expires_at":null}`},
 		{"api_key.issued", APIKeyIssuedDetails{NewRole: "viewer", Permissions: []string{"sessions.read"}, ExpiresAt: &expires}, `{"new_role":"viewer","permissions":["sessions.read"],"expires_at":"2026-10-14T12:00:00Z"}`},
 		{"slack_connection.authorized", PermissionsDetails{Permissions: []string{"chat:write"}}, `{"permissions":["chat:write"]}`},
-		{"environment.retention_changed", RetentionChangedDetails{OldRetentionMode: "duration", OldRetentionSeconds: &seconds, NewRetentionMode: "until_environment_deletion"}, `{"old_retention_mode":"duration","old_retention_seconds":86400,"new_retention_mode":"until_environment_deletion","new_retention_seconds":null}`},
+		{"project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &seconds}, `{"old_retention_seconds":86400,"new_retention_seconds":null}`},
 		{"secret.rotated", nil, `{}`},
 	}
 	for _, tc := range cases {
@@ -70,9 +70,8 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 		{"missing key permissions", "api_key.issued", APIKeyIssuedDetails{NewRole: "owner"}},
 		{"empty permission", "slack_connection.authorized", PermissionsDetails{Permissions: []string{""}}},
 		{"missing permissions object", "slack_connection.authorized", nil},
-		{"missing retention duration", "environment.retention_changed", RetentionChangedDetails{OldRetentionMode: "duration", NewRetentionMode: "until_environment_deletion"}},
-		{"negative retention duration", "environment.retention_changed", RetentionChangedDetails{OldRetentionMode: "duration", OldRetentionSeconds: &negative, NewRetentionMode: "until_environment_deletion"}},
-		{"unexpected retention duration", "environment.retention_changed", RetentionChangedDetails{OldRetentionMode: "until_environment_deletion", NewRetentionMode: "until_environment_deletion", NewRetentionSeconds: &negative}},
+		{"negative retention duration", "project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &negative}},
+		{"unexpected retention duration", "project.retention_changed", RetentionChangedDetails{NewRetentionSeconds: &negative}},
 		{"unapproved facts", "secret.rotated", RoleGrantedDetails{NewRole: "owner"}},
 		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{NewRole: "owner", Permissions: []string{"sessions.read"}, ExpiresAt: &unencodable}},
 	}

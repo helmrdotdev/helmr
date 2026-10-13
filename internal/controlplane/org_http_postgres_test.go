@@ -38,7 +38,7 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 	for index := range 3 {
 		projectID := uuid.NewV7()
 		projectRows = append(projectRows, []any{projectID, orgID, "project-http", fmt.Sprintf("project-%d", index), fmt.Sprintf("Project %d", index), index == 0})
-		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true, "until_environment_deletion",
+		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true,
 			int64(1024), int32(32), int64(1024), int64(1024000), int64(1 << 40), int64(1 << 40), int64(600000), int64(1000000), int64(1000000), pgtype.Numeric{Int: big.NewInt(1000000), Valid: true}, time.Now()})
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"projects"},
@@ -46,7 +46,7 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode",
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default",
 			"max_outstanding_admissions", "max_causal_depth", "max_resident_computers", "max_cpu_millis", "max_memory_bytes", "max_reserved_storage_bytes",
 			"preparation_timeout_ms", "admission_rate_per_second", "admission_burst", "admission_tokens", "admission_refilled_at"}, pgx.CopyFromRows(environmentRows)); err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 func TestCreateProjectHTTPPostgresReportsMissingRegion(t *testing.T) {
 	fixture := newHTTPPostgresFixture(t)
 	_, ownerToken := fixture.organizationOwner(t, "missing-region")
-	recorder := fixture.request(t, http.MethodPost, "/api/projects", ownerToken, `{"project":"project","name":"Project","history_retention_mode":"until_environment_deletion"}`)
+	recorder := fixture.request(t, http.MethodPost, "/api/projects", ownerToken, `{"project":"project","name":"Project"}`)
 	var body api.HTTPErrorResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response = %d %s: %v", recorder.Code, recorder.Body.String(), err)
@@ -123,51 +123,65 @@ func (s *projectHTTPCountingStore) GetProjectBySlug(ctx context.Context, arg db.
 
 func TestHistoryRetentionHTTPPolicy(t *testing.T) {
 	f := newHTTPPostgresFixture(t)
-	_, token := f.organizationOwner(t, "history-http")
+	orgID, token := f.organizationOwner(t, "history-http")
 	if _, err := f.queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "history-http", DisplayName: "History"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range []string{`{"project":"history","name":"History","history_retention_seconds":1}`, `{"project":"history","name":"History","history_retention_mode":"duration"}`, `{"project":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":0}`, `{"project":"history","name":"History","history_retention_mode":"until_environment_deletion","history_retention_seconds":1}`} {
-		r := f.request(t, http.MethodPost, "/api/projects", token, body)
-		if r.Code != http.StatusBadRequest {
-			t.Fatalf("invalid policy accepted: %d %s", r.Code, r.Body.String())
-		}
-	}
-	r := f.request(t, http.MethodPost, "/api/projects", token, `{"project":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":3600}`)
-	var project api.ProjectSummary
-	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &project) != nil || len(project.Environments) != 2 {
+	r := f.request(t, http.MethodPost, "/api/projects", token, `{"project":"history","name":"History"}`)
+	if r.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", r.Code, r.Body.String())
 	}
-	for _, env := range project.Environments {
-		if env.HistoryRetentionMode != "duration" || env.HistoryRetentionSeconds == nil || *env.HistoryRetentionSeconds != 3600 {
-			t.Fatalf("policy absent: %+v", env)
+	path := "/api/projects/history/settings"
+	r = f.request(t, http.MethodGet, path, token, "")
+	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), `"history_retention":"30d"`) {
+		t.Fatalf("default: %d %s", r.Code, r.Body.String())
+	}
+	for _, role := range []db.OrgMemberRole{db.OrgMemberRoleAdmin, db.OrgMemberRoleDeveloper, db.OrgMemberRoleViewer} {
+		user := f.user(t, string(role))
+		f.member(t, orgID, user, role)
+		login := f.session(t, user, orgID)
+		read := f.request(t, http.MethodGet, path, login, "")
+		if read.Code != http.StatusOK {
+			t.Fatalf("%s read: %d", role, read.Code)
+		}
+		write := f.request(t, http.MethodPatch, path, login, `{"history_retention":"30d"}`)
+		want := http.StatusForbidden
+		if role == db.OrgMemberRoleAdmin {
+			want = http.StatusOK
+		}
+		if write.Code != want {
+			t.Fatalf("%s write: %d %s", role, write.Code, write.Body.String())
 		}
 	}
-	env := project.Environments[0]
-	path := "/api/projects/" + project.Project + "/environments/" + env.Environment
-	r = f.request(t, http.MethodPatch, path, token, fmt.Sprintf(`{"name":"Renamed","color_hex":%q}`, env.ColorHex))
-	var updated api.EnvironmentSummary
-	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &updated) != nil || updated.HistoryRetentionSeconds == nil || *updated.HistoryRetentionSeconds != 3600 {
-		t.Fatalf("rename changed policy: %d %s", r.Code, r.Body.String())
-	}
-	r = f.request(t, http.MethodPatch, path, token, fmt.Sprintf(`{"name":"Renamed","color_hex":%q,"history_retention_mode":"until_environment_deletion"}`, env.ColorHex))
-	updated = api.EnvironmentSummary{}
-	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &updated) != nil || updated.HistoryRetentionMode != "until_environment_deletion" || updated.HistoryRetentionSeconds != nil {
-		t.Fatalf("policy update: %d %s", r.Code, r.Body.String())
-	}
-	r = f.request(t, http.MethodPost, "/api/projects/"+project.Project+"/environments", token, `{"environment":"preview","name":"Preview","color_hex":"#123456"}`)
-	var created api.EnvironmentSummary
-	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &created) != nil || created.HistoryRetentionMode != "until_environment_deletion" || created.HistoryRetentionSeconds != nil {
-		t.Fatalf("new environment default policy: %d %s", r.Code, r.Body.String())
-	}
-	r = f.request(t, http.MethodPost, "/api/projects", token, `{"project":"default-history","name":"Default history"}`)
-	project = api.ProjectSummary{}
-	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &project) != nil || len(project.Environments) != 2 {
-		t.Fatalf("default project: %d %s", r.Code, r.Body.String())
-	}
-	for _, environment := range project.Environments {
-		if environment.HistoryRetentionMode != "until_environment_deletion" || environment.HistoryRetentionSeconds != nil {
-			t.Fatalf("initial environment default policy: %+v", environment)
+	_, other := f.organizationOwner(t, "other-history")
+	for _, method := range []string{http.MethodGet, http.MethodPatch} {
+		response := f.request(t, method, path, other, `{"history_retention":"never"}`)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("cross-org %s: %d", method, response.Code)
 		}
+	}
+	for _, body := range []string{`{}`, `null`, `{"history_retention":null}`, `{"history_retention":""}`, `{"history_retention":30}`, `{"history_retention":"0d"}`, `{"history_retention":"1.5d"}`, `{"history_retention":"1ms"}`, `{"history_retention":"30d","unknown":1}`} {
+		r = f.request(t, http.MethodPatch, path, token, body)
+		if r.Code != http.StatusBadRequest {
+			t.Fatalf("invalid %s: %d %s", body, r.Code, r.Body.String())
+		}
+	}
+	for _, value := range []string{"48h", "never", "1s"} {
+		r = f.request(t, http.MethodPatch, path, token, fmt.Sprintf(`{"history_retention":%q}`, value))
+		want := value
+		if value == "48h" {
+			want = "2d"
+		}
+		if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), fmt.Sprintf(`"history_retention":%q`, want)) {
+			t.Fatalf("update: %d %s", r.Code, r.Body.String())
+		}
+		r = f.request(t, http.MethodGet, path, token, "")
+		if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), fmt.Sprintf(`"history_retention":%q`, want)) {
+			t.Fatalf("persisted: %d %s", r.Code, r.Body.String())
+		}
+	}
+	r = f.request(t, http.MethodPatch, "/api/projects/history/environments/production", token, `{"name":"Production","color_hex":"#315FCE","history_retention":"never"}`)
+	if r.Code != http.StatusBadRequest {
+		t.Fatalf("environment override accepted: %d", r.Code)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const historyReleased = `s.status IN ('closed','cancelled')
@@ -30,19 +31,25 @@ func RetainHistory(ctx context.Context, tx pgx.Tx, environment, session uuid.UUI
 	if _, err := lockSession(ctx, tx, environment, session); err != nil {
 		return false, err
 	}
+	// A shared Project lock serializes cleanup with policy updates. Updates never
+	// lock Sessions, so the lock order cannot form a cycle with cleanup.
+	var seconds pgtype.Int8
+	if err := tx.QueryRow(ctx, `SELECT p.history_retention_seconds FROM projects p JOIN environments e ON e.project_id=p.id WHERE e.id=$1 FOR SHARE OF p`, environment).Scan(&seconds); err != nil {
+		return false, err
+	}
 	// Projection must advance its participant cursor and freeze post intents in one
 	// transaction. These two read predicates therefore observe either an unread
 	// source or its outstanding delivery, never a gap between those obligations.
 	// Owned sources also update the front Session's activity surface, so their
 	// final physical-stop event must be projected before that surface expires.
 	// The clock is established once. Subsequent reads and policy edits cannot
-	// postpone or shorten the snapshot selected at Session admission.
+	// reset the eligibility clock. The current Project policy governs expiry.
 	if _, err := tx.Exec(ctx, `WITH eligible AS (SELECT clock_timestamp() AS at FROM sessions s WHERE environment_id=$1 AND id=$2 AND history_eligible_at IS NULL AND `+historyReleased+`)
-   UPDATE sessions s SET history_eligible_at=e.at,history_expires_at=CASE WHEN history_retention_mode='duration' THEN EXTRACT(epoch FROM e.at)+history_retention_seconds END FROM eligible e WHERE s.environment_id=$1 AND s.id=$2`, environment, session); err != nil {
+   UPDATE sessions s SET history_eligible_at=e.at FROM eligible e WHERE s.environment_id=$1 AND s.id=$2`, environment, session); err != nil {
 		return false, err
 	}
 	var expired bool
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(history_expired_at IS NULL AND history_expires_at<=EXTRACT(epoch FROM clock_timestamp()) AND `+historyReleased+`,false) FROM sessions s WHERE environment_id=$1 AND id=$2`, environment, session).Scan(&expired); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(history_expired_at IS NULL AND EXTRACT(epoch FROM history_eligible_at)+$3::numeric<=EXTRACT(epoch FROM clock_timestamp()) AND `+historyReleased+`,false) FROM sessions s WHERE environment_id=$1 AND id=$2`, environment, session, seconds).Scan(&expired); err != nil {
 		return false, err
 	}
 	if !expired {

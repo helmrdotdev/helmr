@@ -1,4 +1,3 @@
-import { HistoryRetentionFields, historyRetentionDraft, historyRetentionLabel, historyRetentionPolicy, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
@@ -73,8 +72,6 @@ function EditEnvironmentModal(props: {
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [retention, setRetention] = createSignal<HistoryRetentionDraft>(historyRetentionDraft(props.env));
-  const [retentionEdited, setRetentionEdited] = createSignal(false);
   const [name, setName] = createSignal(props.env.name);
   const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex));
   const [submitting, setSubmitting] = createSignal(false);
@@ -90,7 +87,7 @@ function EditEnvironmentModal(props: {
     setSubmitting(true);
     setFormError(null);
     try {
-      await updateEnvironment(props.env.project, props.env.environment, { name: nextName, color_hex: colorHex(), ...(retentionEdited() ? historyRetentionPolicy(retention()) : {}) });
+      await updateEnvironment(props.env.project, props.env.environment, { name: nextName, color_hex: colorHex() });
       await props.onSaved();
       props.onClose();
     } catch (error) {
@@ -103,7 +100,6 @@ function EditEnvironmentModal(props: {
   return (
     <Modal title={`Edit ${props.env.name}`} onClose={props.onClose} closeDisabled={submitting()}>
       <form onSubmit={submit}>
-        <HistoryRetentionFields value={retention()} onChange={value => { setRetentionEdited(true); setRetention(value); }} />
         <label class={ui.field}>
           <span>Name</span>
           <input
@@ -224,7 +220,7 @@ export function Environments() {
       />
 
       <Show when={project()} fallback={<StatePanel empty="No project selected." />}>
-        <DataTable columns={["Name", "Environment ID", "Status", "History retention", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+        <DataTable columns={["Name", "Environment ID", "Status", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
           <For each={environments()}>
             {(env) => (
               <tr>
@@ -236,7 +232,6 @@ export function Environments() {
                 </td>
                 <td><IDText value={env.environment} mode="full" /></td>
                 <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.environment} /></td>
-                <td>{historyRetentionLabel(env)}</td>
                 <td class={ui.actionsCell}>
                   <div class="flex justify-end gap-1.5">
                     <Show when={scope.selectedEnvironmentID() !== env.environment}>

@@ -460,6 +460,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{project}", s.getProject)
+		r.Get("/projects/{project}/settings", s.getProjectSettings)
 		r.Get("/projects/{project}/environments/{environment}", s.getEnvironment)
 		r.With(limitRequestBody(bundle.MaxBytes)).
 			Post("/projects/{project}/environments/{environment}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
@@ -527,6 +528,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		})
 		r.Post("/projects", s.createProject)
 		r.Patch("/projects/{project}", s.updateProject)
+		r.Patch("/projects/{project}/settings", s.updateProjectSettings)
 		r.Post("/projects/{project}/environments", s.createEnvironment)
 		r.Patch("/projects/{project}/environments/{environment}", s.updateEnvironment)
 	})

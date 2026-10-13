@@ -467,21 +467,21 @@ func TestStartRejectsNonMember(t *testing.T) {
 	}
 }
 
-func TestSessionHistoryPolicyPinnedAtAdmission(t *testing.T) {
+func TestSessionAdmissionUnaffectedByProjectHistoryPolicy(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET history_retention_mode='duration',history_retention_seconds=3600 WHERE id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=3600 WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
 	first, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("history-first"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET history_retention_mode='until_environment_deletion',history_retention_seconds=NULL WHERE id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
 	second, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("history-second"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT a.history_retention_mode='duration' AND a.history_retention_seconds=3600 AND a.history_eligible_at IS NULL AND a.history_expires_at IS NULL AND b.history_retention_mode='until_environment_deletion' AND b.history_retention_seconds IS NULL FROM sessions a,sessions b WHERE a.environment_id=$1 AND a.id=$2 AND b.environment_id=$1 AND b.id=$3`, f.env, first.SessionID, second.SessionID).Scan(&valid); err != nil || !valid {
-		t.Fatalf("admission policy snapshot: %v %v", valid, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT a.history_eligible_at IS NULL AND b.history_eligible_at IS NULL FROM sessions a,sessions b WHERE a.environment_id=$1 AND a.id=$2 AND b.environment_id=$1 AND b.id=$3`, f.env, first.SessionID, second.SessionID).Scan(&valid); err != nil || !valid {
+		t.Fatalf("admission history clock: %v %v", valid, err)
 	}
 	replay, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("history-first"))
 	if err != nil || !reflect.DeepEqual(replay, first) {

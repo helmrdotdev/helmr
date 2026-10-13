@@ -47,7 +47,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	}
 	parent := f
 	parent.Session = uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0);
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($1,$2,$3,$4,$5,$2,0);
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$5,1,'ready');
  UPDATE sessions SET parent_session_id=$2,requester_session_id=$2,root_session_id=$2,causal_depth=1 WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, parent.Session, f.Agent, f.Deployment, f.Computer, f.Session)
 	sendOp := op

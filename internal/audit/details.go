@@ -40,9 +40,7 @@ type PermissionsDetails struct {
 }
 
 type RetentionChangedDetails struct {
-	OldRetentionMode    string `json:"old_retention_mode"`
 	OldRetentionSeconds *int64 `json:"old_retention_seconds"`
-	NewRetentionMode    string `json:"new_retention_mode"`
 	NewRetentionSeconds *int64 `json:"new_retention_seconds"`
 }
 
@@ -79,9 +77,9 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "slack_connection.authorized":
 		d, ok := details.(PermissionsDetails)
 		valid = ok && validPermissions(d.Permissions)
-	case "environment.retention_changed":
+	case "project.retention_changed":
 		d, ok := details.(RetentionChangedDetails)
-		valid = ok && validRetention(d.OldRetentionMode, d.OldRetentionSeconds) && validRetention(d.NewRetentionMode, d.NewRetentionSeconds)
+		valid = ok && validRetention(d.OldRetentionSeconds) && validRetention(d.NewRetentionSeconds)
 	default:
 		// Actions without additional facts persist an object, never JSON null.
 		if details == nil {
@@ -98,16 +96,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	return data, nil
 }
 
-func validRetention(mode string, seconds *int64) bool {
-	switch mode {
-	case "duration":
-		return seconds != nil && *seconds > 0
-	case "until_environment_deletion":
-		return seconds == nil
-	default:
-		return false
-	}
-}
+func validRetention(seconds *int64) bool { return seconds == nil || *seconds > 0 }
 
 func validPermissions(permissions []string) bool {
 	if len(permissions) == 0 {

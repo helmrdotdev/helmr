@@ -145,6 +145,7 @@ export function ProjectNew() {
       <Show when={error()}>
         <p class={ui.fieldError} role="alert">{error()}</p>
       </Show>
+      <p class={ui.muted}>Session history is retained for 30 days. You can change this later in Project settings.</p>
       <div class={firstProject() ? undefined : ui.actionRow}>
         <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim() || !selectedRegionID().trim()}>
           {submitting() ? "Creating..." : "Create"}

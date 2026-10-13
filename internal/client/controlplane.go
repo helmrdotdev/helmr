@@ -683,3 +683,18 @@ func (c *Client) secretItemPath(id string, opts ...SecretOptions) (string, error
 	}
 	return "/v1/secrets/" + url.PathEscape(id), nil
 }
+
+func (c *Client) GetProjectSettings(ctx context.Context, project string) (api.ProjectSettings, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/settings", nil)
+	if err != nil {
+		return api.ProjectSettings{}, err
+	}
+	var response api.ProjectSettings
+	err = c.doJSON(req, &response)
+	return response, err
+}
+func (c *Client) UpdateProjectSettings(ctx context.Context, project string, request api.ProjectSettings) (api.ProjectSettings, error) {
+	var response api.ProjectSettings
+	err := c.patchJSON(ctx, "/api/projects/"+url.PathEscape(project)+"/settings", request, &response)
+	return response, err
+}

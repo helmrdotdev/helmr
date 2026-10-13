@@ -44,6 +44,7 @@ func CapacityAuthority() Actor   { return Actor{Kind: "capacity"} }
 type Event struct {
 	Actor         Actor
 	OrgID         uuid.UUID
+	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	Action        string
 	TargetKind    string
@@ -80,11 +81,24 @@ func Append(ctx context.Context, tx pgx.Tx, e Event) error {
 	if !valid {
 		return errors.New("invalid audit actor")
 	}
-	var project uuid.UUID
+	project := e.ProjectID
 	if e.EnvironmentID != uuid.Nil() {
 		var org uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT p.org_id,e.project_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, e.EnvironmentID).Scan(&org, &project); err != nil {
 			return fmt.Errorf("resolve audit scope: %w", err)
+		}
+		if e.OrgID != uuid.Nil() && e.OrgID != org {
+			return errors.New("audit scope mismatch")
+		}
+		if e.ProjectID != uuid.Nil() && e.ProjectID != project {
+			return errors.New("audit scope mismatch")
+		}
+		e.OrgID = org
+	}
+	if e.EnvironmentID == uuid.Nil() && project != uuid.Nil() {
+		var org uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT org_id FROM projects WHERE id=$1`, project).Scan(&org); err != nil {
+			return fmt.Errorf("resolve audit project: %w", err)
 		}
 		if e.OrgID != uuid.Nil() && e.OrgID != org {
 			return errors.New("audit scope mismatch")
