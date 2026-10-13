@@ -94,6 +94,9 @@ func ListEnvironments(ctx context.Context, q db.Querier, project db.Project) ([]
 // organization row lock serializes the choice of the organization's default
 // project before the insert.
 func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, input ProjectInput) (db.Project, []db.Environment, error) {
+	if input.HistoryRetention.Mode == "" && input.HistoryRetention.Seconds == nil {
+		input.HistoryRetention.Mode = "until_environment_deletion"
+	}
 	if err := input.HistoryRetention.Validate(); err != nil {
 		return db.Project{}, nil, err
 	}
@@ -203,6 +206,9 @@ func UpdateProject(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID
 
 // CreateEnvironment adds an environment to an active project.
 func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
+	if details.HistoryRetention.Mode == "" && details.HistoryRetention.Seconds == nil {
+		details.HistoryRetention.Mode = "until_environment_deletion"
+	}
 	if err := details.HistoryRetention.Validate(); err != nil {
 		return db.Environment{}, err
 	}

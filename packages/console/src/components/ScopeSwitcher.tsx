@@ -1,4 +1,3 @@
-import { HistoryRetentionFields, historyRetentionPolicy, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
@@ -39,7 +38,6 @@ export function ScopeSwitcher() {
   const [projectQuery, setProjectQuery] = createSignal("");
   const [envQuery, setEnvQuery] = createSignal("");
   const [creating, setCreating] = createSignal<CreateMode>(null);
-  const [retention, setRetention] = createSignal<HistoryRetentionDraft>({ mode: "", seconds: "" });
   const [formName, setFormName] = createSignal("");
   const [formSlug, setFormSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
@@ -139,7 +137,6 @@ export function ScopeSwitcher() {
 
   function resetForm() {
     setFormName("");
-    setRetention({ mode: "", seconds: "" });
     setFormSlug("");
     setSlugTouched(false);
     setSelectedRegionID("");
@@ -227,7 +224,7 @@ export function ScopeSwitcher() {
     setSubmitting(true);
     try {
       const project = await createProject({
-          ...historyRetentionPolicy(retention()), name, project: slug, default_region_id: regionID });
+          name, project: slug, default_region_id: regionID });
       const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -259,7 +256,7 @@ export function ScopeSwitcher() {
     setFormError(null);
     setSubmitting(true);
     try {
-      const env = await createEnvironment(projectID, { name, environment: slug, color_hex: formColorHex(), ...historyRetentionPolicy(retention()) });
+      const env = await createEnvironment(projectID, { name, environment: slug, color_hex: formColorHex() });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.environment);
       navigate(scopeSwitchPath(location.pathname));
@@ -475,7 +472,6 @@ export function ScopeSwitcher() {
       <Show when={creating() === "project"}>
         <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
           <form onSubmit={submitCreateProject}>
-            <HistoryRetentionFields value={retention()} onChange={setRetention} />
             <label class={ui.field}>
               <span>Name</span>
               <input
@@ -543,7 +539,6 @@ export function ScopeSwitcher() {
           closeDisabled={submitting()}
         >
           <form onSubmit={submitCreateEnvironment}>
-            <HistoryRetentionFields value={retention()} onChange={setRetention} />
             <label class={ui.field}>
               <span>Name</span>
               <input

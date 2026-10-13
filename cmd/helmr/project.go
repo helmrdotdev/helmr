@@ -120,7 +120,7 @@ func projectCreateCommand() *cobra.Command {
 		Short: "Create a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd, true)
+			retention, err := historyRetentionFlags(cmd)
 			if err != nil {
 				return err
 			}
@@ -267,7 +267,7 @@ func envCreateCommand() *cobra.Command {
 		Short: "Create an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd, true)
+			retention, err := historyRetentionFlags(cmd)
 			if err != nil {
 				return err
 			}
@@ -323,7 +323,7 @@ func envUpdateCommand() *cobra.Command {
 		Short: "Update an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			retention, err := historyRetentionFlags(cmd, false)
+			retention, err := historyRetentionFlags(cmd)
 			if err != nil {
 				return err
 			}
@@ -476,15 +476,15 @@ func customEnvironmentColorHex(slug string) string {
 }
 
 func addHistoryRetentionFlags(cmd *cobra.Command) {
-	cmd.Flags().String("history-retention-mode", "", "Session history policy: duration or until_environment_deletion. Required when creating.")
+	cmd.Flags().String("history-retention-mode", "", "Session history policy: duration or until_environment_deletion. New Environments default to until_environment_deletion.")
 	cmd.Flags().Int64("history-retention-seconds", 0, "Positive seconds after Session termination and obligation release; required only for duration mode.")
 }
-func historyRetentionFlags(cmd *cobra.Command, required bool) (api.HistoryRetentionPolicy, error) {
+func historyRetentionFlags(cmd *cobra.Command) (api.HistoryRetentionPolicy, error) {
 	mode, _ := cmd.Flags().GetString("history-retention-mode")
 	seconds, _ := cmd.Flags().GetInt64("history-retention-seconds")
 	hasSeconds := cmd.Flags().Changed("history-retention-seconds")
 	p := api.HistoryRetentionPolicy{HistoryRetentionMode: mode}
-	if !required && !cmd.Flags().Changed("history-retention-mode") && !hasSeconds {
+	if !cmd.Flags().Changed("history-retention-mode") && !hasSeconds {
 		return p, nil
 	}
 	if mode == "until_environment_deletion" && !hasSeconds {

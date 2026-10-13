@@ -36,11 +36,11 @@ func TestProjectCreateCommandUsesExplicitIdentifier(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"project", "create", "production-app", "--name", "Production App!", "--history-retention-mode", "until_environment_deletion"})
+	cmd.SetArgs([]string{"project", "create", "production-app", "--name", "Production App!"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Name != "Production App!" || request.Project != "production-app" || request.HistoryRetentionMode != "until_environment_deletion" || request.HistoryRetentionSeconds != nil {
+	if request.Name != "Production App!" || request.Project != "production-app" || request.HistoryRetentionMode != "" || request.HistoryRetentionSeconds != nil {
 		t.Fatalf("request = %+v", request)
 	}
 	if !strings.Contains(out.String(), projectID+"\tProduction App!") {
@@ -250,14 +250,14 @@ func TestEnvCreateCommandUsesExplicitIdentifier(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"env", "create", "qa-environment", "--name", "QA Environment", "--project", "prod", "--history-retention-mode", "duration", "--history-retention-seconds", "86400"})
+	cmd.SetArgs([]string{"env", "create", "qa-environment", "--name", "QA Environment", "--project", "prod"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(methods, ","); got != "GET /api/projects/prod,POST /api/projects/"+projectID+"/environments" {
 		t.Fatalf("methods = %s", got)
 	}
-	if request.Name != "QA Environment" || request.Environment != "qa-environment" || request.ColorHex != "#F59E0B" {
+	if request.Name != "QA Environment" || request.Environment != "qa-environment" || request.ColorHex != "#F59E0B" || request.HistoryRetentionMode != "" || request.HistoryRetentionSeconds != nil {
 		t.Fatalf("request = %+v", request)
 	}
 }
@@ -452,14 +452,34 @@ func TestDefaultEnvironmentColorHexUsesSemanticAndCustomPalette(t *testing.T) {
 	}
 }
 
-func TestHistoryRetentionFlagsRequireExplicitPolicy(t *testing.T) {
-	for _, args := range [][]string{{}, {"--history-retention-mode", "duration"}, {"--history-retention-mode", "duration", "--history-retention-seconds", "0"}, {"--history-retention-mode", "until_environment_deletion", "--history-retention-seconds", "1"}} {
+func TestHistoryRetentionFlagsRejectInvalidPolicy(t *testing.T) {
+	for _, args := range [][]string{{"--history-retention-seconds", "1"}, {"--history-retention-mode", "duration"}, {"--history-retention-mode", "duration", "--history-retention-seconds", "0"}, {"--history-retention-mode", "until_environment_deletion", "--history-retention-seconds", "1"}} {
 		cmd := projectCreateCommand()
 		if err := cmd.ParseFlags(args); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := historyRetentionFlags(cmd, true); err == nil {
+		if _, err := historyRetentionFlags(cmd); err == nil {
 			t.Fatalf("invalid history flags accepted: %v", args)
+		}
+	}
+}
+
+func TestHistoryRetentionFlagsAcceptExplicitPolicies(t *testing.T) {
+	for _, mode := range []string{"duration", "until_environment_deletion"} {
+		cmd := projectCreateCommand()
+		args := []string{"--history-retention-mode", mode}
+		if mode == "duration" {
+			args = append(args, "--history-retention-seconds", "86400")
+		}
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		policy, err := historyRetentionFlags(cmd)
+		if err != nil || policy.HistoryRetentionMode != mode {
+			t.Fatalf("explicit history flags: %+v %v", policy, err)
+		}
+		if mode == "duration" && (policy.HistoryRetentionSeconds == nil || *policy.HistoryRetentionSeconds != 86400) {
+			t.Fatalf("duration missing: %+v", policy)
 		}
 	}
 }

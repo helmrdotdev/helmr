@@ -20,7 +20,7 @@ type ProjectSummary struct {
 }
 
 type HistoryRetentionPolicy struct {
-	HistoryRetentionMode    string `json:"history_retention_mode"`
+	HistoryRetentionMode    string `json:"history_retention_mode,omitempty"`
 	HistoryRetentionSeconds *int64 `json:"history_retention_seconds,omitempty"`
 }
 

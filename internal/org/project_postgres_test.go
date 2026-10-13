@@ -519,11 +519,11 @@ func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	}
 }
 
-func TestHistoryRetentionPolicyRequiredAndAtomic(t *testing.T) {
+func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
 	zero, positive := int64(0), int64(3600)
 	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()}
-	for _, policy := range []HistoryRetentionPolicy{{}, {Mode: "duration"}, {Mode: "duration", Seconds: &zero}, {Mode: "until_environment_deletion", Seconds: &positive}, {Mode: "unknown"}} {
+	for _, policy := range []HistoryRetentionPolicy{{Seconds: &positive}, {Mode: "duration"}, {Mode: "duration", Seconds: &zero}, {Mode: "until_environment_deletion", Seconds: &positive}, {Mode: "unknown"}} {
 		input.HistoryRetention = policy
 		if _, _, err := CreateProject(t.Context(), f.pool, f.orgID, input); err == nil {
 			t.Fatalf("invalid policy accepted: %+v", policy)
@@ -570,7 +570,19 @@ func TestHistoryRetentionPolicyRequiredAndAtomic(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT history_retention_mode FROM environments WHERE id=$1`, env.ID).Scan(&retained); err != nil || retained != "until_environment_deletion" {
 		t.Fatalf("retention rollback: %s %v", retained, err)
 	}
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "missing", ColorHex: "#123456"}, testExecutionLimits()); err == nil {
-		t.Fatal("new Environment accepted no policy")
+	created, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "default-history", ColorHex: "#123456"}, testExecutionLimits())
+	if err != nil || created.HistoryRetentionMode != "until_environment_deletion" || created.HistoryRetentionSeconds.Valid {
+		t.Fatalf("new Environment default policy: %+v %v", created, err)
+	}
+	input.Slug = "default-history"
+	input.HistoryRetention = HistoryRetentionPolicy{}
+	_, envs, err = CreateProject(t.Context(), f.pool, f.orgID, input)
+	if err != nil || len(envs) != 2 {
+		t.Fatalf("default Project creation: %+v %v", envs, err)
+	}
+	for _, env := range envs {
+		if env.HistoryRetentionMode != "until_environment_deletion" || env.HistoryRetentionSeconds.Valid {
+			t.Fatalf("initial Environment default policy: %+v", env)
+		}
 	}
 }

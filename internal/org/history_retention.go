@@ -2,7 +2,7 @@ package org
 
 import "github.com/jackc/pgx/v5/pgtype"
 
-// HistoryRetentionPolicy is explicitly selected for each new Environment.
+// HistoryRetentionPolicy defaults to no expiry for each new Environment.
 // Sessions snapshot it at admission; later edits never shorten their policy.
 type HistoryRetentionPolicy struct {
 	Mode    string

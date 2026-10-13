@@ -101,7 +101,7 @@ test("ordinary protected destinations return after required project creation", a
   await signIn(page, "github");
   await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
   await page.getByLabel("Name", { exact: true }).fill("Example project");
-  await page.getByLabel("History retention policy").selectOption("until_environment_deletion");
+  await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page).toHaveURL("/sessions?status=open#history");
   expect(state.projectCreates).toBe(1);
@@ -183,7 +183,7 @@ test("direct project creation survives login and finishes at home", async ({ pag
   await signIn(page, "github");
   await expect(page).toHaveURL("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("Another project");
-  await page.getByLabel("History retention policy").selectOption("until_environment_deletion");
+  await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page).toHaveURL("/");
   expect(state.projectCreates).toBe(1);

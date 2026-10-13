@@ -127,7 +127,7 @@ func TestHistoryRetentionHTTPPolicy(t *testing.T) {
 	if _, err := f.queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "history-http", DisplayName: "History"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range []string{`{"project":"history","name":"History"}`, `{"project":"history","name":"History","history_retention_mode":"duration"}`, `{"project":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":0}`, `{"project":"history","name":"History","history_retention_mode":"until_environment_deletion","history_retention_seconds":1}`} {
+	for _, body := range []string{`{"project":"history","name":"History","history_retention_seconds":1}`, `{"project":"history","name":"History","history_retention_mode":"duration"}`, `{"project":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":0}`, `{"project":"history","name":"History","history_retention_mode":"until_environment_deletion","history_retention_seconds":1}`} {
 		r := f.request(t, http.MethodPost, "/api/projects", token, body)
 		if r.Code != http.StatusBadRequest {
 			t.Fatalf("invalid policy accepted: %d %s", r.Code, r.Body.String())
@@ -156,7 +156,18 @@ func TestHistoryRetentionHTTPPolicy(t *testing.T) {
 		t.Fatalf("policy update: %d %s", r.Code, r.Body.String())
 	}
 	r = f.request(t, http.MethodPost, "/api/projects/"+project.Project+"/environments", token, `{"environment":"preview","name":"Preview","color_hex":"#123456"}`)
-	if r.Code != http.StatusBadRequest {
-		t.Fatalf("new environment omitted policy: %d %s", r.Code, r.Body.String())
+	var created api.EnvironmentSummary
+	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &created) != nil || created.HistoryRetentionMode != "until_environment_deletion" || created.HistoryRetentionSeconds != nil {
+		t.Fatalf("new environment default policy: %d %s", r.Code, r.Body.String())
+	}
+	r = f.request(t, http.MethodPost, "/api/projects", token, `{"project":"default-history","name":"Default history"}`)
+	project = api.ProjectSummary{}
+	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &project) != nil || len(project.Environments) != 2 {
+		t.Fatalf("default project: %d %s", r.Code, r.Body.String())
+	}
+	for _, environment := range project.Environments {
+		if environment.HistoryRetentionMode != "until_environment_deletion" || environment.HistoryRetentionSeconds != nil {
+			t.Fatalf("initial environment default policy: %+v", environment)
+		}
 	}
 }

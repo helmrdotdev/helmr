@@ -37,7 +37,7 @@ type ListRegionsResponse = {
   regions: Region[];
 };
 
-type CreateProjectInput = HistoryRetentionPolicy & {
+type CreateProjectInput = {
   project: string;
   name: string;
   default_region_id?: string;
@@ -47,7 +47,7 @@ type UpdateProjectInput = {
   name: string;
 };
 
-type CreateEnvironmentInput = HistoryRetentionPolicy & {
+type CreateEnvironmentInput = {
   environment: string;
   name: string;
   color_hex: string;

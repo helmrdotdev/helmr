@@ -37,8 +37,8 @@ selects the Project and Environment on each command with `--project` and
 `--env`. See [Authentication](/docs/reference/api/authentication).
 
 ```sh
-helmr project create agents --name "Agents" --history-retention-mode until_environment_deletion
-helmr env create development --project agents --history-retention-mode until_environment_deletion
+helmr project create agents --name "Agents"
+helmr env create development --project agents
 ```
 
 ## Deployments
@@ -92,6 +92,16 @@ exists:
   Deployment's Template definitions.
 
 The Deployment itself is never modified.
+
+## Session history retention
+
+New Environments keep Session history without a time limit, until the Environment
+is deleted. Project creation applies this default to both initial Environments.
+Use each Environment’s settings to choose a retention period or keep no expiry.
+Changes apply only to new Sessions; existing Sessions keep their original policy.
+A retention period starts after the Session ends and its pending work finishes.
+Expiry removes stored inputs, results, messages and answers; execution identities
+and statuses remain. Computer disk retention is separate.
 
 ## Related
 
