@@ -331,8 +331,15 @@ func liveSessionPID(fd int) error {
 		return errors.New("session process identity is missing")
 	}
 	descriptors := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	if _, err := unix.Poll(descriptors, 0); err != nil {
-		return err
+	for {
+		_, err := unix.Poll(descriptors, 0)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
 	}
 	if descriptors[0].Revents != 0 {
 		return errors.New("session process has exited")
