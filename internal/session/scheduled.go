@@ -61,7 +61,7 @@ func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, 
 	if err != nil {
 		return Admission{}, fmt.Errorf("trigger input: %w", err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computerID, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,(SELECT next_event_seq FROM sessions WHERE environment_id=$1 AND id=$3),'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computerID, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
 		return Admission{}, err
 	}
 	if err = event(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, "turn.queued"); err != nil {

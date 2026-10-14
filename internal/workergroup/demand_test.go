@@ -11,8 +11,8 @@ import (
 
 func queuedTurn(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
- VALUES($1,$2,$3,$4,1,'user',$5,'slack_route',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
+ VALUES($1,$2,$3,$4,1,1,'user',$5,'slack_route',$3,decode(repeat('00',32),'hex'),'null')`, f.Environment, uuid.NewV7(), f.Session, f.Computer, f.User)
 }
 
 func TestQueuedDemandRespectsRegionHoldsAndProcessState(t *testing.T) {

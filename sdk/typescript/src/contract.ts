@@ -66,6 +66,10 @@ export interface Session {
   readonly status: SessionStatus
   readonly createdAt: string
   readonly holds: readonly SessionHold[]
+  /** Sequence of the newest Turn; 0 before the first. Turn sequences have no gaps. */
+  readonly lastTurnSequence: number
+  /** Sequence of the newest Session event; 0 before the first. */
+  readonly lastEventSequence: number
 }
 export type TurnStatus = "queued" | "running" | "finalizing" | "completed" | "failed" | "interrupted" | "cancelled"
 type TurnIdentity = Readonly<{

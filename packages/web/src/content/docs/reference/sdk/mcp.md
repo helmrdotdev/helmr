@@ -268,7 +268,8 @@ Result: `{ "id", "sessionId", "status": "accepted", "holdId" }`.
 Result: one Session with `id`, `agent`, `template`, `deployment_id`, `computer_id`,
 `root_session_id`, `parent_session_id`, `requester_session_id`, `initial_turn`
 (`{ id, status }` or `null`), `key?`, `slack_channel_id?`, `status`,
-`close_after_idle_ms`, `idle_since`, `holds` and `created_at`. Inspection does
+`close_after_idle_ms`, `idle_since`, `holds`, `created_at`, `last_turn_sequence`
+and `last_event_sequence`. Inspection does
 not grant access to the Session's history.
 
 ### `list_sessions`

@@ -115,3 +115,41 @@ func TestSessionAgentNameHistoryWithoutCurrentDeployment(t *testing.T) {
 	}
 
 }
+
+func TestSessionTimeline(t *testing.T) {
+	p := preparationResidentImage(t)
+	f := p.f.fixture
+	first := f.enqueue(t, "first")
+	second := f.enqueue(t, "second")
+	events, err := session.ListEvents(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := map[uuid.UUID]int64{}
+	for _, e := range events.Records {
+		if e.Kind == "turn.queued" && e.TurnID != nil {
+			queued[*e.TurnID] = e.Sequence
+		}
+	}
+	view, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
+	if err != nil || view.LastTurnSequence != second.Sequence || view.LastEventSequence != events.Records[len(events.Records)-1].Sequence {
+		t.Fatalf("session sequences: %+v %v", view, err)
+	}
+	page, err := session.ListTimeline(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: first.Sequence - 1, Limit: 1})
+	if err != nil || len(page.Turns) != 1 || page.NextSequence != first.Sequence {
+		t.Fatalf("first page: %+v %v", page, err)
+	}
+	if got := page.Turns[0]; got.ID != first.TurnID || got.Sequence != first.Sequence || got.Status != "queued" || got.CreatedAt.IsZero() || got.FirstEventSequence != queued[first.TurnID] {
+		t.Fatalf("first turn: %+v, queued at %d", got, queued[first.TurnID])
+	}
+	page, err = session.ListTimeline(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: page.NextSequence, Limit: session.TimelineLimit})
+	if err != nil || len(page.Turns) != 1 || page.NextSequence != 0 || page.Turns[0].FirstEventSequence != queued[second.TurnID] {
+		t.Fatalf("next page: %+v %v", page, err)
+	}
+	if _, err := session.ListTimeline(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: session.TimelineLimit + 1}); !errors.Is(err, session.ErrInvalidInput) {
+		t.Fatalf("limit: %v", err)
+	}
+	if _, err := session.ListTimeline(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: uuid.NewV7(), Limit: 1}); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("foreign Session: %v", err)
+	}
+}

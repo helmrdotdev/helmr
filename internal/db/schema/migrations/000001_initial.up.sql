@@ -1440,6 +1440,7 @@ CREATE TABLE turns (
     session_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
+    first_event_seq bigint NOT NULL CHECK (first_event_seq > 0),
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'finalizing', 'completed', 'failed', 'interrupted', 'cancelled')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user', 'api_key', 'session', 'schedule')),
     caller_id uuid NOT NULL,

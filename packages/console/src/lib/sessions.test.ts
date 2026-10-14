@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 
 import {
   messageDeliveryNotice, questionCLICommands, getSession, getSessionEvents, listSessions, cancelSession,
-  interruptSession, sessionConsolePath, askConsolePath,
+  interruptSession, sessionConsolePath, askConsolePath, listSessionTimeline,
 } from "./sessions";
 
 const originalFetch = globalThis.fetch;
@@ -52,6 +52,25 @@ test("loads the next Session event page with a bounded cursor", async () => {
   expect(requestedURL).toBe(
     "/api/projects/project-1/environments/env-1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/events?after=42&limit=100",
   );
+});
+
+test("loads a Session timeline page after a Turn cursor", async () => {
+  let requestedURL: string | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedURL = String(input);
+    return Response.json({ turns: [{ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40", sequence: 501, status: "failed", created_at: "2026-07-25T00:00:00Z", error_code: "tool_error", first_event_sequence: 9001 }] });
+  }) as typeof fetch;
+
+  const page = await listSessionTimeline({
+    sessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+    projectID: "project-1",
+    environmentID: "env-1",
+  }, { cursor: "500", limit: 1000 });
+
+  expect(requestedURL).toBe(
+    "/api/projects/project-1/environments/env-1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/timeline?cursor=500&limit=1000",
+  );
+  expect(page.turns[0]?.first_event_sequence).toBe(9001);
 });
 
 test("escapes a Session console route without scope params", () => {

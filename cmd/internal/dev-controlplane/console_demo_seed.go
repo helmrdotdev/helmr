@@ -66,10 +66,10 @@ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_s
 ($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed',2,2,4,now()-interval '1 day');
 INSERT INTO session_holds(environment_id,id,session_id,scope,reason,created_at)
 VALUES($1::uuid,$17::uuid,$12::uuid,'local','Waiting for approval before changing the demo billing plan',now()-interval '80 minutes');
-INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,error_code,error_message,processing_closed_at,terminal_at) VALUES
-($1::uuid,$8::uuid,$7::uuid,$6::uuid,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$4::uuid,'demo-create',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Demo input"}]',NULL,NULL,now()-interval '1 hour',now()-interval '1 hour'),
-($1::uuid,$15::uuid,$13::uuid,$6::uuid,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$11::uuid,'demo-report',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Summarize this week''s demo tickets"}]','tool_error',convert_to('The demo ticket export timed out.','UTF8'),now()-interval '30 minutes',now()-interval '30 minutes'),
-($1::uuid,$16::uuid,$14::uuid,$6::uuid,1,'cancelled','user','00000000-0000-7000-8000-000000000101','create',$10::uuid,'demo-triage',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Triage the demo inbox"}]',NULL,NULL,now()-interval '23 hours',now()-interval '23 hours');
+INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,error_code,error_message,processing_closed_at,terminal_at) VALUES
+($1::uuid,$8::uuid,$7::uuid,$6::uuid,1,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$4::uuid,'demo-create',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Demo input"}]',NULL,NULL,now()-interval '1 hour',now()-interval '1 hour'),
+($1::uuid,$15::uuid,$13::uuid,$6::uuid,1,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$11::uuid,'demo-report',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Summarize this week''s demo tickets"}]','tool_error',convert_to('The demo ticket export timed out.','UTF8'),now()-interval '30 minutes',now()-interval '30 minutes'),
+($1::uuid,$16::uuid,$14::uuid,$6::uuid,1,1,'cancelled','user','00000000-0000-7000-8000-000000000101','create',$10::uuid,'demo-triage',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Triage the demo inbox"}]',NULL,NULL,now()-interval '23 hours',now()-interval '23 hours');
 INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,created_at) VALUES
 ($1::uuid,$7::uuid,1,$8::uuid,'turn.queued','{}',now()-interval '2 hours'),
 ($1::uuid,$7::uuid,2,$8::uuid,'turn.failed','{"code":"preparation_deadline"}',now()-interval '1 hour'),

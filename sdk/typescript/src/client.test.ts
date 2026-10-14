@@ -413,6 +413,7 @@ describe("HelmrClient Sessions", () => {
     holds: [],
     status: "open",
     created_at: "2026-07-24T11:50:00Z",
+    last_turn_sequence: 0, last_event_sequence: 0,
   }
   test("rejects a missing Computer field; empty Sessions require explicit null", async () => {
     const client = new HelmrClient({

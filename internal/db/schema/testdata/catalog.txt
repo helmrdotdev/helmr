@@ -917,6 +917,7 @@ column turns.drain_evidence text
 column turns.environment_id uuid not null
 column turns.error_code text
 column turns.error_message bytea
+column turns.first_event_seq bigint not null
 column turns.has_recorded_result boolean generated stored (result_recorded_at IS NOT NULL)
 column turns.id uuid not null
 column turns.idempotency_key text
@@ -1804,6 +1805,7 @@ constraint turns c CHECK ((status = ANY (ARRAY['completed'::text, 'failed'::text
 constraint turns c CHECK (admission_method = ANY (ARRAY['create'::text, 'spawn'::text, 'enqueue'::text, 'slack_route'::text, 'schedule'::text]))
 constraint turns c CHECK (caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'schedule'::text]))
 constraint turns c CHECK (error_code IS NULL OR status = 'failed'::text AND error_code <> ''::text)
+constraint turns c CHECK (first_event_seq > 0)
 constraint turns c CHECK (next_message_seq > 0)
 constraint turns c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint turns c CHECK (octet_length(request_digest) = 32)

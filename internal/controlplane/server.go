@@ -485,6 +485,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery", s.sessionSlackDelivery)
 		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}", s.sessionSlackDelivery)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/events", s.listAgentEventsHTTP)
+		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/timeline", s.listAgentTimelineHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns", s.listAgentTurnsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}", s.getAgentTurnHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks", s.listAgentAsksHTTP)

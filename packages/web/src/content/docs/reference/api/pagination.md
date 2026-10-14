@@ -52,7 +52,9 @@ cursors.
 | `limit` | 1–1000. Default 100. |
 
 The response contains `records`, `next_after`, `has_more` and
-`retained_after`. Store a record's sequence after processing it and pass it as
+`retained_after`. Sequences have no gaps; a Session's `last_event_sequence`
+names the newest one, so `after = max(0, last_event_sequence - 100)` reads the
+newest 100 records. Store a record's sequence after processing it and pass it as
 `after` to resume. An empty page or `has_more: false` does not mean the Turn
 has finished; new events can arrive later. Event kinds are listed in
 [Session events](/docs/reference/events).

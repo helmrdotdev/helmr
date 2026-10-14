@@ -322,7 +322,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 		}
 		if hasInput {
-			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computerID, caller.Kind, caller.ID, method, agentID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,(SELECT next_event_seq FROM sessions WHERE environment_id=$1 AND id=$3),$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computerID, caller.Kind, caller.ID, method, agentID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
 				return err
 			}
 		}

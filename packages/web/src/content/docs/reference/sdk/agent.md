@@ -356,6 +356,10 @@ payloads are listed in [Session events](/docs/reference/events).
 | `initialTurn` | `{ id, status } \| null` |
 | `holds` | `{ id, sessionId, scope: "local" \| "subtree", reason, createdAt }[]` |
 | `createdAt` | `string` |
+| `lastTurnSequence`, `lastEventSequence` | `number`; sequence of the newest Turn and Session event, `0` before the first |
+
+Turn and event sequences have no gaps, so `lastEventSequence` lets a reader start
+from recent events: pass `after: Math.max(0, lastEventSequence - 100)` to read the newest 100.
 
 ### `TurnRef`
 

@@ -33,6 +33,8 @@ type SessionView struct {
 	Status               string
 	CreatedAt            time.Time
 	Holds                []HoldView
+	LastTurnSequence     int64
+	LastEventSequence    int64
 }
 
 type SessionActivityView struct {
@@ -160,12 +162,12 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
    UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=sessions.environment_id
   ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
   FROM session_holds h JOIN ancestors a ON a.id=h.session_id
-  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since,` + sessionActivityColumn
+  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since,next_turn_seq-1,next_event_seq-1,` + sessionActivityColumn
 
 func scanSession(row pgx.Row) (SessionView, error) {
 	var v SessionView
 	var holds, activity []byte
-	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.CloseAfterIdleMs, &v.IdleSince, &activity)
+	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.CloseAfterIdleMs, &v.IdleSince, &v.LastTurnSequence, &v.LastEventSequence, &activity)
 	if err == nil {
 		err = json.Unmarshal(holds, &v.Holds)
 	}
@@ -268,6 +270,62 @@ func GetTurn(ctx context.Context, pool db.TxBeginner, caller Caller, env, sessio
 		var err error
 		result, err = scanTurn(tx.QueryRow(ctx, `SELECT `+turnViewColumns+` FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, env, session, id))
 		return err
+	})
+	return result, err
+}
+
+// TimelineTurn is a Turn without payloads, cheap enough to list every Turn of a Session.
+type TimelineTurn struct {
+	ID                 uuid.UUID
+	Sequence           int64
+	Status             string
+	CreatedAt          time.Time
+	StartedAt          *time.Time
+	TerminalAt         *time.Time
+	ErrorCode          *string
+	FirstEventSequence int64
+}
+
+type TimelinePage struct {
+	Turns        []TimelineTurn
+	NextSequence int64
+}
+
+const TimelineLimit = 1000
+
+func ListTimeline(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnListRequest) (TimelinePage, error) {
+	result := TimelinePage{Turns: []TimelineTurn{}}
+	if req.Limit < 1 || req.Limit > TimelineLimit || req.After < 0 {
+		return result, ErrInvalidInput
+	}
+	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND id=$2)`, req.EnvironmentID, req.SessionID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrDenied
+		}
+		rows, err := tx.Query(ctx, `SELECT id,seq,status,created_at,started_at,terminal_at,error_code,first_event_seq FROM turns WHERE environment_id=$1 AND session_id=$2 AND seq>$3 ORDER BY seq LIMIT $4`, req.EnvironmentID, req.SessionID, req.After, req.Limit+1)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v TimelineTurn
+			if err := rows.Scan(&v.ID, &v.Sequence, &v.Status, &v.CreatedAt, &v.StartedAt, &v.TerminalAt, &v.ErrorCode, &v.FirstEventSequence); err != nil {
+				return err
+			}
+			result.Turns = append(result.Turns, v)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(result.Turns) > req.Limit {
+			result.Turns = result.Turns[:req.Limit]
+			result.NextSequence = result.Turns[len(result.Turns)-1].Sequence
+		}
+		return nil
 	})
 	return result, err
 }

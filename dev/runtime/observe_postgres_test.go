@@ -115,8 +115,8 @@ func TestVerificationTriggerObservation(t *testing.T) {
  VALUES($1,$4,$5,'observed','* * * * *','UTC','{}'),($1,$4,$5,'other','* * * * *','UTC','{}');
  INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at)
  VALUES($1,$2,$4,$5,'observed',now(),now()),($1,$3,$4,$5,'other',now(),now());
- INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
- VALUES($1,$6,$7,$8,1,'schedule',$2,'schedule',$4,decode(repeat('00',32),'hex'),'{}');
+ INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,request_digest,input)
+ VALUES($1,$6,$7,$8,1,1,'schedule',$2,'schedule',$4,decode(repeat('00',32),'hex'),'{}');
  INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,session_id,turn_id,disposition,evaluated_at)
  VALUES($1,$2,$4,'observed',now(),$7,$6,'admitted',now());
  INSERT INTO trigger_occurrences(environment_id,activation_id,agent_id,trigger_key,scheduled_at,disposition,reason,evaluated_at)

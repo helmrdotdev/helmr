@@ -325,8 +325,8 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		if err = tx.QueryRow(ctx, `UPDATE sessions SET next_turn_seq=next_turn_seq+1,idle_since=NULL WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, req.SessionID).Scan(&result.Sequence); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$12,$3,NULLIF($8,''),$9,$10,$11)`, req.EnvironmentID, result.TurnID, req.SessionID, o.computer, result.Sequence, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID), method)
+		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id)
+            VALUES($1,$2,$3,$4,$5,(SELECT next_event_seq FROM sessions WHERE environment_id=$1 AND id=$3),$6,$7,$12,$3,NULLIF($8,''),$9,$10,$11)`, req.EnvironmentID, result.TurnID, req.SessionID, o.computer, result.Sequence, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID), method)
 		if err != nil {
 			return err
 		}

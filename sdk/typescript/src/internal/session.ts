@@ -47,6 +47,8 @@ export function parseSession(value: unknown): Session {
       : { key: requiredString(v["key"], "Session.key") }),
     status: sessionStatus(v["status"]),
     createdAt: timestampString(v["created_at"], "Session.created_at"),
+    lastTurnSequence: safeSequence(v["last_turn_sequence"], "Session.last_turn_sequence"),
+    lastEventSequence: safeSequence(v["last_event_sequence"], "Session.last_event_sequence"),
     closeAfterIdle: retentionFromMilliseconds(v["close_after_idle_ms"], "closeAfterIdle"),
     idleSince: v["idle_since"] === null ? null : timestampString(v["idle_since"], "Session.idle_since"),
     holds: Object.freeze(

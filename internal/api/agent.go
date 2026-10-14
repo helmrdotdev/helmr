@@ -74,6 +74,8 @@ type AgentSession struct {
 	Status               string                   `json:"status"`
 	CreatedAt            time.Time                `json:"created_at"`
 	Holds                []AgentSessionHold       `json:"holds"`
+	LastTurnSequence     int64                    `json:"last_turn_sequence"`
+	LastEventSequence    int64                    `json:"last_event_sequence"`
 }
 type AgentSessionInitialTurn struct {
 	ID     string `json:"id"`
@@ -108,6 +110,22 @@ type AgentTurn struct {
 type AgentSessionsPage struct {
 	Sessions   []AgentSession `json:"sessions"`
 	NextCursor string         `json:"next_cursor,omitempty"`
+}
+
+// AgentTimelineTurn is a Turn without payloads, for drawing every Turn of a Session.
+type AgentTimelineTurn struct {
+	ID                 string     `json:"id"`
+	Sequence           int64      `json:"sequence"`
+	Status             string     `json:"status"`
+	CreatedAt          time.Time  `json:"created_at"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	TerminalAt         *time.Time `json:"terminal_at,omitempty"`
+	ErrorCode          *string    `json:"error_code,omitempty"`
+	FirstEventSequence int64      `json:"first_event_sequence"`
+}
+type AgentTimelinePage struct {
+	Turns      []AgentTimelineTurn `json:"turns"`
+	NextCursor string              `json:"next_cursor,omitempty"`
 }
 type AgentTurnsPage struct {
 	Turns      []AgentTurn `json:"turns"`

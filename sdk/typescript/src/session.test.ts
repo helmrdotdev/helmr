@@ -183,6 +183,7 @@ describe("Session lifecycle client", () => {
         computer_id: holdId,
         status: "closing",
         created_at: createdAt,
+        last_turn_sequence: 1, last_event_sequence: 1,
         updated_at: createdAt,
         active_turn_id: null,
         holds: [{id:holdId,session_id:sessionId,scope:"local",reason:"recovery_required",created_at:createdAt}],

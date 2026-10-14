@@ -28,6 +28,8 @@ export type Session = {
     reason: string;
     created_at: string;
   }[];
+  last_turn_sequence: number;
+  last_event_sequence: number;
 };
 type SessionTurn = {
   stop?: ProcessStop;
@@ -52,6 +54,17 @@ type SessionTurn = {
   completion_save_id?: string;
 };
 type SessionTurnPage = { turns: SessionTurn[]; next_cursor?: string };
+export type TimelineTurn = {
+  id: string;
+  sequence: number;
+  status: SessionTurn["status"];
+  created_at: string;
+  started_at?: string;
+  terminal_at?: string;
+  error_code?: string;
+  first_event_sequence: number;
+};
+type SessionTimelinePage = { turns: TimelineTurn[]; next_cursor?: string };
 type SessionEvent = {
   session_id: string;
   turn_id: string | null;
@@ -160,6 +173,17 @@ export function listSessionTurns(
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   return request(
     `${sessionAPIPath(address)}/turns${params.size ? `?${params}` : ""}`,
+  );
+}
+export function listSessionTimeline(
+  address: SessionAddress,
+  options: { cursor?: string | undefined; limit?: number | undefined } = {},
+): Promise<SessionTimelinePage> {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  return request(
+    `${sessionAPIPath(address)}/timeline${params.size ? `?${params}` : ""}`,
   );
 }
 export function cancelSession(

@@ -28,7 +28,7 @@ func rejectSchemaRow(t *testing.T, tx pgx.Tx, code, statement string, args ...an
 func schemaTurn(t *testing.T, f sessiontest.Fixture, tx pgx.Tx) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,request_digest,input) VALUES($1,$2,$3,$4,1,'user',$5,'enqueue',$3,decode(repeat('01',32),'hex'),'null')`, f.Environment, id, f.Session, f.Computer, f.User)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,first_event_seq,caller_kind,caller_id,admission_method,target_id,request_digest,input) VALUES($1,$2,$3,$4,1,1,'user',$5,'enqueue',$3,decode(repeat('01',32),'hex'),'null')`, f.Environment, id, f.Session, f.Computer, f.User)
 	return id
 }
 

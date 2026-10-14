@@ -138,6 +138,48 @@ func (s *Server) listAgentTurnsHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) listAgentTimelineHTTP(w http.ResponseWriter, r *http.Request) {
+	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
+	if err != nil {
+		s.writeAgentHTTPError(w, err)
+		return
+	}
+	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
+	if err != nil {
+		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		return
+	}
+	limit := 500
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > session.TimelineLimit {
+			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			return
+		}
+	}
+	var after int64
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		after, err = strconv.ParseInt(cursor, 10, 64)
+		if err != nil || after < 0 {
+			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			return
+		}
+	}
+	result, err := session.ListTimeline(r.Context(), s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
+	if err != nil {
+		s.writeAgentHTTPError(w, err)
+		return
+	}
+	response := api.AgentTimelinePage{Turns: []api.AgentTimelineTurn{}}
+	for _, v := range result.Turns {
+		response.Turns = append(response.Turns, api.AgentTimelineTurn{ID: v.ID.String(), Sequence: v.Sequence, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), StartedAt: agentUTCTime(v.StartedAt), TerminalAt: agentUTCTime(v.TerminalAt), ErrorCode: v.ErrorCode, FirstEventSequence: v.FirstEventSequence})
+	}
+	if result.NextSequence != 0 {
+		response.NextCursor = strconv.FormatInt(result.NextSequence, 10)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) getAgentTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
@@ -170,7 +212,7 @@ func agentOptionalID(id *uuid.UUID) *string {
 	return &value
 }
 func agentSessionResponse(v session.SessionView) api.AgentSession {
-	result := api.AgentSession{AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}, LastTurnSequence: v.LastTurnSequence, LastEventSequence: v.LastEventSequence}
 	result.Activity = agentActivityResponse(v.Activity)
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {

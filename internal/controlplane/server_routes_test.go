@@ -74,6 +74,7 @@ GET /api/projects/{project}/environments/{environment}/sessions
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/events
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/timeline
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks

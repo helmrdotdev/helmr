@@ -423,7 +423,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	for _, transport := range []struct{ path, token string }{{base + "/sessions/" + first.SessionID, viewer}, {"/v1/sessions/" + first.SessionID, reader}} {
 		response := httpFixture.request(t, http.MethodGet, transport.path, transport.token, "")
 		var retained api.AgentSession
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &retained) != nil || retained.ID != first.SessionID || retained.Status != "open" {
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &retained) != nil || retained.ID != first.SessionID || retained.Status != "open" || retained.LastTurnSequence < 2 || retained.LastEventSequence < retained.LastTurnSequence {
 			t.Fatalf("retained session: %d %s", response.Code, response.Body.String())
 		}
 		response = httpFixture.request(t, http.MethodGet, transport.path+"/turns?limit=1", transport.token, "")
@@ -436,6 +436,20 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &turn) != nil || turn.ID != first.Turn.TurnID || string(turn.Input) != `[{"text":"{\"work\":1}","type":"text"}]` {
 			t.Fatalf("retained input: %d %s", response.Code, response.Body.String())
 		}
+	}
+	timeline := base + "/sessions/" + first.SessionID + "/timeline"
+	timelineResponse := httpFixture.request(t, http.MethodGet, timeline+"?limit=1", viewer, "")
+	var timelinePage api.AgentTimelinePage
+	if timelineResponse.Code != http.StatusOK || json.Unmarshal(timelineResponse.Body.Bytes(), &timelinePage) != nil || len(timelinePage.Turns) != 1 || timelinePage.Turns[0].ID != first.Turn.TurnID || timelinePage.Turns[0].Sequence != 1 || timelinePage.Turns[0].Status != "queued" || timelinePage.Turns[0].FirstEventSequence != 1 || timelinePage.NextCursor != "1" {
+		t.Fatalf("timeline: %d %s", timelineResponse.Code, timelineResponse.Body.String())
+	}
+	for _, query := range []string{"?limit=0", "?limit=1001", "?cursor=bad", "?cursor=-1"} {
+		if response := httpFixture.request(t, http.MethodGet, timeline+query, viewer, ""); response.Code != http.StatusBadRequest {
+			t.Fatalf("timeline %s: %d", query, response.Code)
+		}
+	}
+	if response := httpFixture.request(t, http.MethodGet, "/v1/sessions/"+first.SessionID+"/timeline", reader, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("timeline is Console-only: %d", response.Code)
 	}
 	if response := httpFixture.request(t, http.MethodGet, "/v1/sessions/"+first.SessionID, sender, ""); response.Code != http.StatusForbidden {
 		t.Fatalf("sender read permission: %d", response.Code)
