@@ -21,3 +21,18 @@ test("rejects an ambiguous batch before asking any question", async () => {
   await expect(answerQuestions(turn, [{ header: "X", question: "X?", options: [{ label: "A", description: "one" }, { label: "A", description: "two" }] }], new AbortController().signal)).rejects.toThrow("unsupported question")
   expect(asked).toBe(false)
 })
+
+
+test("rejects a later invalid Helmr definition before displaying the first question", async () => {
+  for (const invalid of [
+    { header: "x".repeat(257), question: "Details?", options: [] },
+    { header: "Color", question: "Color?", options: [{ label: "A", description: "x".repeat(2049) }] },
+  ]) {
+    let asked = 0
+    const turn = { ask: async () => { asked++; return { answer: "answered" } } } as unknown as Turn
+    await expect(answerQuestions(turn, [
+      { header: "First", question: "First?", options: [] }, invalid,
+    ], new AbortController().signal)).rejects.toThrow()
+    expect(asked).toBe(0)
+  }
+})

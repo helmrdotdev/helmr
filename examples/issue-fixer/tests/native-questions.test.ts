@@ -21,7 +21,7 @@ test("native batch admits in source order and translates independent answers", a
   expect((await pending).answers).toEqual({ one: ["B"], two: ["None of the above", "user_note: custom"] })
 })
 test("invalid later questions reject before any public ask is admitted", () => {
-  for (const bad of [{ ...question("two"), isSecret: true }, { ...question("two"), preview: "private" }, question("one")]) {
+  for (const bad of [{ ...question("two"), isSecret: true }, { ...question("two"), preview: "private" }, question("one"), { ...question("two"), header: "x".repeat(257) }, { ...question("two"), options: [{ label: "A", description: "x".repeat(2049) }] }]) {
     expect(() => nativeQuestions("codex", [question("one"), bad])).toThrow()
   }
   expect(() => nativeQuestions("claude", [{ header: "h", question: "q", multiSelect: false, options: [{ label: "a", description: "a", preview: 123 }, { label: "b", description: "b" }] }])).toThrow()
@@ -41,7 +41,7 @@ test("one failed ask withdraws its live siblings", async () => {
   await expect(askNativeQuestions(turn, nativeQuestions("codex", [question("one"), question("two")]), new AbortController().signal)).rejects.toThrow("admission failed")
   expect(withdrawn).toBe(true)
 })
-test("content conversion encodes JSON and rejects unsupported files", () => {
+test("content conversion preserves text and encodes JSON", () => {
   expect(nativeText([{ type: "text", text: "hel" }, { type: "text", text: "lo" }])).toBe("hello")
   expect(nativeText([{ type: "text", text: "inspect" }, { type: "json", value: { n: 3 } }])).toBe('inspect\n{"n":3}')
   expect(steeringText([{ type: "text", text: "stop editing" }])).toBe("stop editing")

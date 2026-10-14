@@ -35,6 +35,38 @@ const response = await turn.ask({
 // response.answeredBy: { kind: "user", id: "..." }
 ```
 
+## `validateQuestion()`
+
+```ts
+import { ContentError, validateQuestion } from "@helmr/sdk"
+
+// Accepts unknown input and narrows it to Question on success.
+validateQuestion(value: unknown): asserts value is Question
+```
+
+Checks the same definition rules and limits as `turn.ask` without modifying the
+input, storing a question, or displaying it. A string prompt remains a string.
+Success returns `undefined`; failure throws `ContentError` with a `code` and
+human-readable `message`. Codes are `invalid_arguments`,
+`content_kind_unsupported`, or `content_limit_exceeded`. Use the code for program
+logic; messages explain the failure and are not stable identifiers.
+
+To check several generated questions before displaying the first, validate all
+of them before calling `turn.ask`:
+
+```ts
+for (const question of questions) validateQuestion(question)
+for (const question of questions) {
+  const response = await turn.ask(question)
+  // Handle each answer.
+}
+```
+
+Validation checks the definition at the time of the call. `turn.ask` validates
+again when called. Validation does not reserve output budget, check Session
+state or authority, or guarantee admission or all-or-none success of several
+questions. Handle execution failures and cancellation normally.
+
 ## Types
 
 ```ts
@@ -76,6 +108,7 @@ verified user or API key. Invalid submissions return `answer_invalid`.
 | Item | Limit |
 | --- | --- |
 | Question | 256 KiB encoded JSON |
+| Optional `title` | Nonblank, at most 256 UTF-8 bytes |
 | Prompt | 64 Content parts |
 | Choice options | 1–100 |
 | Option `id` | 1–128 bytes, unique |

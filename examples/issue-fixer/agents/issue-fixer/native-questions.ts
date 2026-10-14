@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Json, Turn, Question, ChoiceAnswer } from "@helmr/sdk"
-import { normalizeQuestion } from "@helmr/sdk/internal"
+import { validateQuestion } from "@helmr/sdk"
 
 const option = z.object({ label: z.string().min(1), description: z.string() }).strict()
 const codexQuestion = z.object({
@@ -51,14 +51,15 @@ export function nativeQuestions(provider: "codex" | "claude", input: unknown): N
       choices.push({ id: "native-skip", label: "Skip this question", description: "Continue without selecting an answer to this question.", value: null })
     }
     const prompt = `${index + 1}/${questions.length} ${source.question}${previewText.length ? "\n\n" + previewText.join("\n\n") : ""}`
-    const question = normalizeQuestion({
-      ...(source.header ? { title: source.header } : {}), prompt,
+    const question: Question = {
+      ...(source.header ? { title: source.header } : {}), prompt: [{ type: "text", text: prompt }],
       ...(choices.length ? {
         type: "choice", options: choices,
         multiple: "multiSelect" in source ? source.multiSelect : false,
         allowCustom: provider === "claude", allowNotes: true,
       } : { type: "text" }),
-    })
+    }
+    validateQuestion(question)
     return { key, provider, question, previews }
   })
 }

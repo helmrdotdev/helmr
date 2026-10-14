@@ -127,6 +127,8 @@ export type { ClientAgentsApi, AgentGetQuery, AgentListQuery, AgentListItem, Age
 
 export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"
 
+export { validateQuestion } from "./question"
+
 export type { ChoiceOption, TextQuestion, ChoiceQuestion, NormalizedQuestion, AnswerSubmission, Question, ChoiceAnswer, AnswerFor, AskAnswer } from "./question"
 
 

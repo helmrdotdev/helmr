@@ -38,10 +38,19 @@ ln -s "${repo_root}/node_modules/@standard-schema/spec" \
 
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
-  HelmrClient, agent, template, image, source,
+  HelmrClient, agent, template, image, source, validateQuestion, ContentError, type Question,
   type AgentDefinition, type TemplateDefinition, type ImageBuilder, type InputContent,
   type SecretCreateRequest, type SourceDirectory, type SourceFile, type RuntimeMcpConnectionOptions,
 } from "@helmr/sdk"
+
+const questionInput: unknown = Object.freeze({ type: "text", prompt: "Explain" })
+validateQuestion(questionInput)
+const validated: Question = questionInput
+if (validated.prompt !== "Explain") throw new Error("validation changed the prompt")
+let rejected = false
+try { validateQuestion({ type: "text", prompt: [], title: "x".repeat(257) }) }
+catch (error) { rejected = error instanceof ContentError && error.code === "invalid_arguments" }
+if (!rejected) throw new Error("invalid question was accepted")
 
 const sourceFile: SourceFile = source.file("./package.json")
 const sourceDirectory: SourceDirectory = source.directory("./src")

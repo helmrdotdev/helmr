@@ -27,3 +27,10 @@ export async function optionalAnswerFields(turn: Turn, dynamic: boolean) {
   const notes: undefined = variable.notes
   return { absent, possible, custom, notes }
 }
+
+
+import { validateQuestion } from "./index"
+export function validatedQuestion(value: unknown): Question {
+  validateQuestion(value)
+  return value
+}

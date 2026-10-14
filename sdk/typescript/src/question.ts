@@ -33,6 +33,15 @@ function canonical(value: unknown): Uint8Array {
 }
 function byteLength(text: string): number { return encoder.encode(text).byteLength }
 
+/**
+ * Check a question definition without changing it or creating an ask.
+ * Throws ContentError with a code and reason when the definition is invalid.
+ * Successful validation does not guarantee admission by turn.ask.
+ */
+export function validateQuestion(value: unknown): asserts value is Question {
+  normalizeQuestion(value)
+}
+
 export function normalizeQuestion(value: unknown): NormalizedQuestion {
   const bytes = canonical(value)
   if (bytes.byteLength > CONTENT_BYTES) return limit("Question exceeds 256 KiB")
