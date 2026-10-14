@@ -1,7 +1,7 @@
 # Console components
 
-The console is compact, square and work-focused: 2px corners, hairline borders,
-classic gradient bars, title strips and hard 2px offset shadows on floating parts, monospace for
+The console is compact, square, flat and work-focused: 2px corners, hairline
+borders, no shadows, classic gradients only on the app bar and controls, monospace for
 navigation, labels, IDs, code and values, and Inter for everything else. Build pages
 from the parts below instead of page-local class strings. When a repeated style
 carries structure or behavior, it is a component here; when it is a single element
@@ -36,16 +36,16 @@ silently change nested controls.
 
 ## Containers
 
-Two kinds, never mixed:
+One container language for everything, in the page and floating above it:
 
-- **Floating** parts sit above the page: Popover (menus, pickers), Dialog (every
-  variant and the command palette) and AuthWindow. Only they use the window
-  chrome: a bordered surface with the hard shadow (`ui.window`, `ui.popover`,
-  `shadow-console-window`) and the 22px gradient title strip (`ui.titleStrip`).
 - **In-page** containers sit in the page flow: Panel, DataTable, List, KeyValueList
-  and DangerZone. They have no shadow and no title strip.
+  and DangerZone.
+- **Floating** parts sit above the page: Popover (menus, Select, the scope pickers,
+  the profile menu, the phone drawer), Dialog (every variant and the command
+  palette) and AuthWindow. They are set apart by their border alone, and dialogs
+  by the modal backdrop; nothing has a shadow.
 
-Every in-page container has:
+Every container has:
 
 - **One border.** `ui.container`: `border-console-border-strong` on
   `bg-console-surface`. Semantic exceptions keep their distinction: EmptyState is
@@ -57,9 +57,12 @@ Every in-page container has:
   (`ui.containerCount`); actions on the right as compact buttons or short mono
   status text. A description is never in the header; it is the body's first line.
   DangerZone uses the same header in the danger tone (`ui.containerHeaderDanger`).
-  A titled container is a region named by its title.
+  A titled container is a region named by its title. A dialog's close control is
+  a header action (`ui.closeButton`, 24px). Untitled popovers and menus have no
+  header.
 - **One body.** 12px padding, blocks 12px apart (`ui.containerBody`). The gap is
   the only spacing: the body's direct children drop their vertical margins.
+  Dialog bodies pad 12px too; AuthWindow keeps 16px around its larger title.
 
 Tables and lists: a DataTable or List is its own container (its own border). As a
 direct child of a Panel body (`data-list-frame`, also through QueryState, which
@@ -93,7 +96,7 @@ the container right under it.
 - **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
 - **ScopeSelector** (`components/`). The tab's scope as two segments,
   `<Project> / <Environment>` (with its dot and "protected" tag), each opening its
-  own picker: a `Popover` with a title strip, a `CommandList` of the Projects or
+  own picker: a titled `Popover`, a `CommandList` of the Projects or
   the Project's Environments (current one checked), "New project" / "New
   environment" (the shared create dialogs) and "Manage" (Project settings or
   Environments). The Project picker loads further pages while open, up to 200
@@ -224,14 +227,15 @@ There is one Select. Native `<select>` elements are not used.
 
 ## Overlays
 
-- **Popover.** The one floating panel: placement against its anchor, window
-  chrome with an optional title strip, and dismissal by Escape (`useDismiss`; only
+- **Popover.** The one floating panel: placement against its anchor, the
+  container border with an optional container header, and dismissal by Escape (`useDismiss`; only
   the topmost layer closes), a press outside, Tab, or focus moving elsewhere. Tab
   leaves a menu or picker at once and a dialog-like panel past its first or last
   control. Focus returns to the anchor on every close except a press outside or
   focus moving elsewhere. Nothing is mounted while closed. ActionMenu, Select, the
   scope selector and the profile menu use it.
-- **Dialog.** A modal window. Escape, the close control or a backdrop press close
+- **Dialog.** A modal container: the container header with the title and the
+  close control, over the backdrop. Escape, the close control or a backdrop press close
   it unless `closeDisabled`. Tab cycles within it; on close, focus returns to the
   control that opened it, or to the menu trigger when it was opened from a menu
   item. Variants:
@@ -258,7 +262,7 @@ There is one Select. Native `<select>` elements are not used.
 
 **AuthWindow** is the centered window for sign-in, invites, callbacks, Slack
 linking, CLI device approval, access screens and onboarding (`step` shows progress
-in the title strip, with **Steps** in the window). Its states: the form itself,
+in the container header, next to the product name, with **Steps** in the window). Its states: the form itself,
 **AuthWorking** (Progress and a message), **AuthSuccess** (result, optional redirect
 bar), **AuthError** (human message, folded technical details from `errorDetails`,
 next step; without a title it sits inside a form) and **AuthMissing** (the link or

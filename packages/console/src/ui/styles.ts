@@ -21,7 +21,10 @@ const buttonBase = cx(buttonFrame, "h-7 min-h-7 px-2.5");
 const secondaryTone =
   "border-console-border gradient-button text-console-text hover:border-console-border-strong hover:gradient-button-hover hover:text-console-text";
 
-// The header of an in-page container: 32px like a table's column header row. The
+const closeButtonBase =
+  "grid shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
+
+// The header of a container: 32px like a table's column header row. The
 // base sets no colour; add the default or danger variant.
 const containerHeaderBase = "flex h-8 min-h-8 shrink-0 items-center justify-between gap-2 border-b px-3";
 
@@ -44,8 +47,8 @@ export const ui = {
   sectionStack: "flex flex-col gap-6",
   blockStack: "flex flex-col gap-3",
 
-  // In-page containers (Panel, DataTable, List, KeyValueList, DangerZone): one
-  // border, no shadow, and one header. Only floating parts use `window`.
+  // Containers, in the page (Panel, DataTable, List, KeyValueList, DangerZone) and
+  // floating (Popover, Dialog, AuthWindow): one border, no shadow, one header.
   container: "border border-console-border-strong bg-console-surface",
   containerHeader: cx(containerHeaderBase, "border-console-border bg-console-bg-panel"),
   containerHeaderDanger: cx(containerHeaderBase, "border-console-danger-border bg-console-danger-bg"),
@@ -99,19 +102,15 @@ export const ui = {
   // A square 28px icon button for bar and row chrome (settings, row menus).
   iconButton:
     "inline-grid size-7 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
-  // The 20px close control in a title strip or a dismissible notice.
-  closeButton:
-    "grid size-5 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
+  // The close control: 24px in a container header (dialogs), 20px in a
+  // dismissible notice. The base sets no size.
+  closeButton: cx(closeButtonBase, "size-6"),
+  noticeCloseButton: cx(closeButtonBase, "size-5"),
   closeIcon:
     "relative block size-2.5 before:absolute before:left-1/2 before:top-0 before:h-full before:w-px before:-translate-x-1/2 before:rotate-45 before:bg-current before:content-[''] after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:-rotate-45 after:bg-current after:content-['']",
 
-  // Floating parts only (popovers, menus, dialogs, the auth window): the hard
-  // shadow and the 22px gradient title strip. Nothing in the page flow uses them.
-  window: "border border-console-border-strong bg-console-surface shadow-console-window",
-  titleStrip:
-    "flex h-5.5 shrink-0 items-center justify-between gap-2 border-b border-console-border gradient-strip px-2 font-mono text-micro text-console-text",
-  popover:
-    "fixed z-50 flex flex-col overflow-hidden border border-console-border-strong bg-console-surface shadow-console-window",
+  // Popovers and menus: the container border, no shadow.
+  popover: "fixed z-50 flex flex-col overflow-hidden border border-console-border-strong bg-console-surface",
   // The base sets no colour: two Tailwind colour utilities on one element resolve
   // by stylesheet order, so only the tone variant may set `text-*`.
   actionMenuItemBase:

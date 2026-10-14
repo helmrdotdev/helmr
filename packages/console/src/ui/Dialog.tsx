@@ -6,10 +6,11 @@ import { FormActions } from "./Field";
 import { openDismissLayer } from "./dismiss";
 import { focusableIn, focusReturnTarget } from "./Popover";
 import { Notice } from "./Notice";
+import { ContainerHeader } from "./Panel";
 import { cx, ui } from "./styles";
 import { useClipboard } from "./useClipboard";
 
-// A modal window: title strip with a close control, closed by Escape, the close
+// A modal container: the container header with a close control, closed by Escape, the close
 // control or a press on the backdrop (unless `closeDisabled`). Focus moves to the
 // first `autofocus` element, or the first control, stays inside while open (Tab
 // cycles), and returns on close to the control that opened it; for a dialog opened
@@ -83,7 +84,7 @@ export function Dialog(props: {
       >
         <section
           ref={dialogRef}
-          class={cx(ui.window, "flex max-h-[min(82vh,620px)] w-full max-w-115 flex-col overflow-hidden outline-none", props.class)}
+          class={cx(ui.container, "flex max-h-[min(82vh,620px)] w-full max-w-115 flex-col overflow-hidden outline-none", props.class)}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleID}
@@ -93,9 +94,10 @@ export function Dialog(props: {
             if (event.key === "Tab") trapTab(event);
           }}
         >
-          <div class={ui.titleStrip}>
-            <h2 id={titleID} class="m-0 min-w-0 flex-1 truncate font-mono text-micro font-normal">{props.title}</h2>
-            <button
+          <ContainerHeader
+            id={titleID}
+            title={props.title}
+            actions={<button
               type="button"
               class={ui.closeButton}
               disabled={props.closeDisabled}
@@ -104,9 +106,9 @@ export function Dialog(props: {
               onClick={close}
             >
               <span class={ui.closeIcon} aria-hidden="true" />
-            </button>
-          </div>
-          <div class={cx("min-h-0 overflow-y-auto", props.bodyClass ?? "p-3.5")}>{props.children}</div>
+            </button>}
+          />
+          <div class={cx("min-h-0 overflow-y-auto", props.bodyClass ?? "p-3")}>{props.children}</div>
         </section>
       </div>
     </Portal>
