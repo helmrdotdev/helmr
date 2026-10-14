@@ -1,7 +1,7 @@
 import { request } from "./api";
 
 type AgentListItem = { agent: string; template: string };
-export type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
+type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
 type AgentDefinition = AgentListItem & { deployment_id: string };
 
 // A Template's resources on one line: "1 vCPU · 512 MiB RAM · Default disk".
@@ -56,12 +56,12 @@ function definitionPath(kind: "agents" | "templates", options: DefinitionScope &
 }
 
 export function getAgentDefinition(id: string, options: DefinitionScope & { deploymentID?: string | undefined }): Promise<AgentDefinition> {
-  return request(definitionItemPath("agents", id, options));
+  return request(agentPath(id, options));
 }
-function definitionItemPath(kind: "agents" | "templates", id: string, options: DefinitionScope & { deploymentID?: string | undefined }): string {
-  const base = definitionPath(kind, { projectID: options.projectID, environmentID: options.environmentID });
+function agentPath(agent: string, options: DefinitionScope & { deploymentID?: string | undefined }): string {
+  const base = definitionPath("agents", { projectID: options.projectID, environmentID: options.environmentID });
   const query = options.deploymentID ? `?${new URLSearchParams({ deployment_id: options.deploymentID })}` : "";
-  return `${base}/${encodeURIComponent(id)}${query}`;
+  return `${base}/${encodeURIComponent(agent)}${query}`;
 }
 
 export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
@@ -77,5 +77,5 @@ export function listRetainedAgents(scope: DefinitionScope, cursor?: string): Pro
   return request(`${definitionPath("agents", scope)}?${query}`);
 }
 export function getAgentStatus(agent: string, scope: DefinitionScope): Promise<RetainedAgent> {
-  return request(`${definitionItemPath("agents", agent, scope)}/status`);
+  return request(`${agentPath(agent, scope)}/status`);
 }

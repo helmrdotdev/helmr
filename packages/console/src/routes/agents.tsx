@@ -164,7 +164,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
             {deployment => <span>{record().defined_in_current ? "Defined in Deployment" : "Current Deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
           </Show>
         )}</Show>
-        <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <span class="text-console-text">{template()}</span></span>}</Show>
+        <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
       actions={<CopyLinkButton />}
     />

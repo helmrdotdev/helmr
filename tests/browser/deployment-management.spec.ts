@@ -76,7 +76,7 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
     } else if (url.pathname.endsWith("/commands")) {
       await route.fulfill({ json: { commands: [{ id: command, usage_state: "running", created_at: now }] } });
     } else {
-      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "parked", secrets: [], created_at: now, updated_at: now, last_activity_at: now } });
+      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "cold", secrets: [], created_at: now, updated_at: now, last_activity_at: now } });
     }
   });
   await page.goto(`/computers/${computer}`);
@@ -84,7 +84,7 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
   await expect(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
   await expect(page.getByText("Unreconciled", { exact: true })).toBeVisible();
   await expect(page.getByText("Running", { exact: true })).toBeVisible();
-  await expect(page.getByText("Parked", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cold", { exact: true })).toBeVisible();
   await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("browser", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "browser" })).toHaveCount(0);

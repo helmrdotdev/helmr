@@ -10,7 +10,7 @@ import { IDText } from "../ui/IDText";
 import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 
-const failure = (error: unknown) => errorMessage(error, "Could not load triggers.");
+const failure = (error: unknown) => errorMessage(error, "Could not load Triggers.");
 
 // Trigger activations across Deployments: every Agent's in the tab's Environment,
 // or one Agent's.
@@ -39,11 +39,11 @@ export function TriggerList(props: { agent?: string }) {
   return (
     <QueryState
       query={triggers}
-      pending="Loading triggers..."
+      pending="Loading Triggers..."
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.triggers.length === 0),
-        title: agent() ? "No trigger activations for this Agent." : "No trigger activations in this environment.",
+        title: agent() ? "No Trigger activations for this Agent." : "No Trigger activations in this environment.",
       }}
     >
       {() => (

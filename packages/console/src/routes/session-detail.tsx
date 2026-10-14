@@ -321,7 +321,11 @@ function SessionDetailContent() {
                   )}
                 </QueryState>
               </Panel>
-              <p class={ui.muted}>Send work from the CLI or Slack; close the Session or release holds from the CLI.</p>
+              <p class={ui.muted}>
+                <Show when={current().slack_channel_id} fallback="Send work, close the Session or resume held work from the CLI.">
+                  Send work from the CLI or Slack; close the Session or resume held work from the CLI.
+                </Show>
+              </p>
             </DetailLayout>
           )}
         </QueryState>

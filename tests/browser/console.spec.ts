@@ -98,7 +98,7 @@ test("the Agents section switches between Agents, Sessions and Triggers by click
   await expect(triggers).toBeFocused();
   await expect(triggers).toHaveAttribute("aria-selected", "true");
   await expect(triggers).toHaveAttribute("tabindex", "0");
-  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No trigger activations in this environment.");
+  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No Trigger activations in this environment.");
 
   await page.keyboard.press("Home");
   await expect(page).toHaveURL("/agents");

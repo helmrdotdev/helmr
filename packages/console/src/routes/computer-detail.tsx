@@ -33,7 +33,7 @@ const actionErrorMessage = (error: unknown, fallback: string) =>
 
 function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
   const title = () => props.kind === "sessions" ? "Sessions" : "Commands";
-  const noun = () => props.kind === "sessions" ? { one: "Session", other: "Sessions" } : { one: "command", other: "commands" };
+  const noun = () => props.kind === "sessions" ? { one: "Session", other: "Sessions" } : { one: "Command", other: "Commands" };
   const usage = createInfiniteQuery(() => ({
     queryKey: ["computer", props.computerID, props.kind, props.scope.projectID, props.scope.environmentID],
     queryFn: async ({ pageParam }) => {
@@ -141,7 +141,7 @@ export function ComputerDetail() {
                   </DataTable>
                 </Show>
               </Panel>
-              <p class={ui.muted}>Use the CLI to run commands or delete this Computer.</p>
+              <p class={ui.muted}>Use the CLI to run Commands or delete this Computer.</p>
             </DetailLayout>
           )}
         </QueryState>

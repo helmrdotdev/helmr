@@ -141,7 +141,8 @@ committed files. Use separate Computers when work must not share files or
 Secret placements. Workloads in one Environment are mutually trusted.
 
 A Computer's `status` is its resource lifecycle: `available`, `deleting` or
-`deleted`. Its `residency` describes where it is running:
+`deleted`; the Console shows `available` as "Active". Its `residency` describes
+where it is running:
 
 | Residency | Meaning |
 | --- | --- |

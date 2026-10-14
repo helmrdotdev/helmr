@@ -15,7 +15,7 @@ const TONES = {
   turn: { queued: "waiting", running: "active", finalizing: "waiting", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
   session: { open: "active", closing: "waiting", closed: "succeeded", cancelled: "revoked" },
   computer: { available: "succeeded", deleted: "expired", deleting: "expired" },
-  computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", parked: "expired", restoring: "waiting", unavailable: "revoked" },
+  computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", restoring: "waiting", unavailable: "revoked" },
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   trigger: { active: "active", errored: "revoked", archived: "expired" },
   deployment: { current: "active", not_current: "expired" },

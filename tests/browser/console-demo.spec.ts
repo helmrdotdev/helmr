@@ -75,6 +75,6 @@ test("console demo retains failed Turn input and terminal Session history", asyn
   await expect(page.getByText("Demo input", { exact: true })).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Failed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Send work from the CLI or Slack", { exact: false })).toBeVisible();
+  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel Session", exact: true })).toHaveCount(0);
 });
