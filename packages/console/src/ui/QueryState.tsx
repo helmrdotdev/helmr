@@ -19,7 +19,7 @@ export function PendingState(props: { children: JSX.Element }) {
 
 export function ErrorState(props: { message: string; onRetry?: () => void }) {
   return (
-    <div class="mt-3 flex flex-wrap items-center gap-2" role="alert">
+    <div class="flex flex-wrap items-center gap-2" role="alert">
       <p class="m-0 text-body font-medium text-console-danger">{props.message}</p>
       <Show when={props.onRetry}>
         {(retry) => <button type="button" class={ui.secondaryButton} onClick={() => retry()()}>Retry</button>}
@@ -66,7 +66,7 @@ export function QueryState<T>(props: {
         <Notice
           tone="danger"
           class="mb-3"
-          action={<button type="button" class={cx(ui.secondaryButton, "h-6 min-h-6 px-2")} onClick={retry}>Retry</button>}
+          action={<button type="button" class={ui.compactButton} onClick={retry}>Retry</button>}
         >
           {props.error(props.query.error)}
         </Notice>

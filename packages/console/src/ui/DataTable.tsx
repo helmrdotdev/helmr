@@ -6,10 +6,11 @@ import { cx, ui } from "./styles";
 type Column = string | { label: string; srOnly?: boolean };
 
 // The only table. Rows are single-line; secondary information gets its own column.
-// `footer` renders under the rows inside the table frame (see LoadMore).
+// `footer` renders under the rows inside the table frame (see LoadMore). As a
+// direct child of a Panel body it has no frame and runs to the Panel's edges.
 export function DataTable(props: { columns: readonly Column[]; minWidth?: string; footer?: JSX.Element; children: JSX.Element }) {
   return (
-    <div class="border border-console-border-strong bg-console-surface">
+    <div class={ui.container} data-list-frame>
       <div class={ui.tableWrap}>
         <table class={cx(props.minWidth ?? "min-w-160")}>
           <thead>
@@ -85,7 +86,7 @@ export function LoadMore(props: {
       <Show when={props.hasMore}>
         <button
           type="button"
-          class={cx(ui.secondaryButton, "h-6 min-h-6 px-2")}
+          class={ui.compactButton}
           disabled={props.loading}
           aria-label={props.failed ? `Retry loading more${subject()}` : props.noun ? `Load more ${props.noun}` : undefined}
           onClick={() => props.onLoadMore()}

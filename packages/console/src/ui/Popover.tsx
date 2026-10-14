@@ -1,6 +1,7 @@
-import { createEffect, createSignal, on, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, createUniqueId, on, onCleanup, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { DismissReason } from "./dismiss";
+import { ContainerHeader } from "./Panel";
 import { placePopover } from "./position";
 import { cx, ui } from "./styles";
 import { useDismiss } from "./useDismiss";
@@ -29,9 +30,9 @@ export function focusableIn(root: Element): HTMLElement[] {
   );
 }
 
-// The one floating panel: Window style (border, hard shadow, optional title strip),
-// placed against its anchor. Escape, a press outside, Tab, or focus moving
-// elsewhere closes it. Focus returns to the anchor on every close except a press
+// The one floating panel: the container border and, with a title, the container
+// header; no shadow. Placed against its anchor. Escape, a press outside, Tab, or
+// focus moving elsewhere closes it. Focus returns to the anchor on every close except a press
 // outside or focus moving elsewhere. Menus, pickers and the profile menu render
 // inside it.
 export function Popover(props: {
@@ -42,7 +43,7 @@ export function Popover(props: {
   id?: string;
   role?: "menu" | "dialog" | "listbox" | "group";
   label?: string;
-  // A title strip across the top, as on a window.
+  // The container header; untitled popovers and menus have none.
   title?: string;
   align?: "start" | "end";
   // Fixed width, or `anchor` to be at least as wide as the anchor.
@@ -57,6 +58,7 @@ export function Popover(props: {
   ref?: (element: HTMLDivElement) => void;
   onKeyDown?: (event: KeyboardEvent) => void;
 }) {
+  const titleID = createUniqueId();
   const [style, setStyle] = createSignal<JSX.CSSProperties>({});
   let panel: HTMLDivElement | undefined;
   let closedBy: DismissReason | undefined;
@@ -175,11 +177,7 @@ export function Popover(props: {
           onKeyDown={onKeyDown}
           onFocusOut={onFocusOut}
         >
-          <Show when={props.title}>
-            <div class={ui.titleStrip}>
-              <span class="truncate">{props.title}</span>
-            </div>
-          </Show>
+          <Show when={props.title}>{(title) => <ContainerHeader id={titleID} title={title()} />}</Show>
           <div class={cx("min-h-0 overflow-y-auto", props.bodyClass)}>{props.children}</div>
         </div>
       </Portal>

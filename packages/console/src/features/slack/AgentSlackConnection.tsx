@@ -36,7 +36,7 @@ export function AgentSlackConnection(props: { agentName: string }) {
       when={permission.isOrganizationAdmin()}
       fallback={
         <DetailLayout rail={<ConnectionFacts environmentName={environmentName()} />}>
-          <Panel title="Slack connection" variant="window">
+          <Panel title="Slack connection">
             <p class="m-0 text-body">Each Agent can have its own Slack app in this environment. Its app name and avatar identify it in conversations.</p>
             <Notice tone="info">{MANAGERS} can view and manage this connection. Ask one of them to connect, reauthorize or disconnect it.</Notice>
           </Panel>
@@ -202,7 +202,7 @@ function setupSteps(states: { create: StepState; credentials?: StepState | undef
 
 function SetupPanel(props: { status: string; step?: number; children: JSX.Element }) {
   return (
-    <Panel title={props.step ? `Slack connection · setup ${props.step} of 4` : "Slack connection"} variant="window" actions={<span class="font-mono text-micro text-console-muted">{props.status}</span>}>
+    <Panel title={props.step ? `Slack setup ${props.step} of 4` : "Slack connection"} actions={<span class="font-mono text-chrome text-console-muted">{props.status}</span>}>
       {props.children}
     </Panel>
   );
@@ -223,7 +223,7 @@ function Setup(props: {
   const [created, setCreated] = createSignal(false);
   const step = () => props.connection.credentials_configured ? 3 : created() ? 2 : 1;
   const createContent = () => (
-    <div class={ui.windowStack}>
+    <div class={ui.blockStack}>
       <Show when={props.createAppURL}>{(url) => <div><a class={ui.secondaryButton} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
       <CodeBlock code={JSON.stringify(props.manifest ?? {}, null, 2)} copy label="App manifest" />
       <AppIconPicker seed={props.iconSeed} agentName={props.agentName} />
@@ -240,7 +240,7 @@ function Setup(props: {
           ? { state: "current", content: <CredentialForm connection={props.connection} busy={props.busy} save={props.save} /> }
           : step() > 2 ? { state: "done" } : undefined,
         install: step() === 3
-          ? { state: "current", content: <div class={ui.windowStack}>
+          ? { state: "current", content: <div class={ui.blockStack}>
               <div><button type="button" class={ui.button} disabled={props.busy} onClick={() => props.authorize()}>Install app in Slack</button></div>
               <Disclosure summary="Replace app credentials"><CredentialForm connection={props.connection} busy={props.busy} save={props.save} /></Disclosure>
             </div> }

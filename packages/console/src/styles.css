@@ -52,9 +52,8 @@
   --console-danger-solid: #9f312b;
   --console-danger-ring: rgba(180, 63, 55, 0.12);
 
-  /* Classic bar, button and title-strip gradients. */
+  /* Classic bar and button gradients. */
   --console-gradient-bar: linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
-  --console-gradient-strip: linear-gradient(to bottom, #f8f8f8 0%, #eceff2 100%);
   --console-gradient-button: linear-gradient(to bottom, #fbfcfd 0%, #eef1f3 100%);
   --console-gradient-button-hover: linear-gradient(to bottom, #f3f5f7 0%, #dfe5ea 100%);
   --console-gradient-pressed: linear-gradient(to bottom, #e3e7ec 0%, #d5dbe2 100%);
@@ -114,9 +113,7 @@
   --text-badge: 11px;
   --text-micro: 10.5px;
 
-  /* The one hard shadow for anything that floats: popovers, menus, dialogs and
-     auth windows. */
-  --shadow-console-window: 2px 2px 0 rgb(15 23 42 / 0.12);
+  /* Control rings and the pressed segment; containers have no shadow. */
   --shadow-console-control-focus: 0 0 0 2px var(--console-control-ring);
   --shadow-console-control-invalid: 0 0 0 2px var(--console-danger-ring);
   --shadow-console-pressed: inset 0 1px 2px rgb(15 23 42 / 0.18);
@@ -124,10 +121,6 @@
 
 @utility gradient-bar {
   background-image: var(--console-gradient-bar);
-}
-
-@utility gradient-strip {
-  background-image: var(--console-gradient-strip);
 }
 
 @utility gradient-button {

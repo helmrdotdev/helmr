@@ -59,7 +59,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
           label="Slack delivery issues"
           footer={<LoadMore count={rows().length} noun="delivery issues" hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
         >
-          <For each={rows()}>{(post) => <ListItem class={ui.windowStack}>
+          <For each={rows()}>{(post) => <ListItem class={ui.blockStack}>
             <h3 class="m-0 text-body font-medium">{title(post)}</h3>
             <p class={ui.muted}>{post.role === "intermediate" ? "Progress" : post.role === "request_feedback" ? "Request acknowledgment" : post.role === "question" ? "Question" : post.role === "response" ? "Response" : "Task status"} · Message {post.sequence} · <RelativeTime value={post.created_at} /></p>
             <Show when={!post.payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the Session’s retention policy.</p>}><CodeBlock code={post.text} label={`Message ${post.sequence}`} /></Show>
@@ -83,7 +83,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
       )}
     </QueryState>
     <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" errorMessage={(e) => slackFailure(e, "Delivery could not be stopped.", DELIVERY_MESSAGES).message} title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
-      <div class={ui.windowStack}>
+      <div class={ui.blockStack}>
         <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the Agent.</p>
         <CodeBlock code={post.text} label="Message content" />
         <Show when={!post.root_known}><p class="m-0">The original thread must still be confirmed before later messages can be sent. This action will not create a replacement thread.</p></Show>

@@ -26,7 +26,7 @@ export function Notice(props: {
       </Show>
       <Show when={props.onDismiss}>
         {(dismiss) => (
-          <button type="button" class={ui.closeButton} aria-label="Dismiss notice" onClick={() => dismiss()()}>
+          <button type="button" class={ui.noticeCloseButton} aria-label="Dismiss notice" onClick={() => dismiss()()}>
             <span class={ui.closeIcon} aria-hidden="true" />
           </button>
         )}

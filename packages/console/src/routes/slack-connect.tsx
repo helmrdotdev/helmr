@@ -85,7 +85,7 @@ export function SlackConnect() {
     <Match when={context() || error()}>
       <AuthWindow>
         <AuthTitle>Link your Slack account</AuthTitle>
-        <div class={ui.windowStack}>
+        <div class={ui.blockStack}>
           <Show when={context()}>
             {(current) => <>
               <KeyValueList title="Accounts">

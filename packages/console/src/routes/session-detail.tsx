@@ -253,7 +253,7 @@ function SessionDetailContent() {
                       outcome. A control request may still be stopping an active
                       process or draining admitted work.
                     </p>
-                    <CodeBlock code={JSON.stringify(value(), null, 2)} label="Operation receipt" />
+                    <CodeBlock code={JSON.stringify(value(), null, 2)} />
                   </Panel>
                 )}
               </Show>
@@ -277,7 +277,7 @@ function SessionDetailContent() {
                     >
                       <For each={items()}>
                         {(turn) => (
-                          <ListItem id={`turn-${turn.id}`} class={ui.windowStack}>
+                          <ListItem id={`turn-${turn.id}`} class={ui.blockStack}>
                             <div class="flex flex-wrap items-center gap-2">
                               <strong class="font-medium">Turn #{turn.sequence}</strong>
                               <StatusBadge resource="turn" status={turn.status} />
@@ -312,7 +312,7 @@ function SessionDetailContent() {
                               <CodeBlock code={JSON.stringify(turn.result, null, 2)} label={`Turn #${turn.sequence} result`} />
                             </Show>
                             <Show when={turn.status === "completed" && turn.response}>
-                              {response => <div class={ui.windowStack}><p class={ui.muted}>Response</p><ContentView content={response()} /></div>}
+                              {response => <div class={ui.blockStack}><p class={ui.muted}>Response</p><ContentView content={response()} /></div>}
                             </Show>
                             <TurnQuestions address={address()} turnID={turn.id} polling={polling()} />
                             <Show when={turn.terminal_at}>

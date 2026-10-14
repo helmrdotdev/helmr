@@ -34,7 +34,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   const response = await page.request.post(`${f.askBase}/respond`, { data: { answer: "", response_id: crypto.randomUUID() } });
   expect(response.ok(), await response.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText('""');
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText('""');
   const recorded = await (await page.request.get(f.askBase)).json();
   const me = await (await page.request.get("/api/me")).json();
   expect(recorded.status).toBe("responded");
@@ -73,7 +73,7 @@ test("real API shows ordered progress while saving keeps response and result pri
 test("Console records one externally retried choice with its exact values", async ({ page }) => {
   const f = await conversation(page, "choice");
   await page.goto(f.askURL);
-  await expect(page.getByLabel("Answer control")).toContainText("First");
+  await expect(page.getByRole("region", { name: "Answer control" }).locator("pre")).toContainText("First");
   const answer = { selected: [{ id: "a", value: { v: 1 } }, { id: "b", value: null }], text: "extra" };
   const data = { answer, response_id: crypto.randomUUID() };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -81,7 +81,7 @@ test("Console records one externally retried choice with its exact values", asyn
     expect(response.ok(), await response.text()).toBeTruthy();
   }
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText(JSON.stringify(answer, null, 2));
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText(JSON.stringify(answer, null, 2));
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   const events = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/events?after=0&limit=100`)).json();
   expect(events.records.filter((event: { kind: string }) => event.kind === "ask.responded")).toHaveLength(1);
@@ -111,7 +111,7 @@ test("real API rejects a loaded question after organization scope loss and accep
   const reply = await page.request.post(`${f.askBase}/respond`, { data });
   expect(reply.ok(), await reply.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText('"retained draft"');
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText('"retained draft"');
 });
 
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {

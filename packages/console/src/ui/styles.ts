@@ -13,8 +13,20 @@ export const toneClass: Record<Tone, string> = {
   neutral: "border-console-neutral-border bg-console-neutral-bg text-console-neutral",
 };
 
-const buttonBase =
-  "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border px-2.5 py-0 font-mono text-chrome font-medium leading-none transition duration-100 disabled:cursor-not-allowed disabled:opacity-45";
+// A button without its size; `buttonBase` is the 28px control size and
+// `compactButton` the one 24px size.
+const buttonFrame =
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border py-0 font-mono text-chrome font-medium leading-none transition duration-100 disabled:cursor-not-allowed disabled:opacity-45";
+const buttonBase = cx(buttonFrame, "h-7 min-h-7 px-2.5");
+const secondaryTone =
+  "border-console-border gradient-button text-console-text hover:border-console-border-strong hover:gradient-button-hover hover:text-console-text";
+
+const closeButtonBase =
+  "grid shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
+
+// The header of a container: 32px like a table's column header row. The
+// base sets no colour; add the default or danger variant.
+const containerHeaderBase = "flex h-8 min-h-8 shrink-0 items-center justify-between gap-2 border-b px-3";
 
 // Border, focus ring and invalid state shared by every form control; each control
 // adds its own size and font.
@@ -26,15 +38,30 @@ export const ui = {
   microLabel: "font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle",
   h1: "m-0 text-[1.32rem] font-medium leading-[1.12] text-console-text",
   h2: "m-0 text-[0.9rem] font-medium leading-tight text-console-text",
-  h3: "m-0 font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle",
   muted: "text-body text-console-muted",
   monoLink: "cursor-pointer font-mono text-chrome text-console-accent hover:text-console-accent-hover",
 
   // Spacing rules: buttons in a group sit 8px apart, page sections stack at 24px,
-  // blocks inside a window or panel sit 12px apart.
+  // blocks inside a container, dialog or list row sit 12px apart.
   buttonGroup: "flex flex-wrap items-center gap-2",
   sectionStack: "flex flex-col gap-6",
-  windowStack: "flex flex-col gap-3",
+  blockStack: "flex flex-col gap-3",
+
+  // Containers, in the page (Panel, DataTable, List, KeyValueList, DangerZone) and
+  // floating (Popover, Dialog, AuthWindow): one border, no shadow, one header.
+  container: "border border-console-border-strong bg-console-surface",
+  containerHeader: cx(containerHeaderBase, "border-console-border bg-console-bg-panel"),
+  containerHeaderDanger: cx(containerHeaderBase, "border-console-danger-border bg-console-danger-bg"),
+  containerTitle: "m-0 min-w-0 truncate text-body font-medium leading-snug",
+  containerCount: "ml-2 font-mono text-chrome font-normal text-console-subtle",
+  containerActions: "flex shrink-0 items-center gap-2",
+  // The 12px gap is the only spacing between the body's blocks: direct children
+  // drop their vertical margins (QueryState's refetch notice keeps its margin in
+  // page flow). A table or list (`data-list-frame`) that is a direct child loses
+  // its own frame: it runs to the container's edges, with a divider above and
+  // below only where other blocks sit. Nested deeper, it keeps its frame.
+  containerBody:
+    "flex flex-col gap-3 p-3 [&>*]:my-0 [&>[data-list-frame]]:-mx-3 [&>[data-list-frame]]:border-x-0 [&>[data-list-frame]]:border-console-border [&>[data-list-frame]:first-child]:-mt-3 [&>[data-list-frame]:first-child]:border-t-0 [&>[data-list-frame]:last-child]:-mb-3 [&>[data-list-frame]:last-child]:border-b-0",
 
   // Navigation
   settingsNavLink:
@@ -64,10 +91,10 @@ export const ui = {
     buttonBase,
     "border-console-accent bg-console-accent text-white hover:border-console-accent-hover hover:bg-console-accent-hover active:translate-y-px",
   ),
-  secondaryButton: cx(
-    buttonBase,
-    "border-console-border gradient-button text-console-text hover:border-console-border-strong hover:gradient-button-hover hover:text-console-text",
-  ),
+  secondaryButton: cx(buttonBase, secondaryTone),
+  // The one 24px button: container header actions, table and list footers,
+  // notice actions, a code block's Copy and a queue row's action.
+  compactButton: cx(buttonFrame, "h-6 min-h-6 px-2", secondaryTone),
   dangerOutlineButton: cx(
     buttonBase,
     "border-console-danger-outline bg-console-danger-bg text-console-danger hover:border-console-danger-solid hover:bg-console-danger-solid hover:text-white",
@@ -75,18 +102,15 @@ export const ui = {
   // A square 28px icon button for bar and row chrome (settings, row menus).
   iconButton:
     "inline-grid size-7 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
-  // The 20px close control in a title strip or a dismissible notice.
-  closeButton:
-    "grid size-5 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
+  // The close control: 24px in a container header (dialogs), 20px in a
+  // dismissible notice. The base sets no size.
+  closeButton: cx(closeButtonBase, "size-6"),
+  noticeCloseButton: cx(closeButtonBase, "size-5"),
   closeIcon:
     "relative block size-2.5 before:absolute before:left-1/2 before:top-0 before:h-full before:w-px before:-translate-x-1/2 before:rotate-45 before:bg-current before:content-[''] after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:-rotate-45 after:bg-current after:content-['']",
 
-  // Popovers, menus and windows
-  window: "border border-console-border-strong bg-console-surface shadow-console-window",
-  titleStrip:
-    "flex h-5.5 shrink-0 items-center justify-between gap-2 border-b border-console-border gradient-strip px-2 font-mono text-micro text-console-text",
-  popover:
-    "fixed z-50 flex flex-col overflow-hidden border border-console-border-strong bg-console-surface shadow-console-window",
+  // Popovers and menus: the container border, no shadow.
+  popover: "fixed z-50 flex flex-col overflow-hidden border border-console-border-strong bg-console-surface",
   // The base sets no colour: two Tailwind colour utilities on one element resolve
   // by stylesheet order, so only the tone variant may set `text-*`.
   actionMenuItemBase:

@@ -81,7 +81,7 @@ export function AuthSlackLink() {
       {(current) => (
         <AuthWindow>
           <AuthTitle>Link your Slack account</AuthTitle>
-          <div class={ui.windowStack}>
+          <div class={ui.blockStack}>
             <KeyValueList title="Accounts">
               <KeyValue label="Slack account">{current().identity.name || <IDText value={current().identity.slack_user_id} />}</KeyValue>
               <KeyValue label="Slack user ID"><IDText value={current().identity.slack_user_id} /></KeyValue>
