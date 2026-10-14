@@ -2,8 +2,8 @@ import { useSearchParams } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { startGitHubInvite, startInviteMagicLink } from "../lib/auth";
-import { errorMessage } from "../lib/error";
-import { AuthActions, AuthCopy, AuthDivider, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { authErrorMessage } from "../lib/error";
+import { AuthActions, AuthCopy, AuthDivider, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function Invite() {
@@ -41,7 +41,7 @@ export function Invite() {
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
+      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
     } finally {
       setMagicBusy(false);
     }
@@ -57,13 +57,13 @@ export function Invite() {
       window.location.href = redirect_url;
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
+      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
       setGitHubBusy(false);
     }
   }
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <Show when={token()} fallback={
         <>
           <AuthTitle>Invite failed</AuthTitle>
@@ -143,6 +143,6 @@ export function Invite() {
           </AuthActions>
         </Show>
       </Show>
-    </AuthScreen>
+    </AuthWindow>
   );
 }

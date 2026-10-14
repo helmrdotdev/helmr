@@ -1,34 +1,14 @@
-import { createSignal, onCleanup } from "solid-js";
 import { useScopeIDs } from "../lib/scope";
 import { scopeShareURL } from "../lib/scope-link";
 import { ui } from "../ui/styles";
-
-type CopyState = "idle" | "copied" | "failed";
+import { useClipboard, type CopyState } from "../ui/useClipboard";
 
 const LABEL: Record<CopyState, string> = { idle: "Copy link", copied: "Copied", failed: "Could not copy" };
-const ANNOUNCEMENT: Record<CopyState, string> = { idle: "", copied: "Link copied", failed: "Could not copy link" };
 
 // Copies a link to the current page that opens it in this tab's Project and Environment.
 export function CopyLinkButton() {
   const scope = useScopeIDs();
-  const [state, setState] = createSignal<CopyState>("idle");
-  let timer: number | undefined;
-  onCleanup(() => window.clearTimeout(timer));
-
-  const show = (next: CopyState, duration: number) => {
-    setState(next);
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => setState("idle"), duration);
-  };
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(scopeShareURL(window.location.href, scope()));
-      show("copied", 1200);
-    } catch {
-      show("failed", 3000);
-    }
-  };
+  const clipboard = useClipboard({ copied: "Link copied", failed: "Could not copy link" });
 
   return (
     <>
@@ -36,11 +16,11 @@ export function CopyLinkButton() {
         type="button"
         class={ui.secondaryButton}
         disabled={!scope().projectID || !scope().environmentID}
-        onClick={() => void copy()}
+        onClick={() => void clipboard.copy(scopeShareURL(window.location.href, scope()))}
       >
-        {LABEL[state()]}
+        {LABEL[clipboard.state()]}
       </button>
-      <span class="sr-only" aria-live="polite">{ANNOUNCEMENT[state()]}</span>
+      <clipboard.LiveRegion />
     </>
   );
 }

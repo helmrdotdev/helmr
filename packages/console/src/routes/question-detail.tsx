@@ -20,7 +20,7 @@ function QuestionDetailContent(props: { address: AskAddress }) {
   const enabled = () => Object.values(props.address).every(Boolean);
   const ask = createQuery(() => ({ queryKey: ["ask", props.address], queryFn: () => getAsk(props.address), enabled: enabled(), retry: false, refetchInterval: 5_000 }));
   return <section class={ui.page}>
-    <PageHeader title="Question" back={{ href: sessionConsolePath(props.address.sessionID), label: "Session" }} />
+    <PageHeader title="Question" breadcrumb={[{ href: sessionConsolePath(props.address.sessionID), label: "Session" }]} />
     <Show when={!enabled()}><StatePanel error="Question and environment scope are required." /></Show>
     <Show when={ask.isError}><StatePanel error={ask.error instanceof Error ? ask.error.message : "The question could not be loaded."} /></Show>
     <Show when={enabled() && ask.isPending}><StatePanel loading="Loading question..." /></Show>

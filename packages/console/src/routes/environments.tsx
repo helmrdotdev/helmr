@@ -1,71 +1,23 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
+import { slugify } from "../lib/slug";
+import { useMe } from "../lib/me";
+import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
-import { ApiError } from "../lib/api";
-import { getMe, hasPermission } from "../lib/auth";
-import { createEnvironment, updateEnvironment, type Environment } from "../lib/projects";
+import { errorMessage } from "../lib/error";
+import { hasPermission } from "../lib/auth";
+import { createEnvironment, isProtectedEnvironment, updateEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { DataTable } from "../ui/DataTable";
+import { EnvDot } from "../ui/EnvChip";
+import { ColorField } from "../ui/Field";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { Dialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { envDotStyle, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
-const PROTECTED_ENVIRONMENT_SLUGS = new Set(["production", "staging"]);
 
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
-
-function formErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
-
-function isProtectedEnvironment(env: Environment): boolean {
-  return PROTECTED_ENVIRONMENT_SLUGS.has(env.environment);
-}
-
-function ColorField(props: { value: string; onChange: (colorHex: string) => void }) {
-  return (
-    <label class={ui.field}>
-      <span>Color</span>
-      <div class="flex items-center gap-2">
-        <input
-          type="color"
-          class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
-          value={props.value}
-          onInput={(event) => props.onChange(normalizeEnvironmentColor(event.currentTarget.value))}
-          aria-label="Environment color"
-        />
-        <div class="flex flex-wrap gap-1.5">
-          <For each={ENVIRONMENT_COLOR_PRESETS}>
-            {(preset) => (
-              <button
-                type="button"
-                class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
-                aria-label={`Use ${preset}`}
-                onClick={() => props.onChange(preset)}
-              >
-                <span class="block size-full" style={{ "background-color": preset }} />
-              </button>
-            )}
-          </For>
-        </div>
-      </div>
-    </label>
-  );
-}
 
 function EditEnvironmentModal(props: {
   env: Environment;
@@ -91,14 +43,14 @@ function EditEnvironmentModal(props: {
       await props.onSaved();
       props.onClose();
     } catch (error) {
-      setFormError(formErrorMessage(error));
+      setFormError(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal title={`Edit ${props.env.name}`} onClose={props.onClose} closeDisabled={submitting()}>
+    <Dialog title={`Edit ${props.env.name}`} onClose={props.onClose} closeDisabled={submitting()}>
       <form onSubmit={submit}>
         <label class={ui.field}>
           <span>Name</span>
@@ -115,7 +67,7 @@ function EditEnvironmentModal(props: {
           <span>Environment ID</span>
           <input type="text" class={ui.input} value={props.env.environment} disabled aria-label="Environment ID (not editable)" />
         </label>
-        <ColorField value={colorHex()} onChange={setColorHex} />
+        <ColorField value={colorHex()} onChange={setColorHex} presets={ENVIRONMENT_COLOR_PRESETS} ariaLabel="Environment color" />
         <Show when={formError()}>
           <p class={ui.fieldError} role="alert">{formError()}</p>
         </Show>
@@ -128,7 +80,7 @@ function EditEnvironmentModal(props: {
           </button>
         </div>
       </form>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -151,7 +103,7 @@ function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
 export function Environments() {
   const scope = useScope();
   const queryClient = useQueryClient();
-  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const me = useMe();
   const canManage = () => hasPermission(me.data, "projects.manage");
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<Environment | null>(null);
@@ -201,7 +153,7 @@ export function Environments() {
       scope.setSelectedEnvironmentID(env.environment);
       setCreating(false);
     } catch (error) {
-      setFormError(formErrorMessage(error));
+      setFormError(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -226,7 +178,7 @@ export function Environments() {
               <tr>
                 <td>
                   <span class="inline-flex items-center gap-2.5 font-medium text-console-text">
-                    <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
+                    <EnvDot colorHex={env.color_hex} />
                     {env.name}
                   </span>
                 </td>
@@ -254,7 +206,7 @@ export function Environments() {
 
       <Show when={creating() && project()}>
         {(currentProject) => (
-          <Modal title={`New environment in ${currentProject().name}`} onClose={closeCreateEnvironment} closeDisabled={submitting()}>
+          <Dialog title={`New environment in ${currentProject().name}`} onClose={closeCreateEnvironment} closeDisabled={submitting()}>
             <form onSubmit={submitCreateEnvironment}>
               <label class={ui.field}>
                 <span>Name</span>
@@ -293,6 +245,8 @@ export function Environments() {
                 />
               </label>
               <ColorField
+                presets={ENVIRONMENT_COLOR_PRESETS}
+                ariaLabel="Environment color"
                 value={colorHex()}
                 onChange={(next) => {
                   setColorTouched(true);
@@ -311,7 +265,7 @@ export function Environments() {
                 </button>
               </div>
             </form>
-          </Modal>
+          </Dialog>
         )}
       </Show>
 

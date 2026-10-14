@@ -1,18 +1,16 @@
 import { useLocation, useNavigate } from "@solidjs/router";
-import { createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
-import { getMe, onboardingRedirectPath, type AuthRequirement } from "../lib/auth";
+import { onboardingRedirectPath, type AuthRequirement } from "../lib/auth";
+import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
-import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthError, AuthWorking, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRequirement }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const me = createQuery(() => ({
-    queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000,
-  }));
+  const me = useMe();
   const redirectPath = createMemo(() => {
     const next = locationDestination(location);
     if (me.error instanceof ApiError && me.error.status === 401) return withNext("/login", next);
@@ -25,13 +23,15 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
     if (path) navigate(path, { replace: true });
   });
   return (
-    <Show when={!me.isPending && !redirectPath()} fallback={<AuthLoading>Loading...</AuthLoading>}>
+    <Show when={!me.isPending && !redirectPath()} fallback={<AuthWorking>Loading...</AuthWorking>}>
       <Show when={!me.isError} fallback={
-        <AuthScreen>
-          <AuthTitle>Could not load your account</AuthTitle>
-          <p class={ui.error}>Please try again.</p>
-          <button class={ui.button} onClick={() => void me.refetch()}>Retry</button>
-        </AuthScreen>
+        <AuthWindow>
+          <AuthError
+            title="Could not load your account"
+            message="Please try again."
+            action={<button type="button" class={ui.button} onClick={() => void me.refetch()}>Retry</button>}
+          />
+        </AuthWindow>
       }>
         {props.children}
       </Show>

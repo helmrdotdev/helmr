@@ -10,18 +10,17 @@ import {
   type AdminWorkerGroup,
   type CreateAdminWorkerGroupInput,
 } from "../lib/admin";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { Dialog, RevealDialog } from "../ui/Dialog";
+import { Field } from "../ui/Field";
+import { Select } from "../ui/Select";
 import { PageHeader } from "../ui/PageHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Something went wrong.";
-}
 
 export function AdminWorkerGroups() {
   const queryClient = useQueryClient();
@@ -37,6 +36,7 @@ export function AdminWorkerGroups() {
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [enrollmentToken, setEnrollmentToken] = createSignal<string | null>(null);
+  const [newRegionID, setNewRegionID] = createSignal("");
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin", "worker-groups"] });
 
@@ -114,7 +114,16 @@ export function AdminWorkerGroups() {
         actions={<button type="button" class={ui.button} disabled={(regions.data?.regions.length ?? 0) === 0} onClick={() => { setError(null); setCreating(true); }}>New Worker Group</button>}
       />
       <div class={ui.toolbar}>
-        <label class={ui.filterField}>Region <select class={ui.input} value={regionFilter()} onChange={(event) => setRegionFilter(event.currentTarget.value)}><option value="">All</option><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name}</option>}</For></select></label>
+        <span class={ui.filterField}>
+          Region
+          <Select
+            value={regionFilter()}
+            options={[{ value: "", label: "All" }, ...(regions.data?.regions ?? []).map((region) => ({ value: region.id, label: region.display_name }))]}
+            onChange={setRegionFilter}
+            ariaLabel="Region"
+            minWidth="160px"
+          />
+        </span>
       </div>
       <Show when={error()}>{(message) => <StatePanel error={message()} />}</Show>
       <Show when={!groups.isPending} fallback={<StatePanel loading="Loading Worker Groups..." />}>
@@ -155,20 +164,28 @@ export function AdminWorkerGroups() {
       </Show>
 
       <Show when={creating()}>
-        <Modal title="New Worker Group" onClose={() => setCreating(false)} closeDisabled={submitting()}>
+        <Dialog title="New Worker Group" onClose={() => setCreating(false)} closeDisabled={submitting()}>
           <form onSubmit={submitCreate}>
-            <label class={ui.field}><span>Region</span><select name="region_id" class={ui.input} required autofocus><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name} ({region.id})</option>}</For></select></label>
+            <Field label="Region">
+              <Select
+                name="region_id"
+                value={newRegionID() || (regions.data?.regions[0]?.id ?? "")}
+                options={(regions.data?.regions ?? []).map((region) => ({ value: region.id, label: `${region.display_name} (${region.id})` }))}
+                onChange={setNewRegionID}
+                minWidth="100%"
+              />
+            </Field>
             <TextField name="name" label="Name" placeholder="default" required />
             <label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" /></label>
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
           </form>
-        </Modal>
+        </Dialog>
       </Show>
 
-      <Show when={editing()}>{(group) => <Modal title={`Edit ${group().name}`} onClose={() => setEditing(null)} closeDisabled={submitting()}><form onSubmit={submitEdit}><label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" autofocus>{group().description}</textarea></label><Show when={error()}><p class={ui.fieldError}>{error()}</p></Show><div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>Save</button></div></form></Modal>}</Show>
+      <Show when={editing()}>{(group) => <Dialog title={`Edit ${group().name}`} onClose={() => setEditing(null)} closeDisabled={submitting()}><form onSubmit={submitEdit}><label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" autofocus>{group().description}</textarea></label><Show when={error()}><p class={ui.fieldError}>{error()}</p></Show><div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>Save</button></div></form></Dialog>}</Show>
 
-      <Show when={enrollmentToken()}>{(token) => <Modal title="Worker enrollment token" onClose={() => setEnrollmentToken(null)}><p class={ui.warning}>Copy this token now. It will not be shown again.</p><code class={ui.rawKey}>{token()}</code><div class={ui.modalActions}><button type="button" class={ui.button} onClick={() => setEnrollmentToken(null)}>Done</button></div></Modal>}</Show>
+      <Show when={enrollmentToken()}>{(token) => <RevealDialog title="Worker enrollment token" value={token()} warning="Copy this token now. It will not be shown again." onClose={() => setEnrollmentToken(null)} />}</Show>
     </div>
   );
 }

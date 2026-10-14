@@ -1,9 +1,10 @@
 import { A } from "@solidjs/router";
-import { createSignal, onCleanup, Show } from "solid-js";
+import { Show } from "solid-js";
 import { formatID } from "./id";
 import { cx } from "./styles";
+import { useClipboard } from "./useClipboard";
 
-const TEXT = "font-mono text-[11.5px]";
+const TEXT = "font-mono text-chrome";
 
 type Mode = "short" | "link" | "full";
 
@@ -40,20 +41,8 @@ export function IDText(props: Props) {
 }
 
 function CopyText(props: { value: string }) {
-  const [copied, setCopied] = createSignal(false);
-  let timer: number | undefined;
-  onCleanup(() => window.clearTimeout(timer));
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(props.value);
-      setCopied(true);
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      setCopied(false);
-    }
-  };
+  const clipboard = useClipboard({ copied: "Copied", failed: "Could not copy" });
+  const copied = () => clipboard.state() === "copied";
 
   return (
     <button
@@ -64,10 +53,12 @@ function CopyText(props: { value: string }) {
       )}
       title="Click to copy"
       aria-label={copied() ? `Copied ${props.value}` : `Copy ${props.value}`}
-      onClick={() => void copy()}
+      onClick={() => void clipboard.copy(props.value)}
     >
       <span>{props.value}</span>
-      <span class="text-[10px] text-console-accent" aria-hidden="true">{copied() ? "Copied" : ""}</span>
+      <span class="text-micro text-console-accent" aria-hidden="true">
+        {copied() ? "Copied" : clipboard.state() === "failed" ? "Could not copy" : ""}
+      </span>
     </button>
   );
 }

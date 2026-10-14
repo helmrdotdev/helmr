@@ -1,7 +1,7 @@
 import { A, useNavigate } from "@solidjs/router";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { confirmSlackUserLink, verifySlackUserLink, type SlackIdentityProof } from "../lib/slack";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function AuthSlackLink() {
@@ -24,7 +24,7 @@ export function AuthSlackLink() {
     catch (e) { if (mounted) setError(e instanceof Error ? e.message : "Slack identity could not be linked."); }
     finally { if (mounted) setBusy(false); }
   };
-  return <AuthScreen>
+  return <AuthWindow>
     <AuthTitle>{complete() ? "Your accounts are linked" : "Link your Slack account"}</AuthTitle>
     <Show when={!complete()} fallback={<>
       <AuthCopy>Return to Slack and send a new message or repeat your action. Linking does not apply your earlier action.</AuthCopy>
@@ -38,5 +38,5 @@ export function AuthSlackLink() {
     </div>}</Show></Show>
     <Show when={error()}><p class={ui.error} role="alert">{error()}</p><AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from your Slack account settings.</AuthCopy></Show>
     <Show when={!complete()}><A href="/account/slack">Your Slack account</A></Show>
-  </AuthScreen>;
+  </AuthWindow>;
 }

@@ -2,7 +2,7 @@ import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { SessionAddress } from "../../lib/sessions";
 import { listSlackDelivery, recoverSlackDelivery, type SlackDeliveryPost } from "../../lib/slack";
-import { ConfirmModal } from "../../ui/ConfirmModal";
+import { ConfirmDialog } from "../../ui/Dialog";
 import { Panel } from "../../ui/Panel";
 import { RelativeTime } from "../../ui/RelativeTime";
 import { ui } from "../../ui/styles";
@@ -63,11 +63,11 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
       <Show when={!props.canManage && post.attempt_id}><p class={ui.muted}>An organization owner or admin can check again or stop delivery.</p></Show>
     </article>}</For>
     <Show when={posts.hasNextPage}><button class={ui.secondaryButton} disabled={posts.isFetchingNextPage} onClick={() => void posts.fetchNextPage()}>Load more delivery issues</button></Show>
-    <Show when={selected()} keyed>{(post) => <ConfirmModal title="Stop delivery of this message?" confirmLabel="Stop delivery" onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
+    <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" title="Stop delivery of this message?" confirmLabel="Stop delivery" onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
       <p>Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the Agent.</p>
       <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words text-sm">{post.text}</pre>
       <Show when={!post.root_known}><p>The original thread must still be confirmed before later messages can be sent. This action will not create a replacement thread.</p></Show>
       <Show when={post.stream_state === "uncertain" || post.stream_state === "open"}><p>Evidence remains while Slack stream termination is unconfirmed; this action does not guarantee content expiry.</p></Show>
-    </ConfirmModal>}</Show>
+    </ConfirmDialog>}</Show>
   </Panel>;
 }

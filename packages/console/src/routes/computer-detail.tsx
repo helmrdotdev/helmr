@@ -5,6 +5,7 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
@@ -16,7 +17,7 @@ import {
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
-import { DetailItem, DetailList, Panel } from "../ui/Panel";
+import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -24,16 +25,11 @@ import { ui } from "../ui/styles";
 
 function computerErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 404) return "Computer not found.";
-  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to view this Computer.";
-  if (error instanceof ApiError) return error.message;
-  return "Could not load this Computer.";
+  return errorMessage(error, "Could not load this Computer.", { forbidden: "You do not have permission to view this Computer." });
 }
 
-function actionErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
-  if (error instanceof ApiError) return error.message;
-  return fallback;
-}
+const actionErrorMessage = (error: unknown, fallback: string) =>
+  errorMessage(error, fallback, { forbidden: "You do not have permission to do this." });
 
 function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
   const title = () => props.kind === "sessions" ? "Sessions" : "Commands";
@@ -93,7 +89,7 @@ export function ComputerDetail() {
     <section class={ui.page}>
       <PageHeader
         title="Computer"
-        back={{ href: "/computers", label: "Computers" }}
+        breadcrumb={[{ href: "/computers", label: "Computers" }]}
         actions={<CopyLinkButton />}
         badge={<Show when={computer.data}>{(current) => <StatusBadge resource="computer" status={current().status} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
@@ -113,8 +109,25 @@ export function ComputerDetail() {
               }
             >
               {(current) => (
-                <div class="grid grid-cols-[minmax(0,1fr)_310px] items-start gap-3.5 max-[960px]:grid-cols-1">
-                  <div class="grid gap-3.5">
+                <DetailLayout
+                  rail={
+                  <KeyValueList title="Computer details">
+                    <KeyValue label="Status"><StatusBadge resource="computer" status={current().status} /></KeyValue>
+                    <KeyValue label="Residency">{current().residency}</KeyValue>
+                    <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
+                    <KeyValue label="Key">
+                      <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
+                    </KeyValue>
+                    <KeyValue label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></KeyValue>
+                    <KeyValue label="Deployment">
+                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
+                    </KeyValue>
+                    <KeyValue label="Last activity"><RelativeTime value={current().last_activity_at} /></KeyValue>
+                    <KeyValue label="Created"><RelativeTime value={current().created_at} /></KeyValue>
+                    <KeyValue label="Updated"><RelativeTime value={current().updated_at} /></KeyValue>
+                  </KeyValueList>
+                  }
+                >
                     <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="sessions" />
                     <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="commands" />
                     <Panel title="Secret placements">
@@ -135,24 +148,7 @@ export function ComputerDetail() {
                     </Panel>
 
                     <p class={ui.muted}>Use the CLI to run commands or delete this Computer.</p>
-                  </div>
-
-                  <DetailList title="Computer details">
-                    <DetailItem label="Status"><StatusBadge resource="computer" status={current().status} /></DetailItem>
-                    <DetailItem label="Residency">{current().residency}</DetailItem>
-                    <Show when={current().error}>{(error) => <DetailItem label="Unavailable reason">{error().message}</DetailItem>}</Show>
-                    <DetailItem label="Key">
-                      <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
-                    </DetailItem>
-                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></DetailItem>
-                    <DetailItem label="Deployment">
-                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
-                    </DetailItem>
-                    <DetailItem label="Last activity"><RelativeTime value={current().last_activity_at} /></DetailItem>
-                    <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>
-                    <DetailItem label="Updated"><RelativeTime value={current().updated_at} /></DetailItem>
-                  </DetailList>
-                </div>
+                </DetailLayout>
               )}
             </Show>
           </Show>

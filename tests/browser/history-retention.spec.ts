@@ -33,6 +33,11 @@ async function scope(page: Page, options: { policy?: string; manage?: boolean; f
 }
 
 const mode = (page: Page) => page.getByRole("combobox", { name: "History retention", exact: true });
+const unit = (page: Page) => page.getByRole("combobox", { name: "Unit", exact: true });
+const choose = async (page: Page, combobox: ReturnType<typeof mode>, option: string) => {
+  await combobox.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+};
 const period = (page: Page) => page.getByLabel("Retention period", { exact: true });
 const save = (page: Page) => page.getByRole("button", { name: "Save history retention", exact: true });
 
@@ -90,12 +95,12 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
   await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
   await page.reload();
   await expect(period(page)).toHaveValue("7");
-  await mode(page).selectOption("never");
+  await choose(page, mode(page), "Never expire");
   await save(page).click();
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]!.body).toEqual({ history_retention: "never" });
   await page.reload();
-  await expect(mode(page)).toHaveValue("never");
+  await expect(mode(page)).toHaveText("Never expire");
   await expect(period(page)).toHaveCount(0);
 });
 
@@ -103,10 +108,10 @@ test("custom seconds round-trip exactly and hours normalize", async ({ page }) =
   const { writes } = await scope(page, { policy: "3601s" });
   await page.goto("/settings/projects");
   await expect(period(page)).toHaveValue("3601");
-  await expect(page.getByRole("combobox", { name: "Unit", exact: true })).toHaveValue("1");
+  await expect(unit(page)).toHaveText("Seconds");
   await expect(save(page)).toBeDisabled();
   await period(page).fill("48");
-  await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption("3600");
+  await choose(page, unit(page), "Hours");
   await save(page).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]!.body).toEqual({ history_retention: "2d" });
@@ -142,10 +147,10 @@ test("failed settings read does not present an editable default", async ({ page 
 test("failed save preserves the draft and shows the error", async ({ page }) => {
   await scope(page, { failWrite: true });
   await page.goto("/settings/projects");
-  await mode(page).selectOption("never");
+  await choose(page, mode(page), "Never expire");
   await save(page).click();
   await expect(page.getByRole("alert")).toHaveText("Could not save policy.");
-  await expect(mode(page)).toHaveValue("never");
+  await expect(mode(page)).toHaveText("Never expire");
   await expect(save(page)).toBeEnabled();
 });
 
@@ -172,11 +177,11 @@ test("real Project defaults to 30d and settings persist across all Environments"
   const saved = await page.request.get(`/api/projects/${project}/settings`);
   expect(saved.ok()).toBeTruthy();
   expect(await saved.json()).toEqual({ history_retention: "7d" });
-  await mode(page).selectOption("never");
+  await choose(page, mode(page), "Never expire");
   await save(page).click();
   await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
   await page.reload();
-  await expect(mode(page)).toHaveValue("never");
+  await expect(mode(page)).toHaveText("Never expire");
   const env = await page.request.post(`/api/projects/${project}/environments`, { data: { environment: "preview", name: "Preview", color_hex: "#123456" } });
   expect(env.ok()).toBeTruthy();
   expect(await env.json()).not.toHaveProperty("history_retention");

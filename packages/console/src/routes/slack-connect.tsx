@@ -3,7 +3,7 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { ApiError, postJson } from "../lib/api";
 import { locationDestination, withNext } from "../lib/continuation";
 import { getSlackFirstUseLink, startSlackFirstUseLink, type SlackFirstUseLink } from "../lib/slack";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function SlackConnect() {
@@ -44,7 +44,7 @@ export function SlackConnect() {
       if (mounted) { setError(e instanceof Error ? e.message : "Sign out failed."); setBusy(false); }
     }
   };
-  return <AuthScreen>
+  return <AuthWindow>
     <AuthTitle>Link your Slack account</AuthTitle>
     <Show when={signIn()}>
       <AuthCopy>Sign in to Helmr to connect the Slack account you used to request work. Your action has not been applied.</AuthCopy>
@@ -66,5 +66,5 @@ export function SlackConnect() {
       <button class={ui.secondaryButton} disabled={busy()} onClick={() => void switchAccount()}>Use a different Helmr account</button>
     </Show>
     <Show when={!signIn() && !context() && !error()}><AuthCopy>Checking your linking request...</AuthCopy></Show>
-  </AuthScreen>;
+  </AuthWindow>;
 }

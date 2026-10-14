@@ -1,16 +1,11 @@
+import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import { ApiError } from "../lib/api";
-import {
-  approveDeviceCode,
-  denyDeviceCode,
-  getDeviceCodeStatus,
-  getMe,
-  type DeviceCodeStatus,
-} from "../lib/auth";
-import { errorMessage } from "../lib/error";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { approveDeviceCode, denyDeviceCode, getDeviceCodeStatus, type DeviceCodeStatus } from "../lib/auth";
+import { authErrorMessage } from "../lib/error";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { RelativeTime } from "../ui/RelativeTime";
 import { ui } from "../ui/styles";
 
@@ -39,13 +34,13 @@ function statusText(status: DeviceCodeStatus["status"]): string {
 
 function deviceErrorMessage(error: unknown, fallback: string): string {
   const kind = error instanceof ApiError ? error.code : null;
-  return errorMessage(kind, error instanceof Error ? error.message : fallback);
+  return authErrorMessage(kind, error instanceof Error ? error.message : fallback);
 }
 
 export function Device() {
   const [params] = useSearchParams();
   const queryClient = useQueryClient();
-  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const me = useMe();
   const code = createMemo(() => normalizeCode(readParam(params["code"])));
   const [busy, setBusy] = createSignal<"approve" | "deny" | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
@@ -71,7 +66,7 @@ export function Device() {
       if (code() !== requestCode) return;
       setActionError(deviceErrorMessage(error, "Could not update this device code."));
       if (error instanceof ApiError && error.code === "device_identity_changed") {
-        await queryClient.invalidateQueries({ queryKey: ["me"] });
+        await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
       }
       const refreshed = await status.refetch();
       if (refreshed.data && refreshed.data.status !== "pending") setActionError(null);
@@ -84,7 +79,7 @@ export function Device() {
   const canResolve = createMemo(() => current()?.status === "pending" && !!me.data?.org_id && !me.isError && !busy());
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <AuthTitle>Authorize CLI</AuthTitle>
       <Switch>
         <Match when={code() === ""}>
@@ -148,6 +143,6 @@ export function Device() {
           )}
         </Match>
       </Switch>
-    </AuthScreen>
+    </AuthWindow>
   );
 }

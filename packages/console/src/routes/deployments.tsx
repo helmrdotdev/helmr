@@ -1,11 +1,12 @@
+import { useMe } from "../lib/me";
 import { A } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
 import { defaultEnvironmentColor } from "../features/projects/display";
-import { ApiError } from "../lib/api";
-import { getMe, hasPermission } from "../lib/auth";
+import { errorMessage } from "../lib/error";
+import { hasPermission } from "../lib/auth";
 import { getCurrentDeployment, listDeployments, type Deployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
@@ -17,13 +18,8 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-function deploymentsErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "forbidden") {
-    return "You do not have permission to view Deployments.";
-  }
-  if (error instanceof ApiError) return error.message;
-  return "Could not load Deployments.";
-}
+const deploymentsErrorMessage = (error: unknown) =>
+  errorMessage(error, "Could not load Deployments.", { forbidden: "You do not have permission to view Deployments." });
 
 function DeploymentRow(props: {
   deployment: Deployment;
@@ -64,7 +60,7 @@ export function Deployments() {
   const environmentID = () => scope.selectedEnvironmentID();
   const enabled = () => !!projectID() && !!environmentID();
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
-  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const me = useMe();
 
   const deployments = createInfiniteQuery(() => ({
     queryKey: ["deployments", "list", projectID(), environmentID()],

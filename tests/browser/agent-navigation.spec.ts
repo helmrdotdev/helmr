@@ -42,7 +42,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
 test("current Agent navigation owns connections and filters triggers and Sessions by authored ID", async ({ page }) => {
   const paths = await catalog(page);
   await page.goto(`/agents?${scope}`);
-  await expect(page.getByRole("combobox", { name: "Show Agents" })).toHaveValue("current");
+  await expect(page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "Current Agents" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("link", { name: "support", exact: true }).click();
   await expect(page).toHaveURL("/agents/support");
   await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible();
@@ -69,7 +69,7 @@ for (const current of [true, false]) {
     await catalog(page, { current, defined: false });
     await page.goto(`/agents?${scope}`);
     await expect(page.getByText(current ? "No Agents in the current Deployment." : "No current Deployment.", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Show Agents" }).selectOption("all");
+    await page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "All Agents" }).click();
     await page.getByRole("link", { name: "support", exact: true }).click();
     await expect(page.getByText("New independent Sessions cannot start.", { exact: false })).toBeVisible();
     await expect(page.getByRole("link", { name: "View current definition" })).toHaveCount(0);
@@ -103,7 +103,7 @@ test("Deployment details are read-only and historical definition links keep exac
   expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${historical}`))).toBe(true);
   expect(paths.some(path => path.endsWith(`/templates/browser?deployment_id=${historical}`))).toBe(true);
   await page.goto(`/deployments/${historical}?${scope}`);
-  await expect(page.getByRole("button", { name: "Events", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Events", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Promote|Slack connection|Triggers/ })).toHaveCount(0);
   expect(paths.some(path => path.includes("/triggers"))).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("deployment-read-only.png"), fullPage: true });

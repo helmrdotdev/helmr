@@ -1,7 +1,7 @@
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
@@ -12,25 +12,22 @@ import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
+import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 
-const TABS = ["agents", "templates", "events"] as const;
-type Tab = (typeof TABS)[number];
+type Tab = "agents" | "templates" | "events";
 
-const TAB_LABELS: Record<Tab, string> = {
-  agents: "Agents",
-  templates: "Templates",
-  events: "Events",
+const TABS: TabItem<Tab>[] = [
+  { value: "agents", label: "Agents" },
+  { value: "templates", label: "Templates" },
+  { value: "events", label: "Events" },
+];
+
+const DEPLOYMENT_ERROR_MESSAGES = {
+  forbidden: "You do not have permission to view this Deployment.",
+  deployment_not_materialized: "Definitions for this Deployment are not materialized yet.",
 };
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to view this Deployment.";
-  if (error instanceof ApiError && error.code === "deployment_not_materialized") {
-    return "Definitions for this Deployment are not materialized yet.";
-  }
-  if (error instanceof ApiError) return error.message;
-  return fallback;
-}
+const deploymentError = (error: unknown, fallback: string) => errorMessage(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
 
 function DefinitionTable(props: {
   label: string;
@@ -43,7 +40,7 @@ function DefinitionTable(props: {
   const columns = () => [props.label.replace(/e?s$/, "")];
   return (
     <Show when={!props.pending} fallback={<StatePanel loading={`Loading ${noun()}...`} />}>
-      <Show when={!props.error} fallback={<StatePanel error={errorMessage(props.error, `Could not load ${noun()}.`)} />}>
+      <Show when={!props.error} fallback={<StatePanel error={deploymentError(props.error, `Could not load ${noun()}.`)} />}>
         <Show
           when={(props.items?.length ?? 0) > 0}
           fallback={<StatePanel empty={`This Deployment declares no ${noun()}.`} />}
@@ -123,7 +120,7 @@ export function DeploymentDetail() {
     <section class={ui.page}>
       <PageHeader
         title={deployment.data?.version ?? "Deployment"}
-        back={{ href: "/deployments", label: "Deployments" }}
+        breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
         actions={<CopyLinkButton />}
         badge={<Show when={current.isSuccess} fallback={<span>Checking current Deployment…</span>}><Show when={isCurrent()} fallback={<span>Non-current</span>}><StatusBadge resource="deployment" status="current" /></Show></Show>}
         subtitle={
@@ -142,46 +139,33 @@ export function DeploymentDetail() {
       />
 
       <Show when={deployment.isError}>
-        <StatePanel error={errorMessage(deployment.error, "Could not load this Deployment.")} />
+        <StatePanel error={deploymentError(deployment.error, "Could not load this Deployment.")} />
       </Show>
       <Show when={deployment.isPending && enabled()}>
         <StatePanel loading="Loading Deployment..." />
       </Show>
 
       <Show when={deployment.isSuccess}>
-        <div class="mb-4 flex border-b border-console-border" aria-label="Deployment sections">
-          <For each={TABS}>
-            {(candidate) => (
-              <button
-                type="button"
-                aria-pressed={tab() === candidate}
-                class={cx(ui.logTab, tab() === candidate && ui.logTabActive)}
-                onClick={() => setTab(candidate)}
-              >
-                {TAB_LABELS[candidate]}
-              </button>
-            )}
-          </For>
-        </div>
+        <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
 
-        <Show when={tab() === "agents"}>
+        <TabPanel tabs="deployment-sections" value="agents" selected={tab()}>
           <p class={`${ui.muted} mb-3`}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
           <DefinitionTable href={id => definitionHref("agents", id, deploymentID())} label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} />
           <Show when={agents.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agents</button>
           </Show>
-        </Show>
-        <Show when={tab() === "templates"}>
+        </TabPanel>
+        <TabPanel tabs="deployment-sections" value="templates" selected={tab()}>
           <p class={`${ui.muted} mb-3`}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
           <DefinitionTable href={id => definitionHref("templates", id, deploymentID())} label="Templates" items={templates.data?.pages.flatMap(page => page.templates)} pending={templates.isPending} error={templates.error} />
           <Show when={templates.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={templates.isFetchingNextPage} onClick={() => void templates.fetchNextPage()}>Load more Templates</button>
           </Show>
-        </Show>
+        </TabPanel>
 
-        <Show when={tab() === "events"}>
+        <TabPanel tabs="deployment-sections" value="events" selected={tab()}>
           <Show when={events.isError}>
-            <StatePanel error={errorMessage(events.error, "Could not load Deployment events.")} />
+            <StatePanel error={deploymentError(events.error, "Could not load Deployment events.")} />
           </Show>
           <Show when={!events.isPending} fallback={<StatePanel loading="Loading events..." />}>
             <Show when={eventItems().length > 0} fallback={<StatePanel empty="No events recorded for this Deployment." />}>
@@ -210,7 +194,7 @@ export function DeploymentDetail() {
               </Show>
             </Show>
           </Show>
-        </Show>
+        </TabPanel>
       </Show>
 
     </section>

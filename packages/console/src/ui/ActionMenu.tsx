@@ -1,7 +1,8 @@
-import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
+import { Popover } from "./Popover";
 import { actionMenuItemClass, ui } from "./styles";
 
-type ActionMenuItem = {
+export type ActionMenuItem = {
   label: string;
   busyLabel?: string | undefined;
   disabled?: boolean | undefined;
@@ -11,10 +12,6 @@ type ActionMenuItem = {
   onSelect?: () => void;
 };
 
-const MENU_MIN_WIDTH = 160;
-const MENU_MAX_WIDTH = 240;
-const ITEM_HEIGHT = 31;
-const SEPARATOR_HEIGHT = 9;
 const ITEM_SELECTOR = "button:not(:disabled), a[href]";
 
 // Items render navigation first, then ordinary actions, then the danger group
@@ -31,32 +28,10 @@ export function ActionMenu(props: {
   label?: string;
 }) {
   const [open, setOpen] = createSignal(false);
-  const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
+  const [trigger, setTrigger] = createSignal<HTMLButtonElement>();
   const popoverId = createUniqueId();
   const groups = createMemo(() => groupItems(props.items));
-  let wrapperRef: HTMLDivElement | undefined;
-  let buttonRef: HTMLButtonElement | undefined;
   let menuRef: HTMLDivElement | undefined;
-
-  const updateMenuPosition = () => {
-    if (!buttonRef) return;
-    const rect = buttonRef.getBoundingClientRect();
-    const { main, danger } = groups();
-    const menuHeight = Math.min(
-      (main.length + danger.length) * ITEM_HEIGHT + (danger.length > 0 && main.length > 0 ? SEPARATOR_HEIGHT : 0) + 8,
-      260,
-    );
-    const gap = 6;
-    // Right edge stays on the trigger; the width fits the content between the
-    // min and max, and the left bound is guarded with the widest possible menu.
-    const right = Math.min(window.innerWidth - rect.right, window.innerWidth - MENU_MAX_WIDTH - 8);
-    const opensUp = rect.bottom + gap + menuHeight > window.innerHeight && rect.top - gap - menuHeight > 8;
-    const top = opensUp ? rect.top - gap - menuHeight : rect.bottom + gap;
-    setMenuStyle({
-      right: `${Math.max(8, right)}px`,
-      top: `${Math.max(8, top)}px`,
-    });
-  };
 
   const menuItems = (): HTMLElement[] => Array.from(menuRef?.querySelectorAll<HTMLElement>(ITEM_SELECTOR) ?? []);
 
@@ -68,15 +43,8 @@ export function ActionMenu(props: {
   };
 
   const openMenu = () => {
-    updateMenuPosition();
     setOpen(true);
     requestAnimationFrame(() => focusItem(0));
-  };
-
-  const closeMenu = (options?: { restoreFocus?: boolean }) => {
-    const wasOpen = open();
-    setOpen(false);
-    if (options?.restoreFocus && wasOpen) buttonRef?.focus();
   };
 
   const onMenuKeyDown = (event: KeyboardEvent) => {
@@ -103,30 +71,6 @@ export function ActionMenu(props: {
     }
   };
 
-  onMount(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      if (!wrapperRef?.contains(event.target as Node)) closeMenu();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!open() || event.key !== "Escape") return;
-      event.preventDefault();
-      closeMenu({ restoreFocus: true });
-    };
-    const onReposition = () => {
-      if (open()) closeMenu();
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    onCleanup(() => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    });
-  });
-
   const renderItem = (item: ActionMenuItem) => {
     const label = () => item.busyLabel ?? item.label;
     const itemClass = () => actionMenuItemClass(item.tone);
@@ -140,7 +84,7 @@ export function ActionMenu(props: {
             disabled={item.disabled}
             onClick={() => {
               if (item.disabled) return;
-              closeMenu();
+              setOpen(false);
               item.onSelect?.();
             }}
           >
@@ -154,7 +98,7 @@ export function ActionMenu(props: {
             href={href()}
             target={item.external ? "_blank" : undefined}
             rel={item.external ? "noreferrer" : undefined}
-            onClick={() => closeMenu()}
+            onClick={() => setOpen(false)}
           >
             {label()}
           </a>
@@ -164,23 +108,17 @@ export function ActionMenu(props: {
   };
 
   return (
-    <div class="relative inline-flex justify-end" ref={wrapperRef}>
+    <div class="relative inline-flex justify-end">
       <button
-        ref={buttonRef}
+        ref={setTrigger}
         type="button"
-        class={ui.actionMenuTrigger}
+        class={ui.iconButton}
         data-open={open() ? "true" : "false"}
         aria-controls={popoverId}
         aria-expanded={open()}
         aria-haspopup="true"
         aria-label={props.label ?? "Actions"}
-        onClick={() => {
-          if (open()) {
-            closeMenu();
-          } else {
-            openMenu();
-          }
-        }}
+        onClick={() => (open() ? setOpen(false) : openMenu())}
       >
         <svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <circle cx="3" cy="8" r="1.4" />
@@ -189,23 +127,26 @@ export function ActionMenu(props: {
         </svg>
       </button>
 
-      <Show when={open()}>
-        <div
-          ref={menuRef}
-          class={ui.actionMenu}
-          id={popoverId}
-          style={{ ...menuStyle(), "min-width": `${MENU_MIN_WIDTH}px`, "max-width": `${MENU_MAX_WIDTH}px` }}
-          role="group"
-          aria-label={props.label ?? "Actions"}
-          onKeyDown={onMenuKeyDown}
-        >
-          <For each={groups().main}>{renderItem}</For>
-          <Show when={groups().danger.length > 0 && groups().main.length > 0}>
-            <div class={ui.actionMenuSeparator} role="separator" />
-          </Show>
-          <For each={groups().danger}>{renderItem}</For>
-        </div>
-      </Show>
+      <Popover
+        open={open()}
+        anchor={trigger()}
+        onDismiss={() => setOpen(false)}
+        id={popoverId}
+        role="group"
+        label={props.label ?? "Actions"}
+        align="end"
+        minWidth={160}
+        maxWidth={240}
+        bodyClass="p-0.75"
+        ref={(element) => (menuRef = element)}
+        onKeyDown={onMenuKeyDown}
+      >
+        <For each={groups().main}>{renderItem}</For>
+        <Show when={groups().danger.length > 0 && groups().main.length > 0}>
+          <div class={ui.actionMenuSeparator} role="separator" />
+        </Show>
+        <For each={groups().danger}>{renderItem}</For>
+      </Popover>
     </div>
   );
 }
