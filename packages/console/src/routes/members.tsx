@@ -3,21 +3,24 @@ import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/soli
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { errorMessage } from "../lib/error";
 import {
-  createInvitation,
+  createInvitations,
   invitationResourceID,
   listInvitations,
   listMembers,
+  MAX_INVITATIONS_PER_REQUEST,
   memberResourceID,
+  parseInviteEmails,
   removeMember,
   revokeInvitation,
   updateMemberRole,
+  type InvitationResult,
   type MemberRole,
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
 import { DataTable, EmptyCell, LoadMore, RowActions, RowError } from "../ui/DataTable";
-import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
-import { Field, TextInput } from "../ui/Field";
+import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
+import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
@@ -25,7 +28,7 @@ import { QueryState } from "../ui/QueryState";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { createRowActions } from "../ui/rowActions";
-import { ui } from "../ui/styles";
+import { cx, toneClass, ui } from "../ui/styles";
 
 const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
 
@@ -37,15 +40,31 @@ const NON_OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [
 
 const OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
 
+const EMAIL_FAILED_MESSAGE = "Invitation emails could not be sent. Nobody was invited.";
+const NO_EMAIL_DELIVERY = "Email delivery is not set up for this Helmr installation, so members can't be invited.";
+
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",
-  invalid_email: "Enter a valid email address.",
-  already_member: "That email address is already a member.",
   not_found: "This member or invitation is no longer available.",
+  service_unavailable: NO_EMAIL_DELIVERY,
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 const membersErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, MEMBERS_ERROR_MESSAGES);
+
+// Why one address of an invitation request was not invited.
+const INVITATION_FAILURE_REASONS: Record<string, string> = {
+  invalid_email: "Not a valid email address",
+  already_member: "Already a member",
+  invitation_pending: "Already has a pending invitation",
+  owner_role_required: "Has a pending owner invitation",
+  email_failed: "Invitation emails could not be sent",
+  email_rejected: "Refused by the email server",
+};
+
+function invitationFailureReason(result: InvitationResult): string {
+  return INVITATION_FAILURE_REASONS[result.error?.code ?? ""] ?? "Invitation could not be created";
+}
 
 function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
@@ -65,16 +84,12 @@ function canManageFromMe(role?: string | null, permissions?: string[]): boolean 
   );
 }
 
-function validInviteEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function CreateInviteDialog(props: {
+function InviteMembersDialog(props: {
   currentUserRole: string | null | undefined;
   onClose: () => void;
-  onCreated: (inviteURL: string) => Promise<void>;
+  onInvited: (results: InvitationResult[]) => Promise<void>;
 }) {
-  const [email, setEmail] = createSignal("");
+  const [text, setText] = createSignal("");
   const [role, setRole] = createSignal<MemberRole>("developer");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -82,17 +97,31 @@ function CreateInviteDialog(props: {
   const roleOptions = createMemo(() =>
     props.currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS,
   );
+  const entries = createMemo(() => parseInviteEmails(text()));
+  const valid = createMemo(() => entries().filter((entry) => entry.state === "valid").map((entry) => entry.email));
+  const invalidCount = () => entries().filter((entry) => entry.state === "invalid").length;
+  const duplicateCount = () => entries().filter((entry) => entry.state === "duplicate").length;
+  const overLimit = () => valid().length > MAX_INVITATIONS_PER_REQUEST;
+  const summary = () => [
+    `${valid().length} to invite`,
+    invalidCount() > 0 ? `${invalidCount()} invalid` : "",
+    duplicateCount() > 0 ? `${duplicateCount()} ${duplicateCount() === 1 ? "duplicate" : "duplicates"}` : "",
+  ].filter(Boolean).join(" · ");
 
   const submit = async () => {
+    if (valid().length === 0 || overLimit()) return;
     setError(null);
-    if (!validInviteEmail(email())) {
-      setError(MEMBERS_ERROR_MESSAGES["invalid_email"] ?? INTERNAL_ERROR_MESSAGE);
-      return;
-    }
     setSubmitting(true);
     try {
-      const result = await createInvitation({ email: email().trim(), role: role() });
-      await props.onCreated(result.invite_url);
+      const results = await createInvitations({ emails: valid(), role: role() });
+      // When no email could be sent nothing was created: keep the form and its
+      // addresses so the same invitations can be sent again.
+      if (results.every((result) => result.error?.code === "email_failed" || result.error?.code === "email_rejected")) {
+        const refused = results.find((result) => result.error?.code === "email_rejected");
+        setError(refused ? `${EMAIL_FAILED_MESSAGE} The email server refused ${refused.email}.` : EMAIL_FAILED_MESSAGE);
+        return;
+      }
+      await props.onInvited(results);
     } catch (createError) {
       setError(membersErrorMessage(createError));
     } finally {
@@ -102,23 +131,82 @@ function CreateInviteDialog(props: {
 
   return (
     <FormDialog
-      title="Invite member"
-      intro="Create an email invitation for this organization."
-      submitLabel="Create invite"
-      busyLabel="Creating..."
+      title="Invite members"
+      intro="Invitations expire after 7 days."
+      submitLabel="Invite"
+      busyLabel="Inviting..."
       busy={submitting()}
-      disabled={email().trim() === ""}
+      disabled={valid().length === 0 || overLimit()}
       error={error()}
       onSubmit={() => void submit()}
       onClose={props.onClose}
     >
-      <Field label="Email">
-        <TextInput type="email" value={email()} autocomplete="email" onInput={(event) => setEmail(event.currentTarget.value)} autofocus />
+      <Field
+        label="Emails"
+        hint="Separate addresses with commas, spaces or new lines."
+        error={overLimit() ? `Invite at most ${MAX_INVITATIONS_PER_REQUEST} people at a time.` : null}
+      >
+        <TextArea value={text()} rows={4} autocomplete="off" spellcheck={false} onInput={(event) => setText(event.currentTarget.value)} autofocus />
       </Field>
+      <Show when={entries().length > 0}>
+        <div class="mb-3 grid gap-1.5">
+          <p class={cx("m-0", ui.fieldHint)} aria-live="polite">{summary()}</p>
+          <ul class="m-0 flex max-h-28 list-none flex-wrap gap-1 overflow-y-auto p-0" aria-label="Recipients">
+            <For each={entries()}>
+              {(entry) => (
+                <li
+                  class={cx(
+                    "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-badge",
+                    entry.state === "valid" ? "border-console-border-strong bg-console-bg-panel text-console-text" : entry.state === "invalid" ? toneClass.danger : toneClass.neutral,
+                  )}
+                >
+                  {entry.email}
+                  <Show when={entry.state !== "valid"}>
+                    <span class="font-sans">· {entry.state === "invalid" ? "invalid" : "duplicate"}</span>
+                  </Show>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
       <Field label="Role">
         <Select<MemberRole> value={role()} options={roleOptions()} onChange={setRole} minWidth="100%" />
       </Field>
     </FormDialog>
+  );
+}
+
+// The outcome of an invitation request: how many people were invited, then
+// each address that was not, with why.
+function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: () => void }) {
+  const invited = () => props.results.filter((result) => result.status === "invited").length;
+  const failed = () => props.results.filter((result) => result.status === "failed");
+  return (
+    <Dialog title="Invitations" onClose={props.onClose}>
+      <div class={ui.blockStack}>
+        <Show when={invited() > 0}>
+          <p class="m-0 text-body leading-normal text-console-text">Invited {invited()} {invited() === 1 ? "person" : "people"}.</p>
+        </Show>
+        <Show when={failed().length > 0}>
+          <div class="grid gap-1.5">
+            <p class="m-0 text-body leading-normal text-console-text">Couldn't invite {failed().length}:</p>
+            <ul class="m-0 grid list-none gap-1 p-0" aria-label="Not invited">
+              <For each={failed()}>
+                {(result) => (
+                  <li class="text-body leading-normal text-console-muted">
+                    <span class="font-mono text-chrome text-console-text">{result.email}</span> · {invitationFailureReason(result)}
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        </Show>
+      </div>
+      <div class={ui.modalActions}>
+        <button type="button" class={ui.button} onClick={props.onClose}>Done</button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -204,7 +292,7 @@ function InvitationRow(props: {
 export function Members() {
   const queryClient = useQueryClient();
   const [inviting, setInviting] = createSignal(false);
-  const [inviteURL, setInviteURL] = createSignal<string | null>(null);
+  const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
   const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
   const memberRows = createRowActions<"role">();
@@ -224,6 +312,7 @@ export function Members() {
   }));
 
   const canManage = createMemo(() => canManageFromMe(me.data?.role, me.data?.permissions));
+  const emailDelivery = () => me.data?.email_delivery === true;
   // The server lists pending invitations, newest first; further pages are
   // appended in that order.
   const pendingInvitations = createMemo(() =>
@@ -255,8 +344,8 @@ export function Members() {
         title="Members"
         actions={
           <Show when={canManage()}>
-            <button class={ui.button} type="button" onClick={() => setInviting(true)}>
-              Invite member
+            <button class={ui.button} type="button" disabled={!emailDelivery()} onClick={() => setInviting(true)}>
+              Invite members
             </button>
           </Show>
         }
@@ -264,6 +353,9 @@ export function Members() {
 
       <Show when={!me.isPending && !canManage()}>
         <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
+      </Show>
+      <Show when={canManage() && !emailDelivery()}>
+        <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
       </Show>
 
       <QueryState
@@ -308,27 +400,19 @@ export function Members() {
       </QueryState>
 
       <Show when={inviting()}>
-        <CreateInviteDialog
+        <InviteMembersDialog
           currentUserRole={me.data?.role}
           onClose={() => setInviting(false)}
-          onCreated={async (url) => {
+          onInvited={async (results) => {
             setInviting(false);
-            setInviteURL(url);
+            setInviteResults(results);
             await invalidateMembers();
           }}
         />
       </Show>
 
-      <Show when={inviteURL()}>
-        {(url) => (
-          <RevealDialog
-            title="Invite created"
-            intro="Share this invitation link with the new member."
-            value={url()}
-            warning="Copy this link now. It is not shown again."
-            onClose={() => setInviteURL(null)}
-          />
-        )}
+      <Show when={inviteResults()}>
+        {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
       </Show>
 
       <Show when={removing()}>

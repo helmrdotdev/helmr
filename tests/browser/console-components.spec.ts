@@ -10,7 +10,6 @@ const secretID = "SYNTHETIC_TOKEN";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const now = "2026-10-14T00:00:00Z";
 const rawKey = "hk_test_synthetic_raw_key_value";
-const inviteURL = "http://127.0.0.1/invite?token=synthetic-invite-token";
 const cities = ["Amsterdam", "Berlin", "Chicago", "Dublin", "Frankfurt", "London", "Madrid", "Oslo", "Paris", "Seoul", "Sydney", "Tokyo"];
 
 type Fixture = {
@@ -19,7 +18,7 @@ type Fixture = {
   sessionCursors: (string | null)[];
   secretWrites: { path: string; body: Record<string, unknown> }[];
   deletions: string[];
-  invitations: unknown[];
+  invitations: { emails: string[]; role: string }[];
   // Fail every Sessions request, or only the request for the second page.
   failSessions: boolean;
   failNextSessions: boolean;
@@ -36,7 +35,7 @@ async function fixture(page: Page): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: ["projects.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: ["projects.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/settings`) json = { history_retention: "30d" };
@@ -60,11 +59,17 @@ async function fixture(page: Page): Promise<Fixture> {
       { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role: "developer", status: "active", created_at: now, updated_at: now },
     ] };
     else if (path === "/api/invitations" && method === "POST") {
-      const body = route.request().postDataJSON();
+      const body = route.request().postDataJSON() as Fixture["invitations"][number];
       state.invitations.push(body);
-      json = { id: "inv-2", email: body.email, role: body.role, status: "pending", created_at: now, expires_at: now, invite_url: inviteURL };
+      // second@example.test is already a member; every other address is invited.
+      json = { results: body.emails.map(email => email === "second@example.test"
+        ? { email, status: "failed", error: { code: "already_member", message: "active member already exists for email" } }
+        : { email, status: "invited" }) };
     }
-    else if (path === "/api/invitations") json = { invitations: [{ id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }] };
+    else if (path === "/api/invitations") {
+      const created = state.invitations.flatMap(body => body.emails.filter(email => email !== "second@example.test").map(email => ({ id: `inv-${email}`, email, role: body.role, status: "pending", created_at: now, expires_at: now })));
+      json = { invitations: [...created, { id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }] };
+    }
     else if (path === `${base}/sessions`) {
       const cursor = url.searchParams.get("cursor");
       state.sessionCursors.push(cursor);
@@ -561,22 +566,88 @@ test("removing a member and revoking an invitation each confirm before the reque
   expect(state.deletions).toEqual(["/api/members/member-2", "/api/invitations/inv-1"]);
 });
 
-test("an invite link is revealed once with Copy", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("the invite form splits pasted addresses and flags invalid and duplicate ones", async ({ page }) => {
   const state = await fixture(page);
   await page.goto(`/settings/members?${scope}`);
-  await page.getByRole("button", { name: "Invite member", exact: true }).click();
-  const form = page.getByRole("dialog", { name: "Invite member" });
-  await form.getByLabel("Email", { exact: true }).fill("new@example.test");
-  await form.getByRole("button", { name: "Create invite", exact: true }).click();
-  const reveal = page.getByRole("dialog", { name: "Invite created" });
+  await page.getByRole("button", { name: "Invite members", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Invite members" });
+  const emails = form.getByLabel("Emails", { exact: true });
+  const submit = form.getByRole("button", { name: "Invite", exact: true });
+  await expect(submit).toBeDisabled();
+
+  await emails.fill("not-an-address");
+  await expect(form.getByText("0 to invite · 1 invalid", { exact: true })).toBeVisible();
+  await expect(submit).toBeDisabled();
+
+  await emails.fill("Ada@Example.test, not-an-address\nlin@team.test ada@example.test;grace@team.test");
+  await expect(form.getByText("3 to invite · 1 invalid · 1 duplicate", { exact: true })).toBeVisible();
+  const recipients = form.getByRole("list", { name: "Recipients" }).getByRole("listitem");
+  await expect(recipients).toHaveText(["ada@example.test", "not-an-address· invalid", "lin@team.test", "ada@example.test· duplicate", "grace@team.test"]);
+  await expect(submit).toBeEnabled();
+
+  await emails.fill(Array.from({ length: 51 }, (_, index) => `person-${index}@team.test`).join("\n"));
+  await expect(form.getByText("Invite at most 50 people at a time.", { exact: true })).toBeVisible();
+  await expect(submit).toBeDisabled();
+  expect(state.invitations).toEqual([]);
+});
+
+test("inviting several members summarizes who was invited and who was not, then refreshes the table", async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Invite members", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Invite members" });
+  await form.getByLabel("Emails", { exact: true }).fill("ada@example.test\nlin@team.test, second@example.test grace@team.test bad-address");
+  await form.getByRole("combobox", { name: "Role", exact: true }).click();
+  await page.getByRole("option", { name: "Viewer", exact: true }).click();
+  await form.getByRole("button", { name: "Invite", exact: true }).click();
+
+  const results = page.getByRole("dialog", { name: "Invitations" });
   await expect(form).toHaveCount(0);
-  await expect(reveal).toContainText(inviteURL);
-  await expect(reveal).toContainText("It is not shown again.");
-  await reveal.getByRole("button", { name: "Copy", exact: true }).click();
-  await expect(reveal.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(inviteURL);
-  expect(state.invitations).toEqual([{ email: "new@example.test", role: "developer" }]);
-  await reveal.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(reveal).toHaveCount(0);
+  expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"], role: "viewer" }]);
+  await expect(results.getByText("Invited 3 people.", { exact: true })).toBeVisible();
+  await expect(results.getByText("Couldn't invite 1:", { exact: true })).toBeVisible();
+  await expect(results.getByRole("list", { name: "Not invited" }).getByRole("listitem")).toHaveText(["second@example.test · Already a member"]);
+  await expect(results.getByRole("table")).toHaveCount(0);
+  await expect(results.getByRole("button", { name: /copy/i })).toHaveCount(0);
+
+  // The table behind the dialog already lists the new invitations.
+  await expect(page.getByText("Showing 2 members, 4 invitations", { exact: true })).toBeVisible();
+  await results.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(results).toHaveCount(0);
+  await expect(page.getByRole("cell", { name: "grace@team.test" }).first()).toBeVisible();
+});
+
+test("when no invitation email can be sent the form stays open with its addresses", async ({ page }) => {
+  await fixture(page);
+  let posts = 0;
+  await page.route("**/api/invitations", route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posts++;
+    return route.fulfill({ json: { results: [
+      { email: "ada@team.test", status: "failed", error: { code: "email_failed", message: "Invitation emails could not be sent" } },
+      { email: "lin@team.test", status: "failed", error: { code: "email_rejected", message: "The email server refused this address" } },
+    ] } });
+  });
+  await page.goto(`/settings/members?${scope}`);
+  await page.getByRole("button", { name: "Invite members", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Invite members" });
+  const emails = form.getByLabel("Emails", { exact: true });
+  await emails.fill("Ada <ada@team.test>, lin@team.test");
+  await expect(form.getByRole("list", { name: "Recipients" }).getByRole("listitem")).toHaveText(["ada@team.test", "lin@team.test"]);
+  await form.getByRole("button", { name: "Invite", exact: true }).click();
+  await expect(form.getByRole("alert")).toHaveText("Invitation emails could not be sent. Nobody was invited. The email server refused lin@team.test.");
+  await expect(emails).toHaveValue("Ada <ada@team.test>, lin@team.test");
+  await expect(page.getByRole("dialog", { name: "Invitations" })).toHaveCount(0);
+  expect(posts).toBe(1);
+  await expect(form.getByRole("button", { name: "Invite", exact: true })).toBeEnabled();
+});
+
+test("without email delivery, inviting members is unavailable and says why", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: [], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByText("Email delivery is not set up for this Helmr installation, so members can't be invited.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();
+  await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
 });

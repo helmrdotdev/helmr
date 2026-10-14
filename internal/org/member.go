@@ -2,8 +2,10 @@ package org
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/mail"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -15,6 +17,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// MaxInvitationsPerRequest bounds the addresses one invitation request names.
+// Each address is created under its own savepoint in the request's single
+// transaction; staying below PostgreSQL's per-transaction cache of 64
+// subtransactions keeps the request from overflowing it, which would slow
+// every concurrent snapshot.
+const MaxInvitationsPerRequest = 50
 
 const (
 	invitationTokenBytes        = 32
@@ -32,7 +41,8 @@ type ManagingMember struct {
 	Role   auth.Role
 }
 
-func (m ManagingMember) authorize() error {
+// Authorize reports whether the member may manage members.
+func (m ManagingMember) Authorize() error {
 	if !auth.RoleAllows(m.Role, auth.PermissionMembersManage) {
 		return ErrMemberManagementRequired
 	}
@@ -43,13 +53,32 @@ func (m ManagingMember) isOwner() bool {
 	return m.Role == auth.RoleOwner
 }
 
-// InvitationInput describes an invitation to create. A nil ExpiresInDays takes
-// the default expiry.
+// InvitationInput describes one invitation request: the addresses to invite
+// with one role and expiry. A nil ExpiresInDays takes the default expiry.
 type InvitationInput struct {
-	Email         string
+	Emails        []string
 	Role          string
 	ExpiresInDays *int
 }
+
+// InvitationResult is one address of an invitation request: invited when Err
+// is nil, otherwise refused or failed with Err.
+type InvitationResult struct {
+	Email string
+	Err   error
+}
+
+// NewInvitation is an invitation created by the request with the raw token
+// that only its invitee receives.
+type NewInvitation struct {
+	Invitation db.Invitation
+	RawToken   string
+}
+
+// DeliverInvitations sends every new invitation of a request to its invitee
+// in one batch. It runs inside the request's transaction before commit; an
+// error rolls every invitation of the request back.
+type DeliverInvitations func(ctx context.Context, invitations []NewInvitation) error
 
 // InvitationPosition is the sort key of the last invitation on a previous page.
 type InvitationPosition struct {
@@ -67,7 +96,7 @@ type UpdatedMember struct {
 
 // ListMembers returns every member of the organization, including disabled ones.
 func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
-	if err := manager.authorize(); err != nil {
+	if err := manager.Authorize(); err != nil {
 		return nil, err
 	}
 	members, err := q.ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
@@ -80,7 +109,7 @@ func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]d
 // ListInvitations returns up to limit invitations of the organization after
 // the given position and whether more follow.
 func ListInvitations(ctx context.Context, q db.Querier, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
-	if err := manager.authorize(); err != nil {
+	if err := manager.Authorize(); err != nil {
 		return nil, false, err
 	}
 	params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}
@@ -98,43 +127,113 @@ func ListInvitations(ctx context.Context, q db.Querier, manager ManagingMember, 
 	return invitations, false, nil
 }
 
-// CreateInvitation invites an email address to the organization and returns
-// the invitation with its raw token, which only the invitee link carries.
-// Expired invitations for the address are revoked first; a pending invitation
-// or an active member with the address rejects the new one.
-func CreateInvitation(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter ManagingMember, input InvitationInput) (db.Invitation, string, error) {
-	if err := inviter.authorize(); err != nil {
-		return db.Invitation{}, "", err
+// CreateInvitations invites each address of the request to the organization
+// and returns one result per distinct address in request order. The request as
+// a whole is rejected when the inviter cannot manage members, names no address
+// or more than MaxInvitationsPerRequest, or gives an invalid role or expiry.
+//
+// An address is refused on its own when it is invalid, belongs to an active
+// member or already has a pending invitation; expired invitations for an
+// address are revoked first. Every other address is invited in one
+// transaction, in address order: each invitation with its audit fact (under a
+// savepoint, so a refused address leaves the others in place), then deliver
+// sends the whole batch, in the same order, before commit. A failed delivery, or any other failure of the
+// transaction, rolls every invitation of the request back and fails each of
+// those addresses with that error; a delivery failure wraps
+// ErrInvitationNotDelivered. Raw tokens reach only deliver.
+func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter ManagingMember, input InvitationInput, deliver DeliverInvitations) ([]InvitationResult, error) {
+	if err := inviter.Authorize(); err != nil {
+		return nil, err
 	}
-	var invitation db.Invitation
-	var raw string
-	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		var err error
-		invitation, raw, err = createInvitation(ctx, tx, tokenKey, inviter, input)
-		return err
-	})
-	return invitation, raw, err
-}
-func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter ManagingMember, input InvitationInput) (db.Invitation, string, error) {
-	q := db.New(tx)
-	email, err := NormalizeEmail(input.Email)
-	if err != nil {
-		return db.Invitation{}, "", err
+	if len(input.Emails) == 0 {
+		return nil, invalidInput("emails must name at least one address")
+	}
+	if len(input.Emails) > MaxInvitationsPerRequest {
+		return nil, invalidInput("emails must name at most %d addresses", MaxInvitationsPerRequest)
 	}
 	role, err := parseMemberRole(input.Role, "role")
 	if err != nil {
-		return db.Invitation{}, "", err
+		return nil, err
 	}
 	expiresInDays := defaultInvitationExpiryDays
 	if input.ExpiresInDays != nil {
 		expiresInDays = *input.ExpiresInDays
 	}
 	if expiresInDays < 1 || expiresInDays > maxInvitationExpiryDays {
-		return db.Invitation{}, "", invalidInput("expires_in_days must be between 1 and %d", maxInvitationExpiryDays)
+		return nil, invalidInput("expires_in_days must be between 1 and %d", maxInvitationExpiryDays)
 	}
 	if role == db.OrgMemberRoleOwner && !inviter.isOwner() {
-		return db.Invitation{}, "", ErrOwnerRoleRequired
+		return nil, ErrOwnerRoleRequired
 	}
+	results := make([]InvitationResult, 0, len(input.Emails))
+	var valid []int
+	seen := make(map[string]bool, len(input.Emails))
+	for _, raw := range input.Emails {
+		email, err := NormalizeEmail(raw)
+		if err != nil {
+			email = strings.TrimSpace(raw)
+		}
+		if seen[email] {
+			continue
+		}
+		seen[email] = true
+		if err == nil {
+			valid = append(valid, len(results))
+		}
+		results = append(results, InvitationResult{Email: email, Err: err})
+	}
+	if len(valid) == 0 {
+		return results, nil
+	}
+	// Rows are written in address order so requests naming overlapping
+	// addresses take their locks in the same order rather than deadlocking.
+	ordered := slices.Clone(valid)
+	slices.SortFunc(ordered, func(a, b int) int { return strings.Compare(results[a].Email, results[b].Email) })
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var batch []NewInvitation
+		for _, i := range ordered {
+			var invitation db.Invitation
+			var rawToken string
+			err := db.RunTx(ctx, tx, func(savepoint pgx.Tx) error {
+				var err error
+				invitation, rawToken, err = createInvitation(ctx, savepoint, tokenKey, inviter, results[i].Email, role, expiresInDays)
+				return err
+			})
+			if invitationRefused(err) {
+				results[i].Err = err
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			batch = append(batch, NewInvitation{Invitation: invitation, RawToken: rawToken})
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := deliver(ctx, batch); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvitationNotDelivered, err)
+		}
+		return nil
+	})
+	if err != nil {
+		for _, i := range valid {
+			if results[i].Err == nil {
+				results[i].Err = err
+			}
+		}
+	}
+	return results, nil
+}
+
+// invitationRefused reports whether an address was refused on its own rather
+// than by a failure of the request's transaction.
+func invitationRefused(err error) bool {
+	return errors.Is(err, ErrInvitationActiveMember) || errors.Is(err, ErrInvitationPending) || errors.Is(err, ErrOwnerRoleRequired)
+}
+
+func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter ManagingMember, email string, role db.OrgMemberRole, expiresInDays int) (db.Invitation, string, error) {
+	q := db.New(tx)
 	expired, err := q.RevokeExpiredInvitationsByEmail(ctx, db.RevokeExpiredInvitationsByEmailParams{
 		OrgID:        pgvalue.UUID(inviter.OrgID),
 		InviteeEmail: email,
@@ -212,7 +311,7 @@ func pendingInvitation(ctx context.Context, q db.Querier, orgID uuid.UUID, email
 
 // RevokeInvitation revokes a pending invitation of the organization.
 func RevokeInvitation(ctx context.Context, database db.TxBeginner, manager ManagingMember, invitationID uuid.UUID) error {
-	if err := manager.authorize(); err != nil {
+	if err := manager.Authorize(); err != nil {
 		return err
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error { return revokeInvitation(ctx, tx, manager, invitationID) })
@@ -250,7 +349,7 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 // expectedRole. Managers cannot drop their own member management access, only
 // owners change owner roles, and the last active owner cannot be demoted.
 func UpdateMemberRole(ctx context.Context, database db.TxBeginner, manager ManagingMember, targetUserID uuid.UUID, role string, expectedRole string) (UpdatedMember, error) {
-	if err := manager.authorize(); err != nil {
+	if err := manager.Authorize(); err != nil {
 		return UpdatedMember{}, err
 	}
 	var result UpdatedMember
@@ -313,7 +412,7 @@ func updateMemberRole(ctx context.Context, tx pgx.Tx, manager ManagingMember, ta
 // owners remove owners, and the last active owner cannot be removed.
 func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetUserID uuid.UUID) error {
 	q := db.New(tx)
-	if err := manager.authorize(); err != nil {
+	if err := manager.Authorize(); err != nil {
 		return err
 	}
 	if manager.UserID == targetUserID {

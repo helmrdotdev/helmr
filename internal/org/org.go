@@ -33,6 +33,7 @@ var (
 	ErrInvitationNotFound       = errors.New("invitation not found")
 	ErrInvitationPending        = errors.New("pending invitation already exists for email")
 	ErrInvitationActiveMember   = errors.New("active member already exists for email")
+	ErrInvitationNotDelivered   = errors.New("invitation email could not be sent")
 	ErrAlreadyMember            = errors.New("user is already an active member of the organization")
 )
 

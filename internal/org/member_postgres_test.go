@@ -2,7 +2,9 @@ package org_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"uuid"
 
@@ -27,7 +29,7 @@ func TestMemberManagementPostgresEnforcesOwnerAuthority(t *testing.T) {
 
 	t.Run("principals without member management are rejected", func(t *testing.T) {
 		for _, principal := range []org.ManagingMember{developer, fixture.viewer} {
-			if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, principal, org.InvitationInput{Email: "blocked@example.test", Role: "viewer"}); !errors.Is(err, org.ErrMemberManagementRequired) {
+			if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, principal, org.InvitationInput{Emails: []string{"blocked@example.test"}, Role: "viewer"}); !errors.Is(err, org.ErrMemberManagementRequired) {
 				t.Fatalf("%s invitation error = %v", principal.Role, err)
 			}
 			if err := org.RevokeInvitation(ctx, fixture.pool, principal, uuid.NewV7()); !errors.Is(err, org.ErrMemberManagementRequired) {
@@ -53,30 +55,30 @@ func TestMemberManagementPostgresEnforcesOwnerAuthority(t *testing.T) {
 	})
 
 	t.Run("invitations", func(t *testing.T) {
-		if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "next-owner@example.test", Role: "owner"}); !errors.Is(err, org.ErrOwnerRoleRequired) {
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"next-owner@example.test"}, Role: "owner"}); !errors.Is(err, org.ErrOwnerRoleRequired) {
 			t.Fatalf("admin owner invitation error = %v", err)
 		}
-		invitation, rawToken, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "Teammate@Example.test", Role: "developer"})
+		invitation, rawToken, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"Teammate@Example.test"}, Role: "developer"})
 		if err != nil || rawToken == "" || invitation.InviteeEmail != "teammate@example.test" {
 			t.Fatalf("invitation = %+v, token set %t, err = %v", invitation, rawToken != "", err)
 		}
-		if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "teammate@example.test", Role: "viewer"}); !errors.Is(err, org.ErrInvitationPending) {
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"teammate@example.test"}, Role: "viewer"}); !errors.Is(err, org.ErrInvitationPending) {
 			t.Fatalf("duplicate invitation error = %v", err)
 		}
-		if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "developer@example.test", Role: "viewer"}); !errors.Is(err, org.ErrInvitationActiveMember) {
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"developer@example.test"}, Role: "viewer"}); !errors.Is(err, org.ErrInvitationActiveMember) {
 			t.Fatalf("active member invitation error = %v", err)
 		}
 		days := 31
 		var input org.InputError
-		if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "later@example.test", Role: "viewer", ExpiresInDays: &days}); !errors.As(err, &input) {
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"later@example.test"}, Role: "viewer", ExpiresInDays: &days}); !errors.As(err, &input) {
 			t.Fatalf("expiry error = %v, want input error", err)
 		}
 
-		ownerInvitation, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, owner, org.InvitationInput{Email: "next-owner@example.test", Role: "owner"})
+		ownerInvitation, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, owner, org.InvitationInput{Emails: []string{"next-owner@example.test"}, Role: "owner"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Email: "next-owner@example.test", Role: "viewer"}); !errors.Is(err, org.ErrOwnerRoleRequired) {
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"next-owner@example.test"}, Role: "viewer"}); !errors.Is(err, org.ErrOwnerRoleRequired) {
 			t.Fatalf("admin invitation over pending owner invitation error = %v", err)
 		}
 		ownerInvitationID := pgvalue.MustUUIDValue(ownerInvitation.ID)
@@ -268,7 +270,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	q := fixture.queries
 	invite := func(email string, role string) org.PendingInvitation {
 		t.Helper()
-		_, rawToken, err := org.CreateInvitation(ctx, fixture.pool, fixture.tokenKey, fixture.owner, org.InvitationInput{Email: email, Role: role})
+		_, rawToken, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, fixture.owner, org.InvitationInput{Emails: []string{email}, Role: role})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,10 +384,187 @@ func TestMemberAuditFactsNoOpAndRollback(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT role='viewer' AND disabled_at IS NULL FROM org_members WHERE org_id=$1 AND user_id=$2`, manager.OrgID, f.developer.UserID).Scan(&intact); err != nil || !intact {
 		t.Fatalf("membership failed rollback: %v %v", intact, err)
 	}
-	if _, _, err := org.CreateInvitation(t.Context(), f.pool, f.tokenKey, manager, org.InvitationInput{Email: "audit@example.test", Role: "developer"}); err == nil {
+	if _, _, err := inviteOne(t.Context(), f.pool, f.tokenKey, manager, org.InvitationInput{Emails: []string{"audit@example.test"}, Role: "developer"}); err == nil {
 		t.Fatal("audit failure allowed invitation")
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM invitations WHERE invitee_email='audit@example.test'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("invitation leaked: %d %v", count, err)
 	}
+}
+
+// inviteOne invites a single address and returns its invitation and the raw
+// token delivered for it, or the error that refused the request or the address.
+func inviteOne(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter org.ManagingMember, input org.InvitationInput) (db.Invitation, string, error) {
+	var delivered org.NewInvitation
+	results, err := org.CreateInvitations(ctx, database, tokenKey, inviter, input, func(_ context.Context, invitations []org.NewInvitation) error {
+		delivered = invitations[0]
+		return nil
+	})
+	if err != nil {
+		return db.Invitation{}, "", err
+	}
+	if results[0].Err != nil {
+		return db.Invitation{}, "", results[0].Err
+	}
+	return delivered.Invitation, delivered.RawToken, nil
+}
+
+// recordDelivery delivers nothing and records each batch it was given.
+func recordDelivery(batches *[][]org.NewInvitation) org.DeliverInvitations {
+	return func(_ context.Context, invitations []org.NewInvitation) error {
+		*batches = append(*batches, invitations)
+		return nil
+	}
+}
+
+func TestCreateInvitationsPostgresDeliversOneBatchAndRefusesAddressesOnTheirOwn(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := t.Context()
+	admin := fixture.admin
+	if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"old@example.test"}, Role: "viewer"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var batches [][]org.NewInvitation
+	results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{
+		Emails: []string{" First@Example.test", "not-an-address", "developer@example.test", "first@example.test", "old@example.test", "second@example.test", "not-an-address"},
+		Role:   "developer",
+	}, recordDelivery(&batches))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		email string
+		err   error
+	}{
+		{"first@example.test", nil},
+		{"not-an-address", nil},
+		{"developer@example.test", org.ErrInvitationActiveMember},
+		{"old@example.test", org.ErrInvitationPending},
+		{"second@example.test", nil},
+	}
+	if len(results) != len(want) {
+		t.Fatalf("results = %+v, want %d distinct addresses", results, len(want))
+	}
+	for i, expected := range want {
+		result := results[i]
+		if result.Email != expected.email {
+			t.Fatalf("result %d email = %q, want %q", i, result.Email, expected.email)
+		}
+		switch {
+		case expected.email == "not-an-address":
+			var input org.InputError
+			if !errors.As(result.Err, &input) {
+				t.Fatalf("invalid address result = %+v", result)
+			}
+		case expected.err != nil:
+			if !errors.Is(result.Err, expected.err) {
+				t.Fatalf("%s result = %+v, want %v", expected.email, result, expected.err)
+			}
+		default:
+			if result.Err != nil {
+				t.Fatalf("%s result = %+v", expected.email, result)
+			}
+			var facts int
+			if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events JOIN invitations ON invitations.id = audit_events.target_id WHERE action='invitation.created' AND invitee_email=$1 AND role='developer' AND audit_events.org_id=$2 AND details->>'new_role'='developer'`, expected.email, admin.OrgID).Scan(&facts); err != nil || facts != 1 {
+				t.Fatalf("%s audit facts = %d, err = %v", expected.email, facts, err)
+			}
+		}
+	}
+	if len(batches) != 1 || len(batches[0]) != 2 {
+		t.Fatalf("delivered batches = %+v, want one batch of the two new invitations", batches)
+	}
+	for i, i2 := range []int{0, 4} {
+		delivered := batches[0][i]
+		if delivered.Invitation.InviteeEmail != results[i2].Email || delivered.Invitation.Role != db.OrgMemberRoleDeveloper || delivered.RawToken == "" {
+			t.Fatalf("delivered %d = %+v, want %s", i, delivered, results[i2].Email)
+		}
+		tokenHash, err := auth.HashToken(fixture.tokenKey, delivered.RawToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := org.PendingInvitationByTokenHash(ctx, fixture.queries, tokenHash)
+		if err != nil || pending.InviteeEmail != results[i2].Email {
+			t.Fatalf("delivered token resolves to %+v, err = %v", pending, err)
+		}
+	}
+
+	t.Run("invitations are written and delivered in address order", func(t *testing.T) {
+		var ordered [][]org.NewInvitation
+		results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"zed@example.test", "amy@example.test", "mia@example.test"}, Role: "viewer"}, recordDelivery(&ordered))
+		if err != nil || len(results) != 3 || results[0].Email != "zed@example.test" || results[1].Email != "amy@example.test" {
+			t.Fatalf("results = %+v, err = %v, want request order", results, err)
+		}
+		if len(ordered) != 1 || len(ordered[0]) != 3 {
+			t.Fatalf("batches = %+v", ordered)
+		}
+		for i, want := range []string{"amy@example.test", "mia@example.test", "zed@example.test"} {
+			if got := ordered[0][i].Invitation.InviteeEmail; got != want {
+				t.Fatalf("delivered %d = %s, want %s", i, got, want)
+			}
+		}
+	})
+
+	t.Run("nothing to deliver skips delivery", func(t *testing.T) {
+		var none [][]org.NewInvitation
+		results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"first@example.test", "bad"}, Role: "viewer"}, recordDelivery(&none))
+		if err != nil || len(results) != 2 || results[0].Err == nil || results[1].Err == nil || len(none) != 0 {
+			t.Fatalf("results = %+v, batches = %d, err = %v", results, len(none), err)
+		}
+	})
+
+	t.Run("a failed delivery rolls every invitation of the request back", func(t *testing.T) {
+		sendErr := errors.New("provider unavailable")
+		results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{
+			Emails: []string{"third@example.test", "developer@example.test", "fourth@example.test"},
+			Role:   "viewer",
+		}, func(context.Context, []org.NewInvitation) error { return sendErr })
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, address := range []string{"third@example.test", "fourth@example.test"} {
+			result := results[i*2]
+			if result.Email != address || !errors.Is(result.Err, org.ErrInvitationNotDelivered) || !errors.Is(result.Err, sendErr) {
+				t.Fatalf("%s result = %+v", address, result)
+			}
+		}
+		if !errors.Is(results[1].Err, org.ErrInvitationActiveMember) {
+			t.Fatalf("refused address result = %+v", results[1])
+		}
+		var invitations, facts int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM invitations WHERE invitee_email IN ('third@example.test', 'fourth@example.test')`).Scan(&invitations); err != nil || invitations != 0 {
+			t.Fatalf("invitations after failed delivery = %d, err = %v", invitations, err)
+		}
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND target_id NOT IN (SELECT id FROM invitations)`).Scan(&facts); err != nil || facts != 0 {
+			t.Fatalf("audit facts after failed delivery = %d, err = %v", facts, err)
+		}
+	})
+
+	t.Run("the request is rejected as a whole", func(t *testing.T) {
+		tooMany := make([]string, org.MaxInvitationsPerRequest+1)
+		for i := range tooMany {
+			tooMany[i] = fmt.Sprintf("bulk-%d@example.test", i)
+		}
+		var rejected [][]org.NewInvitation
+		var input org.InputError
+		for name, request := range map[string]org.InvitationInput{
+			"no addresses": {Role: "viewer"},
+			"over limit":   {Emails: tooMany, Role: "viewer"},
+			"invalid role": {Emails: []string{"role@example.test"}, Role: "guest"},
+		} {
+			if _, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, request, recordDelivery(&rejected)); !errors.As(err, &input) {
+				t.Fatalf("%s error = %v, want input error", name, err)
+			}
+		}
+		if _, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"owner-bulk@example.test"}, Role: "owner"}, recordDelivery(&rejected)); !errors.Is(err, org.ErrOwnerRoleRequired) {
+			t.Fatalf("admin owner batch error = %v", err)
+		}
+		if _, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, fixture.developer, org.InvitationInput{Emails: []string{"dev-bulk@example.test"}, Role: "viewer"}, recordDelivery(&rejected)); !errors.Is(err, org.ErrMemberManagementRequired) {
+			t.Fatalf("developer batch error = %v", err)
+		}
+		var leaked int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM invitations WHERE invitee_email LIKE 'bulk-%' OR invitee_email IN ('role@example.test', 'owner-bulk@example.test', 'dev-bulk@example.test')`).Scan(&leaked); err != nil || leaked != 0 || len(rejected) != 0 {
+			t.Fatalf("rejected requests created %d invitations, delivered %d batches, err = %v", leaked, len(rejected), err)
+		}
+	})
 }

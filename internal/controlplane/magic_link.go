@@ -38,7 +38,7 @@ func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 	s.magicLinkLoginStart(w, r, request)
 }
 
-func (s *Server) magicLinkDeliveryConfigured() bool {
+func (s *Server) emailConfigured() bool {
 	_, unconfigured := s.mailer.(email.Unconfigured)
 	return !unconfigured
 }
@@ -53,7 +53,7 @@ func (s *Server) magicLinkInviteStartRoute(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, request api.MagicLinkStartRequest) {
-	if !s.magicLinkDeliveryConfigured() {
+	if !s.emailConfigured() {
 		writeError(w, unavailable(errors.New("magic link mailer is not configured")))
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) magicLinkLoginStart(w http.ResponseWriter, r *http.Request, req
 		writeError(w, unavailable(err))
 		return
 	}
-	if !s.magicLinkDeliveryConfigured() {
+	if !s.emailConfigured() {
 		writeError(w, unavailable(errors.New("magic link mailer is not configured")))
 		return
 	}
@@ -169,7 +169,7 @@ func magicLinkEmailMessage(link identity.PendingMagicLink, linkURL string) email
 			linkURL,
 			link.ExpiresAt.Format(time.RFC3339),
 		),
-		MagicLink: &email.MagicLink{
+		Link: &email.Link{
 			Email:     link.Recipient.Email,
 			Purpose:   string(link.Recipient.Purpose),
 			URL:       linkURL,
