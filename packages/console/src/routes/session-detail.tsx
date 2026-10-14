@@ -2,7 +2,7 @@ import { SessionDelivery } from "../features/slack/SessionDelivery";
 import { SessionProgress } from "../features/asks/SessionProgress";
 import { ContentView } from "../features/asks/Question";
 import { TurnQuestions } from "../features/asks/TurnQuestions";
-import { useParams, useSearchParams } from "@solidjs/router";
+import { useParams } from "@solidjs/router";
 import {
   createInfiniteQuery,
   createQuery,
@@ -16,7 +16,9 @@ import {
   on,
   Show,
 } from "solid-js";
-import { definitionHref, scopedConsoleHref } from "../lib/definitions";
+import { definitionHref } from "../lib/definitions";
+import { computerHref } from "../features/computers/navigation";
+import { CopyLinkButton } from "../components/CopyLinkButton";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
@@ -40,9 +42,6 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function searchValue(value: string | string[] | undefined): string {
-  return typeof value === "string" ? value.trim() : "";
-}
 function errorMessage(error: unknown): string {
   return error instanceof ApiError
     ? error.message
@@ -51,13 +50,12 @@ function errorMessage(error: unknown): string {
 
 export function SessionDetail() {
   const params = useParams();
-  const [search] = useSearchParams();
   const scope = useScope();
   const identity = () =>
     JSON.stringify([
       params["session_id"],
-      searchValue(search["project"]) || scope.selectedProjectID(),
-      searchValue(search["environment"]) || scope.selectedEnvironmentID(),
+      scope.selectedProjectID(),
+      scope.selectedEnvironmentID(),
     ]);
   return (
     <Show when={identity()} keyed>
@@ -68,14 +66,11 @@ export function SessionDetail() {
 
 function SessionDetailContent() {
   const params = useParams();
-  const [search] = useSearchParams();
   const scope = useScope();
   const queryClient = useQueryClient();
   const sessionID = () => params["session_id"]?.trim() ?? "";
-  const projectID = () =>
-    searchValue(search["project"]) || scope.selectedProjectID();
-  const environmentID = () =>
-    searchValue(search["environment"]) || scope.selectedEnvironmentID();
+  const projectID = () => scope.selectedProjectID();
+  const environmentID = () => scope.selectedEnvironmentID();
   const address = (): SessionAddress => ({
     sessionID: sessionID(),
     projectID: projectID(),
@@ -166,6 +161,7 @@ function SessionDetailContent() {
         }
         actions={
           <div class="flex flex-wrap gap-2">
+            <CopyLinkButton />
             <Show when={can("sessions.interrupt") && polling()}>
               <button class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt Session</button>
             </Show>
@@ -290,16 +286,16 @@ function SessionDetailContent() {
                 <DetailList title="Session details">
                   <Show when={current().activity.process}>{process => <DetailItem label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></DetailItem>}</Show>
                   <DetailItem label="Agent">
-                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().agent}</a>
+                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</a>
                   </DetailItem>
                   <Show when={current().initial_turn} fallback={<DetailItem label="Work">No input yet</DetailItem>}>
                     {turn => <DetailItem label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></DetailItem>}
                   </Show>
                   <Show when={current().parent_session_id}>
-                    {id => <DetailItem label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id(), projectID(), environmentID())} /></DetailItem>}
+                    {id => <DetailItem label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></DetailItem>}
                   </Show>
                   <Show when={current().requester_session_id}>
-                    {id => <DetailItem label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id(), projectID(), environmentID())} /></DetailItem>}
+                    {id => <DetailItem label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></DetailItem>}
                   </Show>
                   <Show when={current().key}>
                     {(key) => (
@@ -311,17 +307,17 @@ function SessionDetailContent() {
                   <DetailItem label="Status">
                     <StatusBadge resource="session" status={current().status} />
                   </DetailItem>
-                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template}</a></DetailItem>
+                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></DetailItem>
                   <DetailItem label="Deployment">
                     <IDText
                       value={current().deployment_id}
                       mode="link"
-                      href={scopedConsoleHref(deploymentHref(current().deployment_id), { projectID: projectID(), environmentID: environmentID() })}
+                      href={deploymentHref(current().deployment_id)}
                     />
                   </DetailItem>
                   <DetailItem label="Computer">
                     <Show when={current().computer_id} fallback={<span>No Computer assigned</span>}>
-                      {(id) => <IDText value={id()} mode="link" href={scopedConsoleHref(`/computers/${id()}`, { projectID: projectID(), environmentID: environmentID() })} />}
+                      {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
                     </Show>
                   </DetailItem>
                   <DetailItem label="Created">
@@ -341,7 +337,7 @@ function SessionDetailContent() {
                               </span>
                               <IDText value={hold.id} />
                               <Show when={hold.session_id !== sessionID()}>
-                                <span class="block">Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id, projectID(), environmentID())} /></span>
+                                <span class="block">Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} /></span>
                               </Show>
                             </li>
                           )}

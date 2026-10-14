@@ -3,7 +3,8 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
-import { useRouteScope } from "../lib/scope";
+import { useScopeIDs } from "../lib/scope";
+import { CopyLinkButton } from "../components/CopyLinkButton";
 import { definitionHref, definitionName, listAgentDefinitions, listTemplateDefinitions, type DefinitionListItem } from "../lib/definitions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -64,7 +65,7 @@ function DefinitionTable(props: {
 
 export function DeploymentDetail() {
   const params = useParams();
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const deploymentID = createMemo(() => params["deployment_id"]?.trim() ?? "");
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
@@ -123,6 +124,7 @@ export function DeploymentDetail() {
       <PageHeader
         title={deployment.data?.version ?? "Deployment"}
         back={{ href: "/deployments", label: "Deployments" }}
+        actions={<CopyLinkButton />}
         badge={<Show when={current.isSuccess} fallback={<span>Checking current Deployment…</span>}><Show when={isCurrent()} fallback={<span>Non-current</span>}><StatusBadge resource="deployment" status="current" /></Show></Show>}
         subtitle={
           <Show when={deployment.data}>
@@ -164,14 +166,14 @@ export function DeploymentDetail() {
 
         <Show when={tab() === "agents"}>
           <p class={`${ui.muted} mb-3`}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
-          <DefinitionTable href={id => definitionHref("agents", id, { ...resourceScope(), deploymentID: deploymentID() })} label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} />
+          <DefinitionTable href={id => definitionHref("agents", id, deploymentID())} label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} />
           <Show when={agents.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agents</button>
           </Show>
         </Show>
         <Show when={tab() === "templates"}>
           <p class={`${ui.muted} mb-3`}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
-          <DefinitionTable href={id => definitionHref("templates", id, { ...resourceScope(), deploymentID: deploymentID() })} label="Templates" items={templates.data?.pages.flatMap(page => page.templates)} pending={templates.isPending} error={templates.error} />
+          <DefinitionTable href={id => definitionHref("templates", id, deploymentID())} label="Templates" items={templates.data?.pages.flatMap(page => page.templates)} pending={templates.isPending} error={templates.error} />
           <Show when={templates.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={templates.isFetchingNextPage} onClick={() => void templates.fetchNextPage()}>Load more Templates</button>
           </Show>

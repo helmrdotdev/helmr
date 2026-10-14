@@ -325,5 +325,5 @@ test("inherited hold links its owner and cannot be released on a child", async (
   await page.goto(url);
   await expect(page.getByText("Parent paused (subtree)")).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}?project=${projectID}&environment=${environmentID}`);
+  await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}`);
 });

@@ -220,6 +220,22 @@ function AppShell(props: { children?: JSX.Element }) {
       <Show when={scope.error()}>
         <div class={"border-b border-[#e6aaa4] bg-[#fff1ef] px-5 py-2 text-[13px] font-medium text-console-danger"} role="alert">Could not load projects.</div>
       </Show>
+      <div role="status" aria-live="polite">
+        <Show when={scope.notice()}>
+          {(notice) => (
+            <div class={"flex items-center justify-between gap-3 border-b border-[#9bb9e8] bg-[#eef4ff] px-5 py-1.5 text-[12.5px] text-console-info max-[860px]:px-3"}>
+              <span>
+                {notice().kind === "switched"
+                  ? `Switched to ${notice().projectName} / ${notice().environmentName} from the link.`
+                  : `The link's Project or Environment is not available; showing ${notice().projectName} / ${notice().environmentName}.`}
+              </span>
+              <button type="button" class={ui.modalCloseButton} aria-label="Dismiss notice" onClick={() => scope.dismissNotice()}>
+                <span class={ui.modalCloseIcon} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </Show>
+      </div>
       <main class={"min-w-0 flex-1"}>{props.children}</main>
     </div>
   );

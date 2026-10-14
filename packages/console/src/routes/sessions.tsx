@@ -1,9 +1,10 @@
 import { useSearchParams } from "@solidjs/router";
-import { definitionHref, scopedConsoleHref } from "../lib/definitions";
+import { definitionHref } from "../lib/definitions";
+import { computerHref } from "../features/computers/navigation";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
-import { useRouteScope } from "../lib/scope";
+import { useScopeIDs } from "../lib/scope";
 import {
   listSessions,
   sessionConsolePath,
@@ -37,18 +38,14 @@ function sessionsErrorMessage(error: unknown): string {
   return "Could not load Sessions.";
 }
 
-function SessionRow(props: {
-  session: Session;
-  projectID: string;
-  environmentID: string;
-}) {
+function SessionRow(props: { session: Session }) {
   return (
     <tr>
       <td>
         <IDText value={props.session.id} mode="link"
-          href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)} />
+          href={sessionConsolePath(props.session.id)} />
       </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent}</a></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent, props.session.deployment_id)}>{props.session.agent}</a></td>
       <td>
         <Show
           when={props.session.key}
@@ -63,7 +60,7 @@ function SessionRow(props: {
       <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
       <td>
         <Show when={props.session.computer_id} fallback={<span class="text-console-faint">No Computer assigned</span>}>
-          {(id) => <IDText value={id()} mode="link" href={scopedConsoleHref(`/computers/${id()}`, { projectID: props.projectID, environmentID: props.environmentID })} />}
+          {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
         </Show>
       </td>
       <td>
@@ -74,7 +71,7 @@ function SessionRow(props: {
 }
 
 export function Sessions() {
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const [search] = useSearchParams();
   const text = (v: string | string[] | undefined) => typeof v === "string" ? v : "";
   const projectID = () => scope().projectID;
@@ -121,7 +118,7 @@ export function Sessions() {
         }
       />
 
-      <Show when={agent()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href={scopedConsoleHref("/sessions", { projectID: projectID(), environmentID: environmentID() })}>Show all Sessions</a></p></Show>
+      <Show when={agent()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href="/sessions">Show all Sessions</a></p></Show>
       <Show when={sessions.isError}>
         <StatePanel error={sessionsErrorMessage(sessions.error)} />
       </Show>
@@ -149,11 +146,7 @@ export function Sessions() {
           >
             <For each={items()}>
               {(session) => (
-                <SessionRow
-                  session={session}
-                  projectID={projectID()}
-                  environmentID={environmentID()}
-                />
+                <SessionRow session={session} />
               )}
             </For>
           </DataTable>

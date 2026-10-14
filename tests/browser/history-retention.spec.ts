@@ -87,7 +87,7 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
   await save(page).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toEqual({ path: `/api/projects/${projectID}/settings`, body: { history_retention: "7d" } });
-  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
   await page.reload();
   await expect(period(page)).toHaveValue("7");
   await mode(page).selectOption("never");
@@ -166,7 +166,7 @@ test("real Project defaults to 30d and settings persist across all Environments"
   await period(page).fill("7");
   page.once("dialog", dialog => dialog.accept());
   await save(page).click();
-  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
   await page.goto(`/settings/projects?project=${project}&environment=staging`);
   await expect(period(page)).toHaveValue("7");
   const saved = await page.request.get(`/api/projects/${project}/settings`);
@@ -174,7 +174,7 @@ test("real Project defaults to 30d and settings persist across all Environments"
   expect(await saved.json()).toEqual({ history_retention: "7d" });
   await mode(page).selectOption("never");
   await save(page).click();
-  await expect(page.getByRole("status")).toHaveText("History retention saved.");
+  await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
   await page.reload();
   await expect(mode(page)).toHaveValue("never");
   const env = await page.request.post(`/api/projects/${project}/environments`, { data: { environment: "preview", name: "Preview", color_hex: "#123456" } });
