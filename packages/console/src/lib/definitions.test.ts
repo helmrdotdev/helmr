@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { listAgentDefinitions, listTemplateDefinitions, getAgentDefinition, getTemplateDefinition, definitionHref } from "./definitions";
+import { listAgentDefinitions, listTemplateDefinitions, getAgentDefinition, getTemplateDefinition, definitionHref, agentHref, templateHref } from "./definitions";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -43,4 +43,13 @@ test("definition detail links pin the exact Deployment without scope params", as
     "/api/projects/project%2F1/environments/env%2F1/agents/worker%2Fkey?deployment_id=old%2Fversion",
     "/api/projects/project%2F1/environments/env%2F1/templates/image%2Fkey?deployment_id=old%2Fversion",
   ]);
+});
+
+test("an Agent page opens on its Sessions and its other tabs are pages below it", () => {
+  expect(agentHref("worker/key")).toBe("/agents/worker%2Fkey");
+  expect(agentHref("worker", "sessions")).toBe("/agents/worker");
+  expect(agentHref("worker", "triggers")).toBe("/agents/worker/triggers");
+  expect(agentHref("worker", "slack")).toBe("/agents/worker/slack");
+  expect(agentHref("worker", "definition")).toBe("/agents/worker/definition");
+  expect(templateHref("image/key")).toBe("/templates/image%2Fkey");
 });

@@ -1,6 +1,6 @@
 import { A, Navigate, Route, Router, useLocation } from "@solidjs/router";
 import type { JSX } from "solid-js";
-import { Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { AppBar, type NavItem } from "./components/AppBar";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { RequireAuth } from "./components/RequireAuth";
@@ -12,10 +12,14 @@ import { onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
 import { useMe } from "./lib/me";
 import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
+import { logout } from "./lib/auth";
+import { formatRole } from "./components/ProfileMenu";
+import { environmentChip } from "./features/projects/display";
+import { EnvChip } from "./ui/EnvChip";
 import { Notice } from "./ui/Notice";
 import { AuthWorking } from "./ui/AuthWindow";
 import { Page } from "./ui/Page";
-import { ui } from "./ui/styles";
+import { cx, ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
@@ -24,10 +28,11 @@ import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
-import { Templates, AgentDefinitionDetail, TemplateDetail } from "./routes/definitions";
-import { Agents, AgentDetail } from "./routes/agents";
-import { Sessions } from "./routes/sessions";
-import { Computers } from "./routes/computers";
+import { TemplateList, TemplateDetail, DeploymentAgentDefinition, DeploymentTemplateDefinition } from "./routes/definitions";
+import { SessionList } from "./routes/sessions";
+import { TriggerList } from "./routes/triggers";
+import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentDefinitionTab } from "./routes/agents";
+import { ComputersSection, ComputerList } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
@@ -48,10 +53,8 @@ import { AdminWorkerGroups } from "./routes/admin-worker-groups";
 
 const CONSOLE_NAV: NavItem[] = [
   { href: "/", label: "Overview" },
-  { href: "/agents", label: "Agents" },
-  { href: "/sessions", label: "Sessions" },
-  { href: "/templates", label: "Templates" },
-  { href: "/computers", label: "Computers" },
+  { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
+  { href: "/computers", label: "Computers", match: ["/templates"] },
   { href: "/deployments", label: "Deployments" },
 ];
 
@@ -74,8 +77,71 @@ function SettingsLink() {
   );
 }
 
+// The phone menu's scope: the tab's Project and Environment, changed through the
+// scope selector in the bar.
+function DrawerScope(props: { close: () => void; openScope: () => void }) {
+  const scope = useScope();
+  const environment = () => environmentChip(scope.selectedEnvironment());
+  return (
+    <div class="flex flex-col gap-1 border-b border-console-border p-2">
+      <dl class="m-0 grid gap-1.5 px-2.5 py-1.5">
+        <div class="grid gap-0.5">
+          <dt class={ui.microLabel}>Project</dt>
+          <dd class="m-0 truncate font-mono text-control font-medium text-console-text">{scope.selectedProject()?.name ?? "—"}</dd>
+        </div>
+        <div class="grid gap-0.5">
+          <dt class={ui.microLabel}>Environment</dt>
+          <dd class="m-0">
+            <Show when={environment()} fallback="—">{(chip) => <EnvChip name={chip().name} colorHex={chip().colorHex} protected={chip().protected} />}</Show>
+          </dd>
+        </div>
+      </dl>
+      <button
+        type="button"
+        class={cx(ui.drawerItem, ui.drawerItemIdle)}
+        onClick={() => {
+          props.close();
+          props.openScope();
+        }}
+      >
+        Change project or environment
+      </button>
+    </div>
+  );
+}
+
+// The phone menu's Settings and account entries.
+function DrawerAccount(props: { close: () => void }) {
+  const me = useMe();
+  const location = useLocation();
+  const item = (active: boolean) => cx(ui.drawerItem, active ? ui.drawerItemActive : ui.drawerItemIdle);
+  return (
+    <div class="flex flex-col gap-0.5 p-2">
+      <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && location.pathname !== "/settings/account")} onClick={props.close}>Settings</A>
+      <A href="/settings/account" class={item(location.pathname === "/settings/account")} onClick={props.close}>Account settings</A>
+      <Show when={me.data?.admin}>
+        <A href="/admin" class={item(false)} onClick={props.close}>Admin</A>
+      </Show>
+      <button
+        type="button"
+        class={cx(ui.drawerItem, "bg-transparent text-console-danger hover:bg-console-danger-bg")}
+        onClick={() => {
+          props.close();
+          void logout();
+        }}
+      >
+        Sign out
+      </button>
+      <p class="m-0 truncate px-2.5 py-2 font-mono text-chrome text-console-muted">
+        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.role)}
+      </p>
+    </div>
+  );
+}
+
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
+  const [openScope, setOpenScope] = createSignal<() => void>(() => undefined);
   const protectedColor = () => {
     const environment = scope.selectedEnvironment();
     return environment && isProtectedEnvironment(environment) ? environment.color_hex : undefined;
@@ -83,10 +149,13 @@ function AppShell(props: { children?: JSX.Element }) {
   return (
     <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
-        leading={<ScopeSwitcher />}
+        leading={<ScopeSwitcher opener={(open) => setOpenScope(() => open)} />}
         nav={CONSOLE_NAV}
-        trailing={<><SettingsLink /><ProfileMenu /></>}
+        trailing={<div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div>}
         protectedColor={protectedColor()}
+        drawerTitle="Helmr Console"
+        drawerStart={(close) => <DrawerScope close={close} openScope={() => openScope()()} />}
+        drawerEnd={(close) => <DrawerAccount close={close} />}
       />
       <Show when={scope.error()}>
         <Notice tone="danger" variant="bar" class="font-medium">Could not load projects.</Notice>
@@ -112,6 +181,17 @@ const wrap = (Inner: () => JSX.Element) => () => (
     <ScopeProvider>
       <AppShell>
         <Inner />
+      </AppShell>
+    </ScopeProvider>
+  </RequireAuth>
+);
+
+// A page with sub-pages: the layout stays mounted while its child routes change.
+const wrapLayout = (Layout: (props: { children?: JSX.Element }) => JSX.Element) => (props: { children?: JSX.Element }) => (
+  <RequireAuth>
+    <ScopeProvider>
+      <AppShell>
+        <Layout>{props.children}</Layout>
       </AppShell>
     </ScopeProvider>
   </RequireAuth>
@@ -172,19 +252,29 @@ export function App() {
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
-      <Route path="/agents" component={wrap(Agents)} />
-      <Route path="/deployments/:deployment_id/agents/:agent" component={wrap(AgentDefinitionDetail)} />
-      <Route path="/deployments/:deployment_id/templates/:template" component={wrap(TemplateDetail)} />
-      <Route path="/agents/:agent" component={wrap(AgentDetail)} />
-      <Route path="/templates" component={wrap(Templates)} />
-      <Route path="/templates/:template" component={wrap(TemplateDetail)} />
-      <Route path="/sessions" component={wrap(Sessions)} />
+      <Route component={wrapLayout(AgentsSection)}>
+        <Route path="/agents" component={AgentList} />
+        <Route path="/sessions" component={SessionList} />
+        <Route path="/triggers" component={TriggerList} />
+      </Route>
+      <Route path="/agents/:agent" component={wrapLayout(AgentDetail)}>
+        <Route path="/" component={AgentSessionsTab} />
+        <Route path="/triggers" component={AgentTriggersTab} />
+        <Route path="/slack" component={AgentSlackTab} />
+        <Route path="/definition" component={AgentDefinitionTab} />
+      </Route>
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
-      <Route path="/computers" component={wrap(Computers)} />
+      <Route component={wrapLayout(ComputersSection)}>
+        <Route path="/computers" component={ComputerList} />
+        <Route path="/templates" component={TemplateList} />
+      </Route>
       <Route path="/computers/:computer_id" component={wrap(ComputerDetail)} />
+      <Route path="/templates/:template" component={wrap(TemplateDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
       <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
+      <Route path="/deployments/:deployment_id/agents/:agent" component={wrap(DeploymentAgentDefinition)} />
+      <Route path="/deployments/:deployment_id/templates/:template" component={wrap(DeploymentTemplateDefinition)} />
       <Route path="/projects/new" component={() => <RequireAuth requirement="organization"><ProjectNew /></RequireAuth>} />
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />

@@ -92,9 +92,11 @@ test("My account shows the profile and the Slack identity section", async ({ pag
   await expect(page.getByText("No Slack identities linked.")).toBeVisible();
 });
 
-test("the former settings and account paths show Page not found inside the console", async ({ page }) => {
+const MISSING_PATHS = ["/no-such-page", "/settings/no-such-topic"];
+
+test("a path that does not exist shows Page not found inside the console", async ({ page }) => {
   await fixture(page);
-  for (const path of ["/settings/projects", "/account/slack"]) {
+  for (const path of MISSING_PATHS) {
     await page.goto(path);
     await expect(page).toHaveURL(path);
     await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
@@ -107,8 +109,8 @@ test("the former settings and account paths show Page not found inside the conso
 
 test("a signed-out visitor sees Page not found in a window without being sent to sign in", async ({ page }) => {
   await fixture(page, { signedOut: true });
-  await page.goto("/account/slack");
-  await expect(page).toHaveURL("/account/slack");
+  await page.goto(MISSING_PATHS[0]!);
+  await expect(page).toHaveURL(MISSING_PATHS[0]!);
   await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Go to the console", exact: true })).toHaveAttribute("href", "/");
 });

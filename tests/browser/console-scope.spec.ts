@@ -98,8 +98,8 @@ test("a share link switches the tab without touching its old scope, leaves a cle
   await expect(notice(page)).toHaveText("");
 
   scoped.length = 0;
-  await page.goto(`/sessions?agent=support&project=${project}&environment=staging#history`);
-  await expect(page).toHaveURL("/sessions?agent=support#history");
+  await page.goto(`/sessions?ref=share&project=${project}&environment=staging#history`);
+  await expect(page).toHaveURL("/sessions?ref=share#history");
   await expect(notice(page)).toHaveText("Switched to Scope Tabs / Staging from the link.");
   await expect(scopeTrigger(page)).toContainText("Staging");
   expect(scoped).toContain(`${project}/staging/sessions`);
@@ -146,20 +146,20 @@ test("a partial link keeps the tab's scope and says so", async ({ page }) => {
 test("Copy link shares the page in this tab's scope and an Agent page survives an Environment switch", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await mockConsole(context);
-  await page.goto(`/agents/support?project=${project}&environment=production`);
-  await expect(page).toHaveURL("/agents/support");
-  await expect(page.getByRole("heading", { name: "Slack Connection" })).toBeVisible();
+  await page.goto(`/agents/support/triggers?project=${project}&environment=production`);
+  await expect(page).toHaveURL("/agents/support/triggers");
+  await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Copy link" }).click();
   await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
   await expect(page.getByText("Link copied")).toBeAttached();
   const origin = new URL(page.url()).origin;
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${origin}/agents/support?project=${project}&environment=production`);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${origin}/agents/support/triggers?project=${project}&environment=production`);
 
   await chooseEnvironment(page, "Staging");
-  await expect(page).toHaveURL("/agents/support");
+  await expect(page).toHaveURL("/agents/support/triggers");
   await expect(page.getByText("This environment has no Agent with this name.")).toBeVisible();
   await chooseEnvironment(page, "Production");
-  await expect(page.getByRole("heading", { name: "Slack Connection" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
 });
 
 test("Copy link reports a clipboard failure", async ({ page }) => {

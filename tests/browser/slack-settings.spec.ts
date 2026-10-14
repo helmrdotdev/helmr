@@ -4,6 +4,7 @@ const now = "2026-10-09T00:00:00Z";
 const project = "console-demo";
 const environment = "demo";
 const endpoint = `/api/projects/${project}/environments/${environment}/agents/demo-agent/slack`;
+const slackTab = "/agents/demo-agent/slack";
 async function openAgent(page: Page) {
   await page.goto("/dev/login");
   await page.goto("/settings/environments");
@@ -12,15 +13,18 @@ async function openAgent(page: Page) {
   await page.getByRole("button", { name: "Use", exact: true }).click();
   await expect(demo.getByText("Current", { exact: true })).toBeVisible();
   await page.goto("/agents/demo-agent");
-  await page.getByRole("button", { name: "Manage Slack connection", exact: true }).click();
+  await page.getByRole("tab", { name: "Slack", exact: true }).click();
+  await expect(page).toHaveURL(slackTab);
+  return page.getByRole("tabpanel", { name: "Slack" });
 }
 const connection = (status: string, configured = true) => ({
   id: "connection-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
   status, credentials_configured: configured, client_id: configured ? "client-A" : null,
   app_id: "app-A", team_id: "team-A", workspace_name: "Workspace A", app_name: "Dedicated Agent", app_icon_url: null,
 });
+const currentStep = (panel: ReturnType<Page["getByRole"]>) => panel.getByRole("list", { name: "Slack setup" }).locator("[aria-current=step]");
 
-test("Agent connection setup saves credentials and authorizes only its exact generation", async ({ page }, testInfo) => {
+test("Agent Slack setup walks the steps on the page and authorizes only its exact generation", async ({ page }, testInfo) => {
   let current: ReturnType<typeof connection> | null = null;
   const writes: { path: string; body: unknown }[] = [];
   await page.route(`**${endpoint}**`, async route => {
@@ -34,12 +38,18 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
     await route.fulfill({ json: { connection: current, manifest: { settings: { event_subscriptions: { request_url: "https://example.test/integrations/slack/apps/registration-A/events" } } }, create_app_url: "https://api.slack.com/apps?new_app=1" } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
-  await openAgent(page);
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "Connect Slack", exact: true }).click();
-  await expect(dialog.getByRole("link", { name: "Create app in Slack" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Install app in Slack" })).toHaveCount(0);
-  const icons = dialog.getByRole("group", { name: "App icon" });
+  const panel = await openAgent(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(currentStep(panel)).toContainText("Create the Slack app");
+  await panel.getByRole("button", { name: "Connect Slack", exact: true }).click();
+
+  await expect(panel).toContainText("Slack connection · setup 1 of 4");
+  await expect(currentStep(panel)).toContainText("Create the Slack app");
+  await expect(panel.getByRole("link", { name: "Create app in Slack" })).toHaveAttribute("href", "https://api.slack.com/apps?new_app=1");
+  await expect(panel.getByLabel("App manifest")).toContainText("registration-A/events");
+  await expect(panel.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Install app in Slack" })).toHaveCount(0);
+  const icons = panel.getByRole("group", { name: "App icon" });
   await expect(icons.getByRole("radio")).toHaveCount(8);
   const download = icons.getByRole("link", { name: "Download icon" });
   const initial = await download.getAttribute("href");
@@ -55,20 +65,52 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
   await expect(download).toHaveAttribute("href", "/slack-app-icons/light.png");
   expect((await page.request.get("/slack-app-icons/dark.png")).headers()["content-type"]).toBe("image/png");
   await page.screenshot({ path: testInfo.outputPath("agent-slack-setup.png"), fullPage: true });
-  await dialog.getByLabel("Client ID", { exact: true }).fill("client-A");
-  await dialog.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
-  await dialog.getByLabel("Signing secret", { exact: true }).fill("synthetic-signing-secret");
-  await dialog.getByRole("button", { name: "Save app credentials" }).click();
-  await expect(dialog.getByRole("button", { name: "Install app in Slack" })).toBeVisible();
-  await expect(dialog.getByLabel("Client secret", { exact: true })).toHaveValue("");
-  await expect(dialog.getByLabel("Signing secret", { exact: true })).toHaveValue("");
-  await dialog.getByRole("button", { name: "Install app in Slack" }).click();
+
+  await panel.getByRole("button", { name: "I created the app" }).click();
+  await expect(panel).toContainText("Slack connection · setup 2 of 4");
+  await expect(currentStep(panel)).toContainText("Save app credentials");
+  await panel.getByLabel("Client ID", { exact: true }).fill("client-A");
+  await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
+  await panel.getByLabel("Signing secret", { exact: true }).fill("synthetic-signing-secret");
+  await panel.getByRole("button", { name: "Save app credentials" }).click();
+
+  await expect(panel).toContainText("Slack connection · setup 3 of 4");
+  await expect(currentStep(panel)).toContainText("Install in your workspace");
+  await expect(panel.getByLabel("Client secret", { exact: true })).toBeHidden();
+  await panel.getByText("Replace app credentials", { exact: true }).click();
+  await expect(panel.getByLabel("Client ID", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("");
+  await expect(panel.getByLabel("Signing secret", { exact: true })).toHaveValue("");
+  await panel.getByRole("button", { name: "Install app in Slack" }).click();
   await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=fixture");
   expect(writes).toEqual([
     { path: endpoint, body: {} },
     { path: `${endpoint}/connection-A/credentials`, body: { client_id: "client-A", client_secret: "synthetic-client-secret", signing_secret: "synthetic-signing-secret" } },
-    { path: `${endpoint}/connection-A/authorize`, body: { return_to: "/agents/demo-agent" } },
+    { path: `${endpoint}/connection-A/authorize`, body: { return_to: slackTab } },
   ]);
+});
+
+test("Agent Slack setup can be discarded only after confirming", async ({ page }) => {
+  let current: ReturnType<typeof connection> | null = connection("setup_incomplete");
+  const deletions: string[] = [];
+  await page.route(`**${endpoint}**`, async route => {
+    if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); current = null; await route.fulfill({ status: 204 }); return; }
+    await route.fulfill({ json: { connection: current, manifest: {}, create_app_url: "https://api.slack.com/apps?new_app=1" } });
+  });
+  const panel = await openAgent(page);
+  await expect(currentStep(panel)).toContainText("Install in your workspace");
+  const zone = panel.getByRole("region", { name: "Discard setup" });
+  await expect(zone).toContainText("The app in Slack is not deleted.");
+  await zone.getByRole("button", { name: "Discard setup", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "Discard setup" });
+  await expect(confirmation).toContainText("Discard this setup to release the Agent’s connection slot.");
+  await confirmation.getByRole("button", { name: "Keep connection", exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(deletions).toEqual([]);
+  await zone.getByRole("button", { name: "Discard setup", exact: true }).click();
+  await page.getByRole("dialog", { name: "Discard setup" }).getByRole("button", { name: "Discard setup", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
+  expect(deletions).toEqual([`${endpoint}/connection-A`]);
 });
 
 test("Agent disconnect describes the existing-thread boundary and requires confirmation", async ({ page }, testInfo) => {
@@ -78,13 +120,18 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
     if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); connected = false; await route.fulfill({ status: 204 }); return; }
     await route.fulfill({ json: { connection: connected ? connection("connected") : null } });
   });
-  await openAgent(page);
+  const panel = await openAgent(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  const dialog = page.getByRole("dialog", { name: "Slack · demo-agent" });
-  await expect(dialog).toContainText("Dedicated Agent");
-  await dialog.getByText("Download app icon", { exact: true }).click();
-  await expect(dialog.getByRole("group", { name: "App icon" }).getByRole("link", { name: "Download icon" })).toHaveAttribute("href", /^\/slack-app-icons\/[a-z]+\.png$/);
-  await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(panel.getByRole("status").filter({ hasText: "Connected to Workspace A as Dedicated Agent." })).toBeVisible();
+  await expect(panel.locator("dl")).toContainText("Dedicated Agent");
+  await expect(panel.locator("dl")).toContainText("Workspace A");
+  await expect(panel.getByRole("button", { name: "Reauthorize in Slack" })).toBeVisible();
+  await panel.getByText("Download app icon", { exact: true }).click();
+  await expect(panel.getByRole("group", { name: "App icon" }).getByRole("link", { name: "Download icon" })).toHaveAttribute("href", /^\/slack-app-icons\/[a-z]+\.png$/);
+  await panel.getByText("Update app credentials", { exact: true }).click();
+  await expect(panel.getByLabel("Client ID", { exact: true })).toHaveValue("client-A");
+  const zone = panel.getByRole("region", { name: "Disconnect Slack" });
+  await zone.getByRole("button", { name: "Disconnect", exact: true }).click();
   const confirmation = page.getByRole("dialog", { name: "Disconnect Slack" });
   await expect(confirmation).toContainText("existing threads stay disconnected and triggers require re-promotion");
   await expect(confirmation).toContainText("Demo");
@@ -93,7 +140,7 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   await page.screenshot({ path: testInfo.outputPath("agent-slack-disconnect-mobile.png"), fullPage: true });
   await confirmation.getByRole("button", { name: "Disconnect Slack", exact: true }).click();
   await expect(confirmation).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
   expect(deletions).toEqual([`${endpoint}/connection-A`]);
 });
 
@@ -104,13 +151,24 @@ test("Agent reauthorization keeps its app and workspace identity", async ({ page
     else await route.fulfill({ json: { connection: connection("reauthorization_required") } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
-  await openAgent(page);
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Reauthorize this same app and workspace");
-  await expect(dialog.getByLabel("Client ID", { exact: true })).toHaveAttribute("readonly", "");
-  await dialog.getByRole("button", { name: "Reauthorize in Slack" }).click();
+  const panel = await openAgent(page);
+  const warning = panel.getByRole("status").filter({ hasText: "Reauthorize this same app and workspace" });
+  await expect(warning).toBeVisible();
+  await panel.getByText("Update app credentials", { exact: true }).click();
+  await expect(panel.getByLabel("Client ID", { exact: true })).toHaveAttribute("readonly", "");
+  await warning.getByRole("button", { name: "Reauthorize in Slack" }).click();
   await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=repair");
-  expect(starts).toEqual([{ path: `${endpoint}/connection-A/authorize`, body: { return_to: "/agents/demo-agent" } }]);
+  expect(starts).toEqual([{ path: `${endpoint}/connection-A/authorize`, body: { return_to: slackTab } }]);
+});
+
+test("a connection Slack disconnected can only be removed", async ({ page }) => {
+  await page.route(`**${endpoint}**`, route => route.fulfill({ json: { connection: connection("disconnected") } }));
+  const panel = await openAgent(page);
+  await expect(panel.getByRole("status").filter({ hasText: "Slack no longer accepts this app’s installation." })).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Reauthorize|Install app/ })).toHaveCount(0);
+  await expect(panel.getByText("Update app credentials", { exact: true })).toHaveCount(0);
+  await panel.getByRole("region", { name: "Disconnect Slack" }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Disconnect Slack" })).toBeVisible();
 });
 
 test("Slack callback removes credentials from the URL and reports a changed account", async ({ page }) => {

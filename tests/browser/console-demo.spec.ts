@@ -28,7 +28,9 @@ test("console demo shows retained history in current navigation", async ({ page 
   await navigation.getByRole("link", { name: "Deployments", exact: true }).click();
   await page.getByRole("link", { name: /000000000501/ }).click();
   await expect(page.getByText("demo-agent", { exact: true })).toBeVisible();
-  await navigation.getByRole("link", { name: "Sessions", exact: true }).click();
+  await navigation.getByRole("link", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await expect(page).toHaveURL("/sessions");
   await expect(page.getByRole("link", { name: "000000000701", exact: true })).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await navigation.getByRole("link", { name: "Computers", exact: true }).click();

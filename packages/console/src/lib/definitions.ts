@@ -69,8 +69,14 @@ export function definitionHref(kind: DefinitionKind, id: string, deploymentID: s
 }
 
 export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
-export function agentHref(agent: string): string {
-  return `/agents/${encodeURIComponent(agent)}`;
+// An Agent's page opens on its Sessions; its other tabs are pages below it.
+export type AgentTab = "sessions" | "triggers" | "slack" | "definition";
+export function agentHref(agent: string, tab: AgentTab = "sessions"): string {
+  const base = `/agents/${encodeURIComponent(agent)}`;
+  return tab === "sessions" ? base : `${base}/${tab}`;
+}
+export function templateHref(template: string): string {
+  return `/templates/${encodeURIComponent(template)}`;
 }
 export function listRetainedAgents(scope: DefinitionScope, cursor?: string): Promise<{ agents: RetainedAgent[]; next_cursor?: string }> {
   const query = new URLSearchParams({ view: "all", limit: "100" });

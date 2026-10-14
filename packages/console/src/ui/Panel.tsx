@@ -74,3 +74,15 @@ export function KeyValue(props: { label: string; children?: JSX.Element }) {
     </div>
   );
 }
+
+// A destructive action that belongs to the page: what it does and its one button,
+// which opens a ConfirmDialog. Sits last on the page or in the rail.
+export function DangerZone(props: { title: string; children: JSX.Element; action: JSX.Element; class?: string }) {
+  return (
+    <section class={cx("flex flex-col items-start gap-2 border border-console-danger-border bg-console-surface px-4 py-3.5", props.class)} aria-label={props.title}>
+      <h2 class="m-0 text-[0.9rem] font-medium leading-tight text-console-danger">{props.title}</h2>
+      <p class={cx(ui.muted, "m-0")}>{props.children}</p>
+      {props.action}
+    </section>
+  );
+}

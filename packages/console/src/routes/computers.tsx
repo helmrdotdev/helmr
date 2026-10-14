@@ -1,14 +1,14 @@
 import { definitionHref } from "../lib/definitions";
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, For, Show, type JSX } from "solid-js";
+import { SectionLayout } from "../components/SectionLayout";
 import { computerHref } from "../features/computers/navigation";
 import { errorMessage } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
 import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Page } from "../ui/Page";
-import { PageHeader } from "../ui/PageHeader";
+import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -34,7 +34,22 @@ function ComputerRow(props: { computer: ComputerListItem }) {
   );
 }
 
-export function Computers() {
+type Section = "computers" | "templates";
+const SECTION_TABS: LinkTabItem<Section>[] = [
+  { value: "computers", label: "Computers", href: "/computers" },
+  { value: "templates", label: "Templates", href: "/templates" },
+];
+
+// The Computers section: Computers and the Templates that create them.
+export function ComputersSection(props: { children?: JSX.Element }) {
+  return (
+    <SectionLayout id="computers-section" title="Computers" subtitle="Durable execution environments for Sessions, commands and files, and the Templates that create them." tabs={SECTION_TABS}>
+      {props.children}
+    </SectionLayout>
+  );
+}
+
+export function ComputerList() {
   const scope = useScopeIDs();
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
@@ -52,31 +67,25 @@ export function Computers() {
   const items = createMemo(() => computers.data?.pages.flatMap((page) => page.computers) ?? []);
 
   return (
-    <Page>
-      <PageHeader
-        title="Computers"
-        subtitle="Durable execution environments for Sessions, commands, and files."
-      />
-      <QueryState
-        query={computers}
-        pending="Loading Computers..."
-        error={computersErrorMessage}
-        empty={{
-          when: (data) => data.pages.every((page) => page.computers.length === 0),
-          title: "No Computers yet.",
-          hint: "Start an Agent through the CLI or Slack, or create a Computer with helmr computer create.",
-        }}
-      >
-        {() => (
-          <DataTable
-            columns={["Computer", "Key", "Template", "Status", "Residency", "Last activity", "Created"]}
-            minWidth="min-w-220"
-            footer={<LoadMore count={items().length} noun="Computers" hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
-          >
-            <For each={items()}>{(computer) => <ComputerRow computer={computer} />}</For>
-          </DataTable>
-        )}
-      </QueryState>
-    </Page>
+    <QueryState
+      query={computers}
+      pending="Loading Computers..."
+      error={computersErrorMessage}
+      empty={{
+        when: (data) => data.pages.every((page) => page.computers.length === 0),
+        title: "No Computers yet.",
+        hint: "Start an Agent through the CLI or Slack, or create a Computer with helmr computer create.",
+      }}
+    >
+      {() => (
+        <DataTable
+          columns={["Computer", "Key", "Template", "Status", "Residency", "Last activity", "Created"]}
+          minWidth="min-w-220"
+          footer={<LoadMore count={items().length} noun="Computers" hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
+        >
+          <For each={items()}>{(computer) => <ComputerRow computer={computer} />}</For>
+        </DataTable>
+      )}
+    </QueryState>
   );
 }

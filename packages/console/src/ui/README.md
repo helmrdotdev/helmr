@@ -39,7 +39,16 @@ silently change nested controls.
   settings and admin areas: `leading` (scope selector or `BrandMark`),
   `nav` items, `trailing` controls. A protected Environment draws a 2px line in its
   color along the top edge of the bar, inside its 40px height (`protectedColor`).
-- **NavTab.** One bar tab; it is current on its path and every path below it.
+  Below 720px the section tabs collapse into a menu button that opens a drawer
+  (a `Popover` dialog with 44px `ui.drawerItem` targets); `drawerStart` and
+  `drawerEnd` add the scope and the Settings and account entries.
+- **NavTab.** One bar tab; it is current on its path, every path below it, and the
+  paths in its `match` (a section's other sub-pages). The console has four
+  sections: Overview, Agents (`/agents`, `/sessions`, `/triggers`), Computers
+  (`/computers`, `/templates`) and Deployments.
+- **SectionLayout** (`components/`). A section whose pages are sub-tabs: one
+  `PageHeader` and `LinkTabs` that stay mounted (a layout route) while the selected
+  page renders in the tab panel. It shows the no-scope state for every page.
 - **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
 - **ScopeSwitcher** and **ProfileMenu** (`components/`). Both open in a `Popover`.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
@@ -63,12 +72,17 @@ silently change nested controls.
   last). Every route page starts with it.
 - **Tabs** and **TabPanel.** Sub-sections of a page with real tab roles; arrow
   keys, Home and End move between tabs. A tab is in the URL only when it is a page
-  of its own.
+  of its own; then use **LinkTabs**, whose tabs are links with the same keyboard
+  behavior, inside a layout route so focus stays on the tablist (section sub-tabs,
+  Agent tabs at `/agents/:agent/{triggers,slack,definition}`, Sessions at
+  `/agents/:agent`).
 - **Toolbar.** Above a list: search and filters at `start`, secondary then primary
   actions at `end`. Filters never live in the page header.
 - **Section.** Heading with optional count, description and actions, then content.
 - **Panel.** Bordered block with optional title and actions. `variant="window"`
   adds the title strip and shadow for something that frames a task.
+- **DangerZone.** A destructive page action: title, consequence and one danger
+  button that opens a `ConfirmDialog`. Last in the rail or on the page.
 - **DetailLayout**, **KeyValueList**, **KeyValue.** Detail pages: main column plus a
   300px rail of label/value pairs; a missing value renders "—".
 - **CopyLinkButton** (`components/`). The first `PageHeader` action on Session,
@@ -92,14 +106,17 @@ silently change nested controls.
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
   identities) with one divider style and 12px padding; `footer` takes a LoadMore.
 - **StatusBadge.** Every status. One tone map per resource lives in
-  `StatusBadge.tsx`; add a resource there instead of styling a badge locally.
+  `StatusBadge.tsx`, with a label map where the status name does not read well
+  ("In current Deployment"); add a resource there instead of styling a badge
+  locally.
 - **EnvChip** and **EnvDot.** The only way an Environment is shown: its color, name
   and "protected" tag. **EnvironmentTarget** names the Environment a dialog writes to.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
 - **CodeBlock.** Every block of code or output, with `copy` for things meant to be
   pasted.
 - **Steps.** Numbered setup steps with done, current and upcoming states. Multi-step
-  setup is never a modal; it is Steps on the owning page or tab.
+  setup is never a modal; it is Steps on the owning page or tab (the Agent's Slack
+  tab).
 
 ## Inputs
 
