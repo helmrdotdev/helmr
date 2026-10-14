@@ -48,6 +48,10 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
   await expect(icons.getByRole("radio", { name: "Dark icon" })).toBeChecked();
   await expect(download).toHaveAttribute("href", "/slack-app-icons/dark.png");
   await expect(download).toHaveAttribute("download", "demo-agent-slack-icon.png");
+  await page.keyboard.press("ArrowLeft");
+  await expect(icons.getByRole("radio", { name: "Light icon" })).toBeChecked();
+  await expect(icons.getByRole("radio", { name: "Light icon" })).toBeFocused();
+  await expect(download).toHaveAttribute("href", "/slack-app-icons/light.png");
   expect((await page.request.get("/slack-app-icons/dark.png")).headers()["content-type"]).toBe("image/png");
   await page.screenshot({ path: testInfo.outputPath("agent-slack-setup.png"), fullPage: true });
   await dialog.getByLabel("Client ID", { exact: true }).fill("client-A");
@@ -77,7 +81,8 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   await page.setViewportSize({ width: 390, height: 844 });
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Dedicated Agent");
-  await expect(dialog.getByText("Download app icon", { exact: true })).toBeVisible();
+  await dialog.getByText("Download app icon", { exact: true }).click();
+  await expect(dialog.getByRole("group", { name: "App icon" }).getByRole("link", { name: "Download icon" })).toHaveAttribute("href", /^\/slack-app-icons\/[a-z]+\.png$/);
   await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(dialog).toContainText("existing threads stay disconnected and triggers require re-promotion");
   expect(deletions).toEqual([]);
