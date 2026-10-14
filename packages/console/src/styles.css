@@ -59,6 +59,11 @@
   --console-gradient-pressed: linear-gradient(to bottom, #e3e7ec 0%, #d5dbe2 100%);
   --console-progress-stripes: repeating-linear-gradient(-45deg, #315fce 0 6px, #5f84dc 6px 12px);
 
+  /* JSON syntax in payload viewers. */
+  --console-syntax-key: #7a3e9d;
+  --console-syntax-string: #1f7a4d;
+  --console-syntax-number: #a4520a;
+  --console-syntax-literal: #2a52b3;
   --console-scrollbar: rgba(15, 23, 42, 0.28);
 
   --console-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
@@ -98,6 +103,10 @@
   --color-console-neutral-bg: var(--console-neutral-bg);
   --color-console-neutral-border: var(--console-neutral-border);
   --color-console-danger-text: var(--console-danger-text);
+  --color-console-syntax-key: var(--console-syntax-key);
+  --color-console-syntax-string: var(--console-syntax-string);
+  --color-console-syntax-number: var(--console-syntax-number);
+  --color-console-syntax-literal: var(--console-syntax-literal);
   --color-console-danger-outline: var(--console-danger-outline);
   --color-console-danger-solid: var(--console-danger-solid);
   --font-console-mono: var(--console-mono);

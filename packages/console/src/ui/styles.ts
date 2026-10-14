@@ -184,6 +184,14 @@ export const ui = {
   codeBlock:
     "m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-control leading-normal text-console-text",
 
+  // Payload viewers (PayloadView): text actions in a payload header or tree row,
+  // and raw JSON or text without its own frame.
+  payloadAction:
+    "cursor-pointer whitespace-nowrap border-0 bg-transparent p-0 font-mono text-micro text-console-accent hover:text-console-accent-hover",
+  // A key the summary line above uses, marked in the open record.
+  payloadPinned: "rounded-xs bg-console-accent-soft outline outline-1 -outline-offset-1 outline-console-accent/35",
+  payloadRaw: "m-0 overflow-auto whitespace-pre-wrap break-words font-mono text-control leading-5 text-console-text",
+
   // Auth windows
   authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
   authCopy: "mb-3.5 text-body leading-normal text-console-muted",

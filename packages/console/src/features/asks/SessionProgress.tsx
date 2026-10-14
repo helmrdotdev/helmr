@@ -56,7 +56,7 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
           >
             <For each={output()}>{event => <ListItem>
               <article class={ui.blockStack} aria-label={`Progress ${event.sequence}`}>
-                <TurnRef id={event.turn_id} /><ContentView content={event.content} />
+                <TurnRef id={event.turn_id} /><ContentView content={event.content} label={`Event ${event.sequence} output`} />
               </article>
             </ListItem>}</For>
           </List>
