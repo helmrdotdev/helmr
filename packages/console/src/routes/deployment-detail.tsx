@@ -1,19 +1,18 @@
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from "solid-js";
 import { errorMessage } from "../lib/error";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
-import { definitionHref, definitionName, listAgentDefinitions, listTemplateDefinitions, type DefinitionListItem } from "../lib/definitions";
-import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
+import { DataTable, LoadMore, type Noun } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 
 type Tab = "agents" | "templates" | "events";
@@ -30,11 +29,11 @@ const DEPLOYMENT_ERROR_MESSAGES = {
 };
 const deploymentError = (error: unknown, fallback: string) => errorMessage(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
 
-type DefinitionPages = {
+type DefinitionPages<T> = {
   isPending: boolean;
   isError: boolean;
   error: unknown;
-  data: { pages: { items: DefinitionListItem[] }[] } | undefined;
+  data: { pages: { items: T[] }[] } | undefined;
   refetch: () => unknown;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -42,28 +41,23 @@ type DefinitionPages = {
   fetchNextPage: () => unknown;
 };
 
-function DefinitionTable(props: { label: "Agents" | "Templates"; href: (id: string) => string; query: DefinitionPages }) {
-  const noun = () => props.label.toLowerCase();
+// The Agents or Templates this Deployment declares, with every field of their
+// definitions as columns.
+function DefinitionTable<T>(props: { noun: Noun; columns: string[]; query: DefinitionPages<T>; row: (item: T) => JSX.Element }) {
   const items = createMemo(() => props.query.data?.pages.flatMap(page => page.items) ?? []);
   return (
     <QueryState
       query={props.query}
-      pending={`Loading ${noun()}...`}
-      error={(error) => deploymentError(error, `Could not load ${noun()}.`)}
-      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This Deployment declares no ${noun()}.` }}
+      pending={`Loading ${props.noun.other}...`}
+      error={(error) => deploymentError(error, `Could not load ${props.noun.other}.`)}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This Deployment declares no ${props.noun.other}.` }}
     >
       {() => (
         <DataTable
-          columns={[props.label === "Agents" ? "Agent" : "Template"]}
-          footer={<LoadMore count={items().length} noun={props.label} hasMore={props.query.hasNextPage} loading={props.query.isFetchingNextPage} failed={props.query.isFetchNextPageError} onLoadMore={() => void props.query.fetchNextPage()} />}
+          columns={props.columns}
+          footer={<LoadMore count={items().length} noun={props.noun} hasMore={props.query.hasNextPage} loading={props.query.isFetchingNextPage} failed={props.query.isFetchNextPageError} onLoadMore={() => void props.query.fetchNextPage()} />}
         >
-          <For each={items()}>
-            {(item) => (
-              <tr>
-                <td><PrimaryLink href={props.href(definitionName(item))}>{definitionName(item)}</PrimaryLink></td>
-              </tr>
-            )}
-          </For>
+          <For each={items()}>{(item) => <tr>{props.row(item)}</tr>}</For>
         </DataTable>
       )}
     </QueryState>
@@ -104,7 +98,7 @@ export function DeploymentDetail() {
     queryKey: ["agents", deploymentID(), projectID(), environmentID()],
     queryFn: async ({ pageParam }) => {
       const page = await listAgentDefinitions({ ...definitionOptions(), cursor: pageParam || undefined });
-      return { items: page.agents as DefinitionListItem[], next_cursor: page.next_cursor };
+      return { items: page.agents, next_cursor: page.next_cursor };
     },
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
@@ -115,7 +109,7 @@ export function DeploymentDetail() {
     queryKey: ["templates", deploymentID(), projectID(), environmentID()],
     queryFn: async ({ pageParam }) => {
       const page = await listTemplateDefinitions({ ...definitionOptions(), cursor: pageParam || undefined });
-      return { items: page.templates as DefinitionListItem[], next_cursor: page.next_cursor };
+      return { items: page.templates, next_cursor: page.next_cursor };
     },
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
@@ -159,12 +153,16 @@ export function DeploymentDetail() {
             <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
 
             <TabPanel tabs="deployment-sections" value="agents" selected={tab()}>
-              <p class={cx(ui.muted, "mb-3")}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
-              <DefinitionTable label="Agents" href={id => definitionHref("agents", id, deploymentID())} query={agents} />
+              <DefinitionTable noun={{ one: "Agent", other: "Agents" }} columns={["Agent", "Template"]} query={agents} row={item => <>
+                <td><code>{item.agent}</code></td>
+                <td><code>{item.template}</code></td>
+              </>} />
             </TabPanel>
             <TabPanel tabs="deployment-sections" value="templates" selected={tab()}>
-              <p class={cx(ui.muted, "mb-3")}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
-              <DefinitionTable label="Templates" href={id => definitionHref("templates", id, deploymentID())} query={templates} />
+              <DefinitionTable noun={{ one: "Template", other: "Templates" }} columns={["Template", "Resources"]} query={templates} row={item => <>
+                <td><code>{item.template}</code></td>
+                <td>{templateResources(item)}</td>
+              </>} />
             </TabPanel>
             <TabPanel tabs="deployment-sections" value="events" selected={tab()}>
               <QueryState
@@ -177,7 +175,7 @@ export function DeploymentDetail() {
                   <DataTable
                     columns={["Kind", "Message", "At"]}
                     minWidth="min-w-180"
-                    footer={<LoadMore count={eventItems().length} noun="events" hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
+                    footer={<LoadMore count={eventItems().length} noun={{ one: "event", other: "events" }} hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
                   >
                     <For each={eventItems()}>
                       {(event) => (

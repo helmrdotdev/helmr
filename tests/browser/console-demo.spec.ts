@@ -14,7 +14,7 @@ async function selectDemoEnvironment(page: Page) {
   const demoRow = page.getByRole("row").filter({ hasText: "Demo" });
   await demoRow.getByRole("button", { name: "Actions for Demo", exact: true }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();
-  await expect(demoRow.getByText("Current", { exact: true })).toBeVisible();
+  await expect(demoRow.getByText("Working", { exact: true })).toBeVisible();
 }
 
 test("console demo shows its waiting work on the Overview and retained history in current navigation", async ({ page }) => {
@@ -75,6 +75,6 @@ test("console demo retains failed Turn input and terminal Session history", asyn
   await expect(page.getByText("Demo input", { exact: true })).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Failed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Send work through the CLI", { exact: false })).toBeVisible();
+  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel Session", exact: true })).toHaveCount(0);
 });

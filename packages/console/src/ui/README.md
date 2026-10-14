@@ -120,27 +120,28 @@ the container right under it.
   the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
   tab's Environment, is page state only (never the URL or the tab's scope), and
   starts over when the tab's scope changes. The rail tags the tab's Environment
-  "working" (the narrow Select adds "protected" and "working" to option text). The
-  page description shows the edited
-  Environment with `EditedEnvironmentChip`, the primary action names it, and its
-  dialogs carry it.
+  "working" (the narrow Select adds "protected" and "working" to option text), as
+  the Environments table does. The primary action names the edited Environment and
+  its dialogs carry it.
 
 ## Page structure
 
 - **Page.** Width, padding and vertical rhythm. Every route renders inside one.
-- **PageHeader.** `breadcrumb` (parent pages), `title`, `badge`, `subtitle` (one
-  line), `meta` (IDs and times), `actions` (Copy link first, the primary action
-  last). Every route page starts with it.
+- **PageHeader.** `breadcrumb` (parent pages, ending with the current page: the
+  title when it is text, or `current`), `title`, `badge`, `subtitle` (one line, only
+  for what the page shows nowhere else, never a restatement of the title),
+  `meta` (IDs and times), `actions` (Copy link first, the primary action last).
+  Every route page starts with it.
 - **Tabs** and **TabPanel.** Sub-sections of a page with real tab roles; arrow
   keys, Home and End move between tabs. A tab is in the URL only when it is a page
   of its own; then use **LinkTabs**, whose tabs are links with the same keyboard
   behavior, inside a layout route so focus stays on the tablist (section sub-tabs,
-  Agent tabs at `/agents/:agent/{triggers,slack,definition}`, Sessions at
+  Agent tabs at `/agents/:agent/{triggers,slack}`, Sessions at
   `/agents/:agent`).
 - **Toolbar.** Above a list: search and filters at `start`, secondary then primary
   actions at `end`. Filters never live in the page header.
-- **Section.** Page-level heading with optional count, description and actions,
-  then content (see Containers).
+- **Section.** Page-level heading with optional count and actions, then content
+  (see Containers).
 - **Panel.** The in-page container: optional `title`, `count` and `actions` in the
   container header, then the body (see Containers).
 - **DangerZone.** A destructive page action: the danger-tone header, the
@@ -166,7 +167,10 @@ the container right under it.
     applies. Never inline button rows.
   - **RowError** — an action's error as its own row under the row it belongs to.
   - **LoadMore** — the `footer`: "Load more" (busy "Loading…") and the shown count.
-    `noun` names the button ("Load more Sessions") and the count.
+    `noun` is the singular and plural (`{ one: "Turn", other: "Turns" }`): the
+    count reads "Showing 1 Turn" or "Showing 3 Turns", the button is named
+    "Load more Turns". Product terms keep their capital; other nouns are lower
+    case ("event", "invitation").
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
   identities, the Overview queue) with one divider style and 12px padding; framed
   like a DataTable; `footer` takes a LoadMore.

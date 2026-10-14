@@ -57,13 +57,12 @@ for (const condition of ["current", "no write permission", "unknown current"] as
     if (condition === "unknown current") await page.route(`**${base}/deployments/current`, route => route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Unavailable" } } }));
     await page.goto(`/deployments/${deploymentID}`);
     await expect(page.getByText("assistant", { exact: true })).toBeVisible();
-    await expect(page.getByText("New independent Sessions use only the current Deployment", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: "Promote", exact: true })).toHaveCount(0);
     await expect(page.locator("form")).toHaveCount(0);
   });
 }
 
-test("Computer exposes independently paged Sessions and Commands with pinned Template", async ({ page }) => {
+test("Computer exposes independently paged Sessions and Commands with its Template and residency", async ({ page }) => {
   await catalog(page, ["computers.read", "sessions.read", "deployments.read"]);
   const computer = "00000000-0000-7000-8000-000000000701";
   const session = "00000000-0000-7000-8000-000000000801";
@@ -77,7 +76,7 @@ test("Computer exposes independently paged Sessions and Commands with pinned Tem
     } else if (url.pathname.endsWith("/commands")) {
       await route.fulfill({ json: { commands: [{ id: command, usage_state: "running", created_at: now }] } });
     } else {
-      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "resident", secrets: [], created_at: now, updated_at: now, last_activity_at: now } });
+      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "cold", secrets: [], created_at: now, updated_at: now, last_activity_at: now } });
     }
   });
   await page.goto(`/computers/${computer}`);
@@ -85,8 +84,10 @@ test("Computer exposes independently paged Sessions and Commands with pinned Tem
   await expect(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
   await expect(page.getByText("Unreconciled", { exact: true })).toBeVisible();
   await expect(page.getByText("Running", { exact: true })).toBeVisible();
-  const templateLink = page.getByRole("link", { name: "browser", exact: true });
-  await expect(templateLink).toHaveAttribute("href", `/deployments/${deploymentID}/templates/browser`);
+  await expect(page.getByText("Cold", { exact: true })).toBeVisible();
+  await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("browser", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "browser" })).toHaveCount(0);
   await page.getByRole("button", { name: "Load more Sessions", exact: true }).click();
   await expect(page.getByRole("button", { name: "Load more Sessions", exact: true })).toHaveCount(0);
   expect(requestPaths.some(path => path.endsWith("/sessions?cursor=sessions-page-2"))).toBe(true);

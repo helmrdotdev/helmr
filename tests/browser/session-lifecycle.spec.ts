@@ -155,7 +155,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
     page.getByText("original input", { exact: false }),
   ).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.getByText("Send work through the CLI", { exact: false })).toBeVisible();
+  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
   expect(mutations).toHaveLength(1);
   expect(mutations[0]).toEqual({ idempotency_key: expect.any(String) });
 });

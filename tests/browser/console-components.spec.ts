@@ -77,7 +77,7 @@ async function fixture(page: Page): Promise<Fixture> {
     else if (path === `${base}/deployments/${deploymentID}`) json = deployment;
     else if (path === `${base}/deployments/current`) json = deployment;
     else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: [{ agent: "assistant", template: "browser" }] };
-    else if (path === `${base}/templates`) json = { deployment_id: deploymentID, templates: [{ template: "browser" }] };
+    else if (path === `${base}/templates`) json = { deployment_id: deploymentID, templates: [{ template: "browser", resources: { milliCpu: 1000, memoryMiB: 512 } }] };
     else if (path.endsWith("/events")) json = { events: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });

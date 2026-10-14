@@ -9,10 +9,7 @@ import { cx, ui } from "../ui/styles";
 export function AccountSettings() {
   const me = useMe();
   return <>
-    <PageHeader
-      title="My account"
-      subtitle="Your profile in this organization and the Slack identity linked to it."
-    />
+    <PageHeader title="My account" />
     <QueryState query={me} pending="Loading your account..." error={() => "Your account could not be loaded."}>
       {(account) => (
         <div class={cx(ui.sectionStack, "max-w-220")}>
@@ -23,10 +20,7 @@ export function AccountSettings() {
               <KeyValue label="Organization">{account().org_name || undefined}</KeyValue>
             </dl>
           </Panel>
-          <div class={ui.blockStack}>
-            <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />
-            <p class={ui.muted}>Your Slack identity works across all Agent apps in a Slack workspace, using your current Helmr permissions. To connect an Agent, open Agents, choose the Agent and open its Slack tab.</p>
-          </div>
+          <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />
         </div>
       )}
     </QueryState>

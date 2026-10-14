@@ -30,11 +30,10 @@ import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
-import { TemplateList, TemplateDetail, DeploymentAgentDefinition, DeploymentTemplateDefinition } from "./routes/definitions";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
-import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentDefinitionTab } from "./routes/agents";
-import { ComputersSection, ComputerList } from "./routes/computers";
+import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab } from "./routes/agents";
+import { ComputersSection, ComputerList, TemplateList } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
@@ -259,7 +258,6 @@ export function App() {
         <Route path="/" component={AgentSessionsTab} />
         <Route path="/triggers" component={AgentTriggersTab} />
         <Route path="/slack" component={AgentSlackTab} />
-        <Route path="/definition" component={AgentDefinitionTab} />
       </Route>
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
@@ -268,11 +266,8 @@ export function App() {
         <Route path="/templates" component={TemplateList} />
       </Route>
       <Route path="/computers/:computer_id" component={wrap(ComputerDetail)} />
-      <Route path="/templates/:template" component={wrap(TemplateDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
       <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
-      <Route path="/deployments/:deployment_id/agents/:agent" component={wrap(DeploymentAgentDefinition)} />
-      <Route path="/deployments/:deployment_id/templates/:template" component={wrap(DeploymentTemplateDefinition)} />
       <Route path="/projects/new" component={() => <RequireAuth requirement="organization"><ProjectNew /></RequireAuth>} />
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />

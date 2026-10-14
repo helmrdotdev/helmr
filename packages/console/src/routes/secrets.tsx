@@ -3,7 +3,7 @@ import { createSignal, For, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
 import { errorMessage } from "../lib/error";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
-import { EditedEnvironmentChip, EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
+import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { EnvironmentTarget } from "../ui/EnvChip";
@@ -137,7 +137,7 @@ export function Secrets() {
     <>
       <PageHeader
         title="Secrets"
-        subtitle={<>Secrets for Agents and Computers in <EditedEnvironmentChip edited={edited} />. Values are never displayed after saving.</>}
+        subtitle="Values are never displayed after saving."
         actions={
           <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
             {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}

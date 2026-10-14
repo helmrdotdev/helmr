@@ -113,7 +113,7 @@ export function SessionList(props: { agent?: string }) {
           <DataTable
             columns={columns()}
             minWidth="min-w-200"
-            footer={<LoadMore count={items().length} noun="Sessions" hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "Session", other: "Sessions" }} hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
           >
             <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!agent()} />}</For>
           </DataTable>

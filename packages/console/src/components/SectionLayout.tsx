@@ -14,7 +14,6 @@ import { LinkTabs, TabPanel, type LinkTabItem } from "../ui/Tabs";
 export function SectionLayout<T extends string>(props: {
   id: string;
   title: string;
-  subtitle: string;
   tabs: readonly LinkTabItem<T>[];
   children?: JSX.Element;
 }) {
@@ -23,7 +22,7 @@ export function SectionLayout<T extends string>(props: {
   const selected = () => selectedLinkTab(props.tabs, location.pathname);
   return (
     <Page>
-      <PageHeader title={props.title} subtitle={props.subtitle} />
+      <PageHeader title={props.title} />
       <LinkTabs id={props.id} label={props.title} items={props.tabs} selected={selected()} />
       <TabPanel tabs={props.id} value={selected()} selected={selected()}>
         <Show when={scope().projectID && scope().environmentID} fallback={<EmptyState title="Select a project and environment." />}>

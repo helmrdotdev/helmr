@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { listAgentDefinitions, listTemplateDefinitions, getAgentDefinition, getTemplateDefinition, definitionHref, agentHref, templateHref } from "./definitions";
+import { listAgentDefinitions, listTemplateDefinitions, getAgentDefinition, agentHref, templateResources } from "./definitions";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -32,17 +32,17 @@ test("missing scope fails before sending a request", async () => {
   expect(calls).toHaveLength(0);
 });
 
-test("definition detail links pin the exact Deployment without scope params", async () => {
-  const calls = capture({ id: "worker", deployment_id: "old/version" });
-  const options = { ...scope, deploymentID: "old/version" };
-  const href = definitionHref("agents", "worker/key", options.deploymentID);
-  expect(href).toBe("/deployments/old%2Fversion/agents/worker%2Fkey");
-  await getAgentDefinition("worker/key", options);
-  await getTemplateDefinition("image/key", options);
+test("an Agent definition is read from one exact Deployment", async () => {
+  const calls = capture({ agent: "worker", template: "image", deployment_id: "old/version" });
+  await getAgentDefinition("worker/key", { ...scope, deploymentID: "old/version" });
   expect(calls.map(call => call.url)).toEqual([
     "/api/projects/project%2F1/environments/env%2F1/agents/worker%2Fkey?deployment_id=old%2Fversion",
-    "/api/projects/project%2F1/environments/env%2F1/templates/image%2Fkey?deployment_id=old%2Fversion",
   ]);
+});
+
+test("Template resources read as one line", () => {
+  expect(templateResources({ template: "image", resources: { milliCpu: 1500, memoryMiB: 512 } })).toBe("1.5 vCPU · 512 MiB RAM · Default disk");
+  expect(templateResources({ template: "image", resources: { milliCpu: 1000, memoryMiB: 512, diskMiB: 2048 } })).toBe("1 vCPU · 512 MiB RAM · 2048 MiB disk");
 });
 
 test("an Agent page opens on its Sessions and its other tabs are pages below it", () => {
@@ -50,6 +50,4 @@ test("an Agent page opens on its Sessions and its other tabs are pages below it"
   expect(agentHref("worker", "sessions")).toBe("/agents/worker");
   expect(agentHref("worker", "triggers")).toBe("/agents/worker/triggers");
   expect(agentHref("worker", "slack")).toBe("/agents/worker/slack");
-  expect(agentHref("worker", "definition")).toBe("/agents/worker/definition");
-  expect(templateHref("image/key")).toBe("/templates/image%2Fkey");
 });

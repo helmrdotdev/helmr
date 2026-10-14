@@ -45,15 +45,6 @@ export function useEditedEnvironment(): EditedEnvironment {
   };
 }
 
-// The edited Environment as its chip, for page descriptions.
-export function EditedEnvironmentChip(props: { edited: EditedEnvironment }) {
-  return (
-    <Show when={environmentChip(props.edited.environment())}>
-      {(chip) => <EnvChip class="align-middle" name={chip().name} colorHex={chip().colorHex} protected={chip().protected} />}
-    </Show>
-  );
-}
-
 // An Environment-specific settings page: its content, and a rail listing the
 // Project's Environments to choose the one being edited. On narrow screens the
 // rail becomes a Select above the content.

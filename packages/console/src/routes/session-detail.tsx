@@ -17,7 +17,7 @@ import {
   on,
   Show,
 } from "solid-js";
-import { agentHref, definitionHref } from "../lib/definitions";
+import { agentHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -194,7 +194,7 @@ function SessionDetailContent() {
                     </>}
                   </Show>
                   <KeyValue label="Agent">
-                    <PrimaryLink href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</PrimaryLink>
+                    <PrimaryLink href={agentHref(current().agent)}>{current().agent}</PrimaryLink>
                   </KeyValue>
                   <KeyValue label="Initial Turn">
                     <Show when={current().initial_turn} fallback="No input yet">
@@ -213,7 +213,7 @@ function SessionDetailContent() {
                   <KeyValue label="Status">
                     <StatusBadge resource="session" status={current().status} />
                   </KeyValue>
-                  <KeyValue label="Template"><PrimaryLink href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</PrimaryLink></KeyValue>
+                  <KeyValue label="Template"><code>{current().template}</code></KeyValue>
                   <KeyValue label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </KeyValue>
@@ -260,10 +260,6 @@ function SessionDetailContent() {
               <SessionProgress address={address()} polling={polling()} />
               <Show when={current().slack_channel_id}><SessionDelivery address={address()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
               <Panel title="Turns">
-                <p class={ui.muted}>
-                  Inputs are shown in admission order. Queued work remains
-                  available for inspection when execution is blocked.
-                </p>
                 <QueryState
                   query={turns}
                   pending="Loading Turns..."
@@ -273,7 +269,7 @@ function SessionDetailContent() {
                   {() => (
                     <List
                       label="Turns"
-                      footer={<LoadMore count={items().length} noun="Turns" hasMore={turns.hasNextPage} loading={turns.isFetchingNextPage} failed={turns.isFetchNextPageError} onLoadMore={() => void turns.fetchNextPage()} />}
+                      footer={<LoadMore count={items().length} noun={{ one: "Turn", other: "Turns" }} hasMore={turns.hasNextPage} loading={turns.isFetchingNextPage} failed={turns.isFetchNextPageError} onLoadMore={() => void turns.fetchNextPage()} />}
                     >
                       <For each={items()}>
                         {(turn) => (
@@ -325,7 +321,11 @@ function SessionDetailContent() {
                   )}
                 </QueryState>
               </Panel>
-              <p class={ui.muted}>Send work through the CLI or the connected Slack conversation. Use the CLI to close this Session or release a hold.</p>
+              <p class={ui.muted}>
+                <Show when={current().slack_channel_id} fallback="Send work, close the Session or resume held work from the CLI.">
+                  Send work from the CLI or Slack; close the Session or resume held work from the CLI.
+                </Show>
+              </p>
             </DetailLayout>
           )}
         </QueryState>

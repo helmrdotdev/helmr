@@ -67,7 +67,7 @@ function EditEnvironmentDialog(props: {
 function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
   return (
     <Show when={props.selected} fallback={<EmptyCell />}>
-      <StatusBadge resource="environment" status="current" />
+      <StatusBadge resource="environment" status="working" />
     </Show>
   );
 }
@@ -88,7 +88,6 @@ export function Environments() {
     <>
       <PageHeader
         title="Environments"
-        subtitle="Environments of the selected project. The current one scopes every other console page."
         actions={
           <button type="button" class={ui.button} disabled={!project()} onClick={() => setCreating(true)}>
             New environment

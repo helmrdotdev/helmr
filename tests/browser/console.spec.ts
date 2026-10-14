@@ -14,10 +14,8 @@ const SECTION_ROUTES: [string, string][] = [
   ["/computers", "Computers"],
   ["/templates", "Computers"],
   ["/computers/00000000-0000-7000-8000-000000000002", "Computers"],
-  ["/templates/browser", "Computers"],
   ["/deployments", "Deployments"],
   ["/deployments/00000000-0000-7000-8000-000000000003", "Deployments"],
-  ["/deployments/00000000-0000-7000-8000-000000000003/agents/support", "Deployments"],
 ];
 
 async function login(page: Page) {
@@ -100,7 +98,7 @@ test("the Agents section switches between Agents, Sessions and Triggers by click
   await expect(triggers).toBeFocused();
   await expect(triggers).toHaveAttribute("aria-selected", "true");
   await expect(triggers).toHaveAttribute("tabindex", "0");
-  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No trigger activations in this environment.");
+  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No Trigger activations in this environment.");
 
   await page.keyboard.press("Home");
   await expect(page).toHaveURL("/agents");

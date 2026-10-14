@@ -40,7 +40,6 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
   const notices = createMemo(() => events.data?.pages.flatMap(page => page.notices) ?? []);
   const output = createMemo(() => events.data?.pages.flatMap(page => page.output) ?? []);
   return <Panel title="Progress">
-    <p class={ui.muted}>Progress is shown in publication order. It remains separate from a completed response.</p>
     <QueryState query={events} pending="Loading progress..." error={() => "Progress could not be loaded."}>
       {() => <>
         <Show when={(events.data?.pages[0]?.retained_after ?? 0) > 0}><Notice tone="info">Earlier events have expired.</Notice></Show>
@@ -48,7 +47,7 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
         <Show when={output().length > 0 || events.hasNextPage}>
           <List
             label="Progress"
-            footer={<LoadMore count={output().length} noun="progress" hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
+            footer={<LoadMore count={output().length} noun={{ one: "progress update", other: "progress updates" }} hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
           >
             <For each={output()}>{event => <ListItem>
               <article class={ui.blockStack} aria-label={`Progress ${event.sequence}`}>

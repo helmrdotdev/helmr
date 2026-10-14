@@ -80,10 +80,7 @@ export function Deployments() {
 
   return (
     <Page>
-      <PageHeader
-        title="Deployments"
-        subtitle="Immutable bundles deployed to the selected environment. Promotion changes which Deployment is current."
-      />
+      <PageHeader title="Deployments" />
       <QueryState
         query={deployments}
         pending="Loading Deployments..."
@@ -98,7 +95,7 @@ export function Deployments() {
           <DataTable
             columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]}
             minWidth="min-w-180"
-            footer={<LoadMore count={items().length} noun="Deployments" hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "Deployment", other: "Deployments" }} hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
           >
             <For each={items()}>
               {(deployment) => (

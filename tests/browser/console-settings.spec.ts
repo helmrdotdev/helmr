@@ -126,13 +126,15 @@ test("the Secrets Environment selector edits another Environment without changin
   await expect(staging).toHaveAccessibleName(/^Staging\s*protected$/);
   await expect(production).toBeChecked();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
-  await expect(subtitle(page)).toContainText("Production");
+  await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
+  await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();
 
   await staging.check();
   await expect(staging).toBeChecked();
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toHaveCount(0);
-  await expect(subtitle(page)).toContainText("Staging");
+  await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
+  await expect(page.getByRole("button", { name: "Set secret in Staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
   await expect(scopeTrigger(page)).not.toContainText("Staging");
   await expect(page).toHaveURL("/settings/secrets");

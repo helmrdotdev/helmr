@@ -27,7 +27,7 @@ test("Console inspects a Computer and all secret placement modes without submitt
   await expect(page.getByText("Raw env", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw file", { exact: true })).toBeVisible();
   await expect(page.getByText("https://api.github.com", { exact: true })).toBeVisible();
-  await expect(page.getByText("Use the CLI to run commands or delete this Computer.")).toBeVisible();
+  await expect(page.getByText("Use the CLI to run Commands or delete this Computer.")).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   expect(mutations).toEqual([]);
 });

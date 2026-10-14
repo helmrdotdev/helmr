@@ -15,10 +15,11 @@ const TONES = {
   turn: { queued: "waiting", running: "active", finalizing: "waiting", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
   session: { open: "active", closing: "waiting", closed: "succeeded", cancelled: "revoked" },
   computer: { available: "succeeded", deleted: "expired", deleting: "expired" },
+  computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", restoring: "waiting", unavailable: "revoked" },
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   trigger: { active: "active", errored: "revoked", archived: "expired" },
   deployment: { current: "active", not_current: "expired" },
-  environment: { current: "active", default: "expired" },
+  environment: { working: "active", default: "expired" },
   api_key: { active: "succeeded", expired: "expired", revoked: "revoked" },
   secret: { active: "succeeded", revoked: "revoked" },
   member: { active: "succeeded", disabled: "revoked" },
@@ -38,6 +39,9 @@ const TONES = {
 // Labels that read better than the status name.
 const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
   agent: { defined: "In current Deployment", not_defined: "Not in current Deployment" },
+  // A Computer's status is its lifecycle (not deleted); whether it can run work
+  // is its residency, so "available" would contradict an unavailable residency.
+  computer: { available: "Active" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
 };
 
