@@ -436,7 +436,7 @@ func (p *nativeContinuationPeer) dispatch(t *testing.T, index int) {
 	t.Helper()
 	text, _ := json.Marshal(fmt.Sprintf("unique input %d", index))
 	input, _ := json.Marshal([]map[string]string{{"type": "text", "text": string(text)}})
-	if err := p.relay.session.send(&agentv1.GuestCommand{Identity: p.identity, DeliveryId: fmt.Sprintf("dispatch-%d", index), Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: fmt.Sprintf("%s-turn-%d", p.identity.SessionId, index), Sequence: int64(index), InputJson: input, SourceJson: []byte(`{"kind":"api"}`)}}}); err != nil {
+	if err := p.relay.session.send(&agentv1.GuestCommand{Identity: p.identity, DeliveryId: fmt.Sprintf("dispatch-%d", index), Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: fmt.Sprintf("%s-turn-%d", p.identity.SessionId, index), Sequence: int64(index), InputJson: input, SourceJson: []byte(`{"kind":"api_key"}`)}}}); err != nil {
 		t.Fatal(err)
 	}
 }
