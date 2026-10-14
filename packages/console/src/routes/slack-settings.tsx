@@ -1,14 +1,21 @@
 import { useMe } from "../lib/me";
-import { Show } from "solid-js";
 import { IdentitySettings } from "../features/slack/IdentitySettings";
+import { PageHeader } from "../ui/PageHeader";
+import { QueryState } from "../ui/QueryState";
 import { ui } from "../ui/styles";
 
 export function SlackSettings() {
   const me = useMe();
-  return <div class="flex flex-col gap-5">
-    <div><h1 class={ui.h1}>Your Slack account</h1><p class={ui.muted}>Link your Slack account to your Helmr account. This personal link works across all Agent apps in that Slack workspace, using your current Helmr permissions.</p></div>
-    <p class={ui.muted}>To connect an Agent, open its Slack connection from the deployment’s Agents list.</p>
-    <Show when={me.error}><p class={ui.error}>Your account could not be loaded.</p></Show>
-    <Show when={me.data?.org_id} keyed>{(org) => <IdentitySettings userID={me.data!.user_id} organizationID={org} />}</Show>
-  </div>;
+  return <>
+    <PageHeader
+      title="Your Slack account"
+      subtitle="Link your Slack account to your Helmr account. This personal link works across all Agent apps in that Slack workspace, using your current Helmr permissions."
+    />
+    <div class={ui.windowStack}>
+      <p class={ui.muted}>To connect an Agent, open its Slack connection from the deployment’s Agents list.</p>
+      <QueryState query={me} pending="Loading your account..." error={() => "Your account could not be loaded."}>
+        {(account) => <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />}
+      </QueryState>
+    </div>
+  </>;
 }

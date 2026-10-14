@@ -104,17 +104,13 @@ export const ui = {
   input: cx("h-7 min-h-7 w-full bg-console-surface px-2.5 py-0 text-control leading-none placeholder:text-console-faint", controlFrame),
   monoInput: cx("h-7 min-h-7 w-full bg-console-surface px-2.5 py-0 font-mono text-chrome leading-none placeholder:text-console-faint", controlFrame),
   textarea: cx("min-h-17 w-full resize-y bg-console-surface px-2.5 py-2 text-control leading-snug placeholder:text-console-faint", controlFrame),
-  field:
-    "mb-3 grid gap-1 text-chrome font-medium text-console-muted [&>span]:font-medium [&>span]:text-console-text",
   fieldLabel: "text-chrome font-medium text-console-text",
   fieldHint: "text-chrome font-normal leading-snug text-console-muted",
-  fieldError: "-mt-1 text-control font-medium text-console-danger",
   fieldSet: "mb-3 mt-1 border-0 p-0",
   fieldLegend: "mb-2 p-0 text-control font-medium text-console-text",
-  filterField: "inline-flex items-center gap-2 font-mono text-chrome font-medium text-console-muted",
   segment:
     "h-6.5 cursor-pointer border-0 border-l border-console-border-strong gradient-button px-2.5 font-mono text-chrome font-medium text-console-text first:border-l-0 hover:gradient-button-hover disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:gradient-pressed aria-pressed:shadow-console-pressed",
-  permissionOption:
+  choiceCard:
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-console-surface has-checked:border-console-accent has-checked:bg-console-accent-soft [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-control [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-chrome [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
 
   // Page structure
@@ -124,7 +120,6 @@ export const ui = {
   pageSubtitle: "mt-1.5 max-w-180 text-body leading-normal text-console-muted",
   toolbar: "mb-3 flex flex-wrap items-center justify-between gap-2",
   toolbarSide: "flex flex-wrap items-center gap-2",
-  actionRow: "mt-3 flex flex-wrap justify-end gap-2",
   modalActions: "mt-3 flex flex-wrap justify-end gap-2",
   modalIntro: "mb-3 text-body leading-normal text-console-muted",
 
@@ -138,19 +133,14 @@ export const ui = {
 
   // Feedback
   error: "mt-3 text-body font-medium text-console-danger",
-  rowError: "mt-1.5 text-control font-medium leading-snug text-console-danger",
   emptyState:
     "m-0 flex flex-col items-center gap-1.5 border border-dashed border-console-border bg-console-bg-panel px-5 py-7 text-center text-body text-console-muted",
   notice: "flex items-center gap-2.5 border px-3 py-2 text-body leading-normal",
   noticeBar: "flex items-center gap-3 border-b px-5 py-1.5 text-body leading-normal max-[860px]:px-3",
-  warning: cx("mb-3 border px-3 py-2 text-body leading-normal", toneClass.warning),
-  inlineState: "mt-2.5 text-body font-medium text-console-accent",
 
   // Code and values
   codeBlock:
     "m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-control leading-normal text-console-text",
-  rawKey:
-    "block select-all overflow-x-auto whitespace-nowrap border border-console-border bg-console-bg-panel p-3 font-mono text-control leading-normal text-console-text",
 
   // Auth windows
   authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
@@ -160,7 +150,6 @@ export const ui = {
     "my-3.5 flex items-center gap-3 font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle [&>span:first-child]:h-px [&>span:first-child]:flex-1 [&>span:first-child]:bg-console-border [&>span:last-child]:h-px [&>span:last-child]:flex-1 [&>span:last-child]:bg-console-border",
   authCode:
     "my-3.5 block w-full border border-console-border-strong bg-console-bg-panel p-3 text-center font-mono text-[1.25rem] font-medium tracking-[0.16em] text-console-accent",
-  authStatus: "mb-2 text-body font-medium text-console-text",
 };
 
 export function actionMenuItemClass(tone: "default" | "danger" | undefined): string {

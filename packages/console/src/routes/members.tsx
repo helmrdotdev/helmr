@@ -15,18 +15,17 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { ActionMenu } from "../ui/ActionMenu";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, RowActions, RowError } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Dialog } from "../ui/Dialog";
+import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
+import { Field, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
 import { Section } from "../ui/Page";
+import { QueryState } from "../ui/QueryState";
 import { Select, type SelectOption } from "../ui/Select";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { useClipboard } from "../ui/useClipboard";
 import { createRowActions } from "../ui/rowActions";
 import { ui } from "../ui/styles";
 
@@ -54,10 +53,6 @@ function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
 }
 
-function memberEmail(member: OrganizationMember): string {
-  return member.email ?? "-";
-}
-
 function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
   if (isOrganizationAdmin(role)) return true;
   return (permissions ?? []).some((permission) =>
@@ -76,32 +71,21 @@ function validInviteEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function CreateInviteModal(props: {
+function CreateInviteDialog(props: {
   currentUserRole: string | null | undefined;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onCreated: (inviteURL: string) => Promise<void>;
 }) {
   const [email, setEmail] = createSignal("");
   const [role, setRole] = createSignal<MemberRole>("developer");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [inviteURL, setInviteURL] = createSignal<string | null>(null);
-  const clipboard = useClipboard();
-
-  const closeAndClear = () => {
-    setEmail("");
-    setRole("developer");
-    setInviteURL(null);
-    setError(null);
-    props.onClose();
-  };
 
   const roleOptions = createMemo(() =>
     props.currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS,
   );
 
-  const submit = async (event: Event) => {
-    event.preventDefault();
+  const submit = async () => {
     setError(null);
     if (!validInviteEmail(email())) {
       setError(MEMBERS_ERROR_MESSAGES["invalid_email"] ?? INTERNAL_ERROR_MESSAGE);
@@ -109,12 +93,8 @@ function CreateInviteModal(props: {
     }
     setSubmitting(true);
     try {
-      const result = await createInvitation({
-        email: email().trim(),
-        role: role(),
-      });
-      setInviteURL(result.invite_url);
-      await props.onCreated();
+      const result = await createInvitation({ email: email().trim(), role: role() });
+      await props.onCreated(result.invite_url);
     } catch (createError) {
       setError(membersErrorMessage(createError));
     } finally {
@@ -122,69 +102,25 @@ function CreateInviteModal(props: {
     }
   };
 
-  const copyInviteURL = async () => {
-    const url = inviteURL();
-    if (url) await clipboard.copy(url);
-  };
-
   return (
-    <Dialog
-      title={inviteURL() ? "Invite created" : "Invite member"}
-      onClose={closeAndClear}
-      closeDisabled={submitting()}
+    <FormDialog
+      title="Invite member"
+      intro="Create an email invitation for this organization."
+      submitLabel="Create invite"
+      busyLabel="Creating..."
+      busy={submitting()}
+      disabled={email().trim() === ""}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
     >
-      <Show when={inviteURL()} keyed fallback={
-        <form onSubmit={submit}>
-          <p class={ui.modalIntro}>Create an email invitation for this organization.</p>
-          <label class={ui.field}>
-            <span>Email</span>
-            <input
-              class={ui.input}
-              type="email"
-              value={email()}
-              autocomplete="email"
-              onInput={(event) => setEmail(event.currentTarget.value)}
-              autofocus
-            />
-          </label>
-          <label class={ui.field}>
-            <span>Role</span>
-            <Select<MemberRole>
-              value={role()}
-              options={roleOptions()}
-              onChange={setRole}
-              ariaLabel="Invitation role"
-              minWidth="100%"
-            />
-          </label>
-          <Show when={error()}>
-            <p class={ui.error} role="alert">{error()}</p>
-          </Show>
-          <div class={ui.modalActions}>
-            <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={closeAndClear}>
-              Cancel
-            </button>
-            <button class={ui.button} type="submit" disabled={submitting() || email().trim() === ""}>
-              {submitting() ? "Creating..." : "Create invite"}
-            </button>
-          </div>
-        </form>
-      }>
-        {(url) => (
-          <>
-            <p class={ui.modalIntro}>Share this invitation link with the new member.</p>
-            <code class={ui.rawKey}>{url}</code>
-            <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} onClick={closeAndClear}>Done</button>
-              <button class={ui.button} type="button" onClick={copyInviteURL}>Copy link</button>
-            </div>
-            <Show when={clipboard.state() !== "idle"}>
-              <p class={ui.inlineState} role="status">{clipboard.state() === "copied" ? "Copied" : "Copy failed"}</p>
-            </Show>
-          </>
-        )}
-      </Show>
-    </Dialog>
+      <Field label="Email">
+        <TextInput type="email" value={email()} autocomplete="email" onInput={(event) => setEmail(event.currentTarget.value)} autofocus />
+      </Field>
+      <Field label="Role">
+        <Select<MemberRole> value={role()} options={roleOptions()} onChange={setRole} minWidth="100%" />
+      </Field>
+    </FormDialog>
   );
 }
 
@@ -193,7 +129,7 @@ function MemberRow(props: {
   canManage: boolean;
   isCurrentUser: boolean;
   currentUserRole: string | null | undefined;
-  busy: (action: "role" | "remove") => boolean;
+  busy: boolean;
   error: string | null;
   onRoleChange: (member: OrganizationMember, role: MemberRole) => void;
   onRemove: (member: OrganizationMember) => void;
@@ -212,88 +148,63 @@ function MemberRow(props: {
   });
   const canChangeRole = () => isActive() && props.canManage && id() !== "" && roleOptions().length > 1 && (!isOwner() || props.currentUserRole === "owner");
   const canRemove = () => isActive() && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
-  const busy = (action: "role" | "remove") => props.busy(action);
   return (
-    <tr>
-      <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
-      <td><IDText value={props.member.user_id} /></td>
-      <td>{memberEmail(props.member)}</td>
-      <td>
-        <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
-          <Select<MemberRole>
-            value={props.member.role}
-            options={roleOptions()}
-            onChange={(nextRole) => props.onRoleChange(props.member, nextRole)}
-            disabled={busy("role")}
-            ariaLabel={`Role for ${memberName(props.member)}`}
-            minWidth="132px"
-          />
-        </Show>
-      </td>
-      <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
-      <td><RelativeTime value={props.member.created_at} /></td>
-      <td class={ui.actionsCell}>
-        <Show when={canRemove()} fallback={<span class={ui.muted}>No actions</span>}>
-          <ActionMenu
-            label={`Actions for ${memberName(props.member)}`}
-            items={[{
-              label: "Remove",
-              busyLabel: busy("remove") ? "Removing..." : undefined,
-              disabled: busy("remove"),
-              tone: "danger",
-              onSelect: () => props.onRemove(props.member),
-            }]}
-          />
-        </Show>
-        <Show when={props.error}>
-          <p class={ui.rowError} role="alert">{props.error}</p>
-        </Show>
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
+        <td><IDText value={props.member.user_id} /></td>
+        <td><Show when={props.member.email} fallback={<EmptyCell />}>{props.member.email}</Show></td>
+        <td>
+          <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
+            <Select<MemberRole>
+              value={props.member.role}
+              options={roleOptions()}
+              onChange={(nextRole) => props.onRoleChange(props.member, nextRole)}
+              disabled={props.busy}
+              ariaLabel={`Role for ${memberName(props.member)}`}
+              minWidth="132px"
+            />
+          </Show>
+        </td>
+        <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
+        <td><RelativeTime value={props.member.created_at} /></td>
+        <RowActions
+          label={`Actions for ${memberName(props.member)}`}
+          items={canRemove() ? [{ label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) }] : []}
+        />
+      </tr>
+      <RowError columns={7} message={props.error} />
+    </>
   );
 }
 
 function InvitationRow(props: {
   invitation: OrganizationInvitation;
   canManage: boolean;
-  busy: boolean;
-  error: string | null;
   onRevoke: (invitation: OrganizationInvitation) => void;
 }) {
   const id = () => invitationResourceID(props.invitation);
-  const busy = () => props.busy;
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
       <td><StatusBadge resource="role" status={props.invitation.role} /></td>
       <td><StatusBadge resource="invitation" status={props.invitation.status ?? "pending"} /></td>
       <td><RelativeTime value={props.invitation.expires_at} /></td>
-      <td class={ui.actionsCell}>
-        <Show when={props.canManage} fallback={<span class={ui.muted}>No actions</span>}>
-          <ActionMenu
-            label={`Actions for ${props.invitation.email}`}
-            items={[{
-              label: "Revoke",
-              busyLabel: busy() ? "Revoking..." : undefined,
-              disabled: id() === "" || busy(),
-              tone: "danger",
-              onSelect: () => props.onRevoke(props.invitation),
-            }]}
-          />
-        </Show>
-        <Show when={props.error}>
-          <p class={ui.rowError} role="alert">{props.error}</p>
-        </Show>
-      </td>
+      <RowActions
+        label={`Actions for ${props.invitation.email}`}
+        items={props.canManage && id() !== "" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.invitation) }] : []}
+      />
     </tr>
   );
 }
 
 export function Members() {
   const queryClient = useQueryClient();
-  const [modalOpen, setModalOpen] = createSignal(false);
-  const memberRows = createRowActions<"role" | "remove">();
-  const invitationRows = createRowActions<"revoke">();
+  const [inviting, setInviting] = createSignal(false);
+  const [inviteURL, setInviteURL] = createSignal<string | null>(null);
+  const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
+  const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
+  const memberRows = createRowActions<"role">();
 
   const me = useMe();
   const members = createQuery(() => ({
@@ -330,26 +241,6 @@ export function Members() {
     }, membersErrorMessage);
   };
 
-  const remove = async (member: OrganizationMember) => {
-    const id = memberResourceID(member);
-    if (!id) return;
-    if (!window.confirm(`Remove ${memberName(member)} from this organization?`)) return;
-    await memberRows.run(id, "remove", async () => {
-      await removeMember(id);
-      await queryClient.invalidateQueries({ queryKey: ["members"] });
-    }, membersErrorMessage);
-  };
-
-  const revoke = async (invitation: OrganizationInvitation) => {
-    const id = invitationResourceID(invitation);
-    if (!id) return;
-    if (!window.confirm(`Revoke invitation for ${invitation.email}?`)) return;
-    await invitationRows.run(id, "revoke", async () => {
-      await revokeInvitation(id);
-      await queryClient.invalidateQueries({ queryKey: ["invitations"] });
-    }, membersErrorMessage);
-  };
-
   const isCurrentUser = (member: OrganizationMember) =>
     member.user_id === me.data?.user_id || memberResourceID(member) === me.data?.user_id;
 
@@ -360,7 +251,7 @@ export function Members() {
         subtitle="Organization members, roles, and pending email invitations."
         actions={
           <Show when={canManage()}>
-            <button class={ui.button} type="button" onClick={() => setModalOpen(true)}>
+            <button class={ui.button} type="button" onClick={() => setInviting(true)}>
               Invite member
             </button>
           </Show>
@@ -371,86 +262,127 @@ export function Members() {
         <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
       </Show>
 
-      <Show when={members.isError}>
-        <StatePanel error={membersErrorMessage(members.error)} />
-      </Show>
-
       <div class={ui.sectionStack}>
-      <Section
-        title="Current members"
-        count={members.data?.members.length}
-        description="Active and disabled accounts currently associated with this organization."
-      >
-        <Show when={!members.isPending} fallback={<StatePanel loading="Loading members..." />}>
-          <Show when={(members.data?.members.length ?? 0) > 0} fallback={<StatePanel empty="No members found." />}>
-            <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
-              <For each={members.data?.members ?? []}>
-                {(member) => (
-                  <MemberRow
-                    member={member}
-                    canManage={canManage()}
-                    isCurrentUser={isCurrentUser(member)}
-                    currentUserRole={me.data?.role}
-                    busy={(action) => memberRows.busy(memberResourceID(member), action)}
-                    error={memberRows.error(memberResourceID(member))}
-                    onRoleChange={changeMemberRole}
-                    onRemove={remove}
-                  />
-                )}
-              </For>
-            </DataTable>
-          </Show>
-        </Show>
-      </Section>
+        <Section
+          title="Current members"
+          count={members.data?.members.length}
+          description="Active and disabled accounts currently associated with this organization."
+        >
+          <QueryState
+            query={members}
+            pending="Loading members..."
+            error={membersErrorMessage}
+            empty={{ when: (data) => data.members.length === 0, title: "No members found." }}
+          >
+            {(data) => (
+              <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
+                <For each={data().members}>
+                  {(member) => (
+                    <MemberRow
+                      member={member}
+                      canManage={canManage()}
+                      isCurrentUser={isCurrentUser(member)}
+                      currentUserRole={me.data?.role}
+                      busy={memberRows.busy(memberResourceID(member))}
+                      error={memberRows.error(memberResourceID(member))}
+                      onRoleChange={changeMemberRole}
+                      onRemove={setRemoving}
+                    />
+                  )}
+                </For>
+              </DataTable>
+            )}
+          </QueryState>
+        </Section>
 
-      <Section
-        title="Pending invitations"
-        count={pendingInvitations().length}
-        description="Email invitations that have not been accepted yet."
-      >
-
-        <Show when={invitations.isError}>
-          <StatePanel error={membersErrorMessage(invitations.error)} />
-        </Show>
-
-        <Show when={!invitations.isPending} fallback={<StatePanel loading="Loading invitations..." />}>
-          <Show when={pendingInvitations().length > 0} fallback={<StatePanel empty="No pending invitations." />}>
-            <DataTable columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
-              <For each={pendingInvitations()}>
-                {(invitation) => (
-                  <InvitationRow
-                    invitation={invitation}
-                    canManage={canManage()}
-                    busy={invitationRows.busy(invitationResourceID(invitation))}
-                    error={invitationRows.error(invitationResourceID(invitation))}
-                    onRevoke={revoke}
-                  />
-                )}
-              </For>
-            </DataTable>
-            <Show when={invitations.hasNextPage}>
-              <div class={ui.actionRow}>
-                <button
-                  type="button"
-                  class={ui.secondaryButton}
-                  disabled={invitations.isFetchingNextPage}
-                  onClick={() => void invitations.fetchNextPage()}
-                >
-                  {invitations.isFetchingNextPage ? "Loading..." : "Load more invitations"}
-                </button>
-              </div>
-            </Show>
-          </Show>
-        </Show>
-      </Section>
+        <Section
+          title="Pending invitations"
+          count={pendingInvitations().length}
+          description="Email invitations that have not been accepted yet."
+        >
+          <QueryState
+            query={invitations}
+            pending="Loading invitations..."
+            error={membersErrorMessage}
+            empty={{ when: (data) => data.pages.every((page) => page.invitations.length === 0), title: "No pending invitations." }}
+          >
+            {() => (
+              <DataTable
+                columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]}
+                minWidth="min-w-225"
+                footer={<LoadMore count={pendingInvitations().length} noun="invitations" hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
+              >
+                <For each={pendingInvitations()}>
+                  {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
+                </For>
+              </DataTable>
+            )}
+          </QueryState>
+        </Section>
       </div>
 
-      <Show when={modalOpen()}>
-        <CreateInviteModal
-          onClose={() => setModalOpen(false)}
-          onCreated={invalidateMembers}
+      <Show when={inviting()}>
+        <CreateInviteDialog
           currentUserRole={me.data?.role}
+          onClose={() => setInviting(false)}
+          onCreated={async (url) => {
+            setInviting(false);
+            setInviteURL(url);
+            await invalidateMembers();
+          }}
         />
+      </Show>
+
+      <Show when={inviteURL()}>
+        {(url) => (
+          <RevealDialog
+            title="Invite created"
+            intro="Share this invitation link with the new member."
+            value={url()}
+            warning="Copy this link now. It is not shown again."
+            onClose={() => setInviteURL(null)}
+          />
+        )}
+      </Show>
+
+      <Show when={removing()}>
+        {(member) => (
+          <ConfirmDialog
+            title="Remove member"
+            confirmLabel="Remove"
+            busyLabel="Removing..."
+            tone="danger"
+            target={memberName(member())}
+            errorMessage={membersErrorMessage}
+            onClose={() => setRemoving(null)}
+            onConfirm={async () => {
+              await removeMember(memberResourceID(member()));
+              await queryClient.invalidateQueries({ queryKey: ["members"] });
+            }}
+          >
+            They lose access to this organization.
+          </ConfirmDialog>
+        )}
+      </Show>
+
+      <Show when={revoking()}>
+        {(invitation) => (
+          <ConfirmDialog
+            title="Revoke invitation"
+            confirmLabel="Revoke"
+            busyLabel="Revoking..."
+            tone="danger"
+            target={invitation().email}
+            errorMessage={membersErrorMessage}
+            onClose={() => setRevoking(null)}
+            onConfirm={async () => {
+              await revokeInvitation(invitationResourceID(invitation()));
+              await queryClient.invalidateQueries({ queryKey: ["invitations"] });
+            }}
+          >
+            The invitation link stops working.
+          </ConfirmDialog>
+        )}
       </Show>
     </>
   );

@@ -1,17 +1,28 @@
 import { useLocation } from "@solidjs/router";
 import { locationDestination } from "../lib/continuation";
 import { createSignal, Show } from "solid-js";
-import { ApiError } from "../lib/api";
 import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
-import { authErrorMessage } from "../lib/error";
-import { AuthCopy, AuthDivider, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
+import { AuthCopy, AuthDivider, AuthError, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { Field, TextInput } from "../ui/Field";
 import { ui } from "../ui/styles";
+
+const EMAIL_MESSAGES = {
+  ...AUTH_MESSAGES,
+  bad_request: "Enter a valid email address.",
+  service_unavailable: "Email sign-in is not configured on this server. Continue with GitHub, or contact your administrator.",
+};
+const GITHUB_MESSAGES = {
+  ...AUTH_MESSAGES,
+  service_unavailable: "GitHub sign-in is not configured on this server. Use an email sign-in link, or contact your administrator.",
+};
+const START_FALLBACK = "Sign in could not start. Try again, or choose another sign-in method.";
 
 export function Login() {
   const location = useLocation();
   const [busy, setBusy] = createSignal(false);
   const [githubBusy, setGitHubBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<Failure | null>(null);
   const [email, setEmail] = createSignal("");
   const [sentEmail, setSentEmail] = createSignal<string | null>(null);
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
@@ -29,7 +40,7 @@ export function Login() {
     event.preventDefault();
     const trimmedEmail = email().trim();
     if (!trimmedEmail) {
-      setError("Enter your email address.");
+      setError({ message: "Enter your email address.", details: undefined });
       return;
     }
 
@@ -41,8 +52,7 @@ export function Login() {
       setSentEmail(trimmedEmail);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      const kind = e instanceof ApiError ? e.code : null;
-      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
+      setError(describeFailure(e, EMAIL_MESSAGES, START_FALLBACK));
     } finally {
       setBusy(false);
     }
@@ -55,8 +65,7 @@ export function Login() {
       const { redirect_url } = await startGitHubLogin(locationDestination(location));
       window.location.href = redirect_url;
     } catch (e) {
-      const kind = e instanceof ApiError ? e.code : null;
-      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
+      setError(describeFailure(e, GITHUB_MESSAGES, START_FALLBACK));
       setGitHubBusy(false);
     }
   }
@@ -100,10 +109,8 @@ export function Login() {
         </button>
         <AuthDivider>OR</AuthDivider>
         <form onSubmit={signIn}>
-          <label class={ui.field}>
-            <span>Email</span>
-            <input
-              class={ui.input}
+          <Field label="Email">
+            <TextInput
               type="email"
               autocomplete="email"
               value={email()}
@@ -112,13 +119,13 @@ export function Login() {
               disabled={busy()}
               placeholder="you@example.com"
             />
-          </label>
+          </Field>
           <button class={ui.button} type="submit" disabled={busy()}>
             {buttonText()}
           </button>
         </form>
       </Show>
-      {error() && <p class={ui.error}>{error()}</p>}
+      <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
     </AuthWindow>
   );
 }

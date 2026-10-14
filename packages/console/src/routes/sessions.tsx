@@ -1,4 +1,4 @@
-import { useSearchParams } from "@solidjs/router";
+import { A, useSearchParams } from "@solidjs/router";
 import { definitionHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { createInfiniteQuery } from "@tanstack/solid-query";
@@ -11,12 +11,14 @@ import {
   type Session,
   type SessionStatus,
 } from "../lib/sessions";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Notice } from "../ui/Notice";
+import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
+import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
@@ -36,31 +38,21 @@ const sessionsErrorMessage = (error: unknown) =>
 function SessionRow(props: { session: Session }) {
   return (
     <tr>
+      <td><IDText value={props.session.id} mode="link" href={sessionConsolePath(props.session.id)} /></td>
+      <td><PrimaryLink href={definitionHref("agents", props.session.agent, props.session.deployment_id)}>{props.session.agent}</PrimaryLink></td>
       <td>
-        <IDText value={props.session.id} mode="link"
-          href={sessionConsolePath(props.session.id)} />
-      </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent, props.session.deployment_id)}>{props.session.agent}</a></td>
-      <td>
-        <Show
-          when={props.session.key}
-          fallback={<span class="text-console-faint">—</span>}
-        >
+        <Show when={props.session.key} fallback={<EmptyCell />}>
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td>
-        <StatusBadge resource="session" status={props.session.status} />
-      </td>
+      <td><StatusBadge resource="session" status={props.session.status} /></td>
       <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
       <td>
-        <Show when={props.session.computer_id} fallback={<span class="text-console-subtle">No Computer assigned</span>}>
+        <Show when={props.session.computer_id} fallback={<EmptyCell />}>
           {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
         </Show>
       </td>
-      <td>
-        <RelativeTime value={props.session.created_at} />
-      </td>
+      <td><RelativeTime value={props.session.created_at} /></td>
     </tr>
   );
 }
@@ -97,68 +89,40 @@ export function Sessions() {
   );
 
   return (
-    <section class={ui.page}>
-      <PageHeader
-        title="Sessions"
-        subtitle="Agent Sessions and retained work in the selected environment."
-        actions={
+    <Page>
+      <PageHeader title="Sessions" subtitle="Agent Sessions and retained work in the selected environment." />
+      <Toolbar
+        start={
           <div class="w-44">
-            <Select<SessionFilter>
-              value={filter()}
-              options={FILTERS}
-              onChange={setFilter}
-              ariaLabel="Filter sessions"
-            />
+            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter sessions" />
           </div>
         }
       />
-
-      <Show when={agent()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href="/sessions">Show all Sessions</a></p></Show>
-      <Show when={sessions.isError}>
-        <StatePanel error={sessionsErrorMessage(sessions.error)} />
+      <Show when={agent()}>
+        <Notice tone="info" role="none" class="mb-3" action={<A class={ui.monoLink} href="/sessions">Show all Sessions</A>}>
+          Showing this Agent’s Sessions across all Deployments.
+        </Notice>
       </Show>
-      <Show
-        when={!sessions.isPending}
-        fallback={<StatePanel loading="Loading Sessions..." />}
+      <QueryState
+        query={sessions}
+        pending="Loading Sessions..."
+        error={sessionsErrorMessage}
+        empty={{
+          when: (data) => data.pages.every((page) => page.sessions.length === 0),
+          title: filter() === "all" ? "No Sessions yet." : "No Sessions match this filter.",
+          hint: filter() === "all" ? "Starting an Agent creates a Session." : undefined,
+        }}
       >
-        <Show
-          when={items().length > 0}
-          fallback={
-            <Show
-              when={filter() === "all"}
-              fallback={<StatePanel empty="No Sessions match this filter." />}
-            >
-              <StatePanel
-                empty="No Sessions yet."
-                hint="Starting an Agent creates a Session."
-              />
-            </Show>
-          }
-        >
+        {() => (
           <DataTable
             columns={["Session", "Agent", "Key", "Status", "Holds", "Computer", "Created"]}
             minWidth="min-w-200"
+            footer={<LoadMore count={items().length} noun="Sessions" hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
           >
-            <For each={items()}>
-              {(session) => (
-                <SessionRow session={session} />
-              )}
-            </For>
+            <For each={items()}>{(session) => <SessionRow session={session} />}</For>
           </DataTable>
-          <Show when={sessions.hasNextPage}>
-            <div class={ui.actionRow}>
-              <button
-                type="button"
-                class={ui.secondaryButton}
-                disabled={sessions.isFetchingNextPage}
-                onClick={() => void sessions.fetchNextPage()}
-              >
-                {sessions.isFetchingNextPage ? "Loading..." : "Load more"}
-              </button>
-            </div>
-          </Show>
-        </Show>
-      </Show>
-    </section>
+        )}
+      </QueryState>
+    </Page>
   );
 }

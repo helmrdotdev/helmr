@@ -67,14 +67,19 @@ export function RowError(props: { columns: number; message: string | null | unde
   );
 }
 
-// The table footer: how many rows are shown and, while more exist, "Load more".
+// The footer of a table or list: how many rows are shown and, while more exist,
+// "Load more". With a `noun` the button is named for what it loads ("Load more
+// Sessions"), so several lists on one page stay distinguishable. When loading the
+// next page failed, the footer says so and the button retries just that page.
 export function LoadMore(props: {
   count: number;
   hasMore: boolean;
   loading: boolean;
+  failed?: boolean | undefined;
   onLoadMore: () => void;
   noun?: string;
 }) {
+  const subject = () => (props.noun ? ` ${props.noun}` : "");
   return (
     <div class={ui.tableFooter}>
       <Show when={props.hasMore}>
@@ -82,15 +87,16 @@ export function LoadMore(props: {
           type="button"
           class={cx(ui.secondaryButton, "h-6 min-h-6 px-2")}
           disabled={props.loading}
+          aria-label={props.failed ? `Retry loading more${subject()}` : props.noun ? `Load more ${props.noun}` : undefined}
           onClick={() => props.onLoadMore()}
         >
-          {props.loading ? "Loading…" : "Load more"}
+          {props.loading ? "Loading…" : props.failed ? "Retry" : "Load more"}
         </button>
       </Show>
-      <span>
-        Showing {props.count}
-        {props.noun ? ` ${props.noun}` : ""}
-      </span>
+      <span>Showing {props.count}{subject()}</span>
+      <Show when={props.failed && !props.loading}>
+        <span class="text-console-danger" role="alert">Could not load more{subject()}.</span>
+      </Show>
     </div>
   );
 }

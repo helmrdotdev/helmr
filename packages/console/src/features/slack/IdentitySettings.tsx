@@ -1,8 +1,15 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { errorMessage } from "../../lib/error";
 import { listSlackLinkWorkspaces, listSlackUserLinks, startSlackUserLink, unlinkSlackUser, type SlackUserLink } from "../../lib/slack";
-import { Dialog } from "../../ui/Dialog";
+import { LoadMore } from "../../ui/DataTable";
+import { ConfirmDialog } from "../../ui/Dialog";
 import { Field } from "../../ui/Field";
+import { IDText } from "../../ui/IDText";
+import { List, ListItem } from "../../ui/List";
+import { Notice } from "../../ui/Notice";
+import { Panel } from "../../ui/Panel";
+import { QueryState } from "../../ui/QueryState";
 import { Select } from "../../ui/Select";
 import { ui } from "../../ui/styles";
 
@@ -15,8 +22,13 @@ export function IdentitySettings(props: { userID: string; organizationID: string
     queryKey: ["slack-link-workspaces", props.organizationID], queryFn: ({ pageParam }) => listSlackLinkWorkspaces(pageParam),
     initialPageParam: undefined as string | undefined, getNextPageParam: (page) => page.next_cursor,
   }));
+  // Every workspace belongs in the picker, which filters long lists itself.
+  createEffect(() => {
+    if (workspaces.hasNextPage && !workspaces.isFetchingNextPage && !workspaces.isError) void workspaces.fetchNextPage();
+  });
   const allLinks = createMemo(() => links.data?.pages.flatMap((p) => p.links) ?? []);
   const allWorkspaces = createMemo(() => workspaces.data?.pages.flatMap((p) => p.workspaces) ?? []);
+  const workspaceName = (teamID: string) => allWorkspaces().find((w) => w.team_id === teamID)?.workspace_name || undefined;
   const [workspace, setWorkspace] = createSignal("");
   const [unlinking, setUnlinking] = createSignal<SlackUserLink | null>(null);
   const [busy, setBusy] = createSignal(false), [error, setError] = createSignal<string | null>(null);
@@ -24,34 +36,60 @@ export function IdentitySettings(props: { userID: string; organizationID: string
   const start = async () => {
     setBusy(true); setError(null);
     try { const result = await startSlackUserLink(workspace()); if (mounted) window.location.assign(result.redirect_url); }
-    catch (e) { if (mounted) { setError(e instanceof Error ? e.message : "Slack identity linking could not start."); setBusy(false); } }
+    catch (e) { if (mounted) { setError(errorMessage(e, "Slack identity linking could not start.")); setBusy(false); } }
   };
-  const unlink = async () => {
-    const current = unlinking(); if (!current) return;
-    setBusy(true); setError(null);
-    try { await unlinkSlackUser(current); if (mounted) { setUnlinking(null); await links.refetch(); } }
-    catch (e) { if (mounted) setError(e instanceof Error ? e.message : "Slack identity could not be unlinked."); }
-    finally { if (mounted) setBusy(false); }
-  };
-  return <section class="flex flex-col gap-3 border border-console-border bg-console-surface p-4">
-    <div><h2 class={ui.h2}>Your Slack identity</h2><p class={ui.muted}>Link the Slack account you use to request work and answer questions. Your existing Helmr permissions still apply.</p></div>
-    <Show when={links.error || workspaces.error}><p class={ui.error}>Your Slack identity settings could not be loaded.</p></Show>
-    <Show when={error()}><p class={ui.error} role="alert">{error()}</p></Show>
-    <For each={allLinks()}>{(link) => <div class="flex flex-wrap items-center justify-between gap-3">
-      <p>{link.slack_user_id} <span class={ui.muted}>in {allWorkspaces().find((w) => w.team_id === link.team_id)?.workspace_name || link.team_id}</span></p>
-      <button class={ui.secondaryButton} disabled={busy()} onClick={() => { setError(null); setUnlinking(link); }}>Unlink {link.slack_user_id}</button>
-    </div>}</For>
-    <Show when={links.hasNextPage}><button class={ui.secondaryButton} disabled={links.isFetchingNextPage} onClick={() => void links.fetchNextPage()}>Load more linked identities</button></Show>
-    <Show when={!links.isPending && !links.error && allLinks().length === 0}><p class={ui.muted}>No Slack identities linked.</p></Show>
+  return <Panel title="Your Slack identity">
+    <p class={ui.muted}>Link the Slack account you use to request work and answer questions. Your existing Helmr permissions still apply.</p>
+    <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
+    <QueryState
+      query={links}
+      pending="Loading linked identities..."
+      error={() => "Your Slack identity settings could not be loaded."}
+      empty={{ when: (data) => data.pages.every((page) => page.links.length === 0), title: "No Slack identities linked." }}
+    >
+      {() => (
+        <List
+          label="Linked Slack identities"
+          footer={<LoadMore count={allLinks().length} noun="linked identities" hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} />}
+        >
+          <For each={allLinks()}>{(link) => <ListItem class="flex flex-wrap items-center justify-between gap-3">
+            <span class="inline-flex flex-wrap items-baseline gap-1.5">
+              <IDText value={link.slack_user_id} />
+              <span class={ui.muted}>in {workspaceName(link.team_id) || <IDText value={link.team_id} />}</span>
+            </span>
+            <button type="button" class={ui.secondaryButton} disabled={busy()} aria-label={`Unlink ${link.slack_user_id}`} onClick={() => { setError(null); setUnlinking(link); }}>Unlink</button>
+          </ListItem>}</For>
+        </List>
+      )}
+    </QueryState>
+    <Show when={workspaces.isError}><Notice tone="danger">Slack workspaces could not be loaded.</Notice></Show>
     <Show when={workspaces.data?.pages[0]?.configured}>
-      <div class="flex flex-wrap items-end gap-3"><Field label="Workspace for your identity" flush class="min-w-52"><Select value={workspace()} disabled={busy()} placeholder="Select workspace" options={allWorkspaces().map((w) => ({ value: w.installation_id, label: w.workspace_name || w.team_id }))} onChange={setWorkspace} minWidth="100%" /></Field><button class={ui.secondaryButton} disabled={busy() || !workspace()} onClick={() => void start()}>Verify Slack identity</button></div>
-      <Show when={workspaces.hasNextPage}><button class={ui.secondaryButton} disabled={workspaces.isFetchingNextPage} onClick={() => void workspaces.fetchNextPage()}>Load more available workspaces</button></Show>
-      <Show when={!workspaces.isPending && !workspaces.error && allWorkspaces().length === 0}><p class={ui.muted}>An organization admin must connect an Agent to Slack before you can link your account here.</p></Show>
+      <Show when={allWorkspaces().length > 0} fallback={<p class={ui.muted}>An organization admin must connect an Agent to Slack before you can link your account here.</p>}>
+        <div class="flex flex-wrap items-end gap-3">
+          <Field label="Workspace for your identity" flush class="min-w-52">
+            <Select value={workspace()} disabled={busy()} placeholder="Select workspace" options={allWorkspaces().map((w) => ({ value: w.installation_id, label: w.workspace_name || w.team_id }))} onChange={setWorkspace} minWidth="100%" />
+          </Field>
+          <button type="button" class={ui.secondaryButton} disabled={busy() || !workspace()} onClick={() => void start()}>Verify Slack identity</button>
+        </div>
+      </Show>
     </Show>
-    <Show when={unlinking()}>{(link) => <Dialog title={`Unlink ${link().slack_user_id}?`} onClose={() => setUnlinking(null)} closeDisabled={busy()}>
-      <p>Future Slack requests and answers from this account require linking again. Work already accepted keeps its original user identity and continues.</p>
-      <Show when={error()}><p class={ui.error} role="alert">{error()}</p></Show>
-      <div class={ui.modalActions}><button class={ui.secondaryButton} disabled={busy()} onClick={() => setUnlinking(null)}>Keep identity linked</button><button class={ui.dangerOutlineButton} disabled={busy()} onClick={() => void unlink()}>Unlink identity</button></div>
-    </Dialog>}</Show>
-  </section>;
+    <Show when={unlinking()}>{(link) => (
+      <ConfirmDialog
+        title="Unlink Slack identity"
+        confirmLabel="Unlink identity"
+        busyLabel="Unlinking..."
+        cancelLabel="Keep identity linked"
+        tone="danger"
+        target={<IDText value={link().slack_user_id} />}
+        errorMessage={(e) => errorMessage(e, "Slack identity could not be unlinked.")}
+        onClose={() => setUnlinking(null)}
+        onConfirm={async () => {
+          await unlinkSlackUser(link());
+          if (mounted) await links.refetch();
+        }}
+      >
+        Future Slack requests and answers from this account require linking again. Work already accepted keeps its original user identity and continues.
+      </ConfirmDialog>
+    )}</Show>
+  </Panel>;
 }

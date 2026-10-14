@@ -1,7 +1,9 @@
 import { useQueryClient } from "@tanstack/solid-query";
 import { errorMessage } from "../../lib/error";
 import { promoteDeployment, type Deployment } from "../../lib/deployments";
+import type { Environment } from "../../lib/projects";
 import { ConfirmDialog } from "../../ui/Dialog";
+import { environmentChip } from "../projects/display";
 
 // The one Promote gate for the list row and the detail header: the caller must
 // know the current Deployment before offering to replace it.
@@ -16,7 +18,7 @@ export function PromoteDeploymentModal(props: {
   deployment: Deployment;
   projectID: string;
   environmentID: string;
-  environmentName: string | undefined;
+  environment: Environment | undefined;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -26,6 +28,8 @@ export function PromoteDeploymentModal(props: {
       title="Promote Deployment"
       confirmLabel="Promote"
       busyLabel="Promoting..."
+      target={props.deployment.version}
+      environment={environmentChip(props.environment)}
       onClose={props.onClose}
       onConfirm={async () => {
         await promoteDeployment(props.deployment.id, { projectID: props.projectID, environmentID: props.environmentID });
@@ -35,7 +39,7 @@ export function PromoteDeploymentModal(props: {
       errorMessage={promoteErrorMessage}
     >
       <strong>{props.deployment.version}</strong> becomes the current Deployment for{" "}
-      <strong>{props.environmentName ?? "this environment"}</strong>. New Sessions use its Agents and its triggers take effect. Agents absent from this Deployment stop accepting new independent Sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced Agent IDs retain their identity. Existing Sessions keep their pinned Deployment, and inactive trigger intervals are not replayed.
+      <strong>{props.environment?.name ?? "this environment"}</strong>. New Sessions use its Agents and its triggers take effect. Agents absent from this Deployment stop accepting new independent Sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced Agent IDs retain their identity. Existing Sessions keep their pinned Deployment, and inactive trigger intervals are not replayed.
     </ConfirmDialog>
   );
 }

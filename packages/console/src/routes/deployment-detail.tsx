@@ -6,13 +6,14 @@ import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib
 import { useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { definitionHref, definitionName, listAgentDefinitions, listTemplateDefinitions, type DefinitionListItem } from "../lib/definitions";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
+import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 
 type Tab = "agents" | "templates" | "events";
@@ -29,34 +30,43 @@ const DEPLOYMENT_ERROR_MESSAGES = {
 };
 const deploymentError = (error: unknown, fallback: string) => errorMessage(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
 
-function DefinitionTable(props: {
-  label: string;
-  href: (id: string) => string;
-  items: DefinitionListItem[] | undefined;
-  pending: boolean;
+type DefinitionPages = {
+  isPending: boolean;
+  isError: boolean;
   error: unknown;
-}) {
+  data: { pages: { items: DefinitionListItem[] }[] } | undefined;
+  refetch: () => unknown;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  isFetchNextPageError: boolean;
+  fetchNextPage: () => unknown;
+};
+
+function DefinitionTable(props: { label: "Agents" | "Templates"; href: (id: string) => string; query: DefinitionPages }) {
   const noun = () => props.label.toLowerCase();
-  const columns = () => [props.label.replace(/e?s$/, "")];
+  const items = createMemo(() => props.query.data?.pages.flatMap(page => page.items) ?? []);
   return (
-    <Show when={!props.pending} fallback={<StatePanel loading={`Loading ${noun()}...`} />}>
-      <Show when={!props.error} fallback={<StatePanel error={deploymentError(props.error, `Could not load ${noun()}.`)} />}>
-        <Show
-          when={(props.items?.length ?? 0) > 0}
-          fallback={<StatePanel empty={`This Deployment declares no ${noun()}.`} />}
+    <QueryState
+      query={props.query}
+      pending={`Loading ${noun()}...`}
+      error={(error) => deploymentError(error, `Could not load ${noun()}.`)}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This Deployment declares no ${noun()}.` }}
+    >
+      {() => (
+        <DataTable
+          columns={[props.label === "Agents" ? "Agent" : "Template"]}
+          footer={<LoadMore count={items().length} noun={props.label} hasMore={props.query.hasNextPage} loading={props.query.isFetchingNextPage} failed={props.query.isFetchNextPageError} onLoadMore={() => void props.query.fetchNextPage()} />}
         >
-          <DataTable columns={columns()}>
-            <For each={props.items}>
-              {(item) => (
-                <tr>
-                  <td><a class="text-console-accent hover:text-console-accent-hover" href={props.href(definitionName(item))}>{definitionName(item)}</a></td>
-                </tr>
-              )}
-            </For>
-          </DataTable>
-        </Show>
-      </Show>
-    </Show>
+          <For each={items()}>
+            {(item) => (
+              <tr>
+                <td><PrimaryLink href={props.href(definitionName(item))}>{definitionName(item)}</PrimaryLink></td>
+              </tr>
+            )}
+          </For>
+        </DataTable>
+      )}
+    </QueryState>
   );
 }
 
@@ -92,7 +102,10 @@ export function DeploymentDetail() {
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const agents = createInfiniteQuery(() => ({
     queryKey: ["agents", deploymentID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => listAgentDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
+    queryFn: async ({ pageParam }) => {
+      const page = await listAgentDefinitions({ ...definitionOptions(), cursor: pageParam || undefined });
+      return { items: page.agents as DefinitionListItem[], next_cursor: page.next_cursor };
+    },
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
     enabled: enabled() && tab() === "agents",
@@ -100,7 +113,10 @@ export function DeploymentDetail() {
   }));
   const templates = createInfiniteQuery(() => ({
     queryKey: ["templates", deploymentID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => listTemplateDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
+    queryFn: async ({ pageParam }) => {
+      const page = await listTemplateDefinitions({ ...definitionOptions(), cursor: pageParam || undefined });
+      return { items: page.templates as DefinitionListItem[], next_cursor: page.next_cursor };
+    },
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
     enabled: enabled() && tab() === "templates",
@@ -117,86 +133,69 @@ export function DeploymentDetail() {
   const eventItems = createMemo(() => events.data?.pages.flatMap((page) => page.events) ?? []);
 
   return (
-    <section class={ui.page}>
+    <Page>
       <PageHeader
         title={deployment.data?.version ?? "Deployment"}
         breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
         actions={<CopyLinkButton />}
-        badge={<Show when={current.isSuccess} fallback={<span>Checking current Deployment…</span>}><Show when={isCurrent()} fallback={<span>Non-current</span>}><StatusBadge resource="deployment" status="current" /></Show></Show>}
-        subtitle={
+        badge={<Show when={current.isSuccess}><StatusBadge resource="deployment" status={isCurrent() ? "current" : "not_current"} /></Show>}
+        subtitle={<Show when={deployment.data}>{(record) => <IDText value={record().id} mode="full" />}</Show>}
+        meta={
           <Show when={deployment.data}>
             {(record) => (
-              <span class="grid gap-1">
-                <IDText value={record().id} mode="full" />
-                <span class="flex flex-wrap gap-x-4 gap-y-1">
-                  <span>Bundle <IDText value={record().bundle_digest} /></span>
-                  <span>Created <RelativeTime value={record().created_at} /></span>
-                </span>
-              </span>
+              <>
+                <span>Bundle <IDText value={record().bundle_digest} /></span>
+                <span>Created <RelativeTime value={record().created_at} /></span>
+              </>
             )}
           </Show>
         }
       />
 
-      <Show when={deployment.isError}>
-        <StatePanel error={deploymentError(deployment.error, "Could not load this Deployment.")} />
-      </Show>
-      <Show when={deployment.isPending && enabled()}>
-        <StatePanel loading="Loading Deployment..." />
-      </Show>
+      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+      <QueryState query={deployment} pending="Loading Deployment..." error={(error) => deploymentError(error, "Could not load this Deployment.")}>
+        {() => (
+          <>
+            <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
 
-      <Show when={deployment.isSuccess}>
-        <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
-
-        <TabPanel tabs="deployment-sections" value="agents" selected={tab()}>
-          <p class={`${ui.muted} mb-3`}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
-          <DefinitionTable href={id => definitionHref("agents", id, deploymentID())} label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} />
-          <Show when={agents.hasNextPage}>
-            <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agents</button>
-          </Show>
-        </TabPanel>
-        <TabPanel tabs="deployment-sections" value="templates" selected={tab()}>
-          <p class={`${ui.muted} mb-3`}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
-          <DefinitionTable href={id => definitionHref("templates", id, deploymentID())} label="Templates" items={templates.data?.pages.flatMap(page => page.templates)} pending={templates.isPending} error={templates.error} />
-          <Show when={templates.hasNextPage}>
-            <button type="button" class={ui.secondaryButton} disabled={templates.isFetchingNextPage} onClick={() => void templates.fetchNextPage()}>Load more Templates</button>
-          </Show>
-        </TabPanel>
-
-        <TabPanel tabs="deployment-sections" value="events" selected={tab()}>
-          <Show when={events.isError}>
-            <StatePanel error={deploymentError(events.error, "Could not load Deployment events.")} />
-          </Show>
-          <Show when={!events.isPending} fallback={<StatePanel loading="Loading events..." />}>
-            <Show when={eventItems().length > 0} fallback={<StatePanel empty="No events recorded for this Deployment." />}>
-              <DataTable columns={["Kind", "Message", "At"]} minWidth="min-w-180">
-                <For each={eventItems()}>
-                  {(event) => (
-                    <tr>
-                      <td><code>{event.kind}</code></td>
-                      <td>{event.message}</td>
-                      <td><RelativeTime value={event.at} /></td>
-                    </tr>
-                  )}
-                </For>
-              </DataTable>
-              <Show when={events.hasNextPage}>
-                <div class={ui.actionRow}>
-                  <button
-                    type="button"
-                    class={ui.secondaryButton}
-                    disabled={events.isFetchingNextPage}
-                    onClick={() => void events.fetchNextPage()}
+            <TabPanel tabs="deployment-sections" value="agents" selected={tab()}>
+              <p class={cx(ui.muted, "mb-3")}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
+              <DefinitionTable label="Agents" href={id => definitionHref("agents", id, deploymentID())} query={agents} />
+            </TabPanel>
+            <TabPanel tabs="deployment-sections" value="templates" selected={tab()}>
+              <p class={cx(ui.muted, "mb-3")}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
+              <DefinitionTable label="Templates" href={id => definitionHref("templates", id, deploymentID())} query={templates} />
+            </TabPanel>
+            <TabPanel tabs="deployment-sections" value="events" selected={tab()}>
+              <QueryState
+                query={events}
+                pending="Loading events..."
+                error={(error) => deploymentError(error, "Could not load Deployment events.")}
+                empty={{ when: (data) => data.pages.every(page => page.events.length === 0), title: "No events recorded for this Deployment." }}
+              >
+                {() => (
+                  <DataTable
+                    columns={["Kind", "Message", "At"]}
+                    minWidth="min-w-180"
+                    footer={<LoadMore count={eventItems().length} noun="events" hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
                   >
-                    {events.isFetchingNextPage ? "Loading..." : "Load more"}
-                  </button>
-                </div>
-              </Show>
-            </Show>
-          </Show>
-        </TabPanel>
+                    <For each={eventItems()}>
+                      {(event) => (
+                        <tr>
+                          <td><code>{event.kind}</code></td>
+                          <td>{event.message}</td>
+                          <td><RelativeTime value={event.at} /></td>
+                        </tr>
+                      )}
+                    </For>
+                  </DataTable>
+                )}
+              </QueryState>
+            </TabPanel>
+          </>
+        )}
+      </QueryState>
       </Show>
-
-    </section>
+    </Page>
   );
 }

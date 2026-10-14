@@ -12,7 +12,8 @@ async function login(page: Page) {
 async function selectDemoEnvironment(page: Page) {
   await page.goto("/settings/environments");
   const demoRow = page.getByRole("row").filter({ hasText: "Demo" });
-  await demoRow.getByRole("button", { name: "Use" }).click();
+  await demoRow.getByRole("button", { name: "Actions for Demo", exact: true }).click();
+  await page.getByRole("button", { name: "Use", exact: true }).click();
   await expect(demoRow.getByText("Current", { exact: true })).toBeVisible();
 }
 

@@ -34,13 +34,19 @@ import {
   type SessionAddress,
   type SessionReceipt,
 } from "../lib/sessions";
+import { environmentChip } from "../features/projects/display";
+import { CodeBlock } from "../ui/CodeBlock";
+import { LoadMore, PrimaryLink } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { IDText } from "../ui/IDText";
+import { List, ListItem } from "../ui/List";
+import { Notice } from "../ui/Notice";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
+import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
-import { StatusBadge } from "../ui/StatusBadge";
+import { StatusBadge, type BadgeStatus } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
 const sessionError = (error: unknown) => errorMessage(error, "The operation could not be completed.");
@@ -139,55 +145,59 @@ function SessionDetailContent() {
       queryClient.invalidateQueries({ queryKey: ["sessions"] }),
     ]);
   return (
-    <section class={ui.page}>
+    <Page>
       <PageHeader
         title="Session"
         breadcrumb={[{ href: "/sessions", label: "Sessions" }]}
         subtitle={<IDText value={sessionID()} mode="full" />}
         badge={
           <Show when={session.data}>
-            {(current) => (
-              <StatusBadge resource="session" status={current().status} />
-            )}
+            {(current) => <StatusBadge resource="session" status={current().status} />}
           </Show>
         }
         actions={
-          <div class="flex flex-wrap gap-2">
+          <>
             <CopyLinkButton />
             <Show when={can("sessions.interrupt") && polling()}>
-              <button class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt Session</button>
+              <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt Session</button>
             </Show>
             <Show when={can("sessions.cancel") && polling()}>
-              <button class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel Session</button>
+              <button type="button" class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel Session</button>
             </Show>
-          </div>
+          </>
         }
       />
-      <Show when={session.isError}>
-        <StatePanel error={sessionError(session.error)} />
-      </Show>
-      <Show
-        when={enabled()}
-        fallback={
-          <StatePanel error="Session ID and environment scope are required." />
-        }
-      >
-        <Show
-          when={!session.isPending}
-          fallback={<StatePanel loading="Loading Session..." />}
-        >
-          <Show when={session.data}>
-            {(current) => (
-              <DetailLayout
-                rail={
+      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+        <QueryState query={session} pending="Loading Session..." error={sessionError}>
+          {(current) => (
+            <DetailLayout
+              rail={
                 <KeyValueList title="Session details">
-                  <Show when={current().activity.process}>{process => <KeyValue label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></KeyValue>}</Show>
-                  <KeyValue label="Agent">
-                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</a>
-                  </KeyValue>
-                  <Show when={current().initial_turn} fallback={<KeyValue label="Work">No input yet</KeyValue>}>
-                    {turn => <KeyValue label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></KeyValue>}
+                  <Show when={current().activity.process}>
+                    {process => <>
+                      <KeyValue label="Process">
+                        <StatusBadge resource="process" status={(process().reconstruction_required ? "recovery_required" : process().status) as BadgeStatus<"process">} />
+                      </KeyValue>
+                      <Show when={process().stop}>
+                        {stop => (
+                          <KeyValue label="Process stop">
+                            <span class="inline-flex flex-wrap items-center gap-1.5">
+                              <StatusBadge resource="process_stop" status={stop().state} />
+                              <Show when={stop().turn_id}>{id => <>for <IDText value={id()} mode="link" href={`#turn-${id()}`} /></>}</Show>
+                            </span>
+                          </KeyValue>
+                        )}
+                      </Show>
+                    </>}
                   </Show>
+                  <KeyValue label="Agent">
+                    <PrimaryLink href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</PrimaryLink>
+                  </KeyValue>
+                  <KeyValue label="Initial Turn">
+                    <Show when={current().initial_turn} fallback="No input yet">
+                      {turn => <span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span>}
+                    </Show>
+                  </KeyValue>
                   <Show when={current().parent_session_id}>
                     {id => <KeyValue label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
                   </Show>
@@ -195,25 +205,17 @@ function SessionDetailContent() {
                     {id => <KeyValue label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
                   </Show>
                   <Show when={current().key}>
-                    {(key) => (
-                      <KeyValue label="Key">
-                        <code>{key()}</code>
-                      </KeyValue>
-                    )}
+                    {(key) => <KeyValue label="Key"><code>{key()}</code></KeyValue>}
                   </Show>
                   <KeyValue label="Status">
                     <StatusBadge resource="session" status={current().status} />
                   </KeyValue>
-                  <KeyValue label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></KeyValue>
+                  <KeyValue label="Template"><PrimaryLink href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</PrimaryLink></KeyValue>
                   <KeyValue label="Deployment">
-                    <IDText
-                      value={current().deployment_id}
-                      mode="link"
-                      href={deploymentHref(current().deployment_id)}
-                    />
+                    <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </KeyValue>
                   <KeyValue label="Computer">
-                    <Show when={current().computer_id} fallback={<span>No Computer assigned</span>}>
+                    <Show when={current().computer_id}>
                       {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
                     </Show>
                   </KeyValue>
@@ -221,128 +223,109 @@ function SessionDetailContent() {
                     <RelativeTime value={current().created_at} />
                   </KeyValue>
                   <KeyValue label="Holds">
-                    <Show
-                      when={current().holds.length}
-                      fallback={<span>None</span>}
-                    >
-                      <ul class="space-y-3">
+                    <Show when={current().holds.length} fallback="None">
+                      <List label="Holds">
                         <For each={current().holds}>
                           {(hold) => (
-                            <li class="flex flex-col items-start gap-1">
-                              <span>
-                                {hold.reason || "Paused"} ({hold.scope})
-                              </span>
+                            <ListItem class="flex flex-col items-start gap-1">
+                              <span>{hold.reason || "Paused"} ({hold.scope})</span>
                               <IDText value={hold.id} />
                               <Show when={hold.session_id !== sessionID()}>
-                                <span class="block">Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} /></span>
+                                <span>Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} /></span>
                               </Show>
-                            </li>
+                            </ListItem>
                           )}
                         </For>
-                      </ul>
+                      </List>
                     </Show>
                   </KeyValue>
                 </KeyValueList>
-                }
-              >
-                  <Show when={receipt()}>
-                    {(value) => (
-                      <Panel title="Operation receipt">
-                        <p class={ui.muted}>
-                          The request was accepted. Turn status shows its
-                          outcome. A control request may still be stopping an active
-                          process or draining admitted work.
-                        </p>
-                        <pre class="whitespace-pre-wrap break-words">
-                          {JSON.stringify(value(), null, 2)}
-                        </pre>
-                      </Panel>
-                    )}
-                  </Show>
-                  <SessionProgress address={address()} polling={polling()} />
-                  <Show when={current().slack_channel_id}><SessionDelivery address={address()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
-                  <Panel title="Turns">
+              }
+            >
+              <Show when={receipt()}>
+                {(value) => (
+                  <Panel title="Operation receipt">
                     <p class={ui.muted}>
-                      Inputs are shown in admission order. Queued work remains
-                      available for inspection when execution is blocked.
+                      The request was accepted. Turn status shows its
+                      outcome. A control request may still be stopping an active
+                      process or draining admitted work.
                     </p>
-                    <Show when={turns.isError}>
-                      <StatePanel error={sessionError(turns.error)} />
-                    </Show>
-                    <Show
-                      when={!turns.isPending}
-                      fallback={<StatePanel loading="Loading Turns..." />}
-                    >
-                      <Show
-                        when={items().length}
-                        fallback={<StatePanel empty="No Turns yet." />}
-                      >
-                        <ol class="m-0 list-none divide-y divide-console-border p-0">
-                          <For each={items()}>
-                            {(turn) => (
-                              <li class="py-4" id={`turn-${turn.id}`}>
-                                <div class="flex flex-wrap items-center gap-2">
-                                  <strong>Turn #{turn.sequence}</strong>
-                                  <StatusBadge resource="turn" status={turn.status} />
-                                  <IDText value={turn.id} />
-                                  <Show when={turn.status === "running" && can("sessions.interrupt")}><button class={ui.secondaryButton} onClick={() => setControl({ kind: "turn_interrupt", turnID: turn.id })}>Interrupt Turn</button></Show>
-                                </div>
-                                <Show when={turn.stop}>{stop => <p class={ui.muted}>Processing stop: {stop().state}. <Show when={stop().state !== "stopped"}>New processing waits for stop confirmation.</Show></p>}</Show>
-                                <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
-                                <p class={ui.muted}>Input</p>
-                                <pre class="whitespace-pre-wrap break-words">
-                                  {turn.input?.map(part => part.text).join("")}
-                                </pre>
-                                </Show>
-                                <Show when={turn.status === "finalizing"}>
-                                  <p class={ui.muted}>
-                                    The handler has returned. Helmr is saving
-                                    the required disk state before completion.
-                                  </p>
-                                </Show>
-                                <Show when={turn.error}>
-                                  {error => <p class={ui.fieldError}><code>{error().code}</code><Show when={error().message}>: {error().message}</Show></p>}
-                                </Show>
-                                <Show when={Object.hasOwn(turn, "result")}>
-                                  <p class={ui.muted}>Result</p>
-                                  <pre class="whitespace-pre-wrap break-words">
-                                    {JSON.stringify(turn.result, null, 2)}
-                                  </pre>
-                                </Show>
-                                <Show when={turn.status === "completed" && turn.response}>
-                                  {response => <div><p class={ui.muted}>Response</p><ContentView content={response()} /></div>}
-                                </Show>
-                                <TurnQuestions address={address()} turnID={turn.id} polling={polling()} />
-                                <Show when={turn.terminal_at}>
-                                  {(time) => (
-                                    <p class={ui.muted}>
-                                      Settled <RelativeTime value={time()} />
-                                    </p>
-                                  )}
-                                </Show>
-                              </li>
-                            )}
-                          </For>
-                        </ol>
-                      </Show>
-                      <Show when={turns.hasNextPage}>
-                        <button
-                          class={ui.secondaryButton}
-                          disabled={turns.isFetchingNextPage}
-                          onClick={() => void turns.fetchNextPage()}
-                        >
-                          {turns.isFetchingNextPage
-                            ? "Loading..."
-                            : "Load more Turns"}
-                        </button>
-                      </Show>
-                    </Show>
+                    <CodeBlock code={JSON.stringify(value(), null, 2)} label="Operation receipt" />
                   </Panel>
-                  <p class={ui.muted}>Send work through the CLI or the connected Slack conversation. Use the CLI to close this Session or release a hold.</p>
-              </DetailLayout>
-            )}
-          </Show>
-        </Show>
+                )}
+              </Show>
+              <SessionProgress address={address()} polling={polling()} />
+              <Show when={current().slack_channel_id}><SessionDelivery address={address()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
+              <Panel title="Turns">
+                <p class={ui.muted}>
+                  Inputs are shown in admission order. Queued work remains
+                  available for inspection when execution is blocked.
+                </p>
+                <QueryState
+                  query={turns}
+                  pending="Loading Turns..."
+                  error={sessionError}
+                  empty={{ when: (data) => data.pages.every((page) => page.turns.length === 0), title: "No Turns yet." }}
+                >
+                  {() => (
+                    <List
+                      label="Turns"
+                      footer={<LoadMore count={items().length} noun="Turns" hasMore={turns.hasNextPage} loading={turns.isFetchingNextPage} failed={turns.isFetchNextPageError} onLoadMore={() => void turns.fetchNextPage()} />}
+                    >
+                      <For each={items()}>
+                        {(turn) => (
+                          <ListItem id={`turn-${turn.id}`} class={ui.windowStack}>
+                            <div class="flex flex-wrap items-center gap-2">
+                              <strong class="font-medium">Turn #{turn.sequence}</strong>
+                              <StatusBadge resource="turn" status={turn.status} />
+                              <IDText value={turn.id} />
+                              <Show when={turn.status === "running" && can("sessions.interrupt")}>
+                                <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "turn_interrupt", turnID: turn.id })}>Interrupt Turn</button>
+                              </Show>
+                            </div>
+                            <Show when={turn.stop}>
+                              {stop => (
+                                <p class={`${ui.muted} flex flex-wrap items-center gap-1.5`}>
+                                  Processing stop <StatusBadge resource="process_stop" status={stop().state} />
+                                  <Show when={stop().state !== "stopped"}>New processing waits for stop confirmation.</Show>
+                                </p>
+                              )}
+                            </Show>
+                            <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
+                              <p class={ui.muted}>Input</p>
+                              <CodeBlock code={turn.input?.map(part => part.text).join("") ?? ""} label={`Turn #${turn.sequence} input`} />
+                            </Show>
+                            <Show when={turn.status === "finalizing"}>
+                              <p class={ui.muted}>
+                                The handler has returned. Helmr is saving
+                                the required disk state before completion.
+                              </p>
+                            </Show>
+                            <Show when={turn.error}>
+                              {error => <Notice tone="danger" role="none"><code>{error().code}</code><Show when={error().message}>: {error().message}</Show></Notice>}
+                            </Show>
+                            <Show when={Object.hasOwn(turn, "result")}>
+                              <p class={ui.muted}>Result</p>
+                              <CodeBlock code={JSON.stringify(turn.result, null, 2)} label={`Turn #${turn.sequence} result`} />
+                            </Show>
+                            <Show when={turn.status === "completed" && turn.response}>
+                              {response => <div class={ui.windowStack}><p class={ui.muted}>Response</p><ContentView content={response()} /></div>}
+                            </Show>
+                            <TurnQuestions address={address()} turnID={turn.id} polling={polling()} />
+                            <Show when={turn.terminal_at}>
+                              {(time) => <p class={ui.muted}>Settled <RelativeTime value={time()} /></p>}
+                            </Show>
+                          </ListItem>
+                        )}
+                      </For>
+                    </List>
+                  )}
+                </QueryState>
+              </Panel>
+              <p class={ui.muted}>Send work through the CLI or the connected Slack conversation. Use the CLI to close this Session or release a hold.</p>
+            </DetailLayout>
+          )}
+        </QueryState>
       </Show>
       <Show when={control()} keyed>
         {operation => (
@@ -352,6 +335,8 @@ function SessionDetailContent() {
             confirmLabel={controlLabels[operation.kind]}
             busyLabel="Requesting..."
             tone={operation.kind === "cancel" ? "danger" : "default"}
+            target={<IDText value={operation.kind === "turn_interrupt" ? operation.turnID : sessionID()} />}
+            environment={environmentChip(scope.selectedEnvironment())}
             onClose={() => setControl(undefined)}
             errorMessage={sessionError}
             onConfirm={() => performControl(operation)}
@@ -368,6 +353,6 @@ function SessionDetailContent() {
           </ConfirmDialog>
         )}
       </Show>
-    </section>
+    </Page>
   );
 }

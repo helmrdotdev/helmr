@@ -75,7 +75,8 @@ test("an environment can be renamed and recolored from Settings and the header d
   await expect(page.getByRole("heading", { name: "Environments" })).toBeVisible();
   const stagingRow = page.getByRole("row", { name: /Staging/ });
   await expect(stagingRow).toBeVisible();
-  await stagingRow.getByRole("button", { name: "Edit" }).click();
+  await stagingRow.getByRole("button", { name: "Actions for Staging" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
 
   const dialog = page.getByRole("dialog", { name: "Edit Staging" });
   await expect(dialog).toBeVisible();
@@ -87,10 +88,11 @@ test("an environment can be renamed and recolored from Settings and the header d
 
   const renamedRow = page.getByRole("row", { name: /Staging Renamed/ });
   await expect(renamedRow).toBeVisible();
-  await expect(renamedRow.getByRole("button", { name: "Copy staging", exact: true })).toBeVisible();
+  await expect(renamedRow.getByTitle("staging", { exact: true })).toHaveText("staging");
   await expect(renamedRow.locator("span[style]").first()).toHaveCSS("background-color", "rgb(34, 197, 94)");
 
-  await renamedRow.getByRole("button", { name: "Use" }).click();
+  await renamedRow.getByRole("button", { name: "Actions for Staging Renamed" }).click();
+  await page.getByRole("button", { name: "Use", exact: true }).click();
   const header = page.locator("header");
   await expect(header).toContainText("Staging Renamed");
   await expect(header.locator("span[style*='background-color']").first()).toHaveCSS("background-color", "rgb(34, 197, 94)");

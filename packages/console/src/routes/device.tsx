@@ -1,12 +1,14 @@
 import { ME_QUERY_KEY, useMe } from "../lib/me";
-import { useSearchParams } from "@solidjs/router";
+import { A, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import { ApiError } from "../lib/api";
-import { approveDeviceCode, denyDeviceCode, getDeviceCodeStatus, type DeviceCodeStatus } from "../lib/auth";
-import { authErrorMessage } from "../lib/error";
-import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { approveDeviceCode, denyDeviceCode, getDeviceCodeStatus } from "../lib/auth";
+import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
+import { AuthCopy, AuthError, AuthMissing, AuthSuccess, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { KeyValue, KeyValueList } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
+import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
 function readParam(value: string | string[] | undefined): string {
@@ -17,24 +19,16 @@ function normalizeCode(value: string): string {
   return value.trim().toUpperCase();
 }
 
-function statusText(status: DeviceCodeStatus["status"]): string {
-  switch (status) {
-    case "pending":
-      return "Waiting for approval";
-    case "approved":
-      return "Approved";
-    case "denied":
-      return "Denied";
-    case "consumed":
-      return "Already used";
-    case "expired":
-      return "Expired";
-  }
-}
+const DEVICE_MESSAGES = {
+  ...AUTH_MESSAGES,
+  not_found: "This device request was not found. It may have expired or already been used.",
+  device_identity_changed: "Your account changed since this page loaded. Review the account and organization, then approve again.",
+};
 
-function deviceErrorMessage(error: unknown, fallback: string): string {
-  const kind = error instanceof ApiError ? error.code : null;
-  return authErrorMessage(kind, error instanceof Error ? error.message : fallback);
+const deviceFailure = (error: unknown, fallback: string): Failure => describeFailure(error, DEVICE_MESSAGES, fallback);
+
+function RestartHint() {
+  return <AuthCopy>Run <code>helmr login</code> again in your terminal to start a new request.</AuthCopy>;
 }
 
 export function Device() {
@@ -43,7 +37,7 @@ export function Device() {
   const me = useMe();
   const code = createMemo(() => normalizeCode(readParam(params["code"])));
   const [busy, setBusy] = createSignal<"approve" | "deny" | null>(null);
-  const [actionError, setActionError] = createSignal<string | null>(null);
+  const [actionError, setActionError] = createSignal<Failure | null>(null);
 
   const status = createQuery(() => ({
     queryKey: ["device-code", code()],
@@ -64,7 +58,7 @@ export function Device() {
       queryClient.setQueryData(["device-code", requestCode], result);
     } catch (error) {
       if (code() !== requestCode) return;
-      setActionError(deviceErrorMessage(error, "Could not update this device code."));
+      setActionError(deviceFailure(error, "This device request could not be updated. Try again."));
       if (error instanceof ApiError && error.code === "device_identity_changed") {
         await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
       }
@@ -75,74 +69,71 @@ export function Device() {
     }
   }
 
-  const current = createMemo(() => status.data);
-  const canResolve = createMemo(() => current()?.status === "pending" && !!me.data?.org_id && !me.isError && !busy());
+  const canResolve = createMemo(() => status.data?.status === "pending" && !!me.data?.org_id && !me.isError && !busy());
 
   return (
-    <AuthWindow>
-      <AuthTitle>Authorize CLI</AuthTitle>
-      <Switch>
-        <Match when={code() === ""}>
-          <p class={ui.error}>Missing device code.</p>
-        </Match>
-        <Match when={status.isPending}>
-          <AuthCopy>Loading device request...</AuthCopy>
-        </Match>
-        <Match when={status.isError}>
-          <p class={ui.error}>
-            {deviceErrorMessage(status.error, "This device code could not be loaded.")}
-          </p>
-        </Match>
-        <Match when={current()}>
-          {(device) => (
-            <>
+    <Switch>
+      <Match when={code() === ""}>
+        <AuthWindow>
+          <AuthMissing title="This approval link is incomplete" action={<A class={ui.secondaryButton} href="/">Go to the console</A>}>
+            The link is missing the device code from your terminal. Run <code>helmr login</code> again in your terminal and open the link it shows.
+          </AuthMissing>
+        </AuthWindow>
+      </Match>
+      <Match when={status.isError}>
+        <AuthWindow>
+          <AuthError
+            title="Authorize CLI"
+            {...deviceFailure(status.error, "This device request could not be loaded.")}
+            action={<RestartHint />}
+          />
+        </AuthWindow>
+      </Match>
+      <Match when={status.isPending}>
+        <AuthWorking>Loading device request...</AuthWorking>
+      </Match>
+      <Match when={status.data}>
+        {(device) => (
+          <AuthWindow>
+            <Show
+              when={device().status !== "approved"}
+              fallback={<AuthSuccess title="CLI authorized">Approved. Return to your terminal to finish signing in.</AuthSuccess>}
+            >
+              <AuthTitle>Authorize CLI</AuthTitle>
+            </Show>
+            <Show when={device().status === "pending"}>
+              <AuthCopy>Only approve if you started this login. Check that this code matches your terminal.</AuthCopy>
+            </Show>
+            <div class={ui.authCode} aria-label="Device code">{code()}</div>
+            <KeyValueList title="Request">
+              <KeyValue label="Status"><StatusBadge resource="device_code" status={device().status} /></KeyValue>
               <Show when={device().status === "pending"}>
-                <AuthCopy>Only approve if you started this login. Check that this code matches your terminal.</AuthCopy>
-                <p class={ui.authStatus}>Account: {me.data?.display_name || me.data?.user_id}</p>
-                <p class={ui.authStatus}>Organization: {me.data?.org_name || me.data?.org_id}</p>
-                <p class={ui.muted}>Server: {me.data?.public_url || window.location.origin}</p>
+                <KeyValue label="Account">{me.data?.display_name || me.data?.user_id}</KeyValue>
+                <KeyValue label="Organization">{me.data?.org_name || me.data?.org_id}</KeyValue>
+                <KeyValue label="Server">{me.data?.public_url || window.location.origin}</KeyValue>
+                <KeyValue label="Expires"><RelativeTime value={device().expires_at} /></KeyValue>
               </Show>
-              <div class={ui.authCode} aria-label="Device code">{code()}</div>
-              <p class={ui.authStatus}>Status: {statusText(device().status)}</p>
-              <Show when={device().status === "approved"}>
-                <AuthCopy>Approved. Return to your terminal to finish signing in.</AuthCopy>
-              </Show>
-              <Show when={device().status === "consumed"}>
-                <AuthCopy>This request has already been used. Check your terminal for the login result.</AuthCopy>
-              </Show>
-              <Show when={device().status === "denied" || device().status === "expired"}>
-                <AuthCopy>Run helmr login again in your terminal to start a new request.</AuthCopy>
-              </Show>
-              <Show when={device().status === "pending" && device().expires_at}>
-                <p class={ui.muted}>Expires <RelativeTime value={device().expires_at} /></p>
-              </Show>
-              <Show when={device().status === "pending"}>
-                <div class={ui.actionRow}>
-                  <button
-                    class={ui.button}
-                    type="button"
-                    disabled={!canResolve()}
-                    onClick={() => resolveDevice(true)}
-                  >
-                    {busy() === "approve" ? "Approving..." : "Approve"}
-                  </button>
-                  <button
-                    type="button"
-                    class={ui.secondaryButton}
-                    disabled={!canResolve()}
-                    onClick={() => resolveDevice(false)}
-                  >
-                    {busy() === "deny" ? "Denying..." : "Deny"}
-                  </button>
-                </div>
-              </Show>
-              <Show when={actionError()}>
-                <p class={ui.error}>{actionError()}</p>
-              </Show>
-            </>
-          )}
-        </Match>
-      </Switch>
-    </AuthWindow>
+            </KeyValueList>
+            <Show when={device().status === "consumed"}>
+              <AuthCopy>This request has already been used. Check your terminal for the login result.</AuthCopy>
+            </Show>
+            <Show when={device().status === "denied" || device().status === "expired"}>
+              <RestartHint />
+            </Show>
+            <Show when={device().status === "pending"}>
+              <Show when={actionError()}>{(failure) => <AuthError {...failure()} />}</Show>
+              <div class={ui.modalActions}>
+                <button type="button" class={ui.secondaryButton} disabled={!canResolve()} onClick={() => resolveDevice(false)}>
+                  {busy() === "deny" ? "Denying..." : "Deny"}
+                </button>
+                <button type="button" class={ui.button} disabled={!canResolve()} onClick={() => resolveDevice(true)}>
+                  {busy() === "approve" ? "Approving..." : "Approve"}
+                </button>
+              </div>
+            </Show>
+          </AuthWindow>
+        )}
+      </Match>
+    </Switch>
   );
 }

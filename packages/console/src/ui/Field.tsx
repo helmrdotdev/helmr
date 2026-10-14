@@ -66,6 +66,12 @@ export function TextInput(props: InputProps & { type?: "text" | "email" | "url" 
   return <input {...rest} {...fieldAttributes(field)} type={local.type ?? "text"} class={cx(ui.input, local.class)} />;
 }
 
+export function TextArea(props: Omit<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>, "class" | "id"> & { class?: string }) {
+  const field = useFieldControl();
+  const [local, rest] = splitProps(props, ["class"]);
+  return <textarea {...rest} {...fieldAttributes(field)} class={cx(ui.textarea, local.class)} />;
+}
+
 // A write-only value: it is typed once and never shown again.
 export function SecretInput(props: InputProps) {
   const field = useFieldControl();
@@ -78,6 +84,26 @@ export function SecretInput(props: InputProps) {
       autocomplete="new-password"
       spellcheck={false}
       class={cx(ui.input, local.class)}
+    />
+  );
+}
+
+// A write-only value that may span lines (PEM keys, multi-line tokens): line
+// breaks are kept, it is never prefilled or shown after saving, and it is masked
+// while entered where the browser supports text masking.
+export function SecretTextArea(props: Omit<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>, "class" | "id" | "autocomplete" | "spellcheck"> & { class?: string }) {
+  const field = useFieldControl();
+  const [local, rest] = splitProps(props, ["class"]);
+  return (
+    <textarea
+      {...rest}
+      {...fieldAttributes(field)}
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck={false}
+      wrap="off"
+      class={cx(ui.textarea, "font-mono text-chrome [-webkit-text-security:disc]", local.class)}
     />
   );
 }
@@ -208,25 +234,28 @@ export function ChoiceCards<T extends string>(
       props.onChange(value);
     }
   };
+  const id = createUniqueId();
   return (
     <fieldset class={ui.fieldSet}>
       <legend class={ui.fieldLegend}>{props.label}</legend>
       <div class="grid gap-1.5">
         <For each={props.options}>
-          {(option) => (
-            <label class={ui.permissionOption}>
+          {(option, index) => (
+            <label class={ui.choiceCard}>
               <input
                 type={props.multiple ? "checkbox" : "radio"}
                 name={props.name}
                 value={option.value}
                 checked={checked(option.value)}
                 disabled={props.disabled}
+                aria-label={option.label}
+                aria-describedby={option.description ? `${id}-${index()}` : undefined}
                 onChange={(event) => toggle(option.value, event.currentTarget.checked)}
               />
               <span>
                 <strong>{option.label}</strong>
                 <Show when={option.description}>
-                  <span>{option.description}</span>
+                  <span id={`${id}-${index()}`}>{option.description}</span>
                 </Show>
               </span>
             </label>
@@ -240,12 +269,13 @@ export function ChoiceCards<T extends string>(
 // Many independent toggles, grouped under headings with "Select all" per group.
 export function CheckboxGroup<T extends string>(props: {
   label: string;
-  groups: readonly { label: string; options: readonly { value: T; label: string }[] }[];
+  groups: readonly { label: string; options: readonly { value: T; label: string; description?: string }[] }[];
   value: readonly T[];
   onChange: (value: T[]) => void;
   disabled?: boolean;
 }) {
   const set = createMemo(() => new Set(props.value));
+  const id = createUniqueId();
   const update = (values: readonly T[], on: boolean) => {
     const next = props.value.filter((value) => !values.includes(value));
     props.onChange(on ? [...next, ...values] : next);
@@ -275,20 +305,29 @@ export function CheckboxGroup<T extends string>(props: {
                     Select all
                   </label>
                 </div>
-                <div class="flex flex-wrap gap-x-4 gap-y-1.5 px-2.5 py-2">
+                <div class={group.options.some((option) => option.description) ? "grid gap-2 px-2.5 py-2" : "flex flex-wrap gap-x-4 gap-y-1.5 px-2.5 py-2"}>
                   <For each={group.options}>
-                    {(option) => (
-                      <label class="flex cursor-pointer items-center gap-1.5 text-control text-console-text">
-                        <input
-                          type="checkbox"
-                          class="accent-console-accent"
-                          checked={set().has(option.value)}
-                          disabled={props.disabled}
-                          onChange={(event) => update([option.value], event.currentTarget.checked)}
-                        />
-                        {option.label}
-                      </label>
-                    )}
+                    {(option) => {
+                      const hintID = `${id}-${option.value}`;
+                      return (
+                        <div class="grid gap-0.5">
+                          <label class="flex cursor-pointer items-center gap-1.5 text-control text-console-text">
+                            <input
+                              type="checkbox"
+                              class="accent-console-accent"
+                              checked={set().has(option.value)}
+                              disabled={props.disabled}
+                              aria-describedby={option.description ? hintID : undefined}
+                              onChange={(event) => update([option.value], event.currentTarget.checked)}
+                            />
+                            {option.label}
+                          </label>
+                          <Show when={option.description}>
+                            <span id={hintID} class={cx("block pl-5", ui.fieldHint)}>{option.description}</span>
+                          </Show>
+                        </div>
+                      );
+                    }}
                   </For>
                 </div>
               </div>
@@ -308,6 +347,8 @@ export function FormActions(props: {
   busy: boolean;
   onCancel: () => void;
   cancelLabel?: string | undefined;
+  // Cancel has work of its own in flight (e.g. signing out).
+  cancelDisabled?: boolean | undefined;
   disabled?: boolean | undefined;
   tone?: "default" | "danger" | undefined;
   // Without a form around the actions, the primary action calls this instead of submitting.
@@ -315,7 +356,7 @@ export function FormActions(props: {
 }) {
   return (
     <div class={ui.modalActions}>
-      <button type="button" class={ui.secondaryButton} disabled={props.busy} onClick={() => props.onCancel()}>
+      <button type="button" class={ui.secondaryButton} disabled={props.busy || props.cancelDisabled} onClick={() => props.onCancel()}>
         {props.cancelLabel ?? "Cancel"}
       </button>
       <button

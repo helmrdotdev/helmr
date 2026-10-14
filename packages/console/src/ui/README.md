@@ -76,8 +76,9 @@ silently change nested controls.
     applies. Never inline button rows.
   - **RowError** — an action's error as its own row under the row it belongs to.
   - **LoadMore** — the `footer`: "Load more" (busy "Loading…") and the shown count.
+    `noun` names the button ("Load more Sessions") and the count.
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
-  identities) with one divider style and 12px padding.
+  identities) with one divider style and 12px padding; `footer` takes a LoadMore.
 - **StatusBadge.** Every status. One tone map per resource lives in
   `StatusBadge.tsx`; add a resource there instead of styling a badge locally.
 - **EnvChip** and **EnvDot.** The only way an Environment is shown: its color, name
@@ -92,11 +93,14 @@ silently change nested controls.
 
 - **Field.** Label, one control, optional `hint`, and an `error` announced as an
   alert. Controls inside take the field's label, hint and error automatically.
-- **TextInput** (sans 12px), **SlugInput** (mono; follows the name through
-  `createDerivedSlug` until edited), **SecretInput** (write-only, never echoes),
-  **SearchInput**, **ColorField** (custom color plus preset swatches).
+- **TextInput** (sans 12px), **TextArea**, **SlugInput** (mono; follows the name
+  through `createDerivedSlug` until edited), **SecretInput** (write-only, never
+  echoes), **SecretTextArea** (write-only and multi-line for keys and tokens: line
+  breaks kept, never prefilled or shown after saving, masked where the browser
+  supports it), **SearchInput**, **ColorField** (custom color plus preset swatches).
 - **FormActions.** Cancel, then the primary action, right-aligned 8px apart. While
-  submitting, Cancel is disabled and the primary action shows its busy label.
+  submitting, Cancel is disabled and the primary action shows its busy label;
+  `cancelDisabled` covers a Cancel with work of its own (signing out).
 
 ### Choosing a control
 
@@ -105,17 +109,21 @@ silently change nested controls.
 | 2–5 mutually exclusive options that change a view | **Segmented** |
 | A value in a form, more than 5 options, or long labels | **Select** (filters itself past 10 options) |
 | Options that need a description | **ChoiceCards** (radio, or `multiple` for checkboxes) |
-| Many independent toggles grouped by scope | **CheckboxGroup** (group headings and "Select all") |
+| Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
 There is one Select. Native `<select>` elements are not used.
 
 ## Feedback
 
 - **QueryState.** One query's pending, error (with Retry), empty (title, hint,
-  action) and content states, so pages do not nest them by hand.
+  action) and content states, so pages do not nest them by hand. The content gets
+  the data as an accessor, so a refetch updates it in place. Once data has loaded,
+  a failed refetch keeps the content with a danger Notice and Retry above it; a
+  failed next page is reported by the LoadMore footer (`failed`), which retries
+  only that page. Without `pending`, nothing renders during the first load.
 - **EmptyState.** What is missing and the next step; may hold a CodeBlock or action.
-- **StatePanel.** A single loading, error or empty line for states a page computes
-  itself rather than from one query.
+  Also the state for something a page computes itself, such as no selected scope.
+- **ErrorState.** A failure with Retry; QueryState uses it.
 - **Notice.** `info`, `warning`, `danger` or `success`; inline or `variant="bar"`
   under the app bar; `onDismiss` adds a close control. Danger is announced as an
   alert, the rest as status.
@@ -152,10 +160,12 @@ There is one Select. Native `<select>` elements are not used.
 
 **AuthWindow** is the centered window for sign-in, invites, callbacks, Slack
 linking, CLI device approval, access screens and onboarding (`step` shows progress
-in the title strip). Its states: the form itself, **AuthWorking** (Progress and a
-message), **AuthSuccess** (result, optional redirect bar), **AuthError** (human
-message, folded technical details, next step) and **AuthMissing** (the link or code
-is missing or expired, and how to get a new one). `AuthTitle`, `AuthCopy`,
+in the title strip, with **Steps** in the window). Its states: the form itself,
+**AuthWorking** (Progress and a message), **AuthSuccess** (result, optional redirect
+bar), **AuthError** (human message, folded technical details from `errorDetails`,
+next step; without a title it sits inside a form) and **AuthMissing** (the link or
+code is missing or expired, and how to get a new one). The raw server message is
+only ever in the technical details. `AuthTitle`, `AuthCopy`,
 `AuthActions` and `AuthDivider` lay out the content.
 
 ## Shared behavior
@@ -167,7 +177,8 @@ is missing or expired, and how to get a new one). `AuthTitle`, `AuthCopy`,
 - `slugify` (`lib/slug.ts`) — identifiers from display names.
 - `errorMessage` (`lib/error.ts`) — the message for a failed request: a
   page-specific message for the error code, then the server message, then the
-  fallback. `authErrorMessage` maps sign-in failure codes.
+  fallback. `authErrorMessage` maps sign-in failure codes; `errorDetails` is the
+  code and server message for folded technical details.
 - `useMe`, `usePermission` (`lib/me.ts`) — the one account query and the
   owner/admin and permission checks.
 - `createRowActions` (`ui/rowActions.ts`) — busy and error state for per-row actions.

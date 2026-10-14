@@ -1,28 +1,28 @@
-import { slugify } from "../lib/slug";
 import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { useNavigate, useLocation } from "@solidjs/router";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
-import { errorMessage } from "../lib/error";
+import { createSignOut, onboardingSteps } from "../features/projects/onboarding";
+import { errorDetails, errorMessage } from "../lib/error";
 import { createOrganization } from "../lib/organizations";
-import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { AuthCopy, AuthError, AuthTitle, AuthWindow } from "../ui/AuthWindow";
+import { createDerivedSlug, Field, FormActions, SecretInput, SlugInput, TextInput } from "../ui/Field";
+import { Steps } from "../ui/Steps";
 import { ui } from "../ui/styles";
-
 
 export function OrganizationNew() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
-  const [slug, setSlug] = createSignal("");
+  const slug = createDerivedSlug(name);
   const [setupToken, setSetupToken] = createSignal("");
-  const [slugTouched, setSlugTouched] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<{ message: string; details: string | undefined } | null>(null);
   const me = useMe();
+  const signOut = createSignOut();
   const setupTokenRequired = createMemo(() => !!me.data?.setup_token_required);
-
 
   createEffect(() => {
     if (me.data?.access_required) navigate(withNext("/access-required", locationDestination(location)), { replace: true });
@@ -30,91 +30,54 @@ export function OrganizationNew() {
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    const nextName = name().trim();
-    const nextSlug = slug().trim();
-    const nextSetupToken = setupToken().trim();
-    if (!nextName || !nextSlug || (setupTokenRequired() && !nextSetupToken)) {
-      setError(setupTokenRequired() ? "Name, slug, and setup token are required." : "Name and slug are required.");
-      return;
-    }
     setSubmitting(true);
     setError(null);
     try {
+      const token = setupToken().trim();
       await createOrganization({
-        name: nextName,
-        slug: nextSlug,
-        ...(nextSetupToken ? { setup_token: nextSetupToken } : {}),
+        name: name().trim(),
+        slug: slug.value().trim(),
+        ...(token ? { setup_token: token } : {}),
       });
       await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       navigate(locationDestination(location), { replace: true });
     } catch (e) {
-      setError(errorMessage(e));
+      setError({ message: errorMessage(e, "The organization could not be created. Try again."), details: errorDetails(e) });
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <AuthWindow>
+    <AuthWindow step="Step 1 of 2">
       <AuthTitle>Create your organization</AuthTitle>
-      <AuthCopy>
-        Organizations own members, projects, environments, credentials, and Sessions.
-      </AuthCopy>
+      <div class={ui.windowStack}>
+        <Steps label="Setup steps" steps={onboardingSteps("organization")} />
+        <AuthCopy>Organizations own members, projects, environments, credentials, and Sessions.</AuthCopy>
+      </div>
       <form onSubmit={submit}>
-        <label class={ui.field}>
-          <span>Name</span>
-          <input
-            type="text"
-            class={ui.input}
-            value={name()}
-            onInput={(event) => {
-              setName(event.currentTarget.value);
-              if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
-            }}
-            placeholder="Acme"
-            autocomplete="organization"
-            autofocus
-          />
-        </label>
-        <label class={ui.field}>
-          <span>Slug</span>
-          <input
-            type="text"
-            class={ui.input}
-            value={slug()}
-            onInput={(event) => {
-              setSlugTouched(true);
-              setSlug(event.currentTarget.value);
-            }}
-            placeholder="acme"
-            autocomplete="off"
-            spellcheck={false}
-          />
-        </label>
+        <Field label="Name">
+          <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder="Acme" autocomplete="organization" autofocus />
+        </Field>
+        <Field label="Slug">
+          <SlugInput slug={slug} placeholder="acme" />
+        </Field>
         <Show when={setupTokenRequired()}>
-          <label class={ui.field}>
-            <span>Setup token</span>
-            <input
-              type="password"
-              class={ui.input}
-              value={setupToken()}
-              onInput={(event) => setSetupToken(event.currentTarget.value)}
-              placeholder="Setup token"
-              autocomplete="off"
-            />
-          </label>
+          <Field label="Setup token">
+            <SecretInput value={setupToken()} onInput={(event) => setSetupToken(event.currentTarget.value)} placeholder="Setup token" />
+          </Field>
         </Show>
-        <Show when={error()}>
-          <p class={ui.fieldError} role="alert">{error()}</p>
-        </Show>
-        <button
-          class={ui.button}
-          type="submit"
-          disabled={me.isPending || submitting() || !name().trim() || !slug().trim() || (setupTokenRequired() && !setupToken().trim())}
-        >
-          {submitting() ? "Creating..." : "Create organization"}
-        </button>
+        <Show when={error() ?? signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+        <FormActions
+          submitLabel="Create organization"
+          busyLabel="Creating..."
+          busy={submitting()}
+          disabled={signOut.busy() || me.isPending || !name().trim() || !slug.value().trim() || (setupTokenRequired() && !setupToken().trim())}
+          cancelLabel={signOut.label()}
+          cancelDisabled={signOut.busy()}
+          onCancel={() => void signOut.run()}
+        />
       </form>
     </AuthWindow>
   );

@@ -1,5 +1,6 @@
 import { A, useLocation } from "@solidjs/router";
 import type { JSX } from "solid-js";
+import { Page } from "../ui/Page";
 import { cx, ui } from "../ui/styles";
 
 type NavLink = { href: string; label: string };
@@ -27,7 +28,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
   const location = useLocation();
 
   return (
-    <section class={"mx-auto grid w-full max-w-310 grid-cols-[190px_minmax(0,1fr)] items-start gap-5 px-5 pb-12 pt-10 max-[960px]:grid-cols-1 max-[960px]:gap-4"}>
+    <Page class="grid grid-cols-[190px_minmax(0,1fr)] items-start gap-5 max-[960px]:grid-cols-1 max-[960px]:gap-4">
       <aside class={"sticky top-13 flex flex-col gap-3.5 max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:border max-[960px]:border-console-border max-[960px]:bg-console-surface max-[960px]:p-1.5"} aria-label="Settings sections">
         {SETTINGS_NAV.map((group) => (
           <div class={"flex flex-col gap-px max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-1"}>
@@ -47,6 +48,6 @@ export function SettingsLayout(props: { children: JSX.Element }) {
         ))}
       </aside>
       <div class={"min-w-0"}>{props.children}</div>
-    </section>
+    </Page>
   );
 }

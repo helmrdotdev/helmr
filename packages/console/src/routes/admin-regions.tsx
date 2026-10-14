@@ -2,124 +2,108 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { errorMessage } from "../lib/error";
 import { createAdminRegion, listAdminRegions, updateAdminRegion, type AdminRegion } from "../lib/admin";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, RowActions } from "../ui/DataTable";
+import { FormDialog } from "../ui/Dialog";
+import { Field, TextInput } from "../ui/Field";
 import { IDText } from "../ui/IDText";
-import { Dialog } from "../ui/Dialog";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { StatePanel } from "../ui/StatePanel";
+import { QueryState } from "../ui/QueryState";
 import { ui } from "../ui/styles";
 
+// Create (no region) or edit one Region. The ID is fixed once created.
+function RegionDialog(props: { region: AdminRegion | null; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [id, setID] = createSignal(props.region?.id ?? "");
+  const [displayName, setDisplayName] = createSignal(props.region?.display_name ?? "");
+  const [location, setLocation] = createSignal(props.region?.location ?? "");
+  const [submitting, setSubmitting] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const input = { display_name: displayName().trim(), location: location().trim() };
+      if (props.region) await updateAdminRegion(props.region.id, input);
+      else await createAdminRegion({ id: id().trim(), ...input });
+      await props.onSaved();
+      props.onClose();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      title={props.region ? `Edit ${props.region.id}` : "New Region"}
+      submitLabel={props.region ? "Save" : "Create"}
+      busyLabel={props.region ? "Saving..." : "Creating..."}
+      busy={submitting()}
+      disabled={!id().trim() || !displayName().trim()}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
+    >
+      <Show when={!props.region}>
+        <Field label="ID">
+          <TextInput class="font-mono" value={id()} onInput={(event) => setID(event.currentTarget.value)} placeholder="us-east-1" autocomplete="off" spellcheck={false} required autofocus />
+        </Field>
+      </Show>
+      <Field label="Display name">
+        <TextInput value={displayName()} onInput={(event) => setDisplayName(event.currentTarget.value)} placeholder="US East" required autofocus={!!props.region} />
+      </Field>
+      <Field label="Location">
+        <TextInput value={location()} onInput={(event) => setLocation(event.currentTarget.value)} placeholder="Virginia, USA" />
+      </Field>
+    </FormDialog>
+  );
+}
 
 export function AdminRegions() {
   const queryClient = useQueryClient();
   const regions = createQuery(() => ({ queryKey: ["admin", "regions"], queryFn: listAdminRegions, retry: false }));
-  const [creating, setCreating] = createSignal(false);
-  const [editing, setEditing] = createSignal<AdminRegion | null>(null);
-  const [submitting, setSubmitting] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  const [dialog, setDialog] = createSignal<{ region: AdminRegion | null } | null>(null);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin", "regions"] });
 
-  async function submitCreate(event: SubmitEvent) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await createAdminRegion({
-        id: String(form.get("id") ?? "").trim(),
-        display_name: String(form.get("display_name") ?? "").trim(),
-        location: String(form.get("location") ?? "").trim(),
-      });
-      await refresh();
-      setCreating(false);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitEdit(event: SubmitEvent) {
-    event.preventDefault();
-    const current = editing();
-    if (!current) return;
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await updateAdminRegion(current.id, {
-        display_name: String(form.get("display_name") ?? "").trim(),
-        location: String(form.get("location") ?? "").trim(),
-      });
-      await refresh();
-      setEditing(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
-    <div class={ui.page}>
+    <Page>
       <PageHeader
         title="Regions"
         subtitle="Logical placement domains available to projects and Worker Groups."
-        actions={<button type="button" class={ui.button} onClick={() => { setError(null); setCreating(true); }}>New Region</button>}
+        actions={<button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>New Region</button>}
       />
-      <Show when={!regions.isPending} fallback={<StatePanel loading="Loading Regions..." />}>
-        <Show when={!regions.isError} fallback={<StatePanel error="Could not load Regions." />}>
-          <Show
-            when={(regions.data?.regions.length ?? 0) > 0}
-            fallback={
-              <StatePanel empty="No Regions configured.">
-                <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Region</button>
-              </StatePanel>
-            }
-          >
-            <DataTable columns={["Region", "ID", "Location", { label: "Actions", srOnly: true }]}>
-              <For each={regions.data?.regions ?? []}>
-                {(region) => (
-                  <tr>
-                    <td><strong class="font-medium text-console-text">{region.display_name}</strong></td>
-                    <td><IDText value={region.id} /></td>
-                    <td>{region.location || <span class="text-console-faint">—</span>}</td>
-                    <td class={ui.actionsCell}><button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(region); }}>Edit</button></td>
-                  </tr>
-                )}
-              </For>
-            </DataTable>
-          </Show>
-        </Show>
-      </Show>
+      <QueryState
+        query={regions}
+        pending="Loading Regions..."
+        error={(error) => errorMessage(error, "Could not load Regions.")}
+        empty={{
+          when: (data) => data.regions.length === 0,
+          title: "No Regions configured.",
+          action: <button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>Create Region</button>,
+        }}
+      >
+        {(data) => (
+          <DataTable columns={["Region", "ID", "Location", { label: "Actions", srOnly: true }]}>
+            <For each={data().regions}>
+              {(region) => (
+                <tr>
+                  <td><strong class="font-medium text-console-text">{region.display_name}</strong></td>
+                  <td><IDText value={region.id} /></td>
+                  <td><Show when={region.location} fallback={<EmptyCell />}>{region.location}</Show></td>
+                  <RowActions label={`Actions for ${region.display_name}`} items={[{ label: "Edit", onSelect: () => setDialog({ region }) }]} />
+                </tr>
+              )}
+            </For>
+          </DataTable>
+        )}
+      </QueryState>
 
-      <Show when={creating()}>
-        <Dialog title="New Region" onClose={() => setCreating(false)} closeDisabled={submitting()}>
-          <form onSubmit={submitCreate}>
-            <RegionField name="id" label="ID" placeholder="us-east-1" autofocus />
-            <RegionField name="display_name" label="Display name" placeholder="US East" />
-            <RegionField name="location" label="Location" placeholder="Virginia, USA" />
-            <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
-            <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
-          </form>
-        </Dialog>
+      <Show when={dialog()}>
+        {(current) => <RegionDialog region={current().region} onClose={() => setDialog(null)} onSaved={refresh} />}
       </Show>
-
-      <Show when={editing()}>{(region) => (
-        <Dialog title={`Edit ${region().id}`} onClose={() => setEditing(null)} closeDisabled={submitting()}>
-          <form onSubmit={submitEdit}>
-            <RegionField name="display_name" label="Display name" value={region().display_name} autofocus />
-            <RegionField name="location" label="Location" value={region().location} />
-            <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
-            <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Saving..." : "Save"}</button></div>
-          </form>
-        </Dialog>
-      )}</Show>
-    </div>
+    </Page>
   );
-}
-
-function RegionField(props: { name: string; label: string; value?: string; placeholder?: string; autofocus?: boolean }) {
-  return <label class={ui.field}><span>{props.label}</span><input class={ui.input} name={props.name} value={props.value ?? ""} placeholder={props.placeholder} autofocus={props.autofocus} required={props.name !== "location"} /></label>;
 }

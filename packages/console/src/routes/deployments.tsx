@@ -1,5 +1,4 @@
 import { useMe } from "../lib/me";
-import { A } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -9,14 +8,14 @@ import { errorMessage } from "../lib/error";
 import { hasPermission } from "../lib/auth";
 import { getCurrentDeployment, listDeployments, type Deployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
-import { ActionMenu } from "../ui/ActionMenu";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
+import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { cx } from "../ui/styles";
 
 const deploymentsErrorMessage = (error: unknown) =>
   errorMessage(error, "Could not load Deployments.", { forbidden: "You do not have permission to view Deployments." });
@@ -31,25 +30,19 @@ function DeploymentRow(props: {
   return (
     <tr class={cx(props.current && "bg-console-accent-soft/40")}>
       <td style={props.current ? { "box-shadow": `inset 3px 0 0 ${props.environmentColor}` } : undefined}>
-        <A href={deploymentHref(props.deployment.id)} class="font-medium text-console-text hover:text-console-accent">
-          {props.deployment.version}
-        </A>
+        <PrimaryLink href={deploymentHref(props.deployment.id)}>{props.deployment.version}</PrimaryLink>
       </td>
       <td>
-        <Show when={props.current} fallback={<span class="text-console-faint">—</span>}>
+        <Show when={props.current} fallback={<EmptyCell />}>
           <StatusBadge resource="deployment" status="current" />
         </Show>
       </td>
       <td><IDText value={props.deployment.bundle_digest} /></td>
       <td><RelativeTime value={props.deployment.created_at} /></td>
-      <td class={ui.actionsCell}>
-        <Show when={props.canPromote}>
-          <ActionMenu
-            label={`Actions for ${props.deployment.version}`}
-            items={[{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }]}
-          />
-        </Show>
-      </td>
+      <RowActions
+        label={`Actions for ${props.deployment.version}`}
+        items={props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []}
+      />
     </tr>
   );
 }
@@ -86,22 +79,27 @@ export function Deployments() {
   const [promoting, setPromoting] = createSignal<Deployment | null>(null);
 
   return (
-    <section class={ui.page}>
+    <Page>
       <PageHeader
         title="Deployments"
         subtitle="Immutable bundles deployed to the selected environment. Promotion changes which Deployment is current."
       />
-
-      <Show when={deployments.isError}>
-        <StatePanel error={deploymentsErrorMessage(deployments.error)} />
-      </Show>
-
-      <Show when={!deployments.isPending} fallback={<StatePanel loading="Loading Deployments..." />}>
-        <Show
-          when={items().length > 0}
-          fallback={<StatePanel empty="No Deployments yet." hint={<>Run <code>helmr deploy</code> against this environment to create the first one.</>} />}
-        >
-          <DataTable columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-180">
+      <QueryState
+        query={deployments}
+        pending="Loading Deployments..."
+        error={deploymentsErrorMessage}
+        empty={{
+          when: (data) => data.pages.every((page) => page.deployments.length === 0),
+          title: "No Deployments yet.",
+          hint: <>Run <code>helmr deploy</code> against this environment to create the first one.</>,
+        }}
+      >
+        {() => (
+          <DataTable
+            columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]}
+            minWidth="min-w-180"
+            footer={<LoadMore count={items().length} noun="Deployments" hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
+          >
             <For each={items()}>
               {(deployment) => (
                 <DeploymentRow
@@ -118,20 +116,8 @@ export function Deployments() {
               )}
             </For>
           </DataTable>
-          <Show when={deployments.hasNextPage}>
-            <div class={ui.actionRow}>
-              <button
-                type="button"
-                class={ui.secondaryButton}
-                disabled={deployments.isFetchingNextPage}
-                onClick={() => void deployments.fetchNextPage()}
-              >
-                {deployments.isFetchingNextPage ? "Loading..." : "Load more"}
-              </button>
-            </div>
-          </Show>
-        </Show>
-      </Show>
+        )}
+      </QueryState>
 
       <Show when={promoting()}>
         {(deployment) => (
@@ -139,11 +125,11 @@ export function Deployments() {
             deployment={deployment()}
             projectID={projectID()}
             environmentID={environmentID()}
-            environmentName={scope.selectedEnvironment()?.name}
+            environment={scope.selectedEnvironment()}
             onClose={() => setPromoting(null)}
           />
         )}
       </Show>
-    </section>
+    </Page>
   );
 }
