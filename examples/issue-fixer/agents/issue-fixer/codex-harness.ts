@@ -1,7 +1,7 @@
 import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
 import { MessageRejected } from "@helmr/sdk"
 import { z } from "zod"
-import type { Json, Turn } from "@helmr/sdk"
+import type { JsonValue, Turn } from "@helmr/sdk"
 import { CodexStdio, CodexRequestRejected, spawnCodex, type NativeMessage } from "./codex-stdio"
 import { nativeText, steeringText } from "./native-content"
 import type { HumanContent } from "@helmr/sdk"
@@ -320,8 +320,8 @@ export class CodexHarness {
     operation.requests.set(key, cancel)
     const signal = AbortSignal.any([operation.turn.signal, operation.abort.signal, cancel.signal])
     try {
-      const action = JSON.parse(JSON.stringify({ provider: "codex", nativeRequestId: message.id, method: message.method, params })) as Json
-      let result: Json
+      const action = JSON.parse(JSON.stringify({ provider: "codex", nativeRequestId: message.id, method: message.method, params })) as JsonValue
+      let result: JsonValue
       if (message.method === "item/tool/requestUserInput") {
         let questions
         try { questions = nativeQuestions("codex", params.questions) }

@@ -1505,6 +1505,8 @@ CREATE INDEX turns_queue ON turns(environment_id, session_id, seq) WHERE status=
 
 CREATE INDEX turns_deadlines ON turns(deadline_at, environment_id, session_id) WHERE status IN ('running', 'finalizing') AND deadline_at IS NOT NULL;
 
+CREATE INDEX turns_failed ON turns(environment_id, terminal_at) WHERE status='failed';
+
 -- One scheduled instant of an Agent's trigger, across every activation and
 -- deployment: the identity is (agent, key, scheduled_at).
 CREATE TABLE trigger_occurrences (

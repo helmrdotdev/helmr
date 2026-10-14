@@ -1,6 +1,6 @@
 import { fixtureValue } from "../../support/runtime-mcp"
 import { setTimeout as sleep } from "node:timers/promises"
-import { image, agent, template, type Json } from "@helmr/sdk"
+import { image, agent, template, type JsonValue } from "@helmr/sdk"
 import { appendFile, readFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -21,7 +21,7 @@ const payload = z.object({
 export const faultProbe = agent({
   id: "fault-probe",
   template: faultProbeComputer, maxTurnDuration: "35m",
-  turn: async (turn, ctx): Promise<Json> => {
+  turn: async (turn, ctx): Promise<JsonValue> => {
     const input = payload.parse(fixtureValue(turn.input))
     await appendFile(
       "fault-probe-turns.log",

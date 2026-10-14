@@ -47,7 +47,7 @@ Types exported from `@helmr/sdk`, grouped by area:
 
 | Area | Types |
 | --- | --- |
-| Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `Json`, `JsonValue`, `MaybePromise` |
+| Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `JsonValue`, `MaybePromise` |
 | Turn handler | `Turn`, `InitContext`, `AgentContext`, `RuntimeMcpConnectionOptions`, `InputSource`, `Message`, `MessageSource`, `SlackInputSource`, `OutputReceipt`, `TurnOutcome` |
 | Content | `ContentPart`, `Content`, `HumanContent`, `InputPart`, `InputContent` |
 | Questions | `ChoiceOption`, `TextQuestion`, `ChoiceQuestion`, `AnswerSubmission`, `Question`, `ChoiceAnswer`, `AnswerFor`, `AskAnswer`, `AskState`, `AskAnswerReceipt`, `AskQuery`, `AskPage`, `TurnAsks` |
@@ -55,7 +55,7 @@ Types exported from `@helmr/sdk`, grouped by area:
 | Agents | `ClientAgentsApi`, `SessionCreateRequest`, `SessionCreateReceipt`, `ClientAgentsApi`, `AgentGetQuery`, `AgentListQuery`, `AgentListItem`, `AgentInfo`, `AgentPage` |
 | Sessions and Turns | `ClientSessionsApi`, `SessionRef`, `SessionListQuery`, `Session`, `SessionStatus`, `SessionHold`, `SessionOperationOptions`, `SessionCreateReceipt`, `SessionMessageReceipt`, `SessionCloseReceipt`, `SessionCancelReceipt`, `SessionInterruptReceipt`, `SessionResumeRequest`, `SessionResumeReceipt`, `SessionEvent`, `SessionEventKind`, `SessionEventPage`, `SessionEventQuery`, `MessageReceipt`, `TurnRef`, `TurnState`, `TurnStatus`, `TurnListQuery`, `TurnWaitOptions`, `TimedTurnWaitResult` |
 | Computers | `ClientComputersApi`, `ComputerRef`, `ComputerRef`, `Computer`, `ComputerStatus`, `ComputerResidency`, `ComputerListItem`, `ComputerListQuery`, `ComputerCreateRequest`, `ComputerDeleteRequest`, `ComputerDeleteReceipt`, `ComputerCommandRequest`, `ComputerUsageQuery`, `ComputerUsage`, `ClientTemplatesApi`, `TemplateInfo`, `TemplateListItem`, `TemplateListQuery`, `TemplatePage`, `TemplateGetQuery`, `ImageBuilder`, `SourceDirectory`, `SourceFile` |
-| Commands | `CommandRef`, `CommandInfo`, `CommandOutcome`, `CommandWaitOptions`, `TimedCommandWaitResult`, `CancelReceipt`, `CommandLogQuery`, `CommandLogStreamQuery`, `CommandLogRecord`, `CommandLogReadPage` |
+| Commands | `CommandRef`, `CommandInfo`, `CommandOutcome`, `CommandWaitOptions`, `TimedCommandWaitResult`, `CommandCancelReceipt`, `CommandLogQuery`, `CommandLogStreamQuery`, `CommandLogRecord`, `CommandLogReadPage` |
 | Deployments | `ClientDeploymentsApi`, `Deployment`, `DeploymentListItem`, `DeploymentListQuery` |
 | Triggers | `ClientTriggersApi`, `Trigger`, `TriggerListQuery` |
 | Secrets | `ClientSecretsApi`, `SecretRef`, `Secret`, `SecretStatus`, `SecretCreateRequest`, `SecretListQuery`, `SecretRotateRequest`, `SecretRevokeRequest` |

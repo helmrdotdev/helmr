@@ -8,7 +8,8 @@ import { ContentError, normalizeContent, normalizeInput, normalizeInvocation, ty
 import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { AgentContext, Json, OutputReceipt, InitContext, Message, MessageSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentContext, OutputReceipt, InitContext, Message, MessageSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 
@@ -16,7 +17,7 @@ export interface AdmittedTurn {
   readonly id: string
   readonly sequence: number
   readonly createdAt: string
-  readonly input: Json
+  readonly input: JsonValue
   readonly source: Turn["source"]
 }
 interface AskRegistration {
@@ -44,7 +45,7 @@ export interface SessionDriver {
   respond(turnId: string, responseId: string, value: Content): Promise<void>
   // Attest joined authored work under the current guest authority.
   confirmDrain(turnId: string): Promise<void>
-  finalize(turnId: string, result: Json): Promise<TurnOutcome>
+  finalize(turnId: string, result: JsonValue): Promise<TurnOutcome>
   fail(turnId: string, error: { code: string; message: string }): Promise<TurnOutcome>
   hold(reason: string): Promise<void>
 }
@@ -64,7 +65,7 @@ interface Execution {
   signal: AbortSignal
   phase: "processing" | "draining" | "finalizing" | "settling_failure" | "terminal"
   promise: Promise<TurnOutcome>
-  handler?: Promise<Json>
+  handler?: Promise<JsonValue>
   cancellation: CancellationHook[]
   cancellationFailure?: Error
   cancellationClosed: boolean
@@ -76,7 +77,7 @@ interface Execution {
   messageHandler?: (message: Message) => unknown
   callback?: Promise<void> | undefined
   messages: Map<string, { fingerprint: string; promise: Promise<void> }>
-  result?: Json
+  result?: JsonValue
   failure?: { code: string; message: string }
   settlement?: Promise<TurnOutcome> | undefined
   outcome?: TurnOutcome
@@ -253,7 +254,7 @@ export class SessionRuntime {
   }
 
   private async execute(execution: Execution): Promise<TurnOutcome> {
-    let result: Json
+    let result: JsonValue
     let context: AgentContext<unknown>
     try { context = await this.initialize() }
     catch (error) {

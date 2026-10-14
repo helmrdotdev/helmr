@@ -1,4 +1,4 @@
-import type { CommandInfo, Computer, Duration, Retention, Message, TurnOutcome, SessionEvent, SessionRef, ComputerRef } from "./index"
+import type { CommandCancelReceipt, CommandRef, CommandInfo, Computer, Duration, Retention, Message, TurnOutcome, SessionEvent, SessionRef, ComputerRef } from "./index"
 import { isHelmrError, ContentError } from "./index"
 
 export function lifecycleTypes(outcome: TurnOutcome<{ count: number }>, command: CommandInfo, computer: Computer, event: SessionEvent, message: Message, error: unknown, session: SessionRef, ref: ComputerRef) {
@@ -36,3 +36,7 @@ const invalid: Duration = "soon"
 // @ts-expect-error a schedule starts a Turn; it cannot send a live message
 const source: Message["source"] = { kind: "schedule" }
 void retention; void duration; void invalid; void source
+
+export function commandCancellation(command: CommandRef): Promise<CommandCancelReceipt> {
+  return command.cancel()
+}

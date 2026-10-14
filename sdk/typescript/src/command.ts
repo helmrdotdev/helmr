@@ -32,7 +32,7 @@ export type CommandInfo = Readonly<{ id: string; computerId: string; processReco
   | Readonly<{ status: "failed" | "lost"; outcome: Extract<CommandOutcome, { kind: "system_failed" }> }>
 )
 
-export interface CancelReceipt {
+export interface CommandCancelReceipt {
   readonly id: string
   readonly targetId: string
   readonly status: "accepted"
@@ -44,14 +44,14 @@ export interface CommandRef {
     list(query?: CommandLogQuery, options?: RequestOptions): Promise<CommandLogReadPage>
     stream(query?: CommandLogStreamQuery, options?: RequestOptions): AsyncIterable<CommandLogRecord>
   }>
-  cancel(options?: RequestOptions): Promise<CancelReceipt>
+  cancel(options?: RequestOptions): Promise<CommandCancelReceipt>
   get(options?: RequestOptions): Promise<CommandInfo>
   wait(options: CommandWaitOptions & { readonly timeout: Duration }): Promise<TimedCommandWaitResult>
   wait(options?: CommandWaitOptions & { readonly timeout?: undefined }): Promise<CommandOutcome>
   wait(options: CommandWaitOptions): Promise<CommandOutcome | TimedCommandWaitResult>
 }
 
-export function parseCancelReceipt(value: unknown, expectedId: string): CancelReceipt {
+export function parseCancelReceipt(value: unknown, expectedId: string): CommandCancelReceipt {
   const raw = object(value, "Cancel receipt")
   const id = resourceID(raw["id"], "Cancel receipt.id")
   const targetId = resourceID(raw["target_id"], "Cancel receipt.target_id")

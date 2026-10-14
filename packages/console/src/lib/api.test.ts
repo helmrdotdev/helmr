@@ -38,7 +38,7 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
 test("decodes the common api error envelope", async () => {
   (globalThis as { window?: unknown }).window = {
     location: {
-      pathname: "/settings/projects",
+      pathname: "/settings/project",
       search: "",
       href: "",
     },

@@ -1,9 +1,9 @@
 import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
-import type { InputContent, Json, TurnOutcome } from "@helmr/sdk"
+import type { InputContent, JsonValue, TurnOutcome } from "@helmr/sdk"
 
 // Fixture commands serialize their own data into the platform's text contract.
-export function fixtureInput(value: Json): InputContent { return [{ type: "text", text: JSON.stringify(value) }] }
-export function fixtureValue(input: InputContent): Json { return JSON.parse(input.map(part => part.text).join("")) as Json }
+export function fixtureInput(value: JsonValue): InputContent { return [{ type: "text", text: JSON.stringify(value) }] }
+export function fixtureValue(input: InputContent): JsonValue { return JSON.parse(input.map(part => part.text).join("")) as JsonValue }
 
 export async function callMcp<T>(mcp: RuntimeMcpConnectionOptions, signal: AbortSignal, name: string, args: object): Promise<T> {
   const response = await fetch(mcp.url, { method: "POST", signal,

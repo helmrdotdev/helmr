@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { Json, Turn, Question, ChoiceAnswer } from "@helmr/sdk"
+import type { JsonValue, Turn, Question, ChoiceAnswer } from "@helmr/sdk"
 import { validateQuestion } from "@helmr/sdk"
 
 const option = z.object({ label: z.string().min(1), description: z.string() }).strict()
@@ -44,7 +44,7 @@ export function nativeQuestions(provider: "codex" | "claude", input: unknown): N
         previews[id] = value.preview
         previewText.push(`${value.label} — preview:\n${value.preview}`)
       }
-      return { id, label: value.label, description: value.description, value: value.label as Json }
+      return { id, label: value.label, description: value.description, value: value.label as JsonValue }
     })
     if (provider === "codex" && choices.length) {
       if ("isOther" in source && source.isOther) choices.push({ id: "native-other", label: "None of the above", description: "Optionally add details in notes.", value: "None of the above" })
@@ -91,7 +91,7 @@ export async function askNativeQuestions(turn: Turn, questions: NativeQuestion[]
   } finally { siblings.abort(); await Promise.allSettled(jobs) }
 }
 
-export async function askNativeApproval(turn: Turn, action: Json, signal: AbortSignal): Promise<boolean> {
+export async function askNativeApproval(turn: Turn, action: JsonValue, signal: AbortSignal): Promise<boolean> {
   const { answer } = await turn.ask({
     prompt: [{ type: "text", text: "Allow this operation once?" }, { type: "json", value: action }],
     type: "choice", options: [

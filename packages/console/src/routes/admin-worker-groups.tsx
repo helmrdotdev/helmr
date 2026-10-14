@@ -1,5 +1,6 @@
+import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import {
   createAdminWorkerGroup,
   listAdminRegions,
@@ -7,20 +8,108 @@ import {
   rotateAdminWorkerGroupToken,
   transitionAdminWorkerGroup,
   updateAdminWorkerGroup,
+  type AdminRegion,
   type AdminWorkerGroup,
-  type CreateAdminWorkerGroupInput,
 } from "../lib/admin";
-import { ApiError } from "../lib/api";
-import { DataTable } from "../ui/DataTable";
+import { errorMessage } from "../lib/error";
+import { DataTable, RowActions, RowError } from "../ui/DataTable";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { FormDialog, RevealDialog } from "../ui/Dialog";
+import { Field, TextArea, TextInput } from "../ui/Field";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { StatePanel } from "../ui/StatePanel";
+import { QueryState } from "../ui/QueryState";
+import { createRowActions } from "../ui/rowActions";
+import { Select } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Something went wrong.";
+type Transition = "pause" | "activate" | "drain" | "disable";
+
+function CreateWorkerGroupDialog(props: { regions: AdminRegion[]; onClose: () => void; onCreated: (enrollmentToken: string) => Promise<void> }) {
+  const [regionID, setRegionID] = createSignal(props.regions[0]?.id ?? "");
+  const [name, setName] = createSignal("");
+  const [description, setDescription] = createSignal("");
+  const [submitting, setSubmitting] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await createAdminWorkerGroup({ region_id: regionID(), name: name().trim(), description: description().trim() });
+      await props.onCreated(created.enrollment_token);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      title="New worker group"
+      submitLabel="Create"
+      busyLabel="Creating..."
+      busy={submitting()}
+      disabled={!regionID() || !name().trim()}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
+    >
+      <Field label="Region">
+        <Select
+          value={regionID()}
+          options={props.regions.map((region) => ({ value: region.id, label: `${region.display_name} (${region.id})` }))}
+          onChange={setRegionID}
+          minWidth="100%"
+        />
+      </Field>
+      <Field label="Name">
+        <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder="default" required autofocus />
+      </Field>
+      <Field label="Description">
+        <TextArea value={description()} onInput={(event) => setDescription(event.currentTarget.value)} />
+      </Field>
+    </FormDialog>
+  );
+}
+
+function EditWorkerGroupDialog(props: { group: AdminWorkerGroup; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [description, setDescription] = createSignal(props.group.description);
+  const [submitting, setSubmitting] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updateAdminWorkerGroup(props.group.id, description().trim());
+      await props.onSaved();
+      props.onClose();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      title={`Edit ${props.group.name}`}
+      submitLabel="Save"
+      busyLabel="Saving..."
+      busy={submitting()}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
+    >
+      <Field label="Description">
+        <TextArea value={description()} onInput={(event) => setDescription(event.currentTarget.value)} autofocus />
+      </Field>
+    </FormDialog>
+  );
 }
 
 export function AdminWorkerGroups() {
@@ -32,147 +121,105 @@ export function AdminWorkerGroups() {
     queryFn: () => listAdminWorkerGroups(regionFilter()),
     retry: false,
   }));
+  const regionList = createMemo(() => regions.data?.regions ?? []);
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<AdminWorkerGroup | null>(null);
-  const [submitting, setSubmitting] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
   const [enrollmentToken, setEnrollmentToken] = createSignal<string | null>(null);
+  const rows = createRowActions<Transition | "rotate">();
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin", "worker-groups"] });
 
-  async function submitCreate(event: SubmitEvent) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    const input: CreateAdminWorkerGroupInput = {
-      region_id: String(form.get("region_id") ?? ""),
-      name: String(form.get("name") ?? "").trim(),
-      description: String(form.get("description") ?? "").trim(),
-    };
-    setSubmitting(true);
-    setError(null);
-    try {
-      const created = await createAdminWorkerGroup(input);
-      await refresh();
-      setCreating(false);
-      setEnrollmentToken(created.enrollment_token);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitEdit(event: SubmitEvent) {
-    event.preventDefault();
-    const current = editing();
-    if (!current) return;
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await updateAdminWorkerGroup(current.id, String(form.get("description") ?? "").trim());
-      await refresh();
-      setEditing(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function transition(group: AdminWorkerGroup, action: "pause" | "activate" | "drain" | "disable") {
-    setSubmitting(true);
-    setError(null);
-    try {
+  const transition = (group: AdminWorkerGroup, action: Transition) =>
+    void rows.run(group.id, action, async () => {
       await transitionAdminWorkerGroup(group, action);
       await refresh();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
+    }, (cause) => errorMessage(cause));
 
-  async function rotateToken(group: AdminWorkerGroup) {
-    setSubmitting(true);
-    setError(null);
-    try {
+  const rotateToken = (group: AdminWorkerGroup) =>
+    void rows.run(group.id, "rotate", async () => {
       const rotated = await rotateAdminWorkerGroupToken(group.id);
       setEnrollmentToken(rotated.enrollment_token);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setSubmitting(false);
-    }
-  }
+    }, (cause) => errorMessage(cause));
+
+  const actions = (group: AdminWorkerGroup): ActionMenuItem[] => {
+    const busy = rows.busy(group.id);
+    const items: ActionMenuItem[] = [{ label: "Edit", disabled: busy, onSelect: () => setEditing(group) }];
+    if (group.status === "active") items.push({ label: "Pause", disabled: busy, onSelect: () => transition(group, "pause") });
+    if (group.status === "paused") items.push({ label: "Activate", disabled: busy, onSelect: () => transition(group, "activate") });
+    if (group.status === "active" || group.status === "paused") items.push({ label: "Drain", disabled: busy, onSelect: () => transition(group, "drain") });
+    items.push({ label: "Rotate token", disabled: busy, onSelect: () => rotateToken(group) });
+    if (group.status === "draining") items.push({ label: "Disable", disabled: busy, tone: "danger", onSelect: () => transition(group, "disable") });
+    return items;
+  };
 
   return (
-    <div class={ui.page}>
+    <Page>
       <PageHeader
-        title="Worker Groups"
-        subtitle="Execution fleets, routing, and Worker enrollment."
-        actions={<button type="button" class={ui.button} disabled={(regions.data?.regions.length ?? 0) === 0} onClick={() => { setError(null); setCreating(true); }}>New Worker Group</button>}
+        title="Worker groups"
+        subtitle="Execution fleets, routing, and worker enrollment."
+        actions={<button type="button" class={ui.button} disabled={regionList().length === 0} onClick={() => setCreating(true)}>New worker group</button>}
       />
-      <div class={ui.toolbar}>
-        <label class={ui.filterField}>Region <select class={ui.input} value={regionFilter()} onChange={(event) => setRegionFilter(event.currentTarget.value)}><option value="">All</option><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name}</option>}</For></select></label>
-      </div>
-      <Show when={error()}>{(message) => <StatePanel error={message()} />}</Show>
-      <Show when={!groups.isPending} fallback={<StatePanel loading="Loading Worker Groups..." />}>
-        <Show when={!groups.isError} fallback={<StatePanel error="Could not load Worker Groups." />}>
-          <Show
-            when={(groups.data?.worker_groups.length ?? 0) > 0}
-            fallback={
-              <StatePanel empty="No Worker Groups configured.">
-                <Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<a href="/admin/regions" class="text-console-accent">Create a Region first</a>}>
-                  <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button>
-                </Show>
-              </StatePanel>
-            }
-          >
-            <DataTable columns={["Worker Group", "ID", "Region", "Status", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
-              <For each={groups.data?.worker_groups ?? []}>
-                {(group) => (
+      <Toolbar
+        start={
+          <Select
+            value={regionFilter()}
+            options={[{ value: "", label: "All regions" }, ...regionList().map((region) => ({ value: region.id, label: region.display_name }))]}
+            onChange={setRegionFilter}
+            ariaLabel="Filter by region"
+            minWidth="160px"
+          />
+        }
+      />
+      <QueryState
+        query={groups}
+        pending="Loading worker groups..."
+        error={(error) => errorMessage(error, "Could not load worker groups.")}
+        empty={{
+          when: (data) => data.worker_groups.length === 0,
+          title: "No worker groups configured.",
+          action: (
+            <Show when={regionList().length > 0} fallback={<A href="/admin/regions" class={ui.secondaryButton}>Create a region first</A>}>
+              <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create worker group</button>
+            </Show>
+          ),
+        }}
+      >
+        {(data) => (
+          <DataTable columns={["Worker group", "Status", "ID", "Region", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
+            <For each={data().worker_groups}>
+              {(group) => (
+                <>
                   <tr>
                     <td><strong class="font-medium text-console-text">{group.name}</strong></td>
+                    <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td><IDText value={group.id} /></td>
                     <td><code>{group.region_id}</code></td>
-                    <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td>{group.claim_version}</td>
-                    <td class={ui.actionsCell}><div class="flex items-center justify-end gap-1.5">
-                      <button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(group); }}>Edit</button>
-                      <Show when={group.status === "active"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "pause")}>Pause</button></Show>
-                      <Show when={group.status === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "activate")}>Activate</button></Show>
-                      <Show when={group.status === "active" || group.status === "paused"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "drain")}>Drain</button></Show>
-                      <Show when={group.status === "draining"}><button type="button" class={ui.dangerOutlineButton} disabled={submitting()} onClick={() => void transition(group, "disable")}>Disable</button></Show>
-                      <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void rotateToken(group)}>Rotate token</button>
-                    </div></td>
+                    <RowActions label={`Actions for ${group.name}`} items={actions(group)} />
                   </tr>
-                )}
-              </For>
-            </DataTable>
-          </Show>
-        </Show>
-      </Show>
+                  <RowError columns={6} message={rows.error(group.id)} />
+                </>
+              )}
+            </For>
+          </DataTable>
+        )}
+      </QueryState>
 
       <Show when={creating()}>
-        <Modal title="New Worker Group" onClose={() => setCreating(false)} closeDisabled={submitting()}>
-          <form onSubmit={submitCreate}>
-            <label class={ui.field}><span>Region</span><select name="region_id" class={ui.input} required autofocus><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name} ({region.id})</option>}</For></select></label>
-            <TextField name="name" label="Name" placeholder="default" required />
-            <label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" /></label>
-            <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
-            <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
-          </form>
-        </Modal>
+        <CreateWorkerGroupDialog
+          regions={regionList()}
+          onClose={() => setCreating(false)}
+          onCreated={async (token) => {
+            setCreating(false);
+            setEnrollmentToken(token);
+            await refresh();
+          }}
+        />
       </Show>
 
-      <Show when={editing()}>{(group) => <Modal title={`Edit ${group().name}`} onClose={() => setEditing(null)} closeDisabled={submitting()}><form onSubmit={submitEdit}><label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" autofocus>{group().description}</textarea></label><Show when={error()}><p class={ui.fieldError}>{error()}</p></Show><div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>Save</button></div></form></Modal>}</Show>
+      <Show when={editing()}>{(group) => <EditWorkerGroupDialog group={group()} onClose={() => setEditing(null)} onSaved={refresh} />}</Show>
 
-      <Show when={enrollmentToken()}>{(token) => <Modal title="Worker enrollment token" onClose={() => setEnrollmentToken(null)}><p class={ui.warning}>Copy this token now. It will not be shown again.</p><code class={ui.rawKey}>{token()}</code><div class={ui.modalActions}><button type="button" class={ui.button} onClick={() => setEnrollmentToken(null)}>Done</button></div></Modal>}</Show>
-    </div>
+      <Show when={enrollmentToken()}>{(token) => <RevealDialog title="Worker enrollment token" value={token()} warning="Copy this token now. It will not be shown again." onClose={() => setEnrollmentToken(null)} />}</Show>
+    </Page>
   );
-}
-
-function TextField(props: { name: string; label: string; placeholder?: string; required?: boolean }) {
-  return <label class={ui.field}><span>{props.label}</span><input class={ui.input} name={props.name} placeholder={props.placeholder} required={props.required} /></label>;
 }

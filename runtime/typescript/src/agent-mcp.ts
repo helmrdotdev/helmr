@@ -1,4 +1,5 @@
-import type { Json, InitContext, RuntimeMcpConnectionOptions } from "../../../sdk/typescript/src/agent"
+import type { InitContext, RuntimeMcpConnectionOptions } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { agentProto } from "@helmr/proto"
 import type { AgentChannel } from "./agent-channel"
 
@@ -8,11 +9,11 @@ export function createAgentMcp(channel: AgentChannel): InitContext["mcp"] {
     // descriptor. They never mint or renew upstream authority in user code.
     const raw = await channel.operation(agentProto.Operation_Method.GET_MCP_CONNECTION, null)
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid runtime MCP connection")
-    const value = raw as Record<string, Json>
+    const value = raw as Record<string, JsonValue>
     if (typeof value['url'] !== "string") throw new Error("Invalid runtime MCP connection")
     const rawHeaders = value['headers']
     if (!rawHeaders || typeof rawHeaders !== "object" || Array.isArray(rawHeaders)) throw new Error("Invalid runtime MCP headers")
-    const headers = rawHeaders as Record<string, Json>
+    const headers = rawHeaders as Record<string, JsonValue>
     if (typeof headers['Authorization'] !== "string" || !headers['Authorization'].startsWith("Bearer ")) throw new Error("Invalid runtime MCP headers")
     const url = new URL(value['url'])
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.pathname !== "/mcp" || url.username || url.password || url.search || url.hash) throw new Error("Runtime MCP endpoint is not guest-local")

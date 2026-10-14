@@ -1,5 +1,5 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { image, source, agent, template, type Json } from "@helmr/sdk"
+import { image, source, agent, template, type JsonValue } from "@helmr/sdk"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { z } from "zod"
@@ -48,7 +48,7 @@ export const datapathNetwork = agent({
   id: "datapath-network",
   template: datapathNetworkComputer,
   maxTurnDuration: "10m",
-  turn: async (turn): Promise<Json> => {
+  turn: async (turn): Promise<JsonValue> => {
     const input = payload.parse(fixtureValue(turn.input))
     let finish!: () => void
     const observed = new Promise<void>(resolve => { finish = resolve })
@@ -131,7 +131,7 @@ export const datapathNetwork = agent({
     const output = {
       campaignId: input.campaignId,
       caseId: input.caseId,
-      probe: result as Json,
+      probe: result as JsonValue,
     }
     if (input.holdForObservation) {
       await turn.output.write([{ type: "json", value: { ...output, phase: "observed" } }])

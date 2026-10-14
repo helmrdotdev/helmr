@@ -1984,6 +1984,7 @@ index CREATE INDEX trigger_occurrences_turn ON public.trigger_occurrences USING 
 index CREATE INDEX turn_asks_pending ON public.turn_asks USING btree (environment_id, session_id, turn_id) WHERE (status = 'pending'::text)
 index CREATE INDEX turn_messages_pending ON public.turn_messages USING btree (environment_id, session_id, turn_id, seq) WHERE (status = ANY (ARRAY['admitted'::text, 'started'::text]))
 index CREATE INDEX turns_deadlines ON public.turns USING btree (deadline_at, environment_id, session_id) WHERE ((status = ANY (ARRAY['running'::text, 'finalizing'::text])) AND (deadline_at IS NOT NULL))
+index CREATE INDEX turns_failed ON public.turns USING btree (environment_id, terminal_at) WHERE (status = 'failed'::text)
 index CREATE INDEX turns_queue ON public.turns USING btree (environment_id, session_id, seq) WHERE (status = 'queued'::text)
 index CREATE INDEX worker_groups_active_dispatch_idx ON public.worker_groups USING btree (region_id, id) WHERE (status = 'active'::text)
 index CREATE INDEX worker_hosts_active_dispatch_idx ON public.worker_hosts USING btree (worker_group_id, id) WHERE (status = 'active'::text)

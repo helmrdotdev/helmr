@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -47,24 +48,34 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("seed dev data: %v", err)
 	}
 
-	var definitions, triggers, computers, sessions, turns, runnable, events int
+	var definitions, triggers, computers, openSessions, closedSessions, failedTurns, holds, runnable, events int
+	var current bool
 	if err := pool.QueryRow(ctx, `SELECT
- (SELECT count(*) FROM agent_definitions WHERE environment_id=$1),
- (SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND active_until IS NOT NULL),
+ (SELECT count(*) FROM agent_definitions d JOIN environments e ON e.id=d.environment_id AND e.current_deployment_id=d.deployment_id WHERE d.environment_id=$1),
+ (SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND active_until IS NULL AND next_fire_at>now()),
  (SELECT count(*) FROM computers WHERE environment_id=$1 AND preparation_failed_at IS NOT NULL),
+ (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='open'),
  (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='closed'),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status='failed'),
+ (SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing'))+
- (SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND active_until IS NULL)+
+ (SELECT count(*) FROM turn_asks WHERE environment_id=$1)+
  (SELECT count(*) FROM image_builds WHERE environment_id=$1)+
  (SELECT count(*) FROM computer_leases WHERE environment_id=$1)+
  (SELECT count(*) FROM session_processes WHERE environment_id=$1),
- (SELECT count(*) FROM session_events WHERE environment_id=$1)
- `, demoSeedEnvironmentID).Scan(&definitions, &triggers, &computers, &sessions, &turns, &runnable, &events); err != nil {
+ (SELECT count(*) FROM session_events WHERE environment_id=$1),
+ (SELECT current_deployment_id IS NOT NULL FROM environments WHERE id=$1)
+ `, demoSeedEnvironmentID).Scan(&definitions, &triggers, &computers, &openSessions, &closedSessions, &failedTurns, &holds, &runnable, &events, &current); err != nil {
 		t.Fatal(err)
 	}
-	if definitions != 1 || triggers != 1 || computers != 1 || sessions != 1 || turns != 1 || events != 3 || runnable != 0 {
-		t.Fatalf("demo definitions/triggers/computers/sessions/turns/events/runnable=%d/%d/%d/%d/%d/%d/%d", definitions, triggers, computers, sessions, turns, events, runnable)
+	if !current || definitions != 3 || triggers != 1 || computers != 1 || openSessions != 2 || closedSessions != 2 || failedTurns != 2 || holds != 1 || events != 8 || runnable != 0 {
+		t.Fatalf("demo current/definitions/triggers/computers/open/closed/failed/holds/events/runnable=%v/%d/%d/%d/%d/%d/%d/%d/%d/%d", current, definitions, triggers, computers, openSessions, closedSessions, failedTurns, holds, events, runnable)
+	}
+	// The Overview reads the held Session and the recent failure as waiting work.
+	attention, err := session.ListAttention(ctx, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}, uuid.MustParse(demoSeedEnvironmentID))
+	if err != nil || attention.HoldCount != 1 || attention.FailedTurnCount != 1 || attention.QuestionCount != 0 ||
+		attention.Holds[0].SessionID.String() != demoSeedHeldSessionID || attention.FailedTurns[0].ID.String() != demoSeedFailedTurnID {
+		t.Fatalf("demo attention: %+v %v", attention, err)
 	}
 	var chronological bool
 	if err := pool.QueryRow(ctx, `SELECT s.created_at <= min(e.created_at)
@@ -83,8 +94,14 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("unpromoted synthetic Deployment start=%v, want not ready", err)
+	// The promoted Deployment is synthetic: its image spec has no Computer seed
+	// profile, so work sent to it is refused before anything is admitted.
+	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, computer.ErrInvalidInput) {
+		t.Fatalf("synthetic Deployment start=%v, want refused", err)
+	}
+	var admitted int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE environment_id=$1`, demoSeedEnvironmentID).Scan(&admitted); err != nil || admitted != 4 {
+		t.Fatalf("Sessions after refused start=%d %v, want the 4 seeded", admitted, err)
 	}
 	if _, err := session.Enqueue(ctx, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)

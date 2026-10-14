@@ -2,7 +2,7 @@ export { isHelmrError } from "./error"
 export { ContentError } from "./content"
 export { MessageRejected } from "./message-error"
 export { agent, template, triggers } from "./agent"
-export type { CronTrigger, Json, Duration, Retention, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, TemplateDefinition, TurnOutcome, OutputReceipt, InputSource, SlackInputSource, MessageSource, Message, Turn, RuntimeMcpConnectionOptions, InitContext, AgentContext, AgentDefinition } from "./agent"
+export type { CronTrigger, Duration, Retention, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, TemplateDefinition, TurnOutcome, OutputReceipt, InputSource, SlackInputSource, MessageSource, Message, Turn, RuntimeMcpConnectionOptions, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
@@ -118,7 +118,7 @@ export type {
   ComputerResidency,
 } from "./computer"
 
-export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
+export { type CommandCancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
 
 export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 

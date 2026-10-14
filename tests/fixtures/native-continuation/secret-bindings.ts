@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
-import type { Json } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 
 export interface SecretBindingState {
   rawDigest: string
@@ -13,7 +13,7 @@ export interface SecretBindingState {
 
 // Keep the admitted values and selector in the actual setup heap. Rotation must
 // not rewrite this process or the values retained by a healthy RAM continuation.
-export async function checkSecretBindings(input: Json, prior?: SecretBindingState): Promise<SecretBindingState> {
+export async function checkSecretBindings(input: JsonValue, prior?: SecretBindingState): Promise<SecretBindingState> {
   const digest = (value: string) => createHash("sha256").update(value).digest("hex")
   const raw = process.env.NATIVE_RAW_SECRET
   const marker = process.env.NATIVE_PROTECTED_SECRET
@@ -22,7 +22,7 @@ export async function checkSecretBindings(input: Json, prior?: SecretBindingStat
   let state = prior
   if (!state) {
     assert(input && typeof input === "object" && !Array.isArray(input))
-    const { rawDigest, fileDigest, protectedDigest } = input as Readonly<Record<string, Json>>
+    const { rawDigest, fileDigest, protectedDigest } = input as Readonly<Record<string, JsonValue>>
     assert(typeof rawDigest === "string" && typeof fileDigest === "string" && typeof protectedDigest === "string")
     for (const value of [rawDigest, fileDigest, protectedDigest]) assert(typeof value === "string" && /^[a-f0-9]{64}$/.test(value))
     state = { rawDigest, fileDigest, protectedDigest, marker, checks: 0 }

@@ -3,7 +3,8 @@ import type { AskAnswer } from "../../../sdk/typescript/src/question"
 import type { HumanContent } from "../../../sdk/typescript/src/content"
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { AgentDefinition, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { OperationError } from "./agent-channel"
 import { MessageBusy, SessionRuntime, type SessionDriver, type TurnTiming } from "./agent-session"
@@ -11,11 +12,11 @@ import { parseAsk } from "../../../sdk/typescript/src/internal/asks"
 
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 const question = (text: string) => ({ prompt: [{ type: "text" as const, text }],  type: "text" as const })
-const reply = (answer: Json): AskAnswer => ({ answer, answeredBy: { kind: "user", id: "answerer" } })
+const reply = (answer: JsonValue): AskAnswer => ({ answer, answeredBy: { kind: "user", id: "answerer" } })
 const context: InitContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: new AbortController().signal }
 const textInput = (text: string): InputContent => [{ type: "text", text }]
 const request = (sequence = 1) => ({ id: `turn-${sequence}`, sequence, createdAt: "2026-10-04T00:00:00Z", input: textInput(String(sequence)), source: { kind: "api_key" as const } })
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, Json, unknown>, "init">> & { inputSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1; resultSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1<unknown, Json> }, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
+function fixture(definition: Pick<AgentDefinition<InputContent, JsonValue, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, JsonValue, unknown>, "init">> & { inputSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1; resultSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1<unknown, JsonValue> }, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
   const calls: string[] = []
   const driver: SessionDriver = {
     registerMessages: async () => { calls.push("register") },
@@ -416,7 +417,7 @@ test("failure withdraws only outstanding asks exactly once even when answer neve
 
 test("message backpressure is distinguishable and the exact payload can be retried", async () => {
   const ready = deferred<void>(), release = deferred<void>(), returnHandler = deferred<void>()
-  const received: Json[] = []
+  const received: JsonValue[] = []
   const { runtime } = fixture({ turn: async turn => {
     await turn.onMessage(async value => { received.push(value.content); if (value.content[0]?.text === "1") await release.promise })
     ready.resolve(); await returnHandler.promise; return 1
@@ -489,7 +490,7 @@ test("interrupt immediately closes message admission before asynchronous cleanup
 
 test("uncertain finalization retains a snapshot of the returned JSON", async () => {
   const authored = { value: 1 }
-  const observed: Json[] = []
+  const observed: JsonValue[] = []
   const { runtime } = fixture({ turn: () => authored }, { finalize: async (_id, result) => {
     observed.push(structuredClone(result))
     if (observed.length === 1) throw new Error("reply lost")
@@ -730,7 +731,7 @@ test("a hanging cancellation hook holds without attesting or settling the Turn",
   const { runtime, calls } = fixture({ turn: turn => {
     turn.onCancel(() => new Promise<void>(() => {}))
     entered.resolve()
-    return new Promise<Json>((_resolve, reject) => turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }))
+    return new Promise<JsonValue>((_resolve, reject) => turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }))
   } }, {}, { failureConvergenceMs: 20 })
   const pending = runtime.dispatch(request())
   await entered.promise

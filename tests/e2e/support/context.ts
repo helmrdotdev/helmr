@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { HelmrClient, type SessionCreateRequest, type ComputerRef, type SessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
+import { HelmrClient, type SessionCreateRequest, type ComputerRef, type SessionRef, type TurnState, type AskState, type JsonValue } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
 export { deadline }
@@ -67,9 +67,9 @@ export async function completedResult(turn: ClientTurn, timeoutMs = 20 * 60_000)
 export async function waitOutput(
   session: SessionRef,
   turn: ClientTurn,
-  match: (value: Json) => boolean,
+  match: (value: JsonValue) => boolean,
   timeoutMs = 5 * 60_000,
-): Promise<Json> {
+): Promise<JsonValue> {
   const signal = deadline(timeoutMs)
   let after = 0
   for (;;) {
@@ -125,7 +125,7 @@ export async function verify(
     >
     cleanup: (action: () => Promise<unknown>) => void
     computer: (definition: string, suffix?: string) => Promise<ComputerRef>
-    startAgent: (definition: string, request: Omit<SessionCreateRequest, "agent" | "input"> & { input: Json }) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
+    startAgent: (definition: string, request: Omit<SessionCreateRequest, "agent" | "input"> & { input: JsonValue }) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
   }) => Promise<unknown>,
 ) {
   const url = process.env.HELMR_API_URL,

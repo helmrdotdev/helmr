@@ -219,7 +219,7 @@ interface CommandRef {
   get(options?): Promise<CommandInfo>
   wait(options?: { signal? }): Promise<CommandOutcome>
   wait(options: { timeout: Duration; signal? }): Promise<TimedCommandWaitResult>
-  cancel(options?): Promise<CancelReceipt>
+  cancel(options?): Promise<CommandCancelReceipt>
   readonly logs: {
     list(query?: { cursor?: string; limit?: number }, options?): Promise<CommandLogReadPage>
     stream(query?: { after?: string }, options?): AsyncIterable<CommandLogRecord>

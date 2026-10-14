@@ -8,7 +8,6 @@ export type { TurnOutcome } from "./contract"
 import type { HumanContent, InputContent } from "./content"
 import type { ImageBuilder } from "./image"
 
-export type Json = JsonValue
 export type { Duration, Retention } from "./duration"
 import type { Duration, Retention } from "./duration"
 export type MaybePromise<T> = T | Promise<T>
@@ -105,7 +104,7 @@ export const triggers = Object.freeze({
   },
 })
 type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
-export type AgentDefinition<I = InputContent, O = Json, S = undefined, ID extends string = string, Wire = I, Returned = O> = JsonCheck<O> & AgentContract<ID, Wire, O> & {
+export type AgentDefinition<I = InputContent, O = JsonValue, S = undefined, ID extends string = string, Wire = I, Returned = O> = JsonCheck<O> & AgentContract<ID, Wire, O> & {
   readonly kind: "agent"
   readonly id: ID
   readonly template: TemplateDefinition
@@ -145,8 +144,8 @@ type AgentConfig<ID extends string, SI extends Schema, SO extends Schema, State,
   readonly maxTurnDuration?: Duration
   readonly triggers?: readonly CronTrigger<NoInfer<Accepted<SI>>>[]
 } & SchemaField<"inputSchema", SI> & SchemaField<"resultSchema", SO>
-export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, State = undefined, O = Json>(config: AgentConfig<ID, SI, SO, State, O> & { readonly init: (ctx: InitContext) => MaybePromise<State> } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, State, ID, Accepted<SI>, Returned<SO, O>>
-export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, O = Json>(config: AgentConfig<ID, SI, SO, undefined, O> & { readonly init?: never } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, undefined, ID, Accepted<SI>, Returned<SO, O>>
+export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, State = undefined, O = JsonValue>(config: AgentConfig<ID, SI, SO, State, O> & { readonly init: (ctx: InitContext) => MaybePromise<State> } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, State, ID, Accepted<SI>, Returned<SO, O>>
+export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, O = JsonValue>(config: AgentConfig<ID, SI, SO, undefined, O> & { readonly init?: never } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, undefined, ID, Accepted<SI>, Returned<SO, O>>
 export function agent(config: { readonly id: string; readonly template: TemplateDefinition; readonly turn: unknown; readonly inputSchema?: StandardSchemaV1; readonly resultSchema?: StandardSchemaV1 }): unknown {
   if (!config.id.trim() || config.template.kind !== "template" || typeof config.turn !== "function") throw new TypeError("Agent id, Template and turn handler are required")
   for (const schema of [config.inputSchema, config.resultSchema]) {
@@ -155,7 +154,7 @@ export function agent(config: { readonly id: string; readonly template: Template
   return Object.freeze({ ...config, kind: "agent" as const })
 }
 
-export function requireJson(value: unknown): asserts value is Json {
+export function requireJson(value: unknown): asserts value is JsonValue {
   const ancestors = new Set<object>()
   function visit(current: unknown): void {
     if (current === null || typeof current === "boolean") return

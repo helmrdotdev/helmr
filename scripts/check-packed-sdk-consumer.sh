@@ -129,7 +129,7 @@ EOF
 # Exercise the public packed declarations with the same negative type cases.
 # These files are compiled, never executed.
 for probe in agent-schema lifecycle; do
-  sed -E 's#"\./(agent|content|client|index)"#"@helmr/sdk"#g' \
+  sed -E 's#"\./(agent|content|client|contract|index)"#"@helmr/sdk"#g' \
     "${repo_root}/sdk/typescript/src/${probe}.typecheck.ts" >"${consumer}/${probe}.typecheck.ts"
 done
 

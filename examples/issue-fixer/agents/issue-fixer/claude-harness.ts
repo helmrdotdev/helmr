@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { query, type Query, type SDKUserMessage, type PermissionResult } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod"
-import type { Json, Turn } from "@helmr/sdk"
+import type { JsonValue, Turn } from "@helmr/sdk"
 import { Queue } from "./queue"
 import { nativeText, steeringText } from "./native-content"
 import type { HumanContent } from "@helmr/sdk"
@@ -98,7 +98,7 @@ export class ClaudeHarness {
         const job = (async (): Promise<PermissionResult> => {
         if (toolName === "Agent" || toolName === "Task" || input.run_in_background === true) return { behavior: "deny", message: "Background work is not supported by this application" }
         const signal = AbortSignal.any([operation.turn.signal, operation.abort.signal, options.signal])
-        const action = JSON.parse(JSON.stringify({ provider: "claude", toolUseID: options.toolUseID, toolName, input })) as Json
+        const action = JSON.parse(JSON.stringify({ provider: "claude", toolUseID: options.toolUseID, toolName, input })) as JsonValue
         if (toolName === "AskUserQuestion") {
           let questions, request
           try {

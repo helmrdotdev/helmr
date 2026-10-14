@@ -272,7 +272,7 @@ not through an SDK method. See [Runtime MCP](/docs/reference/sdk/mcp) and
 ```ts
 client.sessions.create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
 
-interface SessionCreateRequest<A extends AgentContract = AgentContract<string, Json, Json>> {
+interface SessionCreateRequest<A extends AgentContract = AgentContract<string, JsonValue, JsonValue>> {
   readonly agent: A["id"]
   readonly input?: AgentInput<A>
   readonly closeAfterIdle?: Retention

@@ -1,10 +1,12 @@
-import { definitionHref, scopedConsoleHref } from "../lib/definitions";
+import { CopyLinkButton } from "../components/CopyLinkButton";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { ComputerStatus } from "../features/computers/ComputerStatus";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
-import { useRouteScope } from "../lib/scope";
+import { errorMessage } from "../lib/error";
+import { useScopeIDs } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
   getComputer,
@@ -12,30 +14,28 @@ import {
   listComputerCommands,
   type ComputerScope,
 } from "../lib/computers";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { DetailItem, DetailList, Panel } from "../ui/Panel";
+import { DetailLayout, KeyValue, KeyValueList } from "../ui/Panel";
+import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
+import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
 function computerErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 404) return "Computer not found.";
-  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to view this Computer.";
-  if (error instanceof ApiError) return error.message;
-  return "Could not load this Computer.";
+  return errorMessage(error, "Could not load this computer.", { forbidden: "You do not have permission to view this computer." });
 }
 
-function actionErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError && error.code === "forbidden") return "You do not have permission to do this.";
-  if (error instanceof ApiError) return error.message;
-  return fallback;
-}
+const actionErrorMessage = (error: unknown, fallback: string) =>
+  errorMessage(error, fallback, { forbidden: "You do not have permission to do this." });
 
-function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
-  const title = () => props.kind === "sessions" ? "Sessions" : "Commands";
+// The sessions or commands using this Computer, paged, as the table of its tab.
+function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
+  const noun = () => props.kind === "sessions" ? { one: "session", other: "sessions" } : { one: "command", other: "commands" };
   const usage = createInfiniteQuery(() => ({
     queryKey: ["computer", props.computerID, props.kind, props.scope.projectID, props.scope.environmentID],
     queryFn: async ({ pageParam }) => {
@@ -53,34 +53,51 @@ function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; k
     retry: false,
   }));
   const items = createMemo(() => usage.data?.pages.flatMap(page => page.items) ?? []);
-  return <Panel title={title()}>
-    <p class={ui.muted}>Currently using this Computer, including work awaiting cleanup.</p>
-    <Show when={usage.isError}><StatePanel error={actionErrorMessage(usage.error, `Could not load ${props.kind}.`)} /></Show>
-    <Show when={usage.isPending}><StatePanel loading={`Loading ${props.kind}...`} /></Show>
-    <Show when={usage.data}>
-      <Show when={items().length > 0} fallback={<StatePanel empty={`No ${props.kind} are using this Computer.`} />}>
-        <DataTable columns={["ID", "Usage"]} minWidth="min-w-0">
+  return (
+    <QueryState
+      query={usage}
+      pending={`Loading ${noun().other}...`}
+      error={(error) => actionErrorMessage(error, `Could not load ${noun().other}.`)}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this computer.` }}
+    >
+      {() => (
+        <DataTable
+          columns={[props.kind === "sessions" ? "Session" : "Command", "Usage"]}
+          minWidth="min-w-0"
+          footer={<LoadMore count={items().length} noun={noun()} hasMore={usage.hasNextPage} loading={usage.isFetchingNextPage} failed={usage.isFetchNextPageError} onLoadMore={() => void usage.fetchNextPage()} />}
+        >
           <For each={items()}>{item => <tr>
             <td><Show when={props.kind === "sessions"} fallback={<IDText value={item.id} />}>
-              <IDText value={item.id} mode="link" href={sessionConsolePath(item.id, props.scope.projectID, props.scope.environmentID)} />
+              <IDText value={item.id} mode="link" href={sessionConsolePath(item.id)} />
             </Show></td>
-            <td>{item.usage_state}</td>
+            <td><StatusBadge resource="computer_usage" status={item.usage_state} /></td>
           </tr>}</For>
         </DataTable>
-      </Show>
-      <Show when={usage.hasNextPage}><button class={ui.secondaryButton} disabled={usage.isFetchingNextPage} onClick={() => void usage.fetchNextPage()}>Load more {props.kind}</button></Show>
-    </Show>
-  </Panel>;
+      )}
+    </QueryState>
+  );
 }
+
+type Tab = "sessions" | "commands" | "secrets";
+
+// The Computer's tables, one tab each; the secret placements are on the
+// Computer record, so their tab shows the count.
+const tabs = (secrets: number): TabItem<Tab>[] => [
+  { value: "sessions", label: "Sessions" },
+  { value: "commands", label: "Commands" },
+  { value: "secrets", label: "Secret placements", count: secrets },
+];
 
 export function ComputerDetail() {
   const params = useParams();
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const computerID = createMemo(() => params["computer_id"]?.trim() ?? "");
   const projectID = createMemo(() => scope().projectID);
   const environmentID = createMemo(() => scope().environmentID);
   const hasScope = createMemo(() => projectID() !== "" && environmentID() !== "");
   const resourceScope = (): ComputerScope => ({ projectID: projectID(), environmentID: environmentID() });
+  const [tab, setTab] = createSignal<Tab>("sessions");
+  createEffect(on(computerID, () => setTab("sessions"), { defer: true }));
   const computer = createQuery(() => ({
     queryKey: ["computer", computerID(), projectID(), environmentID()],
     queryFn: () => getComputer(computerID(), resourceScope()),
@@ -89,74 +106,66 @@ export function ComputerDetail() {
   }));
 
   return (
-    <section class={ui.page}>
+    <Page>
       <PageHeader
         title="Computer"
-        back={{ href: scopedConsoleHref("/computers", resourceScope()), label: "Computers" }}
-        badge={<Show when={computer.data}>{(current) => <StatusBadge resource="computer" status={current().status} />}</Show>}
+        breadcrumb={[{ href: "/computers", label: "Computers" }]}
+        actions={<CopyLinkButton />}
+        badge={<Show when={computer.data}>{(current) => <ComputerStatus computer={current()} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
 
-      <Show when={computerID() !== ""} fallback={<StatePanel error="Computer ID is required." />}>
-        <Show when={hasScope()} fallback={<StatePanel empty="Select a project and environment." />}>
-          <Show when={!computer.isPending} fallback={<StatePanel loading="Loading Computer..." />}>
-            <Show
-              when={computer.data}
-              fallback={
-                <StatePanel empty={computerErrorMessage(computer.error)}>
-                  <button class={ui.secondaryButton} type="button" onClick={() => void computer.refetch()}>
-                    Retry
-                  </button>
-                </StatePanel>
+      <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
+        <QueryState query={computer} pending="Loading computer..." error={computerErrorMessage}>
+          {(current) => (
+            <DetailLayout
+              rail={
+                <KeyValueList title="Computer details">
+                  <KeyValue label="Status"><ComputerStatus computer={current()} /></KeyValue>
+                  <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
+                  <KeyValue label="Key">
+                    <Show when={current().key}>{(key) => <code>{key()}</code>}</Show>
+                  </KeyValue>
+                  <KeyValue label="Created from"><code>{current().template}</code></KeyValue>
+                  <KeyValue label="Deployment">
+                    <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
+                  </KeyValue>
+                  <KeyValue label="Last activity"><RelativeTime value={current().last_activity_at} /></KeyValue>
+                  <KeyValue label="Created"><RelativeTime value={current().created_at} /></KeyValue>
+                  <KeyValue label="Updated"><RelativeTime value={current().updated_at} /></KeyValue>
+                </KeyValueList>
               }
             >
-              {(current) => (
-                <div class="grid grid-cols-[minmax(0,1fr)_310px] items-start gap-3.5 max-[960px]:grid-cols-1">
-                  <div class="grid gap-3.5">
-                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="sessions" />
-                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="commands" />
-                    <Panel title="Secret placements">
-                      <Show when={current().secrets.length > 0} fallback={<StatePanel empty="No Secrets are attached." />}>
-                        <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
-                          <For each={current().secrets}>
-                            {(secret) => (
-                              <tr>
-                                <td><code>{secret.secret}</code></td>
-                                <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
-                                <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
-                                <td>{secret.env?.allowedOrigins?.join(", ") ?? "—"}</td>
-                              </tr>
-                            )}
-                          </For>
-                        </DataTable>
-                      </Show>
-                    </Panel>
-
-                    <p class={ui.muted}>Use the CLI to run commands or delete this Computer.</p>
-                  </div>
-
-                  <DetailList title="Computer details">
-                    <DetailItem label="Status"><StatusBadge resource="computer" status={current().status} /></DetailItem>
-                    <DetailItem label="Residency">{current().residency}</DetailItem>
-                    <Show when={current().error}>{(error) => <DetailItem label="Unavailable reason">{error().message}</DetailItem>}</Show>
-                    <DetailItem label="Key">
-                      <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
-                    </DetailItem>
-                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template}</a></DetailItem>
-                    <DetailItem label="Deployment">
-                      <IDText value={current().deployment_id} mode="link" href={scopedConsoleHref(deploymentHref(current().deployment_id), resourceScope())} />
-                    </DetailItem>
-                    <DetailItem label="Last activity"><RelativeTime value={current().last_activity_at} /></DetailItem>
-                    <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>
-                    <DetailItem label="Updated"><RelativeTime value={current().updated_at} /></DetailItem>
-                  </DetailList>
-                </div>
-              )}
-            </Show>
-          </Show>
-        </Show>
+              <div>
+                <Tabs id="computer-sections" label="Computer sections" items={tabs(current().secrets.length)} selected={tab()} onSelect={setTab} />
+                <TabPanel tabs="computer-sections" value="sessions" selected={tab()}>
+                  <ComputerUsage computerID={current().id} scope={resourceScope()} kind="sessions" />
+                </TabPanel>
+                <TabPanel tabs="computer-sections" value="commands" selected={tab()}>
+                  <ComputerUsage computerID={current().id} scope={resourceScope()} kind="commands" />
+                </TabPanel>
+                <TabPanel tabs="computer-sections" value="secrets" selected={tab()}>
+                  <Show when={current().secrets.length > 0} fallback={<EmptyState title="No secrets are attached." />}>
+                    <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
+                      <For each={current().secrets}>
+                        {(secret) => (
+                          <tr>
+                            <td><code>{secret.secret}</code></td>
+                            <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
+                            <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
+                            <td><Show when={secret.env?.allowedOrigins?.length} fallback={<EmptyCell />}>{secret.env?.allowedOrigins?.join(", ")}</Show></td>
+                          </tr>
+                        )}
+                      </For>
+                    </DataTable>
+                  </Show>
+                </TabPanel>
+              </div>
+              <p class={ui.muted}>Use the CLI to run commands or delete this computer.</p>
+            </DetailLayout>
+          )}
+        </QueryState>
       </Show>
-
-    </section>
+    </Page>
   );
 }

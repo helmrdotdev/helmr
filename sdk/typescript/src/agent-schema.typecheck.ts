@@ -89,7 +89,7 @@ async function optionalCreate(client: import("./client").HelmrClient) {
 }
 void optionalCreate
 
-agent({ id: "explicit-json-result", template, async turn(turn): Promise<import("./agent").Json> {
+agent({ id: "explicit-json-result", template, async turn(turn): Promise<import("./contract").JsonValue> {
   const parts: string[] = turn.input.map(part => part.text)
   // @ts-expect-error conversational input cannot be any
   const impossible: number = turn.input

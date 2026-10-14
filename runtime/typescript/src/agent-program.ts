@@ -2,7 +2,8 @@ import type { LoadedAgentDefinition } from "../../../sdk/typescript/src/internal
 import { normalizeInput, normalizeInvocation } from "../../../sdk/typescript/src/content"
 import { create, fromBinary } from "@bufbuild/protobuf"
 import { agentProto } from "@helmr/proto"
-import type { Json, InitContext, Turn } from "../../../sdk/typescript/src/agent"
+import type { InitContext, Turn } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 import { AgentChannel, OperationError, MAX_AGENT_FRAME_BYTES } from "./agent-channel"
 import { SessionActivity } from "./agent-activity"
@@ -17,7 +18,7 @@ export interface AgentProgramIO {
   write(frame: Uint8Array): Promise<void>
   timing?(record: TurnTiming): void
 }
-function json(bytes: Uint8Array): Json {
+function json(bytes: Uint8Array): JsonValue {
   const value: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"))
   requireJson(value)
   return value
@@ -29,7 +30,7 @@ function safeSequence(value: bigint): number {
 function source(bytes: Uint8Array): Turn['source'] {
   const raw = json(bytes)
   if (raw === null || Array.isArray(raw) || typeof raw !== "object") throw new Error("Invalid Turn source")
-  const value = raw as Record<string, Json>
+  const value = raw as Record<string, JsonValue>
   if (typeof value['kind'] !== "string") throw new Error("Invalid Turn source")
   if (value['requesterSessionId'] !== undefined && typeof value['requesterSessionId'] !== "string") throw new Error("Invalid requester Session")
   if (value['originTurnId'] !== undefined && typeof value['originTurnId'] !== "string") throw new Error("Invalid origin Turn")
@@ -37,7 +38,7 @@ function source(bytes: Uint8Array): Turn['source'] {
   if (value['slack'] !== undefined) {
     const rawReference = value['slack']
     if (rawReference === null || Array.isArray(rawReference) || typeof rawReference !== "object") throw new Error("Invalid Slack source")
-    const reference = rawReference as Record<string, Json>
+    const reference = rawReference as Record<string, JsonValue>
     for (const key of ["teamId", "channelId", "threadTs", "messageTs", "userId"]) {
       if (typeof reference[key] !== "string" || !reference[key]) throw new Error("Invalid Slack source")
     }
@@ -143,7 +144,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
       if (!command.deliveryId) throw new Error("Guest command delivery identity is required")
       const current = runtime!
       const activeChannel = channel
-      const run = async (): Promise<Json> => {
+      const run = async (): Promise<JsonValue> => {
         const control = command.command.case === "control"
         if (control) {
           if (command.controlSequence <= 0n) throw new Error("Control sequence is required")
@@ -153,7 +154,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
           case "dispatch": {
             if (!initialized) throw new Error("Session setup has not completed")
             const turn = command.command.value
-            return await current.dispatch({ id: turn.turnId, sequence: safeSequence(turn.sequence), createdAt: turn.createdAt, input: normalizeInvocation(json(turn.inputJson)), source: source(turn.sourceJson) }) as unknown as Json
+            return await current.dispatch({ id: turn.turnId, sequence: safeSequence(turn.sequence), createdAt: turn.createdAt, input: normalizeInvocation(json(turn.inputJson)), source: source(turn.sourceJson) }) as unknown as JsonValue
           }
           case "message": {
             const message = command.command.value
@@ -183,7 +184,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
             }
             return null
           }
-          case "reconcile": return await current.reconcileFinalization(command.command.value.turnId) as unknown as Json
+          case "reconcile": return await current.reconcileFinalization(command.command.value.turnId) as unknown as JsonValue
           case "acknowledged": current.acknowledgeTerminal(command.command.value.turnId, safeSequence(command.command.value.sequence)); return null
           default: throw new Error("Unknown guest command")
         }

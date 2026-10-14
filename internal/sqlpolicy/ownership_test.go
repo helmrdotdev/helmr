@@ -26,6 +26,7 @@ var dynamicStatementSites = map[string]string{
 	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/computer:reclaimComputerGraphRow":     "statement is a constant at each caller, which the preparation test covers",
+	"internal/session:attentionRows":                "statement is a constant at each caller, which the preparation test covers",
 	"internal/slackroute:lockConnections":           "two constant lock statements selected by lock strength",
 	"internal/telemetry:BeginDiagnosticAdmission":   "reads inline diagnostic cursors on session_processes, image_builds and commands; all producer kinds are exercised on PostgreSQL",
 	"internal/telemetry:DiagnosticAdmission.Append": "writes only diagnostic cursor/replay fields on session_processes, image_builds and commands in the authorizing owner's transaction; PostgreSQL tests cover both streams, unchanged lifecycle state and atomic rollback",

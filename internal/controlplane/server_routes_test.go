@@ -57,6 +57,7 @@ GET /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
 GET /api/projects/{project}/environments/{environment}/agents/{agent}
 GET /api/projects/{project}/environments/{environment}/agents/{agent}/status
 GET /api/projects/{project}/environments/{environment}/api-keys
+GET /api/projects/{project}/environments/{environment}/attention
 GET /api/projects/{project}/environments/{environment}/commands/{commandID}
 GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
 GET /api/projects/{project}/environments/{environment}/computers

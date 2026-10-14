@@ -60,6 +60,9 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
   return state;
 }
 
+// The value of one entry in the device request's details.
+const detail = (page: Page, label: string) => page.getByRole("complementary").locator("div").filter({ has: page.locator("dt", { hasText: label }) }).locator("dd");
+
 async function signIn(page: Page, method: "github" | "email") {
   if (method === "github") await page.getByRole("button", { name: "Continue with GitHub" }).click();
   else {
@@ -79,7 +82,7 @@ for (const method of ["github", "email"] as const) {
     await page.getByLabel("Name", { exact: true }).fill("Example org");
     await page.getByRole("button", { name: "Create organization" }).click();
     await expect(page).toHaveURL("/auth/device?code=ABCD-EFGH");
-    await expect(page.getByText("Organization: Example org")).toBeVisible();
+    await expect(detail(page, "Organization")).toHaveText("Example org");
     expect(state.projectCreates).toBe(0);
     expect(state.approved).toEqual([]);
     await page.getByRole("button", { name: "Approve", exact: true }).click();
@@ -148,7 +151,7 @@ test("two request URLs retain separate codes when login is already available", a
 test("a changed account requires another explicit review and approval", async ({ page, context }) => {
   await fixture(context, { loggedIn: true });
   await page.goto("/auth/device?code=CHANGED");
-  await expect(page.getByText("Account: Developer", { exact: true })).toBeVisible();
+  await expect(detail(page, "Account")).toHaveText("Developer");
   await context.route("**/api/me", (route) => route.fulfill({ json: { user_id: "user-2", display_name: "Another user", org_id: "org-2", org_name: "Another org", permissions: [], organization_required: false, project_required: true, admin: false } }));
   let attempts = 0;
   await context.route("**/api/auth/device/approve", async (route) => {
@@ -158,8 +161,9 @@ test("a changed account requires another explicit review and approval", async ({
     return route.fulfill({ json: { status: "approved" } });
   });
   await page.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(page.getByText("Account: Another user", { exact: true })).toBeVisible();
-  await expect(page.getByText("Account changed. Review again.")).toBeVisible();
+  await expect(detail(page, "Account")).toHaveText("Another user");
+  await expect(page.getByRole("alert")).toHaveText("Your account changed since this page loaded. Review the account and organization, then approve again.");
+  await expect(page.locator("details").filter({ hasText: "Technical details" })).toContainText("device_identity_changed: Account changed. Review again.");
   expect(attempts).toBe(1);
   await page.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(page.getByText("Approved. Return to your terminal to finish signing in.")).toBeVisible();

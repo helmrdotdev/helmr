@@ -14,6 +14,8 @@ export type Me = {
   project_required: boolean;
   access_required?: boolean;
   setup_token_required?: boolean;
+  // Whether this installation can send email; inviting members requires it.
+  email_delivery?: boolean;
 };
 
 export async function getMe(): Promise<Me> {

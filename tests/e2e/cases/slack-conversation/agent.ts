@@ -1,5 +1,5 @@
 import { callMcp, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, template, image, type InitContext, type Json, type Turn } from "@helmr/sdk"
+import { agent, template, image, type InitContext, type JsonValue, type Turn } from "@helmr/sdk"
 import { setTimeout as delay } from "node:timers/promises"
 
 const modes = ["progress", "long", "text", "choice", "radio", "direct", "groups", "failure", "withdraw", "empty", "silent", "stop", "multi"] as const
@@ -32,9 +32,9 @@ async function progress(turn: Turn, speaker: string, marker: string, count: numb
   }
 }
 
-async function conversation(turn: Turn, speaker: string, ctx: InitContext): Promise<Json> {
+async function conversation(turn: Turn, speaker: string, ctx: InitContext): Promise<JsonValue> {
   const { mode, marker } = command(turn.input)
-  const result: { marker: string; speaker: string; mode: Mode; privateMarker: string; answer?: Json } = {
+  const result: { marker: string; speaker: string; mode: Mode; privateMarker: string; answer?: JsonValue } = {
     marker, speaker, mode, privateMarker: `PRIVATE_RETURN_${marker}`,
   }
   if (mode === "multi") {
@@ -118,7 +118,7 @@ export const beta = agent({
 // The front owns the explanation; child lifecycle facts decorate its work post.
 export const coordinator = agent({
   id: "verification-coordinator", template: conversationComputer, maxTurnDuration: "10m",
-  turn: async (turn, ctx): Promise<Json> => {
+  turn: async (turn, ctx): Promise<JsonValue> => {
     const { mode, marker } = command(turn.input)
     if ((mode !== "progress" && mode !== "stop") || marker.length > 58) throw new Error("Start the coordinator with progress or stop and a marker of at most 58 characters")
     await turn.output.write(`Coordinator ${marker}: delegating a synthetic task. This explanation stays in place.`)

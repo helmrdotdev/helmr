@@ -77,7 +77,7 @@ test("a never-sent oversized result settles failure and retries its lost receipt
   const calls: { method: agentProto.Operation_Method; payload: unknown }[] = []
   let settlements = 0
   class RejectedChannel extends AgentChannel {
-    override operation(method: agentProto.Operation_Method, payload: import("../../../sdk/typescript/src/agent").Json) {
+    override operation(method: agentProto.Operation_Method, payload: import("../../../sdk/typescript/src/contract").JsonValue) {
       calls.push({ method, payload })
       if (method === agentProto.Operation_Method.FINALIZE) return Promise.reject(new OperationNotSent("request_too_large", "too large"))
       if (++settlements === 1) return Promise.reject(new Error("failure reply lost"))
@@ -139,7 +139,7 @@ test("ask pending observations poll without occupying withdrawal transport", asy
   const { GuestSessionDriver } = await import("./agent-driver")
   let observations = 0, withdrawals = 0
   class AskChannel extends AgentChannel {
-    override async operation(method: agentProto.Operation_Method, payload: import("../../../sdk/typescript/src/agent").Json) {
+    override async operation(method: agentProto.Operation_Method, payload: import("../../../sdk/typescript/src/contract").JsonValue) {
       const input = payload as { creationId?: string; askId?: string }
       if (method === agentProto.Operation_Method.ASK) return { id: input.creationId! }
       if (method === agentProto.Operation_Method.WITHDRAW_ASK) { withdrawals++; return null }

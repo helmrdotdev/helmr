@@ -1,7 +1,7 @@
 import { createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import {
   issueApiKey,
   listApiKeys,
@@ -11,16 +11,18 @@ import {
   type ApiKeySummary,
   type ListFilter,
 } from "../lib/api-keys";
-import { useScope } from "../lib/scope";
-import { ActionMenu } from "../ui/ActionMenu";
-import { DataTable } from "../ui/DataTable";
-import { formatID } from "../ui/id";
-import { Modal } from "../ui/Modal";
+import { environmentChip } from "../features/projects/display";
+import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
+import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
+import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
+import { CheckboxGroup, Field, TextInput } from "../ui/Field";
+import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
+import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { envDotStyle, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
+import { EnvironmentTarget } from "../ui/EnvChip";
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -46,84 +48,39 @@ const API_KEY_ERROR_MESSAGES: Record<string, string> = {
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
-const API_KEY_SCOPE_OPTIONS: {
-  value: ApiKeyScope;
-  label: string;
-  description: string;
-}[] = [
-  { value: "asks:answer", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
+const API_KEY_PERMISSION_GROUPS: { label: string; options: { value: ApiKeyScope; label: string; description: string }[] }[] = [
   {
-    value: "sessions:read",
-    label: "Read sessions",
-    description: "Allow automation to read Session state in the selected project and environment.",
+    label: "Sessions",
+    options: [
+      { value: "sessions:read", label: "Read sessions", description: "Allow automation to read session state in the selected project and environment." },
+      { value: "sessions:create", label: "Start agents", description: "Allow automation to start declared agents." },
+      { value: "sessions:send", label: "Send session work and messages", description: "Allow automation to enqueue turns and send session or exact turn messages." },
+      { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the session subtree and hold queued work until resumed." },
+      { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
+      { value: "sessions:close", label: "Close sessions", description: "Drain accepted work and close sessions." },
+      { value: "sessions:cancel", label: "Cancel sessions", description: "Cancel queued turns, stop active execution, and close sessions." },
+      { value: "asks:answer", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
+    ],
   },
   {
-    value: "sessions:create",
-    label: "Start agents",
-    description: "Allow automation to start declared Agents.",
+    label: "Computers",
+    options: [
+      { value: "computers:read", label: "Read computers", description: "Allow automation to read computer state and configuration." },
+      { value: "computers:create", label: "Create computers", description: "Allow automation to create declared computers." },
+      { value: "computers:update", label: "Update computer retention", description: "Allow automation to change computer retention policies." },
+      { value: "computers:delete", label: "Delete computers", description: "Allow automation to delete computers." },
+      { value: "computer-exec:create", label: "Run computer commands", description: "Allow automation to start commands on computers." },
+    ],
   },
-  {
-    value: "sessions:send",
-    label: "Send session work and messages",
-    description: "Allow automation to enqueue Turns and send Session or exact Turn messages.",
-  },
-  { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the Session subtree and hold queued work until resumed." },
-  { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
-  {
-    value: "sessions:close",
-    label: "Close sessions",
-    description: "Drain accepted work and close Sessions.",
-  },
-  {
-    value: "sessions:cancel",
-    label: "Cancel sessions",
-    description: "Cancel queued Turns, stop active execution, and close Sessions.",
-  },
-  {
-    value: "secrets:write",
-    label: "Manage secrets",
-    description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment.",
-  },
-  {
-    value: "computers:create",
-    label: "Create computers",
-    description: "Allow automation to create declared Computers.",
-  },
-  {
-    value: "computers:read",
-    label: "Read computers",
-    description: "Allow automation to read Computer state and configuration.",
-  },
-  {
-    value: "computers:update",
-    label: "Update computer retention",
-    description: "Allow automation to change Computer retention policies.",
-  },
-  {
-    value: "computers:delete",
-    label: "Delete computers",
-    description: "Allow automation to delete Computers.",
-  },
-  {
-    value: "computer-exec:create",
-    label: "Run computer commands",
-    description: "Allow automation to start Commands on Computers.",
-  },
-  {
-    value: "deployments:write",
-    label: "Deploy bundles",
-    description: "Allow automation to upload, finalize, and promote Deployment Bundles in the selected project and environment.",
-  },
+  { label: "Secrets", options: [{ value: "secrets:write", label: "Manage secrets", description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment." }] },
+  { label: "Deployments", options: [{ value: "deployments:write", label: "Deploy bundles", description: "Allow automation to upload, finalize, and promote deployment bundles in the selected project and environment." }] },
 ];
+
+const PERMISSION_LABELS = new Map<string, string>(API_KEY_PERMISSION_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.label] as const)));
 
 const DEFAULT_SCOPES: ApiKeyScope[] = ["sessions:create", "sessions:read"];
 
-function apiKeyErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return API_KEY_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
-  }
-  return INTERNAL_ERROR_MESSAGE;
-}
+const apiKeyErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, API_KEY_ERROR_MESSAGES);
 
 function validateLabel(value: string): string | null {
   const label = value.trim();
@@ -134,93 +91,45 @@ function validateLabel(value: string): string | null {
 }
 
 function permissionText(keyItem: ApiKeySummary): string {
-  const grants = keyItem.permissions ?? [];
-  if (grants.length === 0) return "Not reported";
-  const scope = `${formatID(keyItem.project)} / ${formatID(keyItem.environment)}`;
-  return grants.map((grant) => {
-    const labels = API_KEY_SCOPE_OPTIONS
-      .filter((option) => grant.scopes.includes(option.value))
-      .map((option) => option.label);
-    return `${scope}: ${labels.length > 0 ? labels.join(", ") : "Custom permissions"}`;
-  }).join("; ");
+  const scopes = (keyItem.permissions ?? []).flatMap((grant) => grant.scopes);
+  if (scopes.length === 0) return "Not reported";
+  return scopes.map((scope) => PERMISSION_LABELS.get(scope) ?? scope).join(", ");
 }
 
-function ApiKeyRow(props: {
-  keyItem: ApiKeySummary;
-  revoking: boolean;
-  error: string | null;
-  onRevoke: (keyItem: ApiKeySummary) => void;
-}) {
+function ApiKeyRow(props: { keyItem: ApiKeySummary; onRevoke: (keyItem: ApiKeySummary) => void }) {
   return (
     <tr>
       <td>{props.keyItem.name}</td>
+      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
       <td><code>{props.keyItem.key_prefix}...</code></td>
       <td>{permissionText(props.keyItem)}</td>
-      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
       <td><RelativeTime value={props.keyItem.last_used_at} fallback="never" /></td>
       <td><RelativeTime value={props.keyItem.created_at} /></td>
       <td><RelativeTime value={props.keyItem.expires_at} fallback="never" /></td>
-      <td class={ui.actionsCell}>
-        <Show when={props.keyItem.status === "active"} fallback={<span class={ui.muted}>No actions</span>}>
-          <ActionMenu
-            label={`Actions for ${props.keyItem.name}`}
-            items={[{
-              label: "Revoke",
-              busyLabel: props.revoking ? "Revoking..." : undefined,
-              disabled: props.revoking,
-              tone: "danger",
-              onSelect: () => props.onRevoke(props.keyItem),
-            }]}
-          />
-        </Show>
-        <Show when={props.error}>
-          <p class={ui.rowError} role="alert">{props.error}</p>
-        </Show>
-      </td>
+      <RowActions
+        label={`Actions for ${props.keyItem.name}`}
+        items={props.keyItem.status === "active" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.keyItem) }] : []}
+      />
     </tr>
   );
 }
 
-function IssueApiKeyModal(props: {
+function IssueApiKeyDialog(props: {
   projectID: string;
   environmentID: string;
   projectName: string;
   environmentName: string;
   environmentColorHex: string;
   onClose: () => void;
-  onIssued: () => Promise<void>;
+  onIssued: (issued: ApiKeyIssued) => Promise<void>;
 }) {
   const [label, setLabel] = createSignal("");
   const [expiry, setExpiry] = createSignal<ExpiryValue>("never");
   const [selectedScopes, setSelectedScopes] = createSignal<ApiKeyScope[]>([...DEFAULT_SCOPES]);
-  const [issued, setIssued] = createSignal<ApiKeyIssued | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [copyState, setCopyState] = createSignal<string | null>(null);
 
-  const expiryDays = createMemo(() => {
-    const value = expiry();
-    return value === "never" ? null : Number(value);
-  });
-
-  const closeAndClear = () => {
-    setIssued(null);
-    setLabel("");
-    setSelectedScopes([...DEFAULT_SCOPES]);
-    setError(null);
-    setCopyState(null);
-    props.onClose();
-  };
-
-  const toggleScope = (scope: ApiKeyScope, checked: boolean) => {
-    setSelectedScopes((current) => {
-      if (checked) return current.includes(scope) ? current : [...current, scope];
-      return current.filter((candidate) => candidate !== scope);
-    });
-  };
-
-  const submit = async (event: Event) => {
-    event.preventDefault();
+  const submit = async () => {
     setError(null);
     const validation = validateLabel(label());
     if (validation) {
@@ -231,19 +140,15 @@ function IssueApiKeyModal(props: {
       setError(API_KEY_ERROR_MESSAGES["invalid_permissions"] ?? INTERNAL_ERROR_MESSAGE);
       return;
     }
-
     setSubmitting(true);
     try {
+      const value = expiry();
       const result = await issueApiKey(props.projectID, props.environmentID, {
         name: label().trim(),
-        expires_in_days: expiryDays(),
-        permissions: [{
-          scopes: selectedScopes(),
-        }],
+        expires_in_days: value === "never" ? null : Number(value),
+        permissions: [{ scopes: selectedScopes() }],
       });
-      setIssued(result);
-      setCopyState(null);
-      await props.onIssued();
+      await props.onIssued(result);
     } catch (issueError) {
       setError(apiKeyErrorMessage(issueError));
     } finally {
@@ -251,227 +156,158 @@ function IssueApiKeyModal(props: {
     }
   };
 
-  const copyIssuedKey = async () => {
-    const current = issued();
-    if (!current) return;
-    try {
-      await navigator.clipboard.writeText(current.raw_key);
-      setCopyState("Copied");
-    } catch {
-      setCopyState("Copy failed");
-    }
-  };
-
   return (
-    <Modal
-      title={issued() ? "API key generated" : "Generate API key"}
-      onClose={closeAndClear}
-      closeDisabled={submitting()}
+    <FormDialog
+      title="Generate API key"
+      intro="Create a machine credential for automation. Limit it to the permissions this workflow needs."
+      submitLabel="Generate"
+      busyLabel="Generating..."
+      busy={submitting()}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
     >
-      <Show when={issued()} keyed fallback={
-        <form onSubmit={submit}>
-          <p class={ui.modalIntro}>Create a machine credential for automation. Limit it to the permissions this workflow needs.</p>
-          <div class={ui.scopeTarget} aria-label="API key target environment">
-            <span>Target environment</span>
-            <strong>{props.environmentName}</strong>
-            <div>
-              <Show when={props.environmentColorHex}>
-                <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
-              </Show>
-              <span>{props.projectName}</span>
-              <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
-            </div>
-          </div>
-          <label class={ui.field}>
-            <span>Name</span>
-            <input
-              class={ui.input}
-              type="text"
-              value={label()}
-              maxLength={64}
-              autocomplete="off"
-              onInput={(event) => setLabel(event.currentTarget.value)}
-              autofocus
-            />
-          </label>
-          <label class={ui.field}>
-            <span>Expiry</span>
-            <Select<ExpiryValue>
-              value={expiry()}
-              options={EXPIRY_OPTIONS}
-              onChange={setExpiry}
-              ariaLabel="Expiry"
-              minWidth="100%"
-            />
-          </label>
-          <fieldset class={ui.fieldSet}>
-            <legend class={ui.fieldLegend}>Permissions for this environment</legend>
-            <div class={"grid gap-1.5"}>
-              <For each={API_KEY_SCOPE_OPTIONS}>
-                {(option) => (
-                  <label class={ui.permissionOption}>
-                    <input
-                      type="checkbox"
-                      checked={selectedScopes().includes(option.value)}
-                      onChange={(event) => toggleScope(option.value, event.currentTarget.checked)}
-                    />
-                    <span>
-                      <strong>{option.label}</strong>
-                      <span>{option.description}</span>
-                    </span>
-                  </label>
-                )}
-              </For>
-            </div>
-          </fieldset>
-          <Show when={error()}>
-            <p class={ui.error} role="alert">{error()}</p>
-          </Show>
-          <div class={ui.modalActions}>
-            <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={closeAndClear}>
-              Cancel
-            </button>
-            <button class={ui.button} type="submit" disabled={submitting()}>
-              {submitting() ? "Generating..." : "Generate"}
-            </button>
-          </div>
-        </form>
-      }>
-        {(current) => (
-          <>
-            <p class={ui.warning}>This machine credential will not be shown again. Save it to a secret store now.</p>
-            <code class={ui.rawKey}>{current.raw_key}</code>
-            <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} onClick={closeAndClear}>Done</button>
-              <button class={ui.button} type="button" onClick={copyIssuedKey}>Copy</button>
-            </div>
-            <Show when={copyState()}>
-              <p class={ui.inlineState} role="status">{copyState()}</p>
-            </Show>
-          </>
-        )}
-      </Show>
-    </Modal>
+      <EnvironmentTarget
+        label="API key target environment"
+        environmentName={props.environmentName}
+        environmentColorHex={props.environmentColorHex}
+        projectName={props.projectName}
+        projectID={props.projectID}
+        environmentID={props.environmentID}
+      />
+      <Field label="Name">
+        <TextInput value={label()} maxLength={64} autocomplete="off" onInput={(event) => setLabel(event.currentTarget.value)} autofocus />
+      </Field>
+      <Field label="Expiry">
+        <Select<ExpiryValue> value={expiry()} options={EXPIRY_OPTIONS} onChange={setExpiry} minWidth="100%" />
+      </Field>
+      <CheckboxGroup label="Permissions for this environment" groups={API_KEY_PERMISSION_GROUPS} value={selectedScopes()} onChange={setSelectedScopes} />
+    </FormDialog>
   );
 }
 
 export function ApiKeys() {
-  const scope = useScope();
+  const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
   const [filter, setFilter] = createSignal<ListFilter>("active");
-  const [modalOpen, setModalOpen] = createSignal(false);
-  const [revokingId, setRevokingId] = createSignal<string | null>(null);
-  const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
+  const [issuing, setIssuing] = createSignal<EditTarget>();
+  const [issued, setIssued] = createSignal<ApiKeyIssued | null>(null);
+  const [revoking, setRevoking] = createSignal<{ keyItem: ApiKeySummary; target: EditTarget }>();
+  const revoke = (keyItem: ApiKeySummary) => {
+    const target = edited.target();
+    if (target) setRevoking({ keyItem, target });
+  };
 
   const keys = createInfiniteQuery(() => ({
-    queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
+    queryKey: ["api-keys", edited.projectID(), edited.environmentID(), filter()],
     queryFn: ({ pageParam }) => listApiKeys(
-      scope.selectedProjectID(),
-      scope.selectedEnvironmentID(),
+      edited.projectID(),
+      edited.environmentID(),
       filter(),
       pageParam || undefined,
     ),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
+    enabled: !!edited.projectID() && !!edited.environmentID(),
     retry: false,
   }));
   const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
 
-  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
-
-  const revoke = async (keyItem: ApiKeySummary) => {
-    if (!window.confirm(`Revoke API key "${keyItem.name}"?`)) return;
-    setRevokeError(null);
-    setRevokingId(keyItem.id);
-    try {
-      await revokeApiKey(scope.selectedProjectID(), scope.selectedEnvironmentID(), keyItem.id);
-      await invalidateApiKeys();
-    } catch (error) {
-      setRevokeError({ id: keyItem.id, message: apiKeyErrorMessage(error) });
-    } finally {
-      setRevokingId(null);
-    }
-  };
+  const invalidateApiKeys = (projectID: string, environmentID: string) =>
+    queryClient.invalidateQueries({ queryKey: ["api-keys", projectID, environmentID] });
 
   return (
     <>
       <PageHeader
         title="API keys"
-        subtitle="Machine credentials for automation, limited by the permissions selected when each key is generated."
+        subtitle="Limited to the permissions chosen when generated."
         actions={
           <button
             class={ui.button}
             type="button"
-            disabled={!scope.selectedProjectID() || !scope.selectedEnvironmentID()}
-            onClick={() => setModalOpen(true)}
+            disabled={!edited.projectID() || !edited.environment()}
+            onClick={() => setIssuing(edited.target())}
           >
-            Generate new API key
+            {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
           </button>
         }
       />
 
-      <div class={ui.toolbar}>
-        <div class={ui.toolbarSide} />
-        <div class={ui.toolbarSide}>
-          <span class={ui.filterField}>
-            <span>Filter</span>
-            <Select<ListFilter>
-              value={filter()}
-              options={FILTER_OPTIONS}
-              onChange={setFilter}
-              ariaLabel="Filter API keys"
-              minWidth="140px"
-            />
-          </span>
-        </div>
-      </div>
-
-      <Show when={keys.isError}>
-        <StatePanel error={apiKeyErrorMessage(keys.error)} />
-      </Show>
-
-      <Show when={!keys.isPending} fallback={<StatePanel loading="Loading API keys..." />}>
-        <Show when={keyItems().length > 0} fallback={<StatePanel empty="No API keys found." />}>
-          <DataTable
-            columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
-            minWidth="min-w-270"
-          >
-            <For each={keyItems()}>
-              {(keyItem) => (
-                <ApiKeyRow
-                  keyItem={keyItem}
-                  revoking={revokingId() === keyItem.id}
-                  error={revokeError()?.id === keyItem.id ? revokeError()?.message ?? null : null}
-                  onRevoke={revoke}
-                />
-              )}
-            </For>
-          </DataTable>
-          <Show when={keys.hasNextPage}>
-            <div class={ui.actionRow}>
-              <button
-                type="button"
-                class={ui.secondaryButton}
-                disabled={keys.isFetchingNextPage}
-                onClick={() => void keys.fetchNextPage()}
-              >
-                {keys.isFetchingNextPage ? "Loading..." : "Load more API keys"}
-              </button>
-            </div>
-          </Show>
-        </Show>
-      </Show>
-
-      <Show when={modalOpen()}>
-        <IssueApiKeyModal
-          projectID={scope.selectedProjectID()}
-          environmentID={scope.selectedEnvironmentID()}
-          projectName={scope.selectedProject()?.name ?? "Project"}
-          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
-          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
-          onClose={() => setModalOpen(false)}
-          onIssued={invalidateApiKeys}
+      <EnvironmentSelectorLayout edited={edited}>
+        <Toolbar
+          start={<Select<ListFilter> value={filter()} options={FILTER_OPTIONS} onChange={setFilter} ariaLabel="Filter API keys" minWidth="140px" />}
         />
+
+        <QueryState
+          query={keys}
+          pending="Loading API keys..."
+          error={apiKeyErrorMessage}
+          empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
+        >
+          {() => (
+            <DataTable
+              columns={["Name", "Status", "Key prefix", "Permissions", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
+              minWidth="min-w-270"
+              footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
+            >
+              <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} onRevoke={revoke} />}</For>
+            </DataTable>
+          )}
+        </QueryState>
+      </EnvironmentSelectorLayout>
+
+      <Show when={issuing()}>
+        {(target) => (
+          <IssueApiKeyDialog
+            projectID={target().projectID}
+            environmentID={target().environment.environment}
+            projectName={target().projectName}
+            environmentName={target().environment.name}
+            environmentColorHex={environmentChip(target().environment)?.colorHex ?? ""}
+            onClose={() => setIssuing(undefined)}
+            onIssued={async (result) => {
+              const { projectID, environment } = target();
+              setIssuing(undefined);
+              setIssued(result);
+              await invalidateApiKeys(projectID, environment.environment);
+            }}
+          />
+        )}
+      </Show>
+
+      <Show when={issued()}>
+        {(key) => (
+          <RevealDialog
+            title="API key generated"
+            value={key().raw_key}
+            warning="This machine credential will not be shown again. Save it to a secret store now."
+            onClose={() => setIssued(null)}
+          />
+        )}
+      </Show>
+
+      <Show when={revoking()}>
+        {(current) => (
+          <ConfirmDialog
+            title="Revoke API key"
+            confirmLabel="Revoke"
+            busyLabel="Revoking..."
+            tone="danger"
+            target={current().keyItem.name}
+            environment={environmentChip(current().target.environment)}
+            errorMessage={apiKeyErrorMessage}
+            onClose={() => setRevoking(undefined)}
+            onConfirm={async () => {
+              const { keyItem, target } = current();
+              const projectID = target.projectID;
+              const environmentID = target.environment.environment;
+              await revokeApiKey(projectID, environmentID, keyItem.id);
+              await invalidateApiKeys(projectID, environmentID);
+            }}
+          >
+            Automation using this key stops working immediately.
+          </ConfirmDialog>
+        )}
       </Show>
     </>
   );

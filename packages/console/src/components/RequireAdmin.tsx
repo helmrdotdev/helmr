@@ -1,26 +1,26 @@
-import { createQuery } from "@tanstack/solid-query";
+import { A } from "@solidjs/router";
 import { Show, type JSX } from "solid-js";
-import { getMe } from "../lib/auth";
-import { AuthLoading } from "../ui/AuthScreen";
+import { useMe } from "../lib/me";
+import { AuthError, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { ui } from "../ui/styles";
 import { RequireAuth } from "./RequireAuth";
 
 export function RequireAdmin(props: { children: JSX.Element }) {
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
 
   return (
     <RequireAuth requirement="session">
-      <Show when={!me.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
+      <Show when={!me.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
         <Show
           when={me.data?.admin}
           fallback={
-            <main class="grid min-h-dvh place-items-center p-5">
-              <p class="text-[13px] font-medium text-console-danger">Administrator access is required.</p>
-            </main>
+            <AuthWindow>
+              <AuthError
+                title="Administrator access required"
+                message="Your account cannot open the admin area. Sign in with an administrator account."
+                action={<A href="/" class={ui.secondaryButton}>Back to the console</A>}
+              />
+            </AuthWindow>
           }
         >
           {props.children}

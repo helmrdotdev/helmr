@@ -1,7 +1,7 @@
 import { fixtureValue } from "../../e2e/support/runtime-mcp"
 // Authored application for the integrated worker qualification. The driver
 // starts the local model through an ordinary Computer command before native setup.
-import { agent, template, image, source, type Json } from "../../../sdk/typescript/src/index"
+import { agent, template, image, source, type JsonValue } from "../../../sdk/typescript/src/index"
 import assert from "node:assert/strict"
 import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
@@ -150,7 +150,7 @@ export const peer = agent({
   id: "peer",
   template: workspace,
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
-  async turn(turn, { initResult: state, session, computer, mcp }): Promise<Json> {
+  async turn(turn, { initResult: state, session, computer, mcp }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
@@ -195,7 +195,7 @@ export const models = agent({
     await writeFile("/workspace/native-models.json", JSON.stringify(model.endpoints))
     return { ...model, target, nonce: crypto.randomUUID(), count: 0 }
   },
-  async turn(turn, { initResult: state }): Promise<Json> {
+  async turn(turn, { initResult: state }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
     assert(typeof input === "string" || (input && typeof input === "object" && !Array.isArray(input)))
     if (input === "park") {

@@ -1,8 +1,8 @@
 import type { LoadedAgentDefinition } from "@helmr/sdk/internal"
 import { describeInput } from "./input-schema"
 import type { InputSchemaDiscovery } from "../../../sdk/typescript/src/schema/input"
-import { durationMilliseconds, normalizeInput, normalizeInvocation, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
-import type { TemplateDefinition, SecretBinding, Json } from "@helmr/sdk"
+import { durationMilliseconds, normalizeInput, normalizeInvocation, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import type { TemplateDefinition, SecretBinding, JsonValue } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
@@ -25,7 +25,7 @@ export interface AgentManifest {
   readonly closeAfterIdleMs?: number
   readonly closeAfterIdleNever?: boolean
   readonly maxTurnDurationMs?: number
-  readonly triggers: Readonly<Record<string, { readonly cron: string; readonly timezone: string; readonly input: Json; readonly slack?: Readonly<{ channelId: string }> }>>
+  readonly triggers: Readonly<Record<string, { readonly cron: string; readonly timezone: string; readonly input: JsonValue; readonly slack?: Readonly<{ channelId: string }> }>>
 }
 export type BuildPlanDefinition =
   | Readonly<{ kind: "agent"; declaredId: string; manifest: AgentManifest }>
@@ -97,7 +97,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
   const located = locateDefinitions(options)
   const definitions = located.map(({ definition }): BuildPlanDefinition => {
     if (definition.kind === "agent") {
-      const triggers: Record<string, { cron: string; timezone: string; input: Json; slack?: { channelId: string } }> = Object.create(null)
+      const triggers: Record<string, { cron: string; timezone: string; input: JsonValue; slack?: { channelId: string } }> = Object.create(null)
       if (definition.triggers !== undefined && !Array.isArray(definition.triggers)) throw new Error("Agent triggers must be an array")
       for (const trigger of definition.triggers ?? []) {
         assertMembers(trigger, ["id", "cron", "timezone", "input", "slack"], "Agent trigger")

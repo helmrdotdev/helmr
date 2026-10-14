@@ -1,5 +1,5 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, template, image, source, type Json } from "@helmr/sdk"
+import { agent, template, image, source, type JsonValue } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "./process"
@@ -39,14 +39,14 @@ export const runtimeSmokePayload = z.object({
 type Check = {
   readonly name: string
   readonly ok: boolean
-  readonly detail: Json
+  readonly detail: JsonValue
 }
 
 export const runtimeSmoke = agent({
   id: "runtime-smoke",
   template: runtimeSmokeComputer,
   maxTurnDuration: "20m",
-  turn: async (turn, ctx): Promise<Json> => {
+  turn: async (turn, ctx): Promise<JsonValue> => {
     const input = runtimeSmokePayload.parse(fixtureValue(turn.input))
     const marker = input.marker?.trim() || `runtime-smoke-${turn.id}`
     const checks: Check[] = []
@@ -75,7 +75,7 @@ export const runtimeSmoke = agent({
     // Process diagnostics remain internal; only selected application data above
     // is appended to the public Session timeline.
     console.info({ phase: "runtime-smoke", marker, checkCount: checks.length })
-    let answer: Json = null
+    let answer: JsonValue = null
     if (input.exerciseQuestion) {
       checks.push(await collectCheck("human-question", async () => {
         const response = await turn.ask({
@@ -85,7 +85,8 @@ export const runtimeSmoke = agent({
             { id: "decline", label: "Decline", value: false },
           ], allowCustom: true,
         })
-        answer = response.answer
+        const { selected, custom } = response.answer
+        answer = custom === undefined ? { selected } : { selected, custom }
         return { name: "human-question", ok: true, detail: answer }
       }))
     }

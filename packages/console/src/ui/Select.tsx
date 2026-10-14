@@ -1,13 +1,22 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js";
-import { Portal } from "solid-js/web";
+import { createMemo, createSignal, createUniqueId, For, onCleanup, Show, type JSX } from "solid-js";
+import { useFieldControl } from "./Field";
+import { Popover } from "./Popover";
 import { cx, ui } from "./styles";
 
 export type SelectOption<T extends string> = {
   value: T;
   label: string;
-  hint?: string;
+  // Tags after the label in a fixed trailing column (a protected badge), also
+  // shown in the trigger for the chosen option.
+  trailing?: () => JSX.Element;
 };
 
+// Past this many options the list gets a filter box.
+const SEARCHABLE_AFTER = 10;
+
+// The only select in the console: a combobox button that opens a listbox in a
+// popover. Inside a `Field` it takes the field's id, label, hint and error; with
+// `name` it also submits its value with the surrounding form.
 export function Select<T extends string>(props: {
   value: T;
   options: readonly SelectOption<T>[];
@@ -15,71 +24,60 @@ export function Select<T extends string>(props: {
   disabled?: boolean;
   placeholder?: string;
   ariaLabel?: string;
+  name?: string;
   minWidth?: string;
   align?: "start" | "end";
 }) {
+  const field = useFieldControl();
   const [open, setOpen] = createSignal(false);
+  const [query, setQuery] = createSignal("");
   const [activeIndex, setActiveIndex] = createSignal(0);
-  const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
-  let wrapperRef: HTMLDivElement | undefined;
-  let buttonRef: HTMLButtonElement | undefined;
-  let listboxRef: HTMLUListElement | undefined;
+  const [trigger, setTrigger] = createSignal<HTMLButtonElement>();
   let optionRefs: HTMLButtonElement[] = [];
+  let searchRef: HTMLInputElement | undefined;
   let typeahead = "";
   let typeaheadReset: number | undefined;
-  const selected = createMemo(() => props.options.find((option) => option.value === props.value));
-  const selectedIndex = createMemo(() => {
-    const index = props.options.findIndex((option) => option.value === props.value);
-    return index >= 0 ? index : 0;
-  });
   const listboxID = createUniqueId();
+  const searchable = () => props.options.length > SEARCHABLE_AFTER;
+  const selected = createMemo(() => props.options.find((option) => option.value === props.value));
+  const visible = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    if (!q) return props.options;
+    return props.options.filter((option) => option.label.toLowerCase().includes(q) || option.value.toLowerCase().includes(q));
+  });
 
   const focusOption = (index: number) => {
-    const last = props.options.length - 1;
+    const last = visible().length - 1;
     if (last < 0) return;
     const next = Math.max(0, Math.min(index, last));
     setActiveIndex(next);
     queueMicrotask(() => optionRefs[next]?.focus());
   };
 
-  const openAt = (index: number) => {
+  const openList = () => {
     if (props.disabled || props.options.length === 0) return;
-    updateMenuPosition();
+    typeahead = "";
+    setQuery("");
     setOpen(true);
-    focusOption(index);
+    const index = Math.max(0, props.options.findIndex((option) => option.value === props.value));
+    if (searchable()) {
+      setActiveIndex(index);
+      queueMicrotask(() => searchRef?.focus());
+    } else {
+      focusOption(index);
+    }
   };
 
-  const updateMenuPosition = () => {
-    if (!buttonRef) return;
-    const rect = buttonRef.getBoundingClientRect();
-    const viewportPadding = 8;
-    const minWidth = Math.ceil(rect.width);
-    const measuredWidth = Math.ceil(listboxRef?.offsetWidth ?? minWidth);
-    const maxLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - measuredWidth);
-    const spaceBelow = window.innerHeight - rect.bottom - 5 - viewportPadding;
-    const spaceAbove = rect.top - 5 - viewportPadding;
-    const placeAbove = spaceBelow < 120 && spaceAbove > spaceBelow;
-    const maxHeight = Math.max(80, Math.min(260, placeAbove ? spaceAbove : spaceBelow));
-    const top = placeAbove
-      ? Math.max(viewportPadding, Math.floor(rect.top - maxHeight - 5))
-      : Math.ceil(rect.bottom + 5);
-    const inlinePosition = props.align === "end"
-      ? { right: `${Math.max(viewportPadding, Math.ceil(window.innerWidth - rect.right))}px` }
-      : { left: `${Math.min(Math.max(viewportPadding, Math.floor(rect.left)), maxLeft)}px` };
-    setMenuStyle({
-      top: `${top}px`,
-      "max-height": `${maxHeight}px`,
-      "min-width": `${minWidth}px`,
-      ...inlinePosition,
-    });
+  const close = () => {
+    setOpen(false);
+    queueMicrotask(() => trigger()?.focus());
   };
 
-  const chooseOption = (index: number) => {
-    const option = props.options[index];
+  const choose = (index: number) => {
+    const option = visible()[index];
     if (!option) return;
     props.onChange(option.value);
-    setOpen(false);
-    queueMicrotask(() => buttonRef?.focus());
+    close();
   };
 
   const focusByPrefix = (key: string) => {
@@ -88,116 +86,89 @@ export function Select<T extends string>(props: {
     typeaheadReset = window.setTimeout(() => {
       typeahead = "";
     }, 700);
+    const options = visible();
     const start = activeIndex() + 1;
-    const options = props.options;
     const match = [...options.slice(start), ...options.slice(0, start)].findIndex((option) =>
       option.label.toLowerCase().startsWith(typeahead),
     );
-    if (match < 0) return;
-    focusOption((start + match) % options.length);
+    if (match >= 0) focusOption((start + match) % options.length);
   };
 
-  const handleTriggerKeyDown = (event: KeyboardEvent) => {
-    if (event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey) {
+  const printable = (event: KeyboardEvent) =>
+    event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey;
+
+  const onTriggerKeyDown = (event: KeyboardEvent) => {
+    if (printable(event) && !searchable()) {
       event.preventDefault();
-      openAt(selectedIndex());
+      openList();
       focusByPrefix(event.key);
+      return;
+    }
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      if (open()) setOpen(false);
+      else openList();
+    }
+  };
+
+  const onListKeyDown = (event: KeyboardEvent) => {
+    const inSearch = event.target === searchRef;
+    if (printable(event) && !inSearch) {
+      event.preventDefault();
+      if (searchable()) {
+        filter(`${query()}${event.key}`);
+        searchRef?.focus();
+      } else {
+        focusByPrefix(event.key);
+      }
       return;
     }
     switch (event.key) {
       case "ArrowDown":
-      case "ArrowUp":
         event.preventDefault();
-        openAt(selectedIndex());
-        break;
-      case "Enter":
-      case " ":
-        event.preventDefault();
-        if (open()) {
-          setOpen(false);
-        } else {
-          openAt(selectedIndex());
-        }
-        break;
-    }
-  };
-
-  const handleListboxKeyDown = (event: KeyboardEvent) => {
-    if (event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      event.preventDefault();
-      focusByPrefix(event.key);
-      return;
-    }
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        focusOption(activeIndex() + 1);
+        focusOption(inSearch ? 0 : activeIndex() + 1);
         break;
       case "ArrowUp":
         event.preventDefault();
-        focusOption(activeIndex() - 1);
+        if (!inSearch && activeIndex() === 0 && searchable()) searchRef?.focus();
+        else focusOption(activeIndex() - 1);
         break;
       case "Home":
+        if (inSearch) return;
         event.preventDefault();
         focusOption(0);
         break;
       case "End":
+        if (inSearch) return;
         event.preventDefault();
-        focusOption(props.options.length - 1);
+        focusOption(visible().length - 1);
         break;
       case "Enter":
-      case " ":
         event.preventDefault();
-        chooseOption(activeIndex());
+        choose(inSearch ? 0 : activeIndex());
         break;
-      case "Escape":
+      case " ":
+        if (inSearch) return;
         event.preventDefault();
-        setOpen(false);
-        queueMicrotask(() => buttonRef?.focus());
+        choose(activeIndex());
         break;
     }
   };
 
-  onMount(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (wrapperRef?.contains(target) || listboxRef?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && open()) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        setOpen(false);
-        queueMicrotask(() => buttonRef?.focus());
-      }
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
-    onCleanup(() => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
-      window.clearTimeout(typeaheadReset);
-    });
-  });
+  const filter = (value: string) => {
+    setQuery(value);
+    setActiveIndex(0);
+  };
 
-  createEffect(() => {
-    if (open()) updateMenuPosition();
-  });
+  onCleanup(() => window.clearTimeout(typeaheadReset));
 
   return (
-    <div
-      class="relative inline-block"
-      ref={wrapperRef}
-      style={props.minWidth ? { "min-width": props.minWidth } : undefined}
-    >
+    <div class="relative inline-block" style={props.minWidth ? { "min-width": props.minWidth } : undefined}>
       <button
-        ref={buttonRef}
+        ref={setTrigger}
+        id={field?.id}
         type="button"
+        role="combobox"
         class={ui.selectTrigger}
         data-open={open() ? "true" : "false"}
         disabled={props.disabled}
@@ -205,75 +176,82 @@ export function Select<T extends string>(props: {
         aria-expanded={open()}
         aria-controls={open() ? listboxID : undefined}
         aria-label={props.ariaLabel}
-        onClick={() => {
-          if (open()) {
-            setOpen(false);
-          } else {
-            openAt(selectedIndex());
-          }
-        }}
-        onKeyDown={handleTriggerKeyDown}
+        aria-labelledby={props.ariaLabel ? undefined : field?.labelID}
+        aria-describedby={field?.describedBy()}
+        aria-invalid={field?.invalid() || undefined}
+        onClick={() => (open() ? setOpen(false) : openList())}
+        onKeyDown={onTriggerKeyDown}
       >
-        <span class="overflow-hidden text-ellipsis whitespace-nowrap">
-          {selected()?.label ?? props.placeholder ?? "Select…"}
+        <span class="flex min-w-0 items-center gap-1.5">
+          <span class="overflow-hidden text-ellipsis whitespace-nowrap">{selected()?.label ?? props.placeholder ?? "Select…"}</span>
+          {selected()?.trailing?.()}
         </span>
-        <span
-          class={cx(
-            "grid size-4 place-items-center transition-transform",
-            open() && "rotate-180",
-          )}
-          aria-hidden="true"
-        >
+        <span class={cx("grid size-4 place-items-center transition-transform", open() && "rotate-180")} aria-hidden="true">
           <span class="block size-1.5 -translate-y-px rotate-45 border-b border-r border-console-muted" />
         </span>
       </button>
-      <Portal>
-        <Show when={open()}>
-          <ul
-            ref={listboxRef}
-            id={listboxID}
-            class={ui.selectMenu}
-            style={menuStyle()}
-            role="listbox"
-            aria-label={props.ariaLabel}
-            onKeyDown={handleListboxKeyDown}
-          >
-            <For each={props.options}>
+      <Show when={props.name}>
+        {(name) => <input type="hidden" name={name()} value={props.value} />}
+      </Show>
+      <Popover
+        open={open()}
+        anchor={trigger()}
+        onDismiss={() => setOpen(false)}
+        align={props.align ?? "start"}
+        width="anchor"
+        bodyClass="p-0.75"
+        onKeyDown={onListKeyDown}
+      >
+        <Show when={searchable()}>
+          <input
+            ref={searchRef}
+            class={cx(ui.input, "mb-0.75 h-6 min-h-6")}
+            type="search"
+            placeholder="Filter…"
+            aria-label={`Filter ${props.ariaLabel ?? "options"}`}
+            aria-controls={listboxID}
+            value={query()}
+            onInput={(event) => filter(event.currentTarget.value)}
+            autocomplete="off"
+            spellcheck={false}
+          />
+        </Show>
+        <ul
+          id={listboxID}
+          class="m-0 list-none p-0"
+          role="listbox"
+          aria-label={props.ariaLabel}
+          aria-labelledby={props.ariaLabel ? undefined : field?.labelID}
+        >
+          <Show when={visible().length > 0} fallback={<li class="px-2 py-1.5 text-control text-console-subtle">No matches</li>}>
+            <For each={visible()}>
               {(option, index) => (
                 <li>
                   <button
-                    ref={(el) => {
-                      optionRefs[index()] = el;
+                    ref={(element) => {
+                      optionRefs[index()] = element;
                     }}
-                    id={`${listboxID}-${index()}`}
                     type="button"
-                    class={cx(
-                      ui.selectOption,
-                      option.value === props.value && ui.selectedOption,
-                    )}
+                    class={cx(ui.selectOption, option.value === props.value && ui.selectedOption)}
                     role="option"
                     aria-selected={option.value === props.value}
                     tabIndex={index() === activeIndex() ? 0 : -1}
                     onMouseEnter={() => setActiveIndex(index())}
                     onFocus={() => setActiveIndex(index())}
-                    onClick={() => {
-                      chooseOption(index());
-                    }}
+                    onClick={() => choose(index())}
                   >
-                    <span class="text-center text-[12px] font-medium leading-none text-console-accent" aria-hidden="true">
+                    <span class="text-center text-control font-medium leading-none text-console-accent" aria-hidden="true">
                       {option.value === props.value ? "✓" : ""}
                     </span>
                     <span class="overflow-hidden text-ellipsis whitespace-nowrap">{option.label}</span>
-                    <Show when={option.hint}>
-                      <span class="font-mono text-[11px] text-console-subtle">{option.hint}</span>
-                    </Show>
+                    <span class="flex items-center justify-end gap-1.5">{option.trailing?.()}</span>
                   </button>
                 </li>
               )}
             </For>
-          </ul>
-        </Show>
-      </Portal>
+          </Show>
+        </ul>
+      </Popover>
     </div>
   );
 }

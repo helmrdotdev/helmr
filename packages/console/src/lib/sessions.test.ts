@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 
 import {
   messageDeliveryNotice, questionCLICommands, getSession, getSessionEvents, listSessions, cancelSession,
-  interruptSession, sessionConsolePath,
+  interruptSession, sessionConsolePath, askConsolePath,
 } from "./sessions";
 
 const originalFetch = globalThis.fetch;
@@ -54,9 +54,10 @@ test("loads the next Session event page with a bounded cursor", async () => {
   );
 });
 
-test("escapes a Session console route and preserves its scope", () => {
-  expect(sessionConsolePath("session/id", "project/1", "env/1")).toBe(
-    "/sessions/session%2Fid?project=project%2F1&environment=env%2F1",
+test("escapes a Session console route without scope params", () => {
+  expect(sessionConsolePath("session/id")).toBe("/sessions/session%2Fid");
+  expect(askConsolePath({ sessionID: "session/id", turnID: "turn/1", askID: "ask/1" })).toBe(
+    "/sessions/session%2Fid/turns/turn%2F1/asks/ask%2F1",
   );
 });
 

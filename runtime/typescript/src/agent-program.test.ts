@@ -3,7 +3,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { agentProto } from "@helmr/proto"
-import type { AgentDefinition, InitContext, Json, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, InitContext, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { runAgentProgram } from "./agent-program"
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
@@ -19,7 +20,7 @@ function queue<T>() {
 }
 const identity = create(agentProto.SessionIdentitySchema, { sessionId: "session", processEpoch: 3n })
 const json = (value: unknown) => Buffer.from(JSON.stringify(value))
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, Json, unknown>, "init">>, handle?: (operation: agentProto.Operation) => Promise<Json>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
+function fixture(definition: Pick<AgentDefinition<InputContent, JsonValue, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, JsonValue, unknown>, "init">>, handle?: (operation: agentProto.Operation) => Promise<JsonValue>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
   const input = queue<Uint8Array>()
   const ready = deferred<void>(), failed = deferred<agentProto.SessionFailed>()
   const receipts = new Map<string, ReturnType<typeof deferred<agentProto.DeliveryResult>>>()
@@ -32,7 +33,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     // Exercise fragmented frame headers and payloads.
     input.push(header.subarray(0, 2)); input.push(Buffer.concat([header.subarray(2), body.subarray(0, 3)])); input.push(body.subarray(3))
   }
-  async function operate(operation: agentProto.Operation): Promise<Json> {
+  async function operate(operation: agentProto.Operation): Promise<JsonValue> {
     if (handle) return handle(operation)
     const value = JSON.parse(Buffer.from(operation.payloadJson).toString())
     if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: value.result }
@@ -308,7 +309,7 @@ for (const withInit of [true, false]) {
 test("context MCP retries after rejected admission and validates local connection options", async () => {
   const connection = { url: "http://127.0.0.1:31415/mcp", headers: { Authorization: "Bearer local-only" } }
   let denied = false
-  const responses: Json[] = [null, { ...connection, url: "https://example.test/mcp" }, { ...connection, headers: {} }, connection]
+  const responses: JsonValue[] = [null, { ...connection, url: "https://example.test/mcp" }, { ...connection, headers: {} }, connection]
   const f = fixture({ turn: async (_turn, ctx) => {
     await assert.rejects(ctx.mcp.getConnectionOptions(), /admission denied/)
     await assert.rejects(ctx.mcp.getConnectionOptions(), /Invalid runtime MCP connection/)

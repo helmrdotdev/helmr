@@ -168,9 +168,11 @@ Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 | Provider | Required variables | Optional variables |
 | --- | --- | --- |
 | `none` | None. This is the default when no email settings are present. | None |
-| `log` | `EMAIL_PROVIDER=log` | `MAGIC_LINK_DEBUG_URLS=true` logs magic link URLs for local debugging. |
+| `log` | `EMAIL_PROVIDER=log` | `MAGIC_LINK_DEBUG_URLS=true` also returns sign-in links in API responses. Sign-in and invitation links are written to the Control Plane log instead of being sent. For local development only; rejected when `DEPLOYMENT_MODE` is `managed-cloud`. |
 | `smtp` | `EMAIL_PROVIDER=smtp`, `SMTP_ADDR`, `EMAIL_FROM` | `SMTP_USERNAME`, `SMTP_PASSWORD` |
 | `resend` | `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | None |
+
+The configured sender delivers sign-in links and member invitations. Without a sender, members can't be invited.
 
 `EMAIL_FROM` must be an email address or display-name address accepted by the selected provider, such as `Helmr <noreply@example.com>`.
 

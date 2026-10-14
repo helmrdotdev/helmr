@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { create, toBinary } from "@bufbuild/protobuf"
 import { agentProto } from "@helmr/proto"
-import { requireJson, type Json } from "../../../sdk/typescript/src/agent"
+import { requireJson } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 
 export const MAX_AGENT_FRAME_BYTES = 16 * 1024 * 1024
 
 interface Pending {
-  resolve(value: Json): void
+  resolve(value: JsonValue): void
   reject(error: unknown): void
   removeAbort(): void
 }
@@ -40,7 +41,7 @@ export class AgentChannel {
     return identity?.sessionId === this.identity.sessionId && identity.processEpoch === this.identity.processEpoch
   }
 
-  operation(method: agentProto.Operation_Method, payload: Json, options: { turnId?: string; signal?: AbortSignal } = {}): Promise<Json> {
+  operation(method: agentProto.Operation_Method, payload: JsonValue, options: { turnId?: string; signal?: AbortSignal } = {}): Promise<JsonValue> {
     if (this.failure) return Promise.reject(this.failure)
     try { options.signal?.throwIfAborted(); requireJson(payload) } catch (error) { return Promise.reject(error) }
     if (method === agentProto.Operation_Method.UNSPECIFIED) return Promise.reject(new Error("Operation method is required"))
@@ -57,7 +58,7 @@ export class AgentChannel {
         : error)
     }
     const operation = create(agentProto.OperationSchema, { requestId, method, payloadJson, ...(options.turnId === undefined ? {} : { turnId: options.turnId }) })
-    const result = new Promise<Json>((resolve, reject) => {
+    const result = new Promise<JsonValue>((resolve, reject) => {
       const abort = () => {
         const pending = this.pending.get(requestId)
         if (!pending) return

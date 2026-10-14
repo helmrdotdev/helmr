@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from "../../../sdk/typescript/src/agent"
 import type { AgentInputContract, InputSchemaDiscovery } from "../../../sdk/typescript/src/schema/input"
 import { canonicalizeJsonValue } from "@helmr/sdk/internal"
-import type { Json } from "@helmr/sdk"
+import type { JsonValue } from "@helmr/sdk"
 
 // Build-time discovery is advisory. Never execute business validators here and
 // never fetch JSON Schema references during discovery or validation.
@@ -19,8 +19,8 @@ export function describeInput(schema: StandardSchemaV1 | undefined, agentId: str
   } catch { return unavailable("conversion_failed") }
   if (typeof document !== "boolean" && (!document || typeof document !== "object" || Array.isArray(document))) return unavailable("invalid_schema")
   let bytes: Uint8Array
-  try { bytes = canonicalizeJsonValue(document as Json) }
+  try { bytes = canonicalizeJsonValue(document as JsonValue) }
   catch { return unavailable("invalid_schema") }
   if (bytes.byteLength > 64 * 1024) return unavailable("schema_too_large")
-  return { inputKind: "json", inputSchema: { status: "available", schema: JSON.parse(new TextDecoder().decode(bytes)) as Json } }
+  return { inputKind: "json", inputSchema: { status: "available", schema: JSON.parse(new TextDecoder().decode(bytes)) as JsonValue } }
 }

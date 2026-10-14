@@ -1,5 +1,5 @@
 import { callMcp, fixtureInput, fixtureValue, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, template, image, type Json } from "@helmr/sdk"
+import { agent, template, image, type JsonValue } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
 import { z } from "zod"
@@ -34,7 +34,7 @@ const callerInput = z.object({
 }).strict()
 export const helperCaller = agent({
   id: "helper-smoke", template: helperCallerComputer, maxTurnDuration: "10m",
-  turn: async (turn, ctx): Promise<Json> => {
+  turn: async (turn, ctx): Promise<JsonValue> => {
     const input = callerInput.parse(fixtureValue(turn.input))
     const options = {
       agent: helperChild.id, computerId: input.mode === "same-computer" ? ctx.computer.id : input.childComputerId,

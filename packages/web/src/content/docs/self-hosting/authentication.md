@@ -31,6 +31,23 @@ Once `/readyz` succeeds, sign in through GitHub. If the environment has no organ
 
 The setup token is a bootstrap credential, not a substitute for user authentication. Restrict access to its secret and logs. The checked-in helper initializes missing secret values only; it does not rotate an existing setup token.
 
+## Invite members
+
+Owners and admins invite people from **Members** in the Console. Paste up to 50
+email addresses at once, separated by commas, semicolons, spaces or new lines, and choose one
+role for all of them; only owners can invite owners. Each invitee receives an
+email with their invitation link, which expires after 7 days. An address that is
+invalid, already belongs to an active member or already has a pending invitation
+is reported without blocking the others. If the invitation emails cannot be
+sent, no invitation is created and the Console lists the addresses that were not
+invited. With SMTP delivery, a server that refuses one recipient partway through
+a batch may already have accepted emails for the addresses before it; those
+emails arrive, but their links don't work because no invitation was created.
+Invite those people again.
+
+Inviting members requires [email delivery](/docs/reference/env). Without it,
+members can't be invited.
+
 ## Deployment administrators
 
 The AWS reference roots accept `controlplane_environment.ADMIN_EMAILS`, a comma-separated list of verified login emails

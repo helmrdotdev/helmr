@@ -34,7 +34,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   const response = await page.request.post(`${f.askBase}/answer`, { data: { answer: "", answer_id: crypto.randomUUID() } });
   expect(response.ok(), await response.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText('""');
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText('""');
   const recorded = await (await page.request.get(f.askBase)).json();
   const me = await (await page.request.get("/api/me")).json();
   expect(recorded.status).toBe("answered");
@@ -62,7 +62,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   await expect(page.getByText("kept while saving", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Second visible progress", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Question — answered" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem").filter({ has: page.getByRole("link", { name: "Question", exact: true }) })).toContainText("Answered");
   const after = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json();
   expect(after.turns.map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["finalizing", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "kept while saving" }]],
@@ -82,7 +82,7 @@ test("Console records one externally retried choice with its exact values", asyn
     expect(response.ok(), await response.text()).toBeTruthy();
   }
   await page.reload();
-  await expect.poll(async () => JSON.parse(await page.getByLabel("Recorded answer").innerText())).toEqual(answer);
+  await expect.poll(async () => JSON.parse(await page.getByRole("region", { name: "Recorded answer" }).locator("pre").innerText())).toEqual(answer);
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   const events = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/events?after=0&limit=100`)).json();
   expect(events.records.filter((event: { kind: string }) => event.kind === "ask.answered")).toHaveLength(1);
@@ -112,7 +112,7 @@ test("real API rejects a loaded question after organization scope loss and accep
   const reply = await page.request.post(`${f.askBase}/answer`, { data });
   expect(reply.ok(), await reply.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText('"retained draft"');
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText('"retained draft"');
 });
 
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {
@@ -131,12 +131,11 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect(page.getByText("retained after revocation", { exact: true })).toBeVisible();
   await page.goto(`/settings/secrets?${f.scope}`);
   await page.getByRole("button", { name: "Actions for BROWSER_REVOCATION" }).click();
-  const confirmation = page.waitForEvent("dialog");
-  const click = page.getByRole("button", { name: "Revoke", exact: true }).click();
-  const dialog = await confirmation;
-  expect(dialog.message()).toContain("Pending inputs are retained but cannot run on affected Computers.");
-  await dialog.accept();
-  await click;
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Revoke secret" });
+  await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
+  await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
   const turns = async () => (await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json()).turns;
   await expect.poll(async () => (await turns()).map((turn: { status: string }) => turn.status)).toEqual(["interrupted", "queued"]);
@@ -145,7 +144,7 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect(page.getByText("retained after revocation", { exact: true })).toBeVisible();
   expect((await (await page.request.get(f.askBase)).json()).status).toBe("cancelled");
   await page.reload();
-  await expect(page.getByText("Use the CLI to close this Session or release a hold.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("real-api-secret-blocked-queue.png"), fullPage: true });
   const held = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
   const release = await page.request.post(`${f.base}/sessions/${f.sessionID}/resume`, { data: { hold_id: held.holds[0].id, idempotency_key: crypto.randomUUID() } });
@@ -161,9 +160,9 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   expect((await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["interrupted", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "retained after revocation" }]],
   ]);
-  await page.getByRole("button", { name: "Cancel Session", exact: true }).click();
-  const cancel = page.getByRole("dialog", { name: "Cancel Session", exact: true });
-  await cancel.getByRole("button", { name: "Cancel Session", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  const cancel = page.getByRole("dialog", { name: "Cancel session", exact: true });
+  await cancel.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(cancel).toHaveCount(0);
   await expect.poll(async () => (await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["interrupted", [{ type: "text", text: "retained" }]], ["cancelled", [{ type: "text", text: "retained after revocation" }]],

@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from "../../../sdk/typescript/src/agent"
 import { requireJson } from "../../../sdk/typescript/src/agent"
-import type { Json } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 
 export class ValidationFailure extends Error {
   readonly code: "input_invalid" | "result_invalid"
@@ -26,7 +26,7 @@ export async function validate(schema: StandardSchemaV1 | undefined, value: unkn
   return result.value
 }
 
-export function validatedResult(value: unknown): Json {
+export function validatedResult(value: unknown): JsonValue {
   try { requireJson(value) }
   catch { throw new ValidationFailure("result_invalid", [{ message: "Result must be finite JSON with ordinary data properties and valid Unicode" }]) }
   return structuredClone(value)

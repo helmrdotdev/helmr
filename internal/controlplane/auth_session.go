@@ -30,6 +30,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		Admin:           principal.Admin,
 		Permissions:     []string{},
 		ProjectRequired: hasOrg && !account.HasProjects,
+		EmailDelivery:   s.emailConfigured(),
 	}
 	switch {
 	case hasOrg:
