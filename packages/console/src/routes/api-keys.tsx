@@ -12,7 +12,7 @@ import {
   type ListFilter,
 } from "../lib/api-keys";
 import { environmentChip } from "../features/projects/display";
-import { EditedEnvironmentChip, EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
+import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { CheckboxGroup, Field, TextInput } from "../ui/Field";
@@ -220,7 +220,7 @@ export function ApiKeys() {
     <>
       <PageHeader
         title="API keys"
-        subtitle={<>Machine credentials for automation in <EditedEnvironmentChip edited={edited} />, limited by the permissions selected when each key is generated.</>}
+        subtitle="Limited to the permissions chosen when generated."
         actions={
           <button
             class={ui.button}
@@ -248,7 +248,7 @@ export function ApiKeys() {
             <DataTable
               columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
               minWidth="min-w-270"
-              footer={<LoadMore count={keyItems().length} noun="API keys" hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
+              footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >
               <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} onRevoke={revoke} />}</For>
             </DataTable>

@@ -57,7 +57,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
       {() => (
         <List
           label="Slack delivery issues"
-          footer={<LoadMore count={rows().length} noun="delivery issues" hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
+          footer={<LoadMore count={rows().length} noun={{ one: "delivery issue", other: "delivery issues" }} hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
         >
           <For each={rows()}>{(post) => <ListItem class={ui.blockStack}>
             <h3 class="m-0 text-body font-medium">{title(post)}</h3>

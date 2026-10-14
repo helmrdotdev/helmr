@@ -1,4 +1,4 @@
-import { A, useLocation, useParams } from "@solidjs/router";
+import { useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { CopyLinkButton } from "../components/CopyLinkButton";
@@ -7,7 +7,7 @@ import { deploymentHref } from "../features/deployments/navigation";
 import { AgentSlackConnection } from "../features/slack/AgentSlackConnection";
 import { ApiError } from "../lib/api";
 import { getCurrentDeployment } from "../lib/deployments";
-import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, templateHref, type AgentTab, type RetainedAgent } from "../lib/definitions";
+import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, type AgentTab, type RetainedAgent } from "../lib/definitions";
 import { errorMessage } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
@@ -20,7 +20,6 @@ import { EmptyState, QueryState } from "../ui/QueryState";
 import { StatusBadge } from "../ui/StatusBadge";
 import { selectedLinkTab } from "../ui/linkTab";
 import { LinkTabs, TabPanel, type LinkTabItem } from "../ui/Tabs";
-import { DefinitionView } from "./definitions";
 import { SessionList } from "./sessions";
 import { TriggerList } from "./triggers";
 
@@ -41,7 +40,7 @@ const SECTION_TABS: LinkTabItem<Section>[] = [
 // The Agents section: Agents, their Sessions and triggers, one page each.
 export function AgentsSection(props: { children?: JSX.Element }) {
   return (
-    <SectionLayout id="agents-section" title="Agents" subtitle="Agents, their Sessions and triggers in this environment." tabs={SECTION_TABS}>
+    <SectionLayout id="agents-section" title="Agents" tabs={SECTION_TABS}>
       {props.children}
     </SectionLayout>
   );
@@ -82,13 +81,13 @@ export function AgentList() {
         <Show when={shown().length > 0} fallback={<EmptyState title="No loaded Agents match this filter." hint={agents.hasNextPage ? "Load more Agents to search further." : undefined} />}>
           <DataTable
             columns={all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"]}
-            footer={<LoadMore count={items().length} noun="Agents" hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "Agent", other: "Agents" }} hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
           >
             <For each={shown()}>{item => <tr>
               <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
               <td><StatusBadge resource="agent" status={item.defined_in_current ? "defined" : "not_defined"} /></td>
               <Show when={!all()}>
-                <td><Show when={item.template} fallback={<EmptyCell />}>{template => <PrimaryLink href={templateHref(template())}>{template()}</PrimaryLink>}</Show></td>
+                <td><Show when={item.template} fallback={<EmptyCell />}>{template => <code>{template()}</code>}</Show></td>
               </Show>
             </tr>}</For>
           </DataTable>
@@ -133,11 +132,10 @@ const AGENT_TABS: { value: AgentTab; label: string }[] = [
   { value: "sessions", label: "Sessions" },
   { value: "triggers", label: "Triggers" },
   { value: "slack", label: "Slack" },
-  { value: "definition", label: "Definition" },
 ];
 
-// An Agent by its authored name: its status in the current Deployment, then its
-// Sessions, triggers, Slack connection and current definition as tabs, each a
+// An Agent by its authored name: its status and Template in the current
+// Deployment, then its Sessions, triggers and Slack connection as tabs, each a
 // page of its own.
 export function AgentDetail(props: { children?: JSX.Element }) {
   const scope = useScopeIDs();
@@ -146,6 +144,12 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const name = () => params["agent"] ?? "";
   const enabled = () => !!name() && !!scope().projectID && !!scope().environmentID;
   const agent = agentStatusQuery(name);
+  const currentDeploymentID = () => agent.data?.defined_in_current ? agent.data.current_deployment_id ?? "" : "";
+  const definition = createQuery(() => ({
+    queryKey: ["agents", "definition", scope().projectID, scope().environmentID, currentDeploymentID(), name()],
+    queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: currentDeploymentID() }),
+    enabled: !!currentDeploymentID(), retry: false,
+  }));
   const missing = () => agent.error instanceof ApiError && agent.error.status === 404;
   const tabs = createMemo(() => AGENT_TABS.map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
   const selected = () => selectedLinkTab(tabs(), location.pathname);
@@ -154,11 +158,14 @@ export function AgentDetail(props: { children?: JSX.Element }) {
       title={name()}
       breadcrumb={[{ href: "/agents", label: "Agents" }]}
       badge={<Show when={agent.data}>{record => <StatusBadge resource="agent" status={record().defined_in_current ? "defined" : "not_defined"} />}</Show>}
-      meta={<Show when={agent.data}>{record => (
-        <Show when={record().current_deployment_id}>
-          {deployment => <span>{record().defined_in_current ? "Defined in Deployment" : "Current Deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
-        </Show>
-      )}</Show>}
+      meta={<>
+        <Show when={agent.data}>{record => (
+          <Show when={record().current_deployment_id}>
+            {deployment => <span>{record().defined_in_current ? "Defined in Deployment" : "Current Deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
+          </Show>
+        )}</Show>
+        <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <span class="text-console-text">{template()}</span></span>}</Show>
+      </>}
       actions={<CopyLinkButton />}
     />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
@@ -190,31 +197,4 @@ export function AgentTriggersTab() {
 export function AgentSlackTab() {
   const params = useParams();
   return <Show when={params["agent"]} keyed>{name => <AgentSlackConnection agentName={name} />}</Show>;
-}
-
-// The definition in the current Deployment. An Agent outside it keeps its earlier
-// definitions in the Deployments that declared them.
-export function AgentDefinitionTab() {
-  const scope = useScopeIDs();
-  const params = useParams();
-  const name = () => params["agent"] ?? "";
-  const agent = agentStatusQuery(name);
-  const deploymentID = () => agent.data?.defined_in_current ? agent.data.current_deployment_id ?? "" : "";
-  const definition = createQuery(() => ({
-    queryKey: ["agents", "definition", scope().projectID, scope().environmentID, deploymentID(), name()],
-    queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: deploymentID() }),
-    enabled: !!deploymentID(), retry: false,
-  }));
-  return (
-    <Show when={deploymentID()} fallback={
-      <EmptyState
-        title="This Agent is not in the current Deployment."
-        hint={<>Its earlier definitions stay pinned in the Deployments that declared them and in its Sessions. <A class="text-console-accent hover:text-console-accent-hover" href="/deployments">View Deployments</A></>}
-      />
-    }>
-      <QueryState query={definition} pending="Loading definition..." error={(error) => errorMessage(error, "Could not load this definition.")}>
-        {item => <DefinitionView definition={item()} />}
-      </QueryState>
-    </Show>
-  );
 }

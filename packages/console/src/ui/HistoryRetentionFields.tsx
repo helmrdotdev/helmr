@@ -14,8 +14,8 @@ const maxSeconds = 9223372036854775807n;
 type Mode = "never" | "duration";
 
 const MODES: { value: Mode; label: string; description: string }[] = [
-  { value: "never", label: "Never expire", description: "Automatic expiry is disabled. Previously expired content cannot be restored." },
-  { value: "duration", label: "Keep for a duration", description: "Expiry deletes inputs, results, messages, questions, answers and event content. Open Sessions keep their history." },
+  { value: "never", label: "Never expire", description: "Expired content cannot be restored." },
+  { value: "duration", label: "Keep for a duration", description: "Open Sessions keep their history." },
 ];
 
 export type HistoryRetentionDraft = { mode: Mode; amount: string; unit: number };
@@ -48,7 +48,6 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
   return (
     <fieldset class="m-0 border-0 p-0">
       <legend class={ui.fieldLegend}>Session history retention</legend>
-      <p class={ui.muted}>Applies to all remaining Session history in every Environment of this Project.</p>
       <ChoiceCards
         label="History retention"
         name="history-retention"
@@ -78,8 +77,6 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
             />
           </Field>
         </div>
-        <p class={ui.muted}>The period starts after a Session ends and its pending work finishes.</p>
-        <p class={ui.muted}>Session identities and statuses, Computer files, and administrative audit records are separate. Very short periods can expire content before a delayed reader fetches it.</p>
       </Show>
     </fieldset>
   );

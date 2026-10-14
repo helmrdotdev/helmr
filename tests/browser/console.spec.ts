@@ -14,10 +14,8 @@ const SECTION_ROUTES: [string, string][] = [
   ["/computers", "Computers"],
   ["/templates", "Computers"],
   ["/computers/00000000-0000-7000-8000-000000000002", "Computers"],
-  ["/templates/browser", "Computers"],
   ["/deployments", "Deployments"],
   ["/deployments/00000000-0000-7000-8000-000000000003", "Deployments"],
-  ["/deployments/00000000-0000-7000-8000-000000000003/agents/support", "Deployments"],
 ];
 
 async function login(page: Page) {

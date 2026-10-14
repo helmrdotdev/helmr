@@ -65,7 +65,6 @@ export function ProjectSettings() {
     <>
       <PageHeader
         title="Project"
-        subtitle="Profile and settings shared by every Environment in the selected Project."
         meta={
           <Show when={project()}>
             {(current) => (

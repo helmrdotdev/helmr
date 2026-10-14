@@ -17,12 +17,11 @@ export function Toolbar(props: { start?: JSX.Element; end?: JSX.Element }) {
   );
 }
 
-// A titled part of a page: heading with an optional count, description and
-// actions, then its content. Sections stack 24px apart inside `ui.sectionStack`.
+// A titled part of a page: heading with an optional count and actions, then its
+// content. Sections stack 24px apart inside `ui.sectionStack`.
 export function Section(props: {
   title: string;
   count?: number | undefined;
-  description?: JSX.Element;
   actions?: JSX.Element;
   children: JSX.Element;
   class?: string;
@@ -37,9 +36,6 @@ export function Section(props: {
               <span class="ml-2 font-mono text-badge font-medium text-console-subtle">{props.count}</span>
             </Show>
           </h2>
-          <Show when={props.description}>
-            <p class={ui.pageSubtitle}>{props.description}</p>
-          </Show>
         </div>
         <Show when={props.actions}>
           <div class={cx(ui.buttonGroup, "shrink-0")}>{props.actions}</div>

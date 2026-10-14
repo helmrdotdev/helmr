@@ -184,7 +184,7 @@ function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts
       <div class="flex flex-wrap items-center gap-2">
         <Segmented label="Filter by kind" value={filter()} options={options()} onChange={setFilter} />
       </div>
-      <Panel title="Waiting on you" count={shown().length}>
+      <Panel title="Waiting on you" count={shown().length} actions={<span class="font-mono text-chrome text-console-muted">Oldest first</span>}>
         <Show when={shown().length > 0} fallback={<p class={cx(ui.muted, "m-0 py-2 text-center")}>Nothing of this kind is waiting.</p>}>
           <List label="Waiting items">
             <For each={shown()}>{(item) => <QueueItem item={item} />}</For>
@@ -194,9 +194,6 @@ function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts
       <For each={truncated()}>
         {(kind) => <p class={cx(ui.muted, "m-0")}>Showing the oldest {props.items.filter((item) => item.kind === kind).length} of {count(kind)} {KIND_LABELS[kind].toLowerCase()} items.</p>}
       </For>
-      <p class={cx(ui.muted, "m-0")}>
-        Oldest first. Questions leave this list once answered in Slack or the CLI, holds once released, failed Turns once the Session moves on, closes or a day passes, and connections once reauthorized. Session history stays in <A class={ui.monoLink} href="/sessions">Sessions</A>.
-      </p>
     </div>
   );
 }
@@ -228,7 +225,7 @@ export function Overview() {
 
   return (
     <Page>
-      <PageHeader title="Overview" subtitle="Everything in this environment that is waiting on a person." meta={<DeploymentContext />} />
+      <PageHeader title="Overview" meta={<DeploymentContext />} />
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
         <Switch>
           <Match when={attention.isError && !attention.data}>

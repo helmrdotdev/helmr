@@ -68,19 +68,24 @@ export function RowError(props: { columns: number; message: string | null | unde
   );
 }
 
-// The footer of a table or list: how many rows are shown and, while more exist,
-// "Load more". With a `noun` the button is named for what it loads ("Load more
-// Sessions"), so several lists on one page stay distinguishable. When loading the
-// next page failed, the footer says so and the button retries just that page.
+// What a footer counts: its singular and plural noun ("Session", "Sessions").
+// Product terms keep their capital ("Turn", "Trigger"); other nouns are lower
+// case ("event", "invitation").
+export type Noun = { one: string; other: string };
+
+// The footer of a table or list: how many rows are shown ("Showing 1 Turn",
+// "Showing 3 Turns") and, while more exist, "Load more", named for what it loads
+// ("Load more Sessions") so several lists on one page stay distinguishable. When
+// loading the next page failed, the footer says so and the button retries just
+// that page.
 export function LoadMore(props: {
   count: number;
   hasMore: boolean;
   loading: boolean;
   failed?: boolean | undefined;
   onLoadMore: () => void;
-  noun?: string;
+  noun: Noun;
 }) {
-  const subject = () => (props.noun ? ` ${props.noun}` : "");
   return (
     <div class={ui.tableFooter}>
       <Show when={props.hasMore}>
@@ -88,15 +93,15 @@ export function LoadMore(props: {
           type="button"
           class={ui.compactButton}
           disabled={props.loading}
-          aria-label={props.failed ? `Retry loading more${subject()}` : props.noun ? `Load more ${props.noun}` : undefined}
+          aria-label={props.failed ? `Retry loading more ${props.noun.other}` : `Load more ${props.noun.other}`}
           onClick={() => props.onLoadMore()}
         >
           {props.loading ? "Loading…" : props.failed ? "Retry" : "Load more"}
         </button>
       </Show>
-      <span>Showing {props.count}{subject()}</span>
+      <span>Showing {props.count} {props.count === 1 ? props.noun.one : props.noun.other}</span>
       <Show when={props.failed && !props.loading}>
-        <span class="text-console-danger" role="alert">Could not load more{subject()}.</span>
+        <span class="text-console-danger" role="alert">Could not load more {props.noun.other}.</span>
       </Show>
     </div>
   );

@@ -52,7 +52,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
       {() => (
         <List
           label="Linked Slack identities"
-          footer={<LoadMore count={allLinks().length} noun="linked identities" hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} />}
+          footer={<LoadMore count={allLinks().length} noun={{ one: "linked identity", other: "linked identities" }} hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} />}
         >
           <For each={allLinks()}>{(link) => <ListItem class="flex flex-wrap items-center justify-between gap-3">
             <span class="inline-flex flex-wrap items-baseline gap-1.5">

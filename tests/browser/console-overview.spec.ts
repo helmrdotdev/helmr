@@ -84,7 +84,6 @@ test("the Overview queues every kind oldest first with its context, links and ac
   await fixture(page);
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
   await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
-  await expect(page.getByText("Everything in this environment that is waiting on a person.")).toBeVisible();
   await expect(page.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
   await expect(page.getByText(/promoted 2 hours ago/)).toBeVisible();
   await expect(overviewTab(page)).toHaveAccessibleName("Overview, 5 waiting");
@@ -146,7 +145,7 @@ test("Questions are answered from their own page; the Overview never sends an an
   await expect(questions.nth(1).getByRole("link", { name: "Answer", exact: true })).toHaveAttribute("href", `/sessions/${sessions.later}/turns/${turns.later}/asks/${asks.later}`);
   await expect(page.locator("main form")).toHaveCount(0);
   await expect(page.locator("main textarea, main input[type=radio], main input[type=checkbox]")).toHaveCount(0);
-  await expect(page.getByText(/answered in Slack or the CLI/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Waiting on you" }).getByText("Oldest first", { exact: true })).toBeVisible();
   await questions.nth(0).getByRole("link", { name: "Answer", exact: true }).click();
   await expect(page).toHaveURL(`/sessions/${sessions.asked}/turns/${turns.asked}/asks/${asks.oldest}`);
   expect(state.writes).toEqual([]);

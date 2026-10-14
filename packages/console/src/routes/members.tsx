@@ -248,7 +248,6 @@ export function Members() {
     <>
       <PageHeader
         title="Members"
-        subtitle="Organization members, roles, and pending email invitations."
         actions={
           <Show when={canManage()}>
             <button class={ui.button} type="button" onClick={() => setInviting(true)}>
@@ -266,7 +265,6 @@ export function Members() {
         <Section
           title="Current members"
           count={members.data?.members.length}
-          description="Active and disabled accounts currently associated with this organization."
         >
           <QueryState
             query={members}
@@ -298,7 +296,6 @@ export function Members() {
         <Section
           title="Pending invitations"
           count={pendingInvitations().length}
-          description="Email invitations that have not been accepted yet."
         >
           <QueryState
             query={invitations}
@@ -310,7 +307,7 @@ export function Members() {
               <DataTable
                 columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]}
                 minWidth="min-w-225"
-                footer={<LoadMore count={pendingInvitations().length} noun="invitations" hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
+                footer={<LoadMore count={pendingInvitations().length} noun={{ one: "invitation", other: "invitations" }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
               >
                 <For each={pendingInvitations()}>
                   {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}

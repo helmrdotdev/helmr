@@ -1,4 +1,3 @@
-import { definitionHref } from "../lib/definitions";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
@@ -14,7 +13,7 @@ import {
   listComputerCommands,
   type ComputerScope,
 } from "../lib/computers";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
@@ -34,6 +33,7 @@ const actionErrorMessage = (error: unknown, fallback: string) =>
 
 function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
   const title = () => props.kind === "sessions" ? "Sessions" : "Commands";
+  const noun = () => props.kind === "sessions" ? { one: "Session", other: "Sessions" } : { one: "command", other: "commands" };
   const usage = createInfiniteQuery(() => ({
     queryKey: ["computer", props.computerID, props.kind, props.scope.projectID, props.scope.environmentID],
     queryFn: async ({ pageParam }) => {
@@ -52,18 +52,17 @@ function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; k
   }));
   const items = createMemo(() => usage.data?.pages.flatMap(page => page.items) ?? []);
   return <Panel title={title()}>
-    <p class={ui.muted}>Currently using this Computer, including work awaiting cleanup.</p>
     <QueryState
       query={usage}
-      pending={`Loading ${props.kind}...`}
-      error={(error) => actionErrorMessage(error, `Could not load ${props.kind}.`)}
-      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${props.kind} are using this Computer.` }}
+      pending={`Loading ${noun().other}...`}
+      error={(error) => actionErrorMessage(error, `Could not load ${noun().other}.`)}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this Computer.` }}
     >
       {() => (
         <DataTable
           columns={[props.kind === "sessions" ? "Session" : "Command", "Usage"]}
           minWidth="min-w-0"
-          footer={<LoadMore count={items().length} noun={title()} hasMore={usage.hasNextPage} loading={usage.isFetchingNextPage} failed={usage.isFetchNextPageError} onLoadMore={() => void usage.fetchNextPage()} />}
+          footer={<LoadMore count={items().length} noun={noun()} hasMore={usage.hasNextPage} loading={usage.isFetchingNextPage} failed={usage.isFetchNextPageError} onLoadMore={() => void usage.fetchNextPage()} />}
         >
           <For each={items()}>{item => <tr>
             <td><Show when={props.kind === "sessions"} fallback={<IDText value={item.id} />}>
@@ -109,12 +108,12 @@ export function ComputerDetail() {
               rail={
                 <KeyValueList title="Computer details">
                   <KeyValue label="Status"><StatusBadge resource="computer" status={current().status} /></KeyValue>
-                  <KeyValue label="Residency">{current().residency}</KeyValue>
+                  <KeyValue label="Residency"><StatusBadge resource="computer_residency" status={current().residency} /></KeyValue>
                   <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
                   <KeyValue label="Key">
                     <Show when={current().key}>{(key) => <code>{key()}</code>}</Show>
                   </KeyValue>
-                  <KeyValue label="Created from"><PrimaryLink href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</PrimaryLink></KeyValue>
+                  <KeyValue label="Created from"><code>{current().template}</code></KeyValue>
                   <KeyValue label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </KeyValue>

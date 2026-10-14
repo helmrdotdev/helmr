@@ -85,7 +85,7 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
   const { writes } = await scope(page);
   await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("30");
-  await expect(page.getByText("Applies to all remaining Session history in every Environment of this Project.")).toBeVisible();
+  await expect(page.getByText("Open Sessions keep their history.")).toBeVisible();
   await expect(save(page)).toBeDisabled();
   await period(page).fill("7");
   await save(page).click();

@@ -11,7 +11,7 @@ async function openAgent(page: Page) {
   const demo = page.getByRole("row").filter({ hasText: "Demo" });
   await demo.getByRole("button", { name: "Actions for Demo", exact: true }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();
-  await expect(demo.getByText("Current", { exact: true })).toBeVisible();
+  await expect(demo.getByText("Working", { exact: true })).toBeVisible();
   await page.goto("/agents/demo-agent");
   await page.getByRole("tab", { name: "Slack", exact: true }).click();
   await expect(page).toHaveURL(slackTab);
