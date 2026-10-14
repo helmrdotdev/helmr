@@ -4,7 +4,8 @@ import { ui } from "./styles";
 
 export type Crumb = { href: string; label: string };
 
-// Every route page starts with it: breadcrumb to the parent pages, title with an
+// Every route page starts with it: breadcrumb from the parent pages to the
+// current page (the title when it is text, or `current`), title with an
 // optional status badge, a one-line subtitle, a metadata row (IDs, times) and the
 // page's actions (Copy link first, the primary action last).
 export function PageHeader(props: {
@@ -12,9 +13,11 @@ export function PageHeader(props: {
   subtitle?: JSX.Element;
   badge?: JSX.Element;
   breadcrumb?: readonly Crumb[];
+  current?: string;
   meta?: JSX.Element;
   actions?: JSX.Element;
 }) {
+  const currentLabel = () => props.current ?? (typeof props.title === "string" ? props.title : undefined);
   return (
     <div class={ui.pageHeader}>
       <div class="min-w-0">
@@ -22,13 +25,21 @@ export function PageHeader(props: {
           <nav class="mb-2 font-mono text-chrome text-console-muted" aria-label="Breadcrumb">
             <ol class="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
               <For each={props.breadcrumb}>
-                {(crumb) => (
+                {(crumb, index) => (
                   <li class="flex items-center gap-1.5">
+                    <Show when={index() > 0}><span class="text-console-subtle" aria-hidden="true">/</span></Show>
                     <A href={crumb.href} class="cursor-pointer text-console-accent hover:text-console-accent-hover">{crumb.label}</A>
-                    <span class="text-console-subtle" aria-hidden="true">/</span>
                   </li>
                 )}
               </For>
+              <Show when={currentLabel()}>
+                {(label) => (
+                  <li class="flex min-w-0 items-center gap-1.5">
+                    <span class="text-console-subtle" aria-hidden="true">/</span>
+                    <span class="truncate text-console-text" aria-current="page">{label()}</span>
+                  </li>
+                )}
+              </Show>
             </ol>
           </nav>
         </Show>
