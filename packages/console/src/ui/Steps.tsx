@@ -31,7 +31,7 @@ export function Steps(props: { steps: readonly Step[]; label: string }) {
                 <span class="sr-only">{step.state === "done" ? " (done)" : step.state === "current" ? " (current step)" : ""}</span>
               </span>
               <Show when={step.description}>
-                <span class={ui.muted}>{step.description}</span>
+                <div class={cx(ui.muted, "grid gap-1.5")}>{step.description}</div>
               </Show>
               <Show when={step.state === "current" && step.content}>
                 <div class="mt-1">{step.content}</div>

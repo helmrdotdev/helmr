@@ -54,11 +54,11 @@ test("Project creation uses the default without asking for a policy", async ({ p
 });
 
 for (const kind of ["project", "environment"] as const) {
-  test(`scope switcher creates a ${kind} without retention fields`, async ({ page }) => {
+  test(`the ${kind} picker creates a ${kind} without retention fields`, async ({ page }) => {
     const { writes } = await scope(page);
     await page.goto("/settings/environments");
-    await page.getByRole("button", { name: "Project Test / Env Production" }).click();
-    await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name: `New ${kind}`, exact: true }).click();
+    await page.locator("header").getByRole("button", { name: kind === "project" ? /^Project:/ : /^Environment:/ }).click();
+    await page.getByRole("dialog", { name: `Choose ${kind}` }).getByRole("button", { name: `New ${kind}`, exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(mode(page)).toHaveCount(0);
     await dialog.getByLabel("Name", { exact: true }).fill("Preview");

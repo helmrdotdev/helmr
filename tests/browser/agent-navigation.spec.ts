@@ -50,6 +50,8 @@ test("current Agent navigation opens the Agent with its Sessions, triggers, Slac
   await expect(page).toHaveURL("/agents/support");
 
   await expect(page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link")).toHaveText(["Agents"]);
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("listitem").last()).toHaveText("/support");
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" }).locator("[aria-current=page]")).toHaveText("support");
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
   await expect(page.getByText("In current Deployment", { exact: true })).toBeVisible();
   await expect(page.getByText("Defined in Deployment", { exact: false })).toBeVisible();

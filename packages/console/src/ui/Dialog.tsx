@@ -20,6 +20,8 @@ export function Dialog(props: {
   children: JSX.Element;
   closeDisabled?: boolean;
   class?: string;
+  // Replaces the body's padding, for content that draws its own edges.
+  bodyClass?: string;
 }) {
   const titleID = createUniqueId();
   let dialogRef: HTMLElement | undefined;
@@ -104,7 +106,7 @@ export function Dialog(props: {
               <span class={ui.closeIcon} aria-hidden="true" />
             </button>
           </div>
-          <div class="min-h-0 overflow-y-auto p-3.5">{props.children}</div>
+          <div class={cx("min-h-0 overflow-y-auto", props.bodyClass ?? "p-3.5")}>{props.children}</div>
         </section>
       </div>
     </Portal>
