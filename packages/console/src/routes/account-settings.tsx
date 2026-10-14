@@ -25,7 +25,7 @@ export function AccountSettings() {
           </Panel>
           <div class={ui.windowStack}>
             <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />
-            <p class={ui.muted}>Your Slack identity works across all Agent apps in a Slack workspace, using your current Helmr permissions. To connect an Agent, open its Slack connection from the deployment’s Agents list.</p>
+            <p class={ui.muted}>Your Slack identity works across all Agent apps in a Slack workspace, using your current Helmr permissions. To connect an Agent, open Agents, choose the Agent and open its Slack tab.</p>
           </div>
         </div>
       )}

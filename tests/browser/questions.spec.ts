@@ -118,3 +118,14 @@ test("withdrawn questions retain the prompt without offering a response", async 
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   await expect(page.locator("form")).toHaveCount(0);
 });
+
+test("the Question breadcrumb leads through the Agent to its Session", async ({ page }) => {
+  await scope(page);
+  await page.route(`**${base}/sessions/${sessionID}`, route => route.fulfill({ json: { id: sessionID, agent: "sales", status: "open", holds: [], created_at: now } }));
+  await page.route(`**${path}**`, route => route.fulfill({ json: question({ type: "text" }) }));
+  await page.goto(url);
+  const crumbs = page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link");
+  await expect(crumbs).toHaveText(["Agents", "sales", "Session"]);
+  await expect(crumbs.nth(1)).toHaveAttribute("href", "/agents/sales");
+  await expect(crumbs.nth(2)).toHaveAttribute("href", `/sessions/${sessionID}`);
+});

@@ -1,50 +1,72 @@
-import { usePermission } from "../lib/me";
-import { A, useParams } from "@solidjs/router";
+import { A, useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
-import { AgentConnectionModal } from "../features/slack/AgentConnectionModal";
-import { ApiError } from "../lib/api";
-import { errorMessage } from "../lib/error";
-import { agentHref, definitionHref, getAgentStatus, listAgentDefinitions, listRetainedAgents, type RetainedAgent } from "../lib/definitions";
-import { getCurrentDeployment } from "../lib/deployments";
-import { deploymentHref } from "../features/deployments/navigation";
-import { listTriggers } from "../lib/triggers";
-import { useScopeIDs } from "../lib/scope";
+import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { CopyLinkButton } from "../components/CopyLinkButton";
-import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { SectionLayout } from "../components/SectionLayout";
+import { deploymentHref } from "../features/deployments/navigation";
+import { AgentSlackConnection } from "../features/slack/AgentSlackConnection";
+import { ApiError } from "../lib/api";
+import { getCurrentDeployment } from "../lib/deployments";
+import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, templateHref, type AgentTab, type RetainedAgent } from "../lib/definitions";
+import { errorMessage } from "../lib/error";
+import { useScopeIDs } from "../lib/scope";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { Notice } from "../ui/Notice";
 import { IDText } from "../ui/IDText";
-import { Segmented } from "../ui/Field";
+import { SearchInput, Segmented } from "../ui/Field";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { Panel } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
-import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
-import { ui } from "../ui/styles";
+import { selectedLinkTab } from "../ui/linkTab";
+import { LinkTabs, TabPanel, type LinkTabItem } from "../ui/Tabs";
+import { DefinitionView } from "./definitions";
+import { SessionList } from "./sessions";
+import { TriggerList } from "./triggers";
 
 const SHOW_OPTIONS = [
-  { value: "current", label: "Current Agents" },
+  { value: "current", label: "Current Deployment" },
   { value: "all", label: "All Agents" },
 ] as const;
 
 const failure = (error: unknown) => errorMessage(error, "Could not load Agents.");
 
-export function Agents() {
+type Section = "agents" | "sessions" | "triggers";
+const SECTION_TABS: LinkTabItem<Section>[] = [
+  { value: "agents", label: "Agents", href: "/agents" },
+  { value: "sessions", label: "Sessions", href: "/sessions" },
+  { value: "triggers", label: "Triggers", href: "/triggers" },
+];
+
+// The Agents section: Agents, their Sessions and triggers, one page each.
+export function AgentsSection(props: { children?: JSX.Element }) {
+  return (
+    <SectionLayout id="agents-section" title="Agents" subtitle="Agents, their Sessions and triggers in this environment." tabs={SECTION_TABS}>
+      {props.children}
+    </SectionLayout>
+  );
+}
+
+type AgentRow = RetainedAgent & { template?: string | undefined };
+
+export function AgentList() {
   const scope = useScopeIDs();
-  const enabled = () => !!scope().projectID && !!scope().environmentID;
   const [all, setAll] = createSignal(false);
-  const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: enabled() && !all(), retry: false, refetchInterval: 15_000 }));
+  const [search, setSearch] = createSignal("");
+  const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: !all(), retry: false, refetchInterval: 15_000 }));
   const agents = createInfiniteQuery(() => ({
     queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, all(), all() ? null : current.data?.id],
-    queryFn: async ({ pageParam }): Promise<{ agents: RetainedAgent[]; next_cursor?: string | undefined }> => {
+    queryFn: async ({ pageParam }): Promise<{ agents: AgentRow[]; next_cursor?: string | undefined }> => {
       if (all()) return listRetainedAgents(scope(), pageParam || undefined);
       const page = await listAgentDefinitions({ ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 });
-      return { agents: page.agents.map(item => ({ agent: item.agent, defined_in_current: true, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
+      return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
-    enabled: enabled() && (all() || (!!current.data && !current.isError)), retry: false,
+    enabled: all() || (!!current.data && !current.isError), retry: false,
   }));
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
+  const query = () => search().trim().toLowerCase();
+  const shown = createMemo(() => query() ? items().filter(item => item.agent.toLowerCase().includes(query())) : items());
   const table = () => (
     <QueryState
       query={agents}
@@ -57,98 +79,142 @@ export function Agents() {
       }}
     >
       {() => (
-        <DataTable
-          columns={["Agent", "Current Deployment"]}
-          footer={<LoadMore count={items().length} noun="Agents" hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
-        >
-          <For each={items()}>{item => <tr>
-            <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
-            <td><StatusBadge resource="agent" status={item.defined_in_current ? "defined" : "not_defined"} /></td>
-          </tr>}</For>
-        </DataTable>
+        <Show when={shown().length > 0} fallback={<EmptyState title="No loaded Agents match this filter." hint={agents.hasNextPage ? "Load more Agents to search further." : undefined} />}>
+          <DataTable
+            columns={all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"]}
+            footer={<LoadMore count={items().length} noun="Agents" hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
+          >
+            <For each={shown()}>{item => <tr>
+              <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
+              <td><StatusBadge resource="agent" status={item.defined_in_current ? "defined" : "not_defined"} /></td>
+              <Show when={!all()}>
+                <td><Show when={item.template} fallback={<EmptyCell />}>{template => <PrimaryLink href={templateHref(template())}>{template()}</PrimaryLink>}</Show></td>
+              </Show>
+            </tr>}</For>
+          </DataTable>
+        </Show>
       )}
     </QueryState>
   );
+  return <>
+    <Toolbar start={<>
+      <Segmented label="Show Agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />
+      <div class="w-56 max-sm:w-full">
+        <SearchInput aria-label="Filter Agents" placeholder="Filter loaded Agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
+      </div>
+    </>} />
+    <Show when={all()} fallback={
+      <QueryState
+        query={current}
+        pending="Loading current Agents..."
+        error={failure}
+        empty={{ when: (deployment) => !deployment, title: "No current Deployment.", hint: "Choose All Agents to manage retained connections and history." }}
+      >
+        {table}
+      </QueryState>
+    }>
+      {table()}
+    </Show>
+  </>;
+}
+
+function agentStatusQuery(name: () => string) {
+  const scope = useScopeIDs();
+  return createQuery(() => ({
+    queryKey: ["agents", "status", scope().projectID, scope().environmentID, name()],
+    queryFn: () => getAgentStatus(name(), scope()),
+    enabled: !!name() && !!scope().projectID && !!scope().environmentID,
+    retry: false,
+    refetchInterval: 15_000,
+  }));
+}
+
+const AGENT_TABS: { value: AgentTab; label: string }[] = [
+  { value: "sessions", label: "Sessions" },
+  { value: "triggers", label: "Triggers" },
+  { value: "slack", label: "Slack" },
+  { value: "definition", label: "Definition" },
+];
+
+// An Agent by its authored name: its status in the current Deployment, then its
+// Sessions, triggers, Slack connection and current definition as tabs, each a
+// page of its own.
+export function AgentDetail(props: { children?: JSX.Element }) {
+  const scope = useScopeIDs();
+  const params = useParams();
+  const location = useLocation();
+  const name = () => params["agent"] ?? "";
+  const enabled = () => !!name() && !!scope().projectID && !!scope().environmentID;
+  const agent = agentStatusQuery(name);
+  const missing = () => agent.error instanceof ApiError && agent.error.status === 404;
+  const tabs = createMemo(() => AGENT_TABS.map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
+  const selected = () => selectedLinkTab(tabs(), location.pathname);
   return <Page>
-    <PageHeader title="Agents" subtitle="Manage Agent connections, Sessions and triggers across Deployments." />
-    <Toolbar start={<Segmented label="Show Agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />} />
-    <Show when={enabled()} fallback={<EmptyState title="Select an environment to view Agents." />}>
-      <Show when={all()} fallback={
-        <QueryState
-          query={current}
-          pending="Loading current Agents..."
-          error={failure}
-          empty={{ when: (deployment) => !deployment, title: "No current Deployment.", hint: "Choose All Agents to manage retained connections and history." }}
-        >
-          {table}
+    <PageHeader
+      title={name()}
+      breadcrumb={[{ href: "/agents", label: "Agents" }]}
+      badge={<Show when={agent.data}>{record => <StatusBadge resource="agent" status={record().defined_in_current ? "defined" : "not_defined"} />}</Show>}
+      meta={<Show when={agent.data}>{record => (
+        <Show when={record().current_deployment_id}>
+          {deployment => <span>{record().defined_in_current ? "Defined in Deployment" : "Current Deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
+        </Show>
+      )}</Show>}
+      actions={<CopyLinkButton />}
+    />
+    <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+      <Show when={!missing()} fallback={<EmptyState title="This environment has no Agent with this name." hint="Agents appear once a Deployment in this environment defines them." />}>
+        <QueryState query={agent} pending="Loading Agent..." error={failure}>
+          {record => <>
+            <Show when={!record().defined_in_current}>
+              <Notice tone="info" class="mb-4">{record().current_deployment_id ? "This Agent is not in the current Deployment." : "This environment has no current Deployment."} New independent Sessions cannot start. Existing Sessions, trigger history and connections remain available for inspection and management.</Notice>
+            </Show>
+            <LinkTabs id="agent-tabs" label="Agent" items={tabs()} selected={selected()} />
+            <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>
+          </>}
         </QueryState>
-      }>
-        {table()}
       </Show>
     </Show>
   </Page>;
 }
 
-export function AgentDetail() {
+export function AgentSessionsTab() {
+  const params = useParams();
+  return <SessionList agent={params["agent"] ?? ""} />;
+}
+
+export function AgentTriggersTab() {
+  const params = useParams();
+  return <TriggerList agent={params["agent"] ?? ""} />;
+}
+
+export function AgentSlackTab() {
+  const params = useParams();
+  return <Show when={params["agent"]} keyed>{name => <AgentSlackConnection agentName={name} />}</Show>;
+}
+
+// The definition in the current Deployment. An Agent outside it keeps its earlier
+// definitions in the Deployments that declared them.
+export function AgentDefinitionTab() {
   const scope = useScopeIDs();
   const params = useParams();
   const name = () => params["agent"] ?? "";
-  const enabled = () => !!name() && !!scope().projectID && !!scope().environmentID;
-  const [slack, setSlack] = createSignal(false);
-  createEffect(on(() => JSON.stringify([scope().projectID, scope().environmentID, name()]), () => setSlack(false), { defer: true }));
-  const permission = usePermission();
-  const agent = createQuery(() => ({ queryKey: ["agents", "status", scope().projectID, scope().environmentID, name()], queryFn: () => getAgentStatus(name(), scope()), enabled: enabled(), retry: false, refetchInterval: 15_000 }));
-  const triggers = createInfiniteQuery(() => ({
-    queryKey: ["triggers", scope().projectID, scope().environmentID, name()],
-    queryFn: ({ pageParam }) => listTriggers(scope(), pageParam || undefined, name()),
-    initialPageParam: "", getNextPageParam: page => page.next_cursor,
-    enabled: enabled() && agent.isSuccess, retry: false,
+  const agent = agentStatusQuery(name);
+  const deploymentID = () => agent.data?.defined_in_current ? agent.data.current_deployment_id ?? "" : "";
+  const definition = createQuery(() => ({
+    queryKey: ["agents", "definition", scope().projectID, scope().environmentID, deploymentID(), name()],
+    queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: deploymentID() }),
+    enabled: !!deploymentID(), retry: false,
   }));
-  const items = createMemo(() => triggers.data?.pages.flatMap(page => page.triggers) ?? []);
-  const missing = () => agent.error instanceof ApiError && agent.error.status === 404;
-  return <Page>
-    <PageHeader title={name()} subtitle="Agent operations across Deployments." breadcrumb={[{ href: "/agents", label: "Agents" }]} actions={<CopyLinkButton />} />
-    <Show when={enabled()} fallback={<EmptyState title="Select an environment to view this Agent." />}>
-      <Show when={!missing()} fallback={<EmptyState title="This environment has no Agent with this name." hint="Agents appear once a Deployment in this environment defines them." />}>
-        <QueryState query={agent} pending="Loading Agent..." error={failure}>
-          {record => <div class={ui.sectionStack}>
-            <Panel title="Agent">
-              <Show when={record().defined_in_current && record().current_deployment_id} fallback={<p class={ui.muted}>{record().current_deployment_id ? "This Agent is not defined in the current Deployment." : "This environment has no current Deployment."} New independent Sessions cannot start. Existing Sessions, trigger history and connections remain available for inspection and management.</p>}>{deployment => <p><A class={ui.monoLink} href={definitionHref("agents", name(), deployment())}>View current definition</A></p>}</Show>
-              <p><A class={ui.monoLink} href={`/sessions?${new URLSearchParams({ agent: name() })}`}>View Sessions for this Agent</A></p>
-            </Panel>
-            <Panel title="Slack Connection">
-              <p class={ui.muted}>The connection belongs to this Agent in this environment and persists across Deployments.</p>
-              <Show when={permission.isOrganizationAdmin()} fallback={<p class={ui.muted}>An organization owner or admin can manage this connection.</p>}>
-                <div><button type="button" class={ui.secondaryButton} onClick={() => setSlack(true)}>Manage Slack connection</button></div>
-              </Show>
-            </Panel>
-            <Panel title="Triggers">
-              <p class={ui.muted}>Trigger activations across Deployments. Change triggers in code and promote a Deployment to activate them.</p>
-              <QueryState
-                query={triggers}
-                pending="Loading triggers..."
-                error={failure}
-                empty={{ when: (data) => data.pages.every(page => page.triggers.length === 0), title: "No trigger activations for this Agent." }}
-              >
-                {() => (
-                  <DataTable
-                    columns={["Trigger", "Cron", "Timezone", "Next", "Active from", "Active until", "Deployment", "ID"]}
-                    minWidth="min-w-250"
-                    footer={<LoadMore count={items().length} noun="triggers" hasMore={triggers.hasNextPage} loading={triggers.isFetchingNextPage} failed={triggers.isFetchNextPageError} onLoadMore={() => void triggers.fetchNextPage()} />}
-                  >
-                    <For each={items()}>{trigger => <tr>
-                      <td>{trigger.trigger_key}</td><td><code>{trigger.cron.pattern}</code></td><td>{trigger.cron.timezone}</td>
-                      <td><RelativeTime value={trigger.next_fire_at} /></td><td><RelativeTime value={trigger.active_from} /></td><td><RelativeTime value={trigger.active_until} /></td>
-                      <td><IDText value={trigger.deployment_id} mode="link" href={deploymentHref(trigger.deployment_id)} /></td><td><IDText value={trigger.id} /></td>
-                    </tr>}</For>
-                  </DataTable>
-                )}
-              </QueryState>
-            </Panel>
-            <Show when={slack()}><AgentConnectionModal agentName={name()} projectID={scope().projectID} environmentID={scope().environmentID} onClose={() => setSlack(false)} /></Show>
-          </div>}
-        </QueryState>
-      </Show>
+  return (
+    <Show when={deploymentID()} fallback={
+      <EmptyState
+        title="This Agent is not in the current Deployment."
+        hint={<>Its earlier definitions stay pinned in the Deployments that declared them and in its Sessions. <A class="text-console-accent hover:text-console-accent-hover" href="/deployments">View Deployments</A></>}
+      />
+    }>
+      <QueryState query={definition} pending="Loading definition..." error={(error) => errorMessage(error, "Could not load this definition.")}>
+        {item => <DefinitionView definition={item()} />}
+      </QueryState>
     </Show>
-  </Page>;
+  );
 }

@@ -70,7 +70,8 @@ export function ScopeProvider(props: { children: JSX.Element }) {
   const tabStorage = browserStorage("sessionStorage");
   const lastStorage = browserStorage("localStorage");
   const stored = readTabScope(tabStorage, lastStorage);
-  // Every route mounts its own provider, so a link's hint is read once here.
+  // Every route (or section layout with sub-pages) mounts its own provider, so a
+  // link's hint is read once here; in-app links never carry one.
   // Pages mount with the linked scope and never load the previous scope first.
   const linkedPath = withoutScopeHint(location);
   const hint = readScopeHint(location.search);

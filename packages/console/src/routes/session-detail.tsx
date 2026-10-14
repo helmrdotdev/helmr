@@ -17,7 +17,7 @@ import {
   on,
   Show,
 } from "solid-js";
-import { definitionHref } from "../lib/definitions";
+import { agentHref, definitionHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -148,7 +148,10 @@ function SessionDetailContent() {
     <Page>
       <PageHeader
         title="Session"
-        breadcrumb={[{ href: "/sessions", label: "Sessions" }]}
+        breadcrumb={[
+          { href: "/agents", label: "Agents" },
+          ...(session.data ? [{ href: agentHref(session.data.agent), label: session.data.agent }] : []),
+        ]}
         subtitle={<IDText value={sessionID()} mode="full" />}
         badge={
           <Show when={session.data}>

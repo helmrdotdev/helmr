@@ -22,7 +22,9 @@ const COLUMN =
 const COLUMN_HEAD = "flex flex-col gap-1.5 border-b border-console-border bg-console-bg-panel p-1.5";
 const NO_MATCH = "grid flex-1 place-items-center px-3 py-5 text-control text-console-subtle";
 
-export function ScopeSwitcher() {
+// `opener` receives a function that opens the switcher, for controls elsewhere in
+// the shell (the phone menu) that change the scope through it.
+export function ScopeSwitcher(props: { opener?: (open: () => void) => void }) {
   const scope = useScope();
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,6 +73,8 @@ export function ScopeSwitcher() {
     queueMicrotask(() => projectSearchRef?.focus());
   };
 
+  props.opener?.(() => { if (!open()) toggle(); });
+
   const pick = (apply: () => void) => {
     apply();
     navigate(scopeSwitchPath(location.pathname));
@@ -96,10 +100,10 @@ export function ScopeSwitcher() {
           when={!hasNoProjects()}
           fallback={<span class={"max-w-37.5 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-console-text max-sm:max-w-27.5"}>No projects yet</span>}
         >
-          <span class={"text-console-muted"}>Project</span>
+          <span class={"text-console-muted max-[720px]:sr-only"}>Project</span>
           <span class={"max-w-32.5 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-console-text max-sm:max-w-23"}>{scope.selectedProject()?.name ?? "—"}</span>
           <span class={"text-console-faint"}>/</span>
-          <span class={"text-console-muted"}>Env</span>
+          <span class={"text-console-muted max-[720px]:sr-only"}>Env</span>
           <span class={"flex max-w-32.5 items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-console-text max-sm:max-w-23"}>
             <EnvDot colorHex={selectedEnvironment()?.color_hex ?? defaultEnvironmentColor("")} />
             {selectedEnvironment()?.name ?? "—"}

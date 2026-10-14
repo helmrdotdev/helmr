@@ -26,12 +26,18 @@ const TONES = {
   role: { owner: "active", admin: "expired", developer: "expired", viewer: "expired" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
   agent: { defined: "active", not_defined: "expired" },
+  slack_connection: { setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },
   computer_usage: { admitted: "waiting", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
   question: { pending: "waiting", responded: "succeeded", cancelled: "revoked" },
   device_code: { pending: "waiting", approved: "succeeded", denied: "revoked", consumed: "expired", expired: "expired" },
 } as const satisfies Record<string, Record<string, Tone>>;
+
+// Labels that read better than the status name.
+const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
+  agent: { defined: "In current Deployment", not_defined: "Not in current Deployment" },
+};
 
 export type BadgeResource = keyof typeof TONES;
 export type BadgeStatus<R extends BadgeResource> = keyof (typeof TONES)[R] & string;
@@ -45,7 +51,7 @@ export function StatusBadge<R extends BadgeResource>(props: { resource: R; statu
         TONE_CLASSES[tone()],
       )}
     >
-      {statusLabel(props.status)}
+      {LABELS[props.resource]?.[props.status] ?? statusLabel(props.status)}
     </span>
   );
 }

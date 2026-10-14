@@ -39,29 +39,78 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
   return paths;
 }
 
-test("current Agent navigation owns connections and filters triggers and Sessions by authored ID", async ({ page }) => {
+test("current Agent navigation opens the Agent with its Sessions, triggers, Slack and definition tabs", async ({ page }) => {
   const paths = await catalog(page);
   await page.goto(`/agents?${scope}`);
-  await expect(page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "Current Agents" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "Current Deployment" })).toHaveAttribute("aria-pressed", "true");
+  const row = page.getByRole("row").filter({ hasText: "support" });
+  await expect(row.getByText("In current Deployment", { exact: true })).toBeVisible();
+  await expect(row.getByRole("link", { name: "browser", exact: true })).toHaveAttribute("href", "/templates/browser");
   await page.getByRole("link", { name: "support", exact: true }).click();
   await expect(page).toHaveURL("/agents/support");
-  await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible();
+
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link")).toHaveText(["Agents"]);
+  await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
+  await expect(page.getByText("In current Deployment", { exact: true })).toBeVisible();
+  await expect(page.getByText("Defined in Deployment", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy link" })).toBeVisible();
+  const tabs = page.getByRole("tablist", { name: "Agent" });
+  await expect(tabs.getByRole("tab")).toHaveText(["Sessions", "Triggers", "Slack", "Definition"]);
+  await expect(tabs.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Sessions" })).toContainText("This Agent has no Sessions yet.");
+  await expect.poll(() => paths.some(path => path.includes("/sessions?agent=support"))).toBe(true);
+  expect(paths.some(path => path.includes("agent_id="))).toBe(false);
+
+  await tabs.getByRole("tab", { name: "Sessions", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL("/agents/support/triggers");
+  await expect(tabs.getByRole("tab", { name: "Triggers", exact: true })).toBeFocused();
   await expect(page.getByText("daily", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Load more triggers" }).click();
   await expect(page.getByRole("button", { name: "Load more triggers" })).toHaveCount(0);
   expect(paths.some(path => path.endsWith("/triggers?agent=support"))).toBe(true);
   expect(paths.some(path => path.endsWith("/triggers?cursor=older&agent=support"))).toBe(true);
-  await page.getByRole("button", { name: "Manage Slack connection" }).click();
-  await expect(page.getByRole("dialog", { name: "Slack · support" })).toBeVisible();
+
+  await tabs.getByRole("tab", { name: "Slack", exact: true }).click();
+  await expect(page).toHaveURL("/agents/support/slack");
   await expect(page.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Close modal", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  const definition = page.getByRole("link", { name: "View current definition" });
-  await expect(definition).toHaveAttribute("href", `/deployments/${deployment}/agents/support`);
-  await page.getByRole("link", { name: "View Sessions for this Agent" }).click();
-  await expect(page).toHaveURL("/sessions?agent=support");
-  await expect.poll(() => paths.some(path => path.includes("/sessions?agent=support"))).toBe(true);
-  expect(paths.some(path => path.includes("agent_id="))).toBe(false);
+
+  await tabs.getByRole("tab", { name: "Definition", exact: true }).click();
+  await expect(page).toHaveURL("/agents/support/definition");
+  const definition = page.getByRole("tabpanel", { name: "Definition" });
+  await expect(definition.getByRole("link", { name: "browser", exact: true })).toHaveAttribute("href", "/templates/browser");
+  await expect(definition.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", `/deployments/${deployment}`);
+  expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${deployment}`))).toBe(true);
+
+  await page.goto(`/agents/support/slack/?${scope}`);
+  await expect(tabs.getByRole("tab", { name: "Slack", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goto(`/agents/support/definition?${scope}`);
+  await expect(page).toHaveURL("/agents/support/definition");
+  await expect(tabs.getByRole("tab", { name: "Definition", exact: true })).toHaveAttribute("aria-selected", "true");
+});
+
+test("the Agents list filters loaded Agents by name", async ({ page }) => {
+  await catalog(page);
+  await page.goto(`/agents?${scope}`);
+  const filter = page.getByRole("searchbox", { name: "Filter Agents" });
+  await filter.fill("supp");
+  await expect(page.getByRole("link", { name: "support", exact: true })).toBeVisible();
+  await filter.fill("billing");
+  await expect(page.getByText("No loaded Agents match this filter.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "support", exact: true })).toHaveCount(0);
+  await filter.fill("");
+  await expect(page.getByRole("link", { name: "support", exact: true })).toBeVisible();
+});
+
+test("the environment Triggers page lists every Agent's activations", async ({ page }) => {
+  const paths = await catalog(page);
+  await page.goto(`/triggers?${scope}`);
+  await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
+  const row = page.getByRole("row").filter({ hasText: "daily" });
+  await expect(row.getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support/triggers");
+  await expect.poll(() => paths.some(path => path.endsWith("/triggers"))).toBe(true);
+  expect(paths.filter(path => path.includes("/triggers")).every(path => !path.includes("agent="))).toBe(true);
 });
 
 for (const current of [true, false]) {
@@ -70,35 +119,41 @@ for (const current of [true, false]) {
     await page.goto(`/agents?${scope}`);
     await expect(page.getByText(current ? "No Agents in the current Deployment." : "No current Deployment.", { exact: true })).toBeVisible();
     await page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "All Agents" }).click();
+    await expect(page.getByRole("row").filter({ hasText: "support" }).getByText("Not in current Deployment", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: "support", exact: true }).click();
     await expect(page.getByText("New independent Sessions cannot start.", { exact: false })).toBeVisible();
-    await expect(page.getByRole("link", { name: "View current definition" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Manage Slack connection" }).click();
-    await expect(page.getByRole("dialog", { name: "Slack · support" })).toBeVisible();
-    await page.getByRole("button", { name: "Close modal", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("tab", { name: "Definition", exact: true }).click();
+    await expect(page.getByText("This Agent is not in the current Deployment.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tabpanel", { name: "Definition" }).getByRole("link", { name: "View Deployments" })).toHaveAttribute("href", "/deployments");
+    await page.getByRole("tab", { name: "Slack", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("retained-agent.png"), fullPage: true });
   });
 }
 
-test("viewer can inspect retained Agent without connection controls", async ({ page }) => {
+test("viewer sees who manages an Agent's Slack connection without reading it", async ({ page }) => {
   const paths = await catalog(page, { current: false, defined: false, role: "viewer" });
-  await page.goto(`/agents/support?${scope}`);
+  await page.goto(`/agents/support/slack?${scope}`);
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
-  await expect(page.getByText("An organization owner or admin can manage this connection.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Manage Slack connection" })).toHaveCount(0);
+  await expect(page.getByText("Organization owners and admins can view and manage this connection.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Connect Slack|Disconnect|Discard setup|Reauthorize/ })).toHaveCount(0);
   expect(paths.some(path => path.endsWith("/slack"))).toBe(false);
 });
 
-test("Deployment details are read-only and historical definition links keep exact pins", async ({ page }, testInfo) => {
+test("Deployment details are read-only and pinned definitions stay inside their Deployment", async ({ page }, testInfo) => {
   const paths = await catalog(page);
   await page.goto(`/deployments/${historical}?${scope}`);
   await page.getByRole("link", { name: "support", exact: true }).click();
   await expect(page).toHaveURL(`/deployments/${historical}/agents/support`);
+  const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link");
+  await expect(breadcrumb).toHaveText(["Deployments", "000000000502"]);
+  await expect(breadcrumb.nth(1)).toHaveAttribute("href", `/deployments/${historical}`);
   await expect(page.getByText("This definition belongs to an earlier or unpromoted Deployment.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Manage Slack connection" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open Agent" })).toHaveAttribute("href", "/agents/support");
+  await expect(page.getByRole("button", { name: /Slack/ })).toHaveCount(0);
   await page.getByRole("link", { name: "browser", exact: true }).click();
   await expect(page).toHaveURL(`/deployments/${historical}/templates/browser`);
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link")).toHaveText(["Deployments", "000000000502"]);
   await expect(page.getByText("1 vCPU", { exact: false })).toBeVisible();
   expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${historical}`))).toBe(true);
   expect(paths.some(path => path.endsWith(`/templates/browser?deployment_id=${historical}`))).toBe(true);
@@ -107,4 +162,13 @@ test("Deployment details are read-only and historical definition links keep exac
   await expect(page.getByRole("button", { name: /Promote|Slack connection|Triggers/ })).toHaveCount(0);
   expect(paths.some(path => path.includes("/triggers"))).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("deployment-read-only.png"), fullPage: true });
+});
+
+test("the current Template opens inside the Computers section", async ({ page }) => {
+  const paths = await catalog(page);
+  await page.goto(`/templates/browser?${scope}`);
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link")).toHaveText(["Computers", "Templates"]);
+  await expect(page.getByText("1 vCPU", { exact: false })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Sections" }).locator("[aria-current=page]")).toHaveText(["Computers"]);
+  expect(paths.some(path => path.endsWith(`/templates/browser?deployment_id=${deployment}`))).toBe(true);
 });

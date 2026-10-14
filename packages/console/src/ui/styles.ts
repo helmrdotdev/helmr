@@ -43,6 +43,13 @@ export const ui = {
   settingsNavLinkActive:
     "bg-console-accent-soft text-console-text before:absolute before:-left-2.5 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-console-accent max-[960px]:before:hidden",
 
+  // Phone menu drawer: 44px targets. The base sets no colour; add the idle or
+  // active variant.
+  drawerItem:
+    "flex h-11 min-h-11 w-full cursor-pointer items-center gap-2 rounded-xs border-0 px-2.5 text-left font-mono text-control font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+  drawerItemIdle: "bg-transparent text-console-muted hover:bg-console-bg-panel hover:text-console-text",
+  drawerItemActive: "bg-console-accent-soft text-console-text shadow-[inset_2px_0_0_var(--console-accent)]",
+
   // Scope selector
   scopeTrigger:
     "flex h-6.5 cursor-pointer max-w-107.5 items-center gap-1.5 rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-badge text-console-text transition hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-50 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel",

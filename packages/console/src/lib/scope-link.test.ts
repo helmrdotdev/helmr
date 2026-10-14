@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { linkNotice, linkRestoreScope, readScopeHint, scopeShareURL, withoutScopeHint } from "./scope-link";
 
 test("a share hint needs both Project and Environment", () => {
-  expect(readScopeHint("?project=p%2F1&environment=prod&agent=support")).toEqual({ projectID: "p/1", environmentID: "prod" });
+  expect(readScopeHint("?project=p%2F1&environment=prod&status=open")).toEqual({ projectID: "p/1", environmentID: "prod" });
   expect(readScopeHint("?project=p1")).toBeUndefined();
   expect(readScopeHint("?environment=prod")).toBeUndefined();
   expect(readScopeHint("?project=&environment=prod")).toBeUndefined();
@@ -10,20 +10,20 @@ test("a share hint needs both Project and Environment", () => {
 });
 
 test("stripping a hint keeps the path, other params and hash", () => {
-  expect(withoutScopeHint({ pathname: "/sessions", search: "?project=p&agent=support&environment=e", hash: "#turns" }))
-    .toBe("/sessions?agent=support#turns");
+  expect(withoutScopeHint({ pathname: "/sessions", search: "?project=p&status=open&environment=e", hash: "#turns" }))
+    .toBe("/sessions?status=open#turns");
   expect(withoutScopeHint({ pathname: "/agents/support", search: "?project=p&environment=e", hash: "" })).toBe("/agents/support");
   expect(withoutScopeHint({ pathname: "/computers", search: "?project=p", hash: "" })).toBe("/computers");
 });
 
 test("a location without hint params needs no rewrite", () => {
-  expect(withoutScopeHint({ pathname: "/sessions", search: "?agent=support", hash: "#x" })).toBeUndefined();
+  expect(withoutScopeHint({ pathname: "/sessions", search: "?status=open", hash: "#x" })).toBeUndefined();
   expect(withoutScopeHint({ pathname: "/", search: "", hash: "" })).toBeUndefined();
 });
 
 test("share URLs are absolute and carry the tab scope", () => {
-  expect(scopeShareURL("https://console.example/sessions/s1?agent=a#turns", { projectID: "p/1", environmentID: "prod" }))
-    .toBe("https://console.example/sessions/s1?agent=a&project=p%2F1&environment=prod#turns");
+  expect(scopeShareURL("https://console.example/sessions/s1?status=open#turns", { projectID: "p/1", environmentID: "prod" }))
+    .toBe("https://console.example/sessions/s1?status=open&project=p%2F1&environment=prod#turns");
   expect(scopeShareURL("https://console.example/agents/x?project=old&environment=old", { projectID: "p", environmentID: "e" }))
     .toBe("https://console.example/agents/x?project=p&environment=e");
 });

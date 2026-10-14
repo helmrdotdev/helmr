@@ -5,7 +5,7 @@ import { useMe } from "../lib/me";
 import { Popover } from "../ui/Popover";
 import { cx, ui } from "../ui/styles";
 
-function formatRole(role: string | null | undefined): string {
+export function formatRole(role: string | null | undefined): string {
   if (!role) return "Member";
   return role
     .split(/[_\s-]+/)
