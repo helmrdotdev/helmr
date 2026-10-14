@@ -38,6 +38,17 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
   await dialog.getByRole("button", { name: "Connect Slack", exact: true }).click();
   await expect(dialog.getByRole("link", { name: "Create app in Slack" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Install app in Slack" })).toHaveCount(0);
+  const icons = dialog.getByRole("group", { name: "App icon" });
+  await expect(icons.getByRole("radio")).toHaveCount(8);
+  const download = icons.getByRole("link", { name: "Download icon" });
+  const initial = await download.getAttribute("href");
+  expect(initial).toMatch(/^\/slack-app-icons\/(violet|teal|orange|blue|pink|yellow)\.png$/);
+  await expect(icons.getByRole("radio", { checked: true })).toHaveAttribute("value", initial!.slice("/slack-app-icons/".length, -".png".length));
+  await icons.getByRole("radio", { name: "Dark icon" }).locator("..").click();
+  await expect(icons.getByRole("radio", { name: "Dark icon" })).toBeChecked();
+  await expect(download).toHaveAttribute("href", "/slack-app-icons/dark.png");
+  await expect(download).toHaveAttribute("download", "demo-agent-slack-icon.png");
+  expect((await page.request.get("/slack-app-icons/dark.png")).headers()["content-type"]).toBe("image/png");
   await page.screenshot({ path: testInfo.outputPath("agent-slack-setup.png"), fullPage: true });
   await dialog.getByLabel("Client ID", { exact: true }).fill("client-A");
   await dialog.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
@@ -66,6 +77,7 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   await page.setViewportSize({ width: 390, height: 844 });
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Dedicated Agent");
+  await expect(dialog.getByText("Download app icon", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(dialog).toContainText("existing threads stay disconnected and triggers require re-promotion");
   expect(deletions).toEqual([]);

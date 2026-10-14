@@ -2,10 +2,12 @@ import { createQuery } from "@tanstack/solid-query";
 import { createSignal, onCleanup, Show } from "solid-js";
 import { authorizeAgentSlackConnection, beginAgentSlackConnection, disconnectAgentSlackConnection, getAgentSlackConnection, saveSlackAppCredentials, type AgentSlackAddress, type AgentSlackConnection } from "../../lib/slack";
 import { Modal } from "../../ui/Modal";
+import { AppIconPicker } from "./AppIconPicker";
 import { ui } from "../../ui/styles";
 
 export function AgentConnectionModal(props: AgentSlackAddress & { onClose: () => void }) {
   const address = { projectID: props.projectID, environmentID: props.environmentID, agentName: props.agentName };
+  const iconSeed = `${props.projectID}/${props.environmentID}/${props.agentName}`;
   const state = createQuery(() => ({ queryKey: ["agent-slack", address.projectID, address.environmentID, address.agentName], queryFn: () => getAgentSlackConnection(address), retry: false, gcTime: 0, refetchOnWindowFocus: false }));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -41,11 +43,13 @@ export function AgentConnectionModal(props: AgentSlackAddress & { onClose: () =>
           <p>Create a dedicated Slack app for <strong>{props.agentName}</strong>, then save its credentials here.</p>
           <p class={ui.muted}>The app’s Basic Information page contains these credentials. Slack can verify its event URL after they are saved; retry URL verification in Slack if needed.</p>
           <Show when={state.data?.create_app_url}><a class={ui.secondaryButton} href={state.data!.create_app_url} target="_blank" rel="noopener noreferrer">Create app in Slack</a></Show>
+          <AppIconPicker seed={iconSeed} agentName={props.agentName} />
           <details><summary class="cursor-pointer">App manifest</summary><pre class="max-h-48 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(state.data?.manifest, null, 2)}</pre></details>
         </Show>
         <Show when={connection.status === "setup_incomplete" || connection.status === "reauthorization_required"}>
           <CredentialForm connection={connection} busy={busy()} save={(credentials) => run(() => saveSlackAppCredentials(address, connection.id, credentials))} />
         </Show>
+        <Show when={connection.status === "connected"}><details><summary class="cursor-pointer">Download app icon</summary><AppIconPicker seed={iconSeed} agentName={props.agentName} /></details></Show>
         <Show when={connection.status === "connected"}><details><summary class="cursor-pointer">Update app credentials</summary><CredentialForm connection={connection} busy={busy()} save={(credentials) => run(() => saveSlackAppCredentials(address, connection.id, credentials))} /></details></Show>
         <Show when={connection.credentials_configured}>
           <button class={ui.button} disabled={busy()} onClick={() => void authorize(connection.id)}>{connection.installation_id ? "Reauthorize in Slack" : "Install app in Slack"}</button>
