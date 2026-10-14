@@ -134,7 +134,7 @@ func TestSlackQuestionPreservesTitleInMessageAndModal(t *testing.T) {
 		t.Fatalf("question rendering: %v", err)
 	}
 	blocks, _ := json.Marshal(posts[0].Body.Blocks)
-	if !strings.Contains(string(blocks), "Delete archived workspace?") || !strings.Contains(posts[0].Body.Text, "Delete archived workspace?") {
+	if !strings.Contains(string(blocks), "Delete archived workspace?") || !strings.Contains(posts[0].Body.Text, "Delete archived workspace?\n\nThis cannot be undone") {
 		t.Fatalf("missing confirmation subject: %+v", posts[0])
 	}
 	view, err := answerModal(q, "signed-form")

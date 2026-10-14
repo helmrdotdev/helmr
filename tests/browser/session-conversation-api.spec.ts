@@ -31,7 +31,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   const f = await conversation(page);
   await page.goto(f.askURL);
   await expect(page.getByLabel("Answer through CLI")).toBeVisible();
-  const response = await page.request.post(`${f.askBase}/respond`, { data: { answer: "", response_id: crypto.randomUUID() } });
+  const response = await page.request.post(`${f.askBase}/answer`, { data: { answer: "", answer_id: crypto.randomUUID() } });
   expect(response.ok(), await response.text()).toBeTruthy();
   await page.reload();
   await expect(page.getByLabel("Recorded answer")).toHaveText('""');
@@ -59,7 +59,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   const enqueue = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, { data: { input: [{ type: "text", text: "kept while saving" }], idempotency_key: crypto.randomUUID() } });
   expect(enqueue.ok(), await enqueue.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByText("kept while saving", { exact: false })).toBeVisible();
+  await expect(page.getByText("kept while saving", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Second visible progress", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Question — answered" })).toBeVisible();
@@ -73,15 +73,16 @@ test("real API shows ordered progress while saving keeps response and result pri
 test("Console records one externally retried choice with its exact values", async ({ page }) => {
   const f = await conversation(page, "choice");
   await page.goto(f.askURL);
-  await expect(page.getByLabel("Answer control")).toContainText("First");
-  const answer = { selected: [{ id: "a", value: { v: 1 } }, { id: "b", value: null }], text: "extra" };
-  const data = { answer, response_id: crypto.randomUUID() };
+  await page.getByText("Inspect question", { exact: true }).click();
+  await expect(page.getByLabel("Question definition")).toContainText("First");
+  const answer = { selected: [{ id: "a", value: { v: 1 } }, { id: "b", value: null }], custom: "extra" };
+  const data = { answer: { selectedIds: ["a", "b"], custom: "extra" }, answer_id: crypto.randomUUID() };
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await page.request.post(`${f.askBase}/respond`, { data });
+    const response = await page.request.post(`${f.askBase}/answer`, { data });
     expect(response.ok(), await response.text()).toBeTruthy();
   }
   await page.reload();
-  await expect(page.getByLabel("Recorded answer")).toHaveText(JSON.stringify(answer, null, 2));
+  await expect.poll(async () => JSON.parse(await page.getByLabel("Recorded answer").innerText())).toEqual(answer);
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   const events = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/events?after=0&limit=100`)).json();
   expect(events.records.filter((event: { kind: string }) => event.kind === "ask.answered")).toHaveLength(1);
@@ -90,7 +91,7 @@ test("Console records one externally retried choice with its exact values", asyn
 test("real API rejects a loaded question after organization scope loss and accepts after restoration", async ({ page }) => {
   const f = await conversation(page);
   await page.goto(f.askURL);
-  const data = { answer: "retained draft", response_id: crypto.randomUUID() };
+  const data = { answer: "retained draft", answer_id: crypto.randomUUID() };
   const before = await (await page.request.get("/api/me")).json();
   expect(before.org_id).toBeTruthy();
   try {
@@ -98,7 +99,7 @@ test("real API rejects a loaded question after organization scope loss and accep
     const revoked = await (await page.request.get("/api/me")).json();
     expect(revoked.org_id).toBeFalsy();
     expect(revoked.user_id).toBe(before.user_id);
-    const reply = await page.request.post(`${f.askBase}/respond`, { data });
+    const reply = await page.request.post(`${f.askBase}/answer`, { data });
     // Revoked membership removes the request's organization/environment scope.
     expect(reply.status()).toBe(400);
     await expect(page.getByLabel("Recorded answer")).toHaveCount(0);
@@ -108,7 +109,7 @@ test("real API rejects a loaded question after organization scope loss and accep
   }
   const pending = await (await page.request.get(f.askBase)).json();
   expect(pending.status).toBe("pending");
-  const reply = await page.request.post(`${f.askBase}/respond`, { data });
+  const reply = await page.request.post(`${f.askBase}/answer`, { data });
   expect(reply.ok(), await reply.text()).toBeTruthy();
   await page.reload();
   await expect(page.getByLabel("Recorded answer")).toHaveText('"retained draft"');
@@ -127,7 +128,7 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   const enqueue = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, { data: { input: [{ type: "text", text: "retained after revocation" }], idempotency_key: crypto.randomUUID() } });
   expect(enqueue.ok(), await enqueue.text()).toBeTruthy();
   await page.reload();
-  await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
+  await expect(page.getByText("retained after revocation", { exact: true })).toBeVisible();
   await page.goto(`/settings/secrets?${f.scope}`);
   await page.getByRole("button", { name: "Actions for BROWSER_REVOCATION" }).click();
   const confirmation = page.waitForEvent("dialog");
@@ -141,7 +142,7 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect.poll(async () => (await turns()).map((turn: { status: string }) => turn.status)).toEqual(["interrupted", "queued"]);
   await page.goto(f.sessionURL);
   await expect(page.getByText("Computer exposed to a revoked Secret", { exact: false })).toBeVisible();
-  await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
+  await expect(page.getByText("retained after revocation", { exact: true })).toBeVisible();
   expect((await (await page.request.get(f.askBase)).json()).status).toBe("cancelled");
   await page.reload();
   await expect(page.getByText("Use the CLI to close this Session or release a hold.", { exact: false })).toBeVisible();
@@ -168,5 +169,5 @@ test("real Secret revocation preserves queued input for inspection and explicit 
     ["interrupted", [{ type: "text", text: "retained" }]], ["cancelled", [{ type: "text", text: "retained after revocation" }]],
   ]);
   await page.reload();
-  await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
+  await expect(page.getByText("retained after revocation", { exact: true })).toBeVisible();
 });

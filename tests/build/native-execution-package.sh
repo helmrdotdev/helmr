@@ -72,6 +72,7 @@ docker buildx inspect --bootstrap "$fixture_builder" >/dev/null
 bun install --frozen-lockfile --ignore-scripts > "$output/dependencies.log" 2>&1
 scripts/build-npm-packages.sh >> "$output/dependencies.log" 2>&1
 (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts) >> "$output/dependencies.log" 2>&1
+bun x tsc --noEmit -p tests/fixtures/native-continuation/tsconfig.json >> "$output/dependencies.log" 2>&1
 make platform-entries > "$output/entries.log" 2>&1
 go build -trimpath -ldflags="-X main.deploymentBundleBuilderImage=$endpoint/builder@$digest" -o "$tmp/helmr" ./cmd/helmr
 mkdir -p "$tmp/project/agents"

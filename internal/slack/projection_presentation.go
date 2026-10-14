@@ -194,7 +194,7 @@ func renderQuestion(sequence int64, raw json.RawMessage) ([]ContentPost, error) 
 		return nil, err
 	}
 	if q.Title != "" {
-		title, _ := json.Marshal(map[string]string{"type": "text", "text": q.Title})
+		title, _ := json.Marshal(map[string]string{"type": "text", "text": q.Title + "\n\n"})
 		parts = append([]json.RawMessage{title}, parts...)
 	}
 	var choices strings.Builder
