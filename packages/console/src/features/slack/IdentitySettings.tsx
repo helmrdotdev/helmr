@@ -1,13 +1,14 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { errorMessage } from "../../lib/error";
+import type { Failure } from "../../lib/error";
+import { slackFailure, slackNotConfigured } from "./failure";
+import { SlackFailureNotice, SlackNotSetUp } from "./SlackFailure";
 import { listSlackLinkWorkspaces, listSlackUserLinks, startSlackUserLink, unlinkSlackUser, type SlackUserLink } from "../../lib/slack";
 import { LoadMore } from "../../ui/DataTable";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { Field } from "../../ui/Field";
 import { IDText } from "../../ui/IDText";
 import { List, ListItem } from "../../ui/List";
-import { Notice } from "../../ui/Notice";
 import { Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
 import { Select } from "../../ui/Select";
@@ -31,20 +32,21 @@ export function IdentitySettings(props: { userID: string; organizationID: string
   const workspaceName = (teamID: string) => allWorkspaces().find((w) => w.team_id === teamID)?.workspace_name || undefined;
   const [workspace, setWorkspace] = createSignal("");
   const [unlinking, setUnlinking] = createSignal<SlackUserLink | null>(null);
-  const [busy, setBusy] = createSignal(false), [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false), [error, setError] = createSignal<Failure | null>(null);
   let mounted = true; onCleanup(() => { mounted = false; });
   const start = async () => {
     setBusy(true); setError(null);
     try { const result = await startSlackUserLink(workspace()); if (mounted) window.location.assign(result.redirect_url); }
-    catch (e) { if (mounted) { setError(errorMessage(e, "Slack identity linking could not start.")); setBusy(false); } }
+    catch (e) { if (mounted) { setError(slackFailure(e, "Slack identity linking could not start.")); setBusy(false); } }
   };
   return <Panel title="Your Slack identity">
     <p class={ui.muted}>Link the Slack account you use to request work and answer questions. Your existing Helmr permissions still apply.</p>
-    <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
+    <Show when={!slackNotConfigured(links.error) && !slackNotConfigured(workspaces.error)} fallback={<SlackNotSetUp failure={slackFailure(links.error ?? workspaces.error, "")} consequence="Slack identities cannot be linked." />}>
+    <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <QueryState
       query={links}
       pending="Loading linked identities..."
-      error={() => "Your Slack identity settings could not be loaded."}
+      error={(e) => slackFailure(e, "Your Slack identity settings could not be loaded.").message}
       empty={{ when: (data) => data.pages.every((page) => page.links.length === 0), title: "No Slack identities linked." }}
     >
       {() => (
@@ -62,7 +64,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
         </List>
       )}
     </QueryState>
-    <Show when={workspaces.isError}><Notice tone="danger">Slack workspaces could not be loaded.</Notice></Show>
+    <Show when={workspaces.isError}><SlackFailureNotice failure={slackFailure(workspaces.error, "Slack workspaces could not be loaded.")} /></Show>
     <Show when={workspaces.data?.pages[0]?.configured}>
       <Show when={allWorkspaces().length > 0} fallback={<p class={ui.muted}>An organization admin must connect an Agent to Slack before you can link your account here.</p>}>
         <div class="flex flex-wrap items-end gap-3">
@@ -73,6 +75,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
         </div>
       </Show>
     </Show>
+    </Show>
     <Show when={unlinking()}>{(link) => (
       <ConfirmDialog
         title="Unlink Slack identity"
@@ -81,7 +84,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
         cancelLabel="Keep identity linked"
         tone="danger"
         target={<IDText value={link().slack_user_id} />}
-        errorMessage={(e) => errorMessage(e, "Slack identity could not be unlinked.")}
+        errorMessage={(e) => slackFailure(e, "Slack identity could not be unlinked.").message}
         onClose={() => setUnlinking(null)}
         onConfirm={async () => {
           await unlinkSlackUser(link());

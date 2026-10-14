@@ -1,6 +1,6 @@
 import { createQuery } from "@tanstack/solid-query";
 import { createEffect, createSignal, on, onCleanup, Show, type JSX } from "solid-js";
-import { errorMessage } from "../../lib/error";
+import type { Failure } from "../../lib/error";
 import { usePermission } from "../../lib/me";
 import { useScope } from "../../lib/scope";
 import { authorizeAgentSlackConnection, beginAgentSlackConnection, disconnectAgentSlackConnection, getAgentSlackConnection, saveSlackAppCredentials, type AgentSlackAddress, type AgentSlackConnection as Connection } from "../../lib/slack";
@@ -17,6 +17,8 @@ import { statusLabel } from "../../ui/label";
 import { cx, ui } from "../../ui/styles";
 import { environmentChip } from "../projects/display";
 import { AppIconPicker } from "./AppIconPicker";
+import { slackFailure, slackNotConfigured } from "./failure";
+import { SlackFailureNotice, SlackNotSetUp } from "./SlackFailure";
 
 type Credentials = { client_id: string; client_secret: string; signing_secret: string };
 
@@ -62,7 +64,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   const iconSeed = () => `${props.projectID}/${props.environmentID}/${props.agentName}`;
   const state = createQuery(() => ({ queryKey: ["agent-slack", props.projectID, props.environmentID, props.agentName], queryFn: () => getAgentSlackConnection(address()), retry: false, gcTime: 0, refetchOnWindowFocus: false }));
   const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string>();
+  const [error, setError] = createSignal<Failure>();
   const [removing, setRemoving] = createSignal<Connection | null>(null);
   createEffect(on(() => JSON.stringify(address()), () => { setError(undefined); setRemoving(null); }, { defer: true }));
   let mounted = true;
@@ -70,7 +72,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
     try { await action(); if (mounted) await state.refetch(); }
-    catch (failure) { if (mounted) setError(errorMessage(failure, "The connection could not be updated.")); throw failure; }
+    catch (failure) { if (mounted) setError(slackFailure(failure, "The connection could not be updated.")); throw failure; }
     finally { if (mounted) setBusy(false); }
   };
   const attempt = (action: () => Promise<unknown>) => { void run(action).catch(() => undefined); };
@@ -81,7 +83,8 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   });
 
   return (
-    <QueryState query={state} pending="Loading connection..." error={(failure) => errorMessage(failure, "The connection could not be loaded.")}>
+    <Show when={!slackNotConfigured(state.error)} fallback={<SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents in this installation cannot be connected to Slack." />}>
+    <QueryState query={state} pending="Loading connection..." error={(failure) => slackFailure(failure, "The connection could not be loaded.").message}>
       {(data) => (
         <DetailLayout rail={
           <div class="flex flex-col gap-4">
@@ -116,7 +119,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
             </Show>
           </div>
         }>
-          <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
+          <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
           <Show
             when={data().connection}
             keyed
@@ -165,7 +168,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                 tone="danger"
                 target={connection().app_name || props.agentName}
                 environment={environmentChip(scope.selectedEnvironment())}
-                errorMessage={(failure) => errorMessage(failure, "The connection could not be updated.")}
+                errorMessage={(failure) => slackFailure(failure, "The connection could not be updated.").message}
                 onClose={() => setRemoving(null)}
                 onConfirm={async () => {
                   await disconnectAgentSlackConnection(address(), connection().id);
@@ -181,6 +184,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
         </DetailLayout>
       )}
     </QueryState>
+    </Show>
   );
 }
 

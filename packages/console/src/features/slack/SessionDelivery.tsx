@@ -1,13 +1,16 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { errorMessage } from "../../lib/error";
+import type { Failure } from "../../lib/error";
+import { slackFailure } from "./failure";
+
+const DELIVERY_MESSAGES = { conflict: "This message's delivery changed since the page loaded; refresh before trying again." };
+import { SlackFailureNotice } from "./SlackFailure";
 import type { SessionAddress } from "../../lib/sessions";
 import { listSlackDelivery, recoverSlackDelivery, type SlackDeliveryPost } from "../../lib/slack";
 import { CodeBlock } from "../../ui/CodeBlock";
 import { LoadMore } from "../../ui/DataTable";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { List, ListItem } from "../../ui/List";
-import { Notice } from "../../ui/Notice";
 import { Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
 import { RelativeTime } from "../../ui/RelativeTime";
@@ -36,19 +39,19 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
   const rows = createMemo(() => posts.data?.pages.flatMap((page) => page.posts) ?? []);
   const [selected, setSelected] = createSignal<SlackDeliveryPost>();
   const [checking, setChecking] = createSignal(false);
-  const [error, setError] = createSignal<string>();
+  const [error, setError] = createSignal<Failure>();
   const check = async (post: SlackDeliveryPost) => {
     setChecking(true); setError(undefined);
     try { await recoverSlackDelivery(props.address, post, "check"); await posts.refetch(); }
-    catch (cause) { setError(errorMessage(cause, "Delivery could not be checked.")); }
+    catch (cause) { setError(slackFailure(cause, "Delivery could not be checked.", DELIVERY_MESSAGES)); }
     finally { setChecking(false); }
   };
   return <Panel title="Slack delivery">
-    <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
+    <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <QueryState
       query={posts}
       pending="Loading Slack delivery..."
-      error={() => "Slack delivery could not be loaded."}
+      error={(e) => slackFailure(e, "Slack delivery could not be loaded.").message}
       empty={{ when: (data) => data.pages.every((page) => page.posts.length === 0), title: "No Slack delivery issues reported." }}
     >
       {() => (
@@ -79,7 +82,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
         </List>
       )}
     </QueryState>
-    <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
+    <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" errorMessage={(e) => slackFailure(e, "Delivery could not be stopped.", DELIVERY_MESSAGES).message} title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
       <div class={ui.windowStack}>
         <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the Agent.</p>
         <CodeBlock code={post.text} label="Message content" />
