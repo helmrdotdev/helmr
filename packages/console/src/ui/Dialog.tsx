@@ -215,7 +215,7 @@ export function ConfirmDialog(props: {
   );
 }
 
-// A value shown once (API key, invite link, enrollment token) with Copy and a
+// A value shown once (API key, enrollment token) with Copy and a
 // warning that it is not shown again.
 export function RevealDialog(props: {
   title: string;

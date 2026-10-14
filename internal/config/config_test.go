@@ -411,6 +411,25 @@ func TestLoadControlPlaneRejectsEmailFromWithDisabledDelivery(t *testing.T) {
 	}
 }
 
+func TestLoadControlPlaneRejectsLogEmailInManagedCloud(t *testing.T) {
+	setControlPlaneRequiredEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+	t.Setenv("DEPLOYMENT_MODE", "managed-cloud")
+	t.Setenv("CAS_URI", "s3://helmr-cas")
+	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
+	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("EMAIL_PROVIDER", "log")
+
+	_, err := LoadControlPlane()
+	if err == nil || err.Error() != "EMAIL_PROVIDER=log is for local development and is not allowed when DEPLOYMENT_MODE is managed-cloud" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")

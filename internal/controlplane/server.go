@@ -453,7 +453,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Patch("/members/{userID}", s.updateMemberRole)
 		r.Delete("/members/{userID}", s.removeMember)
 		r.Get("/invitations", s.listInvitations)
-		r.Post("/invitations", s.createInvitation)
+		r.Post("/invitations", s.createInvitations)
 		r.Delete("/invitations/{id}", s.revokeInvitation)
 	})
 	r.Group(func(r chi.Router) {

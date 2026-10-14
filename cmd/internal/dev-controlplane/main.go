@@ -40,6 +40,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -175,6 +176,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
+	mailer, magicLinkDelivery := devEmail(log)
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
@@ -198,6 +200,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		AuthKey:                        cfg.authKey,
 		PublicURL:                      publicURL,
 		TelemetryReader:                telemetryReader,
+		Mailer:                         mailer,
+		MagicLinkDelivery:              magicLinkDelivery,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)
@@ -225,11 +229,19 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
 		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
+		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
 	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"
 	// Deferred ClickHouse and PostgreSQL closes run only after serveDev
 	// has drained or force-closed HTTP and joined every background loop.
 	return serveDev(ctx, log, httpServer, loginURL, loops, 10*time.Second)
+}
+
+// devEmail is the dev control plane's email delivery: sign-in and invitation
+// links are written to the log instead of being sent, so local development
+// can exercise both without an email provider.
+func devEmail(log *slog.Logger) (email.Sender, *controlplane.MagicLinkDelivery) {
+	return email.LogSender{Log: log}, controlplane.NewMagicLinkDelivery(log, 10*time.Second)
 }
 
 type backgroundLoop struct {

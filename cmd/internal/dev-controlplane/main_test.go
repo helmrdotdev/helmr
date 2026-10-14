@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/org"
 )
 
@@ -106,4 +109,19 @@ func TestMigrationPathsFindsSourceRootWhenCwdDiffers(t *testing.T) {
 
 func devTestExecutionLimits() org.ExecutionLimits {
 	return org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}
+}
+
+func TestDevEmailWritesInvitationLinksToTheLog(t *testing.T) {
+	var output bytes.Buffer
+	mailer, delivery := devEmail(slog.New(slog.NewTextHandler(&output, nil)))
+	if _, logged := mailer.(email.LogSender); !logged || delivery == nil {
+		t.Fatalf("dev email = %T with delivery %v, want the log sender and a delivery worker", mailer, delivery)
+	}
+	link := "http://127.0.0.1:8080/invite?token=dev-token"
+	if err := mailer.SendEmails(t.Context(), []email.Message{{To: "ada@example.test", Subject: "Invitation", Link: &email.Link{Email: "ada@example.test", Purpose: "invitation", URL: link}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), link) || !strings.Contains(output.String(), "purpose=invitation") {
+		t.Fatalf("log = %q, want the invitation link", output.String())
+	}
 }

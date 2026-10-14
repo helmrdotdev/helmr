@@ -311,8 +311,8 @@ trigger for the chosen option.
   - **ConfirmDialog** for every confirmation: it names the `target` and its
     `environment`, takes a `cancelLabel`, and uses `tone="danger"` for destructive
     actions. `window.confirm` is not used;
-  - **RevealDialog** for a value shown once (API key, invite link, enrollment
-    token) with Copy and a warning.
+  - **RevealDialog** for a value shown once (API key, enrollment token) with
+    Copy and a warning.
 - **CommandList.** A search box over a list for pickers and the command palette:
   focus stays in the box (combobox with `aria-activedescendant`), typing filters
   by every word, ArrowUp/ArrowDown move (Home/End too while the box is empty; with

@@ -130,6 +130,7 @@ func TestMagicLinkDebugDeliveryUsesBoundedWorker(t *testing.T) {
 }
 
 type blockingMagicLinkSender struct {
+	email.Unconfigured
 	started chan email.Message
 }
 
@@ -144,6 +145,7 @@ func (s *blockingMagicLinkSender) SendEmail(ctx context.Context, message email.M
 }
 
 type recordingMagicLinkSender struct {
+	email.Unconfigured
 	sent chan email.Message
 }
 
