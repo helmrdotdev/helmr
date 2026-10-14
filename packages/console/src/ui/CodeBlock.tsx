@@ -12,7 +12,7 @@ export function CodeBlock(props: { code: string; copy?: boolean; label?: string;
       <Show when={props.copy}>
         <button
           type="button"
-          class={cx(ui.secondaryButton, "absolute right-2 top-2 h-6 min-h-6 px-2")}
+          class={cx(ui.compactButton, "absolute right-2 top-2")}
           onClick={() => void clipboard.copy(props.code)}
         >
           {clipboard.state() === "copied" ? "Copied" : clipboard.state() === "failed" ? "Could not copy" : "Copy"}

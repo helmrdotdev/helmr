@@ -11,8 +11,10 @@ import { askConsolePath, listSessions, sessionConsolePath } from "../lib/session
 import { CodeBlock } from "../ui/CodeBlock";
 import { Segmented } from "../ui/Field";
 import { IDText } from "../ui/IDText";
+import { List, ListItem } from "../ui/List";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
+import { Panel } from "../ui/Panel";
 import { EmptyState, ErrorState, PendingState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -109,11 +111,7 @@ function FirstDeployment(props: { projectID: string; environmentID: string; envi
   const origin = window.location.origin;
   const scope = () => `--project ${props.projectID} --env ${props.environmentID}`;
   return (
-    <section class={ui.window} aria-label={`Set up ${props.environmentName}`}>
-      <div class={ui.titleStrip}>
-        <h2 class="m-0 min-w-0 flex-1 truncate font-mono text-micro font-normal">Set up {props.environmentName}</h2>
-      </div>
-      <div class={cx(ui.windowStack, "p-4")}>
+    <Panel title={`Set up ${props.environmentName}`}>
         <p class={cx(ui.muted, "m-0")}>Deploy an Agent to this environment. This page lists what waits on you afterwards.</p>
         <Steps
           label="First Deployment"
@@ -144,17 +142,13 @@ function FirstDeployment(props: { projectID: string; environmentID: string; envi
             },
           ]}
         />
-      </div>
-    </section>
+    </Panel>
   );
 }
 
 function QueueItem(props: { item: AttentionItem }) {
   return (
-    <li
-      class="px-3.5 py-3"
-      aria-label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}
-    >
+    <ListItem label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
       <div class="flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
         <StatusBadge resource="attention" status={props.item.kind} />
         <span class="min-w-0 flex-[1_1_280px] truncate text-body" title={summary(props.item)}>{summary(props.item)}</span>
@@ -165,9 +159,9 @@ function QueueItem(props: { item: AttentionItem }) {
           </Show>
         </span>
         <span class="font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
-        <A class={cx(ui.secondaryButton, "h-6 min-h-6 px-2")} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
+        <A class={ui.compactButton} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
       </div>
-    </li>
+    </ListItem>
   );
 }
 
@@ -190,21 +184,18 @@ function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts
       <div class="flex flex-wrap items-center gap-2">
         <Segmented label="Filter by kind" value={filter()} options={options()} onChange={setFilter} />
       </div>
-      <section class={ui.window} aria-label="Waiting on you">
-        <div class={ui.titleStrip}>
-          <h2 class="m-0 min-w-0 flex-1 truncate font-mono text-micro font-normal">Needs you · oldest first</h2>
-        </div>
-        <Show when={shown().length > 0} fallback={<p class={cx(ui.muted, "m-0 px-3.5 py-5 text-center")}>Nothing of this kind is waiting.</p>}>
-          <ul class="m-0 list-none divide-y divide-console-border-soft p-0" aria-label="Waiting items">
+      <Panel title="Waiting on you" count={shown().length}>
+        <Show when={shown().length > 0} fallback={<p class={cx(ui.muted, "m-0 py-2 text-center")}>Nothing of this kind is waiting.</p>}>
+          <List label="Waiting items">
             <For each={shown()}>{(item) => <QueueItem item={item} />}</For>
-          </ul>
+          </List>
         </Show>
-      </section>
+      </Panel>
       <For each={truncated()}>
         {(kind) => <p class={cx(ui.muted, "m-0")}>Showing the oldest {props.items.filter((item) => item.kind === kind).length} of {count(kind)} {KIND_LABELS[kind].toLowerCase()} items.</p>}
       </For>
       <p class={cx(ui.muted, "m-0")}>
-        Questions leave this list once answered in Slack or the CLI, holds once released, failed Turns once the Session moves on, closes or a day passes, and connections once reauthorized. Session history stays in <A class={ui.monoLink} href="/sessions">Sessions</A>.
+        Oldest first. Questions leave this list once answered in Slack or the CLI, holds once released, failed Turns once the Session moves on, closes or a day passes, and connections once reauthorized. Session history stays in <A class={ui.monoLink} href="/sessions">Sessions</A>.
       </p>
     </div>
   );

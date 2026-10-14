@@ -34,13 +34,13 @@ export function Question(props: { ask: AskState; address: AskAddress }) {
     <Show when={props.ask.payloadExpired}><Notice tone="info">The question and answer payloads have expired.</Notice></Show>
     <Show when={props.ask.prompt}>{prompt => <Panel title="Question"><ContentView content={prompt()} /></Panel>}</Show>
     <Show when={props.ask.answerControl}>
-      {control => <Panel title="Answer control"><CodeBlock label="Answer control" code={JSON.stringify(control(), null, 2)} /></Panel>}
+      {control => <Panel title="Answer control"><CodeBlock code={JSON.stringify(control(), null, 2)} /></Panel>}
     </Show>
     <Show when={props.ask.status === "responded" && !props.ask.payloadExpired}>
-      <Panel title="Recorded answer"><CodeBlock label="Recorded answer" code={JSON.stringify(props.ask.answer, null, 2)} /></Panel>
+      <Panel title="Recorded answer"><CodeBlock code={JSON.stringify(props.ask.answer, null, 2)} /></Panel>
     </Show>
     <Show when={props.ask.status === "pending" && props.ask.answerControl && !props.ask.payloadExpired}>
-      <section aria-label="Answer through CLI" class={ui.windowStack}>
+      <Panel title="Answer through CLI">
         <p class={ui.muted}>Answer in the connected Slack conversation or use the CLI below. These commands use your Helmr login; unset HELMR_API_KEY first.</p>
         <CodeBlock code={commands().login} copy />
         <p class={ui.muted}>Read the complete question and its current status:</p>
@@ -48,7 +48,7 @@ export function Question(props: { ask: AskState; address: AskAddress }) {
         <p class={ui.muted}>Save your answer in answer.json: a JSON string for text, or a choice object with a selected array of &#123;id, value&#125; entries in declaration order. Include custom text only when allowText is enabled.</p>
         <p class={ui.muted}>Replace RESPONSE_ID with a unique ID for your answer. Reuse the same ID and unchanged answer when retrying an uncertain response.</p>
         <CodeBlock code={commands().respond} copy />
-      </section>
+      </Panel>
     </Show>
   </DetailLayout>;
 }

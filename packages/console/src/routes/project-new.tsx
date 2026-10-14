@@ -47,7 +47,7 @@ export function ProjectNew() {
       <AuthWindow step={firstProject() ? "Step 2 of 2" : undefined}>
         <AuthTitle>{firstProject() ? "Create your first project" : "New project"}</AuthTitle>
         <Show when={firstProject()}>
-          <div class={ui.windowStack}>
+          <div class={ui.blockStack}>
             <Steps label="Setup steps" steps={onboardingSteps("project")} />
           </div>
         </Show>

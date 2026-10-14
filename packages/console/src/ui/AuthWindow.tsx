@@ -48,7 +48,7 @@ export function AuthActions(props: { children: JSX.Element }) {
 export function AuthWorking(props: { children: JSX.Element }) {
   return (
     <AuthWindow>
-      <div class={ui.windowStack}>
+      <div class={ui.blockStack}>
         <Progress label="Working" />
         <p class={ui.muted}>{props.children}</p>
       </div>

@@ -43,7 +43,7 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   await expect(currentStep(panel)).toContainText("Create the Slack app");
   await panel.getByRole("button", { name: "Connect Slack", exact: true }).click();
 
-  await expect(panel).toContainText("Slack connection · setup 1 of 4");
+  await expect(panel).toContainText("Slack setup 1 of 4");
   await expect(currentStep(panel)).toContainText("Create the Slack app");
   await expect(panel.getByRole("link", { name: "Create app in Slack" })).toHaveAttribute("href", "https://api.slack.com/apps?new_app=1");
   await expect(panel.getByLabel("App manifest")).toContainText("registration-A/events");
@@ -67,14 +67,14 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   await page.screenshot({ path: testInfo.outputPath("agent-slack-setup.png"), fullPage: true });
 
   await panel.getByRole("button", { name: "I created the app" }).click();
-  await expect(panel).toContainText("Slack connection · setup 2 of 4");
+  await expect(panel).toContainText("Slack setup 2 of 4");
   await expect(currentStep(panel)).toContainText("Save app credentials");
   await panel.getByLabel("Client ID", { exact: true }).fill("client-A");
   await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
   await panel.getByLabel("Signing secret", { exact: true }).fill("synthetic-signing-secret");
   await panel.getByRole("button", { name: "Save app credentials" }).click();
 
-  await expect(panel).toContainText("Slack connection · setup 3 of 4");
+  await expect(panel).toContainText("Slack setup 3 of 4");
   await expect(currentStep(panel)).toContainText("Install in your workspace");
   await expect(panel.getByLabel("Client secret", { exact: true })).toBeHidden();
   await panel.getByText("Replace app credentials", { exact: true }).click();

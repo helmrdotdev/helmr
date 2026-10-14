@@ -86,7 +86,7 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
         </div>
         {props.children}
       </div>
-      <Panel variant="window" title="Environment" class="sticky top-13.5 max-[960px]:hidden">
+      <Panel title="Environment" class="sticky top-13.5 max-[960px]:hidden">
         <fieldset class="m-0 grid gap-0.5 border-0 p-0">
           <legend class="sr-only">Environment</legend>
           <For each={props.edited.environments()}>

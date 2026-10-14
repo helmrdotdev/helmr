@@ -1,7 +1,7 @@
 # Console components
 
 The console is compact, square and work-focused: 2px corners, hairline borders,
-classic gradient bars and title strips, hard 2px offset shadows, monospace for
+classic gradient bars, title strips and hard 2px offset shadows on floating parts, monospace for
 navigation, labels, IDs, code and values, and Inter for everything else. Build pages
 from the parts below instead of page-local class strings. When a repeated style
 carries structure or behavior, it is a component here; when it is a single element
@@ -19,19 +19,58 @@ silently change nested controls.
   are data and are applied inline.
 - **Type set.** `text-body` 12.5px, `text-control` 12px (form values), `text-chrome`
   11.5px (mono navigation, buttons, IDs), `text-badge` 11px, `text-micro` 10.5px.
-  Page and section headings use `ui.h1` and `ui.h2`. Nothing else.
+  Page and section headings use `ui.h1` and `ui.h2`, container headers
+  `ui.containerTitle`. Nothing else.
 - **Sizes.** Controls are 28px high (`h-7`), bar tabs 26px, page tabs 36px, table
-  rows 36px with a 32px header. Phone drawer targets are 44px.
+  rows 36px with a 32px header, container headers 32px. Phone drawer targets are
+  44px. The one smaller button is `ui.compactButton` (24px, secondary): container
+  header actions, table and list footers, notice actions, a code block's Copy and
+  a queue row's action.
 - **Spacing.** 4/8/12/16/24/32. Buttons in a group sit 8px apart (`ui.buttonGroup`),
-  page sections stack 24px apart (`ui.sectionStack`), blocks inside a panel or
-  window sit 12px apart (`ui.windowStack`).
-- **Micro-label** (`ui.microLabel`). The one uppercase mono label: table headers,
-  rail labels, group labels.
-- **Window chrome.** A 22px gradient title strip (`ui.titleStrip`) on a bordered
-  surface with the hard shadow (`ui.window`, `shadow-console-window`). Used for
-  everything that floats or frames a task: popovers, menus, dialogs, auth windows.
+  page sections stack 24px apart (`ui.sectionStack`), blocks inside a container,
+  dialog or list row sit 12px apart (`ui.blockStack`).
+- **Micro-label** (`ui.microLabel`). The one uppercase mono label: table column
+  headers, rail value labels, group labels.
 - **Focus.** Every interactive element shows the same 2px focus ring on keyboard
   focus; text controls show an accent border and ring instead.
+
+## Containers
+
+Two kinds, never mixed:
+
+- **Floating** parts sit above the page: Popover (menus, pickers), Dialog (every
+  variant and the command palette) and AuthWindow. Only they use the window
+  chrome: a bordered surface with the hard shadow (`ui.window`, `ui.popover`,
+  `shadow-console-window`) and the 22px gradient title strip (`ui.titleStrip`).
+- **In-page** containers sit in the page flow: Panel, DataTable, List, KeyValueList
+  and DangerZone. They have no shadow and no title strip.
+
+Every in-page container has:
+
+- **One border.** `ui.container`: `border-console-border-strong` on
+  `bg-console-surface`. Semantic exceptions keep their distinction: EmptyState is
+  dashed, DangerZone uses the danger border, CodeBlock keeps its panel background.
+- **One header**, only when it has a title (`ContainerHeader`, `ui.containerHeader`):
+  32px like a table's column header row, flat `bg-console-bg-panel`, bottom border,
+  12px horizontal padding; the title in sans 12.5px medium text colour, sentence
+  case (`ui.containerTitle`); an optional count in mono subtle
+  (`ui.containerCount`); actions on the right as compact buttons or short mono
+  status text. A description is never in the header; it is the body's first line.
+  DangerZone uses the same header in the danger tone (`ui.containerHeaderDanger`).
+  A titled container is a region named by its title.
+- **One body.** 12px padding, blocks 12px apart (`ui.containerBody`). The gap is
+  the only spacing: the body's direct children drop their vertical margins.
+
+Tables and lists: a DataTable or List is its own container (its own border). As a
+direct child of a Panel body (`data-list-frame`, also through QueryState, which
+adds no element) it has no frame: it runs flush to the Panel's edges, with a
+divider only where other blocks sit above or below it, and the Panel's header
+names it. Nested deeper (inside a list row, a rail value or a wrapper element) it
+keeps its own frame. A table or list that needs a title sits in a Panel. Steps have
+no frame; they sit in a Panel.
+
+A page `Section` heading sits outside containers and never repeats the title of
+the container right under it.
 
 ## Shell
 
@@ -97,13 +136,16 @@ silently change nested controls.
   `/agents/:agent`).
 - **Toolbar.** Above a list: search and filters at `start`, secondary then primary
   actions at `end`. Filters never live in the page header.
-- **Section.** Heading with optional count, description and actions, then content.
-- **Panel.** Bordered block with optional title and actions. `variant="window"`
-  adds the title strip and shadow for something that frames a task.
-- **DangerZone.** A destructive page action: title, consequence and one danger
-  button that opens a `ConfirmDialog`. Last in the rail or on the page.
+- **Section.** Page-level heading with optional count, description and actions,
+  then content (see Containers).
+- **Panel.** The in-page container: optional `title`, `count` and `actions` in the
+  container header, then the body (see Containers).
+- **DangerZone.** A destructive page action: the danger-tone header, the
+  consequence and one danger button that opens a `ConfirmDialog`. Last in the rail
+  or on the page.
 - **DetailLayout**, **KeyValueList**, **KeyValue.** Detail pages: main column plus a
-  300px rail of label/value pairs; a missing value renders "—".
+  300px rail; the rail's title is its container header, then label/value pairs; a
+  missing value renders "—".
 - **CopyLinkButton** (`components/`). The first `PageHeader` action on Session,
   Computer, Deployment and Agent detail pages. Project and Environment are tab
   state, never part of in-app links; this button copies the one link that carries
@@ -112,8 +154,8 @@ silently change nested controls.
 ## Data display
 
 - **DataTable.** The only table. Pass `columns` (strings, or `{ label, srOnly }` for
-  the actions column) and render `<tr>` rows. Rows are single-line; secondary
-  information gets its own column. Conventions:
+  the actions column) and render `<tr>` rows (framing rules under Containers). Rows
+  are single-line; secondary information gets its own column. Conventions:
   - **PrimaryLink** — the primary cell, a mono link to the row's resource (or
     `IDText mode="link"` for IDs).
   - **EmptyCell** — "—" for a cell with no value.
@@ -123,7 +165,8 @@ silently change nested controls.
   - **LoadMore** — the `footer`: "Load more" (busy "Loading…") and the shown count.
     `noun` names the button ("Load more Sessions") and the count.
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
-  identities) with one divider style and 12px padding; `footer` takes a LoadMore.
+  identities, the Overview queue) with one divider style and 12px padding; framed
+  like a DataTable; `footer` takes a LoadMore.
 - **StatusBadge.** Every status. One tone map per resource lives in
   `StatusBadge.tsx`, with a label map where the status name does not read well
   ("In current Deployment"); add a resource there instead of styling a badge
@@ -181,8 +224,8 @@ There is one Select. Native `<select>` elements are not used.
 
 ## Overlays
 
-- **Popover.** The one floating panel: placement against its anchor, Window
-  styling with an optional title strip, and dismissal by Escape (`useDismiss`; only
+- **Popover.** The one floating panel: placement against its anchor, window
+  chrome with an optional title strip, and dismissal by Escape (`useDismiss`; only
   the topmost layer closes), a press outside, Tab, or focus moving elsewhere. Tab
   leaves a menu or picker at once and a dialog-like panel past its first or last
   control. Focus returns to the anchor on every close except a press outside or

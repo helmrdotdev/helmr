@@ -51,7 +51,7 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
             footer={<LoadMore count={output().length} noun="progress" hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
           >
             <For each={output()}>{event => <ListItem>
-              <article class={ui.windowStack} aria-label={`Progress ${event.sequence}`}>
+              <article class={ui.blockStack} aria-label={`Progress ${event.sequence}`}>
                 <TurnRef id={event.turn_id} /><ContentView content={event.content} />
               </article>
             </ListItem>}</For>

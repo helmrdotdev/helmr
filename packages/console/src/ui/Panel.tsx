@@ -1,39 +1,39 @@
-import { children, Show, type JSX } from "solid-js";
+import { children, createUniqueId, Show, type JSX } from "solid-js";
 import { cx, ui } from "./styles";
 
-// A bordered block with an optional title and actions; its blocks sit 12px apart.
-// The `window` variant puts the title in a title strip and adds the hard shadow,
-// for anything that frames a task.
+// The one header of an in-page container: 32px, title, optional count, actions
+// on the right (compact buttons, `ui.compactButton`).
+export function ContainerHeader(props: { id: string; title: string; count?: number | undefined; actions?: JSX.Element; tone?: "danger" }) {
+  return (
+    <div class={props.tone === "danger" ? ui.containerHeaderDanger : ui.containerHeader}>
+      <h2 class={cx(ui.containerTitle, props.tone === "danger" ? "text-console-danger" : "text-console-text")}>
+        <span id={props.id}>{props.title}</span>
+        <Show when={props.count !== undefined}><span class={ui.containerCount}>{props.count}</span></Show>
+      </h2>
+      <Show when={props.actions}><div class={ui.containerActions}>{props.actions}</div></Show>
+    </div>
+  );
+}
+
+// The in-page container: one border, one header when titled, and a body whose
+// blocks sit 12px apart. A description belongs on the body's first line. A table
+// or list that is a direct child of the body runs flush to its edges with no frame
+// of its own (`ui.containerBody`).
 export function Panel(props: {
   title?: string;
+  count?: number | undefined;
   actions?: JSX.Element;
-  variant?: "panel" | "window";
   children: JSX.Element;
   class?: string;
 }) {
+  const id = createUniqueId();
   return (
-    <Show
-      when={props.variant === "window"}
-      fallback={
-        <section class={cx("flex flex-col gap-3 border border-console-border bg-console-surface p-4", props.class)}>
-          <Show when={props.title || props.actions}>
-            <div class="flex items-center justify-between gap-3">
-              <Show when={props.title}><h2 class={ui.h2}>{props.title}</h2></Show>
-              <Show when={props.actions}><div class={ui.buttonGroup}>{props.actions}</div></Show>
-            </div>
-          </Show>
-          {props.children}
-        </section>
-      }
-    >
-      <section class={cx(ui.window, props.class)} aria-label={props.title}>
-        <div class={ui.titleStrip}>
-          <h2 class="m-0 min-w-0 flex-1 truncate font-mono text-micro font-normal">{props.title}</h2>
-          <Show when={props.actions}><div class="flex items-center gap-1">{props.actions}</div></Show>
-        </div>
-        <div class={cx(ui.windowStack, "p-3")}>{props.children}</div>
-      </section>
-    </Show>
+    <section class={cx(ui.container, props.class)} aria-labelledby={props.title ? id : undefined}>
+      <Show when={props.title}>{(title) => <ContainerHeader id={id} title={title()} count={props.count} actions={props.actions} />}</Show>
+      <div class={ui.containerBody}>
+        {props.children}
+      </div>
+    </section>
   );
 }
 
@@ -48,12 +48,13 @@ export function DetailLayout(props: { children: JSX.Element; rail: JSX.Element }
   );
 }
 
-// The rail's label/value pairs.
+// The rail's label/value pairs, under the container header.
 export function KeyValueList(props: { title: string; children: JSX.Element }) {
+  const id = createUniqueId();
   return (
-    <aside class="sticky top-13.5 border border-console-border bg-console-surface px-4 py-3.5 max-[960px]:static">
-      <h3 class={cx(ui.h3, "mb-3.5")}>{props.title}</h3>
-      <dl class="m-0 grid gap-2.5">{props.children}</dl>
+    <aside class={cx(ui.container, "sticky top-13.5 max-[960px]:static")} aria-labelledby={id}>
+      <ContainerHeader id={id} title={props.title} />
+      <dl class="m-0 grid gap-2.5 p-3">{props.children}</dl>
     </aside>
   );
 }
@@ -76,13 +77,17 @@ export function KeyValue(props: { label: string; children?: JSX.Element }) {
 }
 
 // A destructive action that belongs to the page: what it does and its one button,
-// which opens a ConfirmDialog. Sits last on the page or in the rail.
+// which opens a ConfirmDialog. Sits last on the page or in the rail. The container
+// header in the danger tone, inside the danger border.
 export function DangerZone(props: { title: string; children: JSX.Element; action: JSX.Element; class?: string }) {
+  const id = createUniqueId();
   return (
-    <section class={cx("flex flex-col items-start gap-2 border border-console-danger-border bg-console-surface px-4 py-3.5", props.class)} aria-label={props.title}>
-      <h2 class="m-0 text-[0.9rem] font-medium leading-tight text-console-danger">{props.title}</h2>
-      <p class={cx(ui.muted, "m-0")}>{props.children}</p>
-      {props.action}
+    <section class={cx("border border-console-danger-border bg-console-surface", props.class)} aria-labelledby={id}>
+      <ContainerHeader id={id} title={props.title} tone="danger" />
+      <div class={cx(ui.containerBody, "items-start")}>
+        <p class={cx(ui.muted, "m-0")}>{props.children}</p>
+        {props.action}
+      </div>
     </section>
   );
 }

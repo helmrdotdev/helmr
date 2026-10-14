@@ -52,7 +52,7 @@ export function OrganizationNew() {
   return (
     <AuthWindow step="Step 1 of 2">
       <AuthTitle>Create your organization</AuthTitle>
-      <div class={ui.windowStack}>
+      <div class={ui.blockStack}>
         <Steps label="Setup steps" steps={onboardingSteps("organization")} />
         <AuthCopy>Organizations own members, projects, environments, credentials, and Sessions.</AuthCopy>
       </div>

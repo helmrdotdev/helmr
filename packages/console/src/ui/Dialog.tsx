@@ -226,7 +226,7 @@ export function RevealDialog(props: {
   const clipboard = useClipboard();
   return (
     <Dialog title={props.title} onClose={props.onClose}>
-      <div class={ui.windowStack}>
+      <div class={ui.blockStack}>
         <Show when={props.intro}><p class="m-0 text-body leading-normal text-console-muted">{props.intro}</p></Show>
         <Notice tone="warning">{props.warning ?? "Copy this value now. It is not shown again."}</Notice>
         <div class="flex border border-console-border-strong">
