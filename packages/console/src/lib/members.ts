@@ -33,15 +33,87 @@ type ListInvitationsResponse = {
   next_cursor?: string;
 };
 
-type CreateInvitationInput = {
-  email: string;
+// The most addresses one invitation request may name.
+export const MAX_INVITATIONS_PER_REQUEST = 50;
+
+type CreateInvitationsInput = {
+  emails: string[];
   role: MemberRole;
 };
 
-type CreatedInvitation = {
-  invitation: OrganizationInvitation;
-  invite_url: string;
+// One address of an invitation request: invited (its invitation was
+// emailed), or failed with the reason.
+export type InvitationResult = {
+  email: string;
+  status: "invited" | "failed";
+  error?: { code: string; message: string };
 };
+
+type CreateInvitationsResponse = {
+  results: InvitationResult[];
+};
+
+export type InviteEntry = {
+  email: string;
+  state: "valid" | "invalid" | "duplicate";
+};
+
+// A bare address the server accepts: a dot-atom local part and domain (ASCII
+// atext or any non-ASCII character), at most 320 characters.
+const ATOM = "[A-Za-z0-9!#$%&'*+/=?^_`{|}~\\-\\u0080-\\uFFFF]+";
+const DOT_ATOM = `${ATOM}(?:\\.${ATOM})*`;
+const ADDRESS = new RegExp(`^${DOT_ATOM}@${DOT_ATOM}$`);
+
+export function validInviteAddress(address: string): boolean {
+  return address.length <= 320 && ADDRESS.test(address);
+}
+
+// The addresses typed or pasted into the invite form, lowercased, in order.
+// Entries are separated by commas, semicolons, spaces or line breaks; a
+// mail-client entry such as `Ada Lovelace <ada@example.com>` or
+// `"Lovelace, Ada" <ada@example.com>` stands for the address in angle
+// brackets. A repeat of an earlier address is a duplicate; only valid entries
+// are sent.
+export function parseInviteEmails(text: string): InviteEntry[] {
+  const addresses: string[] = [];
+  // Words not yet known to be a display name: they are dropped when an
+  // `<address>` follows them, and are entries of their own otherwise.
+  let pending: string[] = [];
+  const flush = () => {
+    addresses.push(...pending);
+    pending = [];
+  };
+  const tokens = text.replace(/"[^"]*"/g, " ").split(/([,;\n])|[^\S\n]+/);
+  for (const token of tokens) {
+    if (token === undefined || token === "") continue;
+    if (token === "," || token === ";" || token === "\n") {
+      flush();
+      continue;
+    }
+    const bracketed = /<([^<>]*)>/.exec(token);
+    if (bracketed) {
+      const name = token.slice(0, bracketed.index);
+      pending = [];
+      if (name.includes("@")) addresses.push(name);
+      addresses.push(bracketed[1]!.trim());
+      continue;
+    }
+    if (token.includes("@") || token.includes("<") || token.includes(">")) {
+      flush();
+      addresses.push(token);
+      continue;
+    }
+    pending.push(token);
+  }
+  flush();
+  const seen = new Set<string>();
+  return addresses.map((address) => {
+    const email = address.toLowerCase();
+    if (seen.has(email)) return { email, state: "duplicate" as const };
+    seen.add(email);
+    return { email, state: validInviteAddress(email) ? ("valid" as const) : ("invalid" as const) };
+  });
+}
 
 export function memberResourceID(member: OrganizationMember): string {
   return member.user_id;
@@ -60,16 +132,9 @@ export async function listInvitations(cursor?: string): Promise<ListInvitationsR
   return request<ListInvitationsResponse>(`/api/invitations${query}`);
 }
 
-export async function createInvitation(input: CreateInvitationInput): Promise<CreatedInvitation> {
-  const response = await postJson<CreateInvitationInput, OrganizationInvitation & { invite_url: string }>(
-    "/api/invitations",
-    input,
-  );
-  const { invite_url, ...invitation } = response;
-  return {
-    invitation,
-    invite_url,
-  };
+export async function createInvitations(input: CreateInvitationsInput): Promise<InvitationResult[]> {
+  const response = await postJson<CreateInvitationsInput, CreateInvitationsResponse>("/api/invitations", input);
+  return response.results;
 }
 
 export async function updateMemberRole(id: string, role: MemberRole, expectedRole: MemberRole): Promise<OrganizationMember> {

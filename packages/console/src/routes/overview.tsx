@@ -1,100 +1,249 @@
 import { A } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
-import { For, Show } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
-import { ApiError } from "../lib/api";
-import { getCurrentDeployment } from "../lib/deployments";
-import { useScope } from "../lib/scope";
-import { listSessions, sessionConsolePath } from "../lib/sessions";
-import { DataTable } from "../ui/DataTable";
+import { attentionTotal, useAttention, type AttentionCounts, type AttentionItem, type AttentionKind } from "../lib/attention";
+import { agentHref } from "../lib/definitions";
+import { getCurrentDeployment, getDeploymentEvents } from "../lib/deployments";
+import { errorMessage } from "../lib/error";
+import { useScope, useScopeIDs } from "../lib/scope";
+import { askConsolePath, listSessions, sessionConsolePath } from "../lib/sessions";
+import { CodeBlock } from "../ui/CodeBlock";
+import { Segmented } from "../ui/Field";
 import { IDText } from "../ui/IDText";
+import { List, ListItem } from "../ui/List";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
+import { EmptyState, ErrorState, PendingState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { SectionHeader } from "../ui/SectionHeader";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { ui } from "../ui/styles";
+import { Steps } from "../ui/Steps";
+import { cx, ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Could not load the environment overview.";
+const overviewError = (error: unknown) => errorMessage(error, "Could not load what is waiting in this environment.");
+
+type Filter = "all" | AttentionKind;
+
+const KIND_LABELS: Record<AttentionKind, string> = {
+  question: "Questions",
+  hold: "Held",
+  failed_turn: "Failed",
+  slack_reauthorization: "Connections",
+};
+
+const ACTIONS: Record<AttentionKind, string> = {
+  question: "Answer",
+  hold: "Review",
+  failed_turn: "Inspect",
+  slack_reauthorization: "Reauthorize",
+};
+
+// What one waiting item is about, on one line.
+function summary(item: AttentionItem): string {
+  switch (item.kind) {
+    case "question":
+      return item.prompt || "The agent asked a question.";
+    case "hold":
+      return item.reason || "Session held.";
+    case "failed_turn":
+      return `Turn #${item.turn_sequence ?? "?"} failed${item.error_code ? `: ${item.error_code}` : ""}`;
+    case "slack_reauthorization":
+      return `Slack connection lost authorization${item.workspace_name ? ` in ${item.workspace_name}` : ""}`;
+  }
 }
 
-function CliOnboarding() {
+// Where the item's primary action leads.
+function actionHref(item: AttentionItem): string {
+  switch (item.kind) {
+    case "question":
+      return askConsolePath({ sessionID: item.session_id ?? "", turnID: item.turn_id ?? "", askID: item.id });
+    case "hold":
+      return sessionConsolePath(item.session_id ?? "");
+    case "failed_turn":
+      return `${sessionConsolePath(item.session_id ?? "")}#turn-${item.turn_id ?? item.id}`;
+    case "slack_reauthorization":
+      return agentHref(item.agent, "slack");
+  }
+}
+
+// The metadata under the title: the current Deployment and when it was
+// promoted, from its latest promotion event, as separate meta items.
+function DeploymentContext() {
+  const scope = useScopeIDs();
+  const enabled = () => !!scope().projectID && !!scope().environmentID;
+  const current = createQuery(() => ({
+    queryKey: ["deployments", "current", scope().projectID, scope().environmentID],
+    queryFn: () => getCurrentDeployment(scope()),
+    enabled: enabled(),
+    retry: false,
+    refetchInterval: 15_000,
+  }));
+  const promoted = createQuery(() => ({
+    queryKey: ["deployments", "promoted", scope().projectID, scope().environmentID, current.data?.id],
+    queryFn: async () => {
+      const page = await getDeploymentEvents(current.data!.id, scope(), { limit: 100 });
+      return page.events.filter((event) => event.kind === "deployment.promoted").at(-1)?.at ?? null;
+    },
+    enabled: enabled() && !!current.data,
+    retry: false,
+  }));
   return (
-    <Panel title="Set up your first Agent">
-      <p class={ui.muted}>Create an Agent project, install its dependencies, and deploy it to this environment.</p>
-      <pre class="overflow-x-auto border border-console-border bg-console-bg-panel p-3 font-mono text-xs">{`helmr init --dir ./my-agent
-cd ./my-agent
-bun install
-helmr deploy . --project PROJECT --env ENVIRONMENT`}</pre>
-      <p class={ui.muted}>Then create a Session through the CLI or a connected Slack app. Browse the current Deployment to inspect its Agents. Each Session retains its Turns, output, questions and controls.</p>
+    <Show when={current.isSuccess}>
+      <Show when={current.data} fallback={<span>No current deployment</span>}>
+        {(deployment) => (
+          <>
+            <span class="whitespace-nowrap">Current deployment <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} /></span>
+            <Show when={promoted.data}>
+              {(at) => <span class="whitespace-nowrap">Promoted <RelativeTime value={at()} /></span>}
+            </Show>
+          </>
+        )}
+      </Show>
+    </Show>
+  );
+}
+
+// Before the first Deployment: the CLI steps with this tab's Project and
+// Environment filled in.
+function FirstDeployment(props: { projectID: string; environmentID: string; environmentName: string }) {
+  const origin = window.location.origin;
+  const scope = () => `--project ${props.projectID} --env ${props.environmentID}`;
+  return (
+    <Panel title={`Set up ${props.environmentName}`}>
+        <p class={cx(ui.muted, "m-0")}>Deploy an agent to this environment. This page lists what waits on you afterwards.</p>
+        <Steps
+          label="First deployment"
+          steps={[
+            {
+              title: "Install the CLI and sign in",
+              state: "current",
+              description: <>
+                <span>Signing in opens this console to approve the device.</span>
+                <CodeBlock code={`curl -fsSL https://helmr.dev/install | bash\nhelmr login ${origin}`} copy label="Install and sign in" />
+              </>,
+            },
+            {
+              title: "Create and deploy an agent",
+              state: "upcoming",
+              description: <>
+                <span>The starter project defines the hello agent.</span>
+                <CodeBlock code={`helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . ${scope()}`} copy label="Create and deploy" />
+              </>,
+            },
+            {
+              title: "Start a session",
+              state: "upcoming",
+              description: <>
+                <span>From the CLI, or from Slack once the agent is connected.</span>
+                <CodeBlock code={`helmr session create hello ${scope()}`} copy label="Start a session" />
+              </>,
+            },
+          ]}
+        />
     </Panel>
+  );
+}
+
+function QueueItem(props: { item: AttentionItem }) {
+  return (
+    <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
+        <StatusBadge resource="attention" status={props.item.kind} />
+        <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first" title={summary(props.item)}>{summary(props.item)}</span>
+        <span class="flex shrink-0 items-center gap-1.5 font-mono text-chrome text-console-muted">
+          <A class="text-console-accent hover:text-console-accent-hover" href={agentHref(props.item.agent)}>{props.item.agent}</A>
+          <Show when={props.item.session_id}>
+            {(session) => <>· <IDText value={session()} mode="link" href={sessionConsolePath(session())} /></>}
+          </Show>
+        </span>
+        <span class="shrink-0 font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
+        <A class={cx(ui.compactButton, "ml-auto")} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
+    </ListItem>
+  );
+}
+
+function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts }) {
+  const [filter, setFilter] = createSignal<Filter>("all");
+  const kinds = (): AttentionKind[] => [
+    "question", "hold", "failed_turn",
+    ...(props.counts.slack_reauthorization === undefined ? [] : ["slack_reauthorization" as const]),
+  ];
+  const count = (kind: AttentionKind) => props.counts[kind] ?? 0;
+  const options = () => [
+    { value: "all" as Filter, label: "All", count: attentionTotal(props.counts) },
+    ...kinds().map((kind) => ({ value: kind as Filter, label: KIND_LABELS[kind], count: count(kind) })),
+  ];
+  const shown = createMemo(() => filter() === "all" ? props.items : props.items.filter((item) => item.kind === filter()));
+  // Each kind returns its oldest 100; say so where more are waiting.
+  const truncated = createMemo(() => kinds().filter((kind) => (filter() === "all" || filter() === kind) && count(kind) > props.items.filter((item) => item.kind === kind).length));
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <Segmented label="Filter by kind" value={filter()} options={options()} onChange={setFilter} />
+      </div>
+      <Panel title="Waiting on you" count={shown().length} actions={<span class="font-mono text-chrome text-console-muted">Oldest first</span>}>
+        <Show when={shown().length > 0} fallback={<p class={cx(ui.muted, "m-0 py-2 text-center")}>Nothing of this kind is waiting.</p>}>
+          <List label="Waiting items">
+            <For each={shown()}>{(item) => <QueueItem item={item} />}</For>
+          </List>
+        </Show>
+      </Panel>
+      <For each={truncated()}>
+        {(kind) => <p class={cx(ui.muted, "m-0")}>Showing the oldest {props.items.filter((item) => item.kind === kind).length} of {count(kind)} {KIND_LABELS[kind].toLowerCase()} items.</p>}
+      </For>
+    </div>
   );
 }
 
 export function Overview() {
   const scope = useScope();
-  const projectID = () => scope.selectedProjectID();
-  const environmentID = () => scope.selectedEnvironmentID();
-  const enabled = () => !!projectID() && !!environmentID();
+  const ids = useScopeIDs();
+  const enabled = () => !!ids().projectID && !!ids().environmentID;
+  const attention = useAttention();
   const current = createQuery(() => ({
-    queryKey: ["deployments", "current", projectID(), environmentID()],
-    queryFn: () => getCurrentDeployment({ projectID: projectID(), environmentID: environmentID() }),
+    queryKey: ["deployments", "current", ids().projectID, ids().environmentID],
+    queryFn: () => getCurrentDeployment(ids()),
     enabled: enabled(),
     retry: false,
-    refetchInterval: 10_000,
+    refetchInterval: 15_000,
   }));
-  const sessions = createQuery(() => ({
-    queryKey: ["sessions", "overview", projectID(), environmentID()],
-    queryFn: () => listSessions({ projectID: projectID(), environmentID: environmentID(), limit: 10 }),
-    enabled: enabled(),
+  // Only an Environment without a current Deployment asks whether it ever had a Session.
+  const anySession = createQuery(() => ({
+    queryKey: ["sessions", "any", ids().projectID, ids().environmentID],
+    queryFn: async () => (await listSessions({ ...ids(), limit: 1 })).sessions.length > 0,
+    enabled: enabled() && current.data === null,
     retry: false,
-    refetchInterval: 5_000,
   }));
+  const total = () => (attention.data ? attentionTotal(attention.data.counts) : 0);
+  const firstRun = () => current.data === null && anySession.data === false && total() === 0;
+  // With nothing waiting, wait to tell a new Environment from a quiet one; a
+  // failed check shows the quiet state rather than loading forever.
+  const deciding = () => total() === 0 && (current.isPending || (current.data === null && anySession.isPending));
+
   return (
-    <section class={ui.page}>
-      <PageHeader title="Overview" subtitle="Agents and retained work in the selected environment." />
-      <Show when={enabled()} fallback={<StatePanel empty="Select a project and environment." />}>
-        <div class="flex flex-col gap-6">
-          <Show when={current.isError}><StatePanel error={errorMessage(current.error)} /></Show>
-          <Show when={current.isPending}><StatePanel loading="Loading Deployment..." /></Show>
-          <Show when={current.isSuccess}>
-            <Show when={current.data} fallback={<CliOnboarding />}>
-              {deployment => (
-                <Panel title="Current Deployment">
-                  <div class="flex flex-wrap items-center gap-3">
-                    <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} />
-                    <span class={ui.muted}>Created <RelativeTime value={deployment().created_at} /></span>
-                    <A class={ui.secondaryButton} href="/agents">View Agents</A>
-                  </div>
-                </Panel>
-              )}
-            </Show>
-          </Show>
-          <section>
-            <SectionHeader title="Recent Sessions" subtitle="Open a Session to inspect its Turns, answer questions or manage held work."
-              actions={<A class={ui.secondaryButton} href="/sessions">All Sessions</A>} />
-            <Show when={sessions.isError}><StatePanel error={errorMessage(sessions.error)} /></Show>
-            <Show when={sessions.isPending}><StatePanel loading="Loading Sessions..." /></Show>
-            <Show when={sessions.isSuccess}>
-              <Show when={sessions.data?.sessions.length} fallback={<StatePanel empty="No Sessions yet." hint="Create a Session through the CLI or a connected Slack app." />}>
-                <DataTable columns={["Session", "Agent", "Status", "Holds", "Created"]}>
-                  <For each={sessions.data?.sessions}>{session => (
-                    <tr>
-                      <td><IDText value={session.id} mode="link" href={sessionConsolePath(session.id, projectID(), environmentID())} /></td>
-                      <td><code>{session.agent}</code></td>
-                      <td><StatusBadge resource="session" status={session.status} /></td>
-                      <td>{session.holds.length ? `${session.holds.length} active` : "None"}</td>
-                      <td><RelativeTime value={session.created_at} /></td>
-                    </tr>
-                  )}</For>
-                </DataTable>
-              </Show>
-            </Show>
-          </section>
-        </div>
+    <Page>
+      <PageHeader title="Overview" meta={<DeploymentContext />} />
+      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+        <Switch>
+          <Match when={attention.isError && !attention.data}>
+            <ErrorState message={overviewError(attention.error)} onRetry={() => void attention.refetch()} />
+          </Match>
+          <Match when={!attention.data || deciding()}>
+            <PendingState>Loading…</PendingState>
+          </Match>
+          <Match when={firstRun()}>
+            <FirstDeployment projectID={ids().projectID} environmentID={ids().environmentID} environmentName={scope.selectedEnvironment()?.name ?? ids().environmentID} />
+          </Match>
+          <Match when={total() === 0}>
+            <EmptyState title="Nothing is waiting on you." hint="Questions, holds, failed turns and Slack connections that need you appear here as they happen.">
+              <A class={ui.monoLink} href="/sessions">View sessions</A>
+            </EmptyState>
+          </Match>
+          <Match when={attention.data}>
+            {(data) => <Queue items={data().items} counts={data().counts} />}
+          </Match>
+        </Switch>
       </Show>
-    </section>
+    </Page>
   );
 }

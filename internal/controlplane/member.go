@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -114,34 +116,124 @@ func decodeInvitationListCursor(raw string) (invitationListCursor, error) {
 	return cursor, nil
 }
 
-func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
+// createInvitations invites the requested addresses by email, which requires
+// configured email delivery. The invitations and their audit facts are created
+// in one transaction and their emails are sent as one batch before it
+// commits: a failed send rolls every invitation back and fails those
+// addresses. Two rare cases leave emails whose links do not resolve: the
+// commit failing after the emails were sent, and an SMTP server refusing a
+// recipient mid-batch after accepting the earlier messages (the refused
+// address is reported as such). Both report every address of the batch failed.
+func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, unavailable(err))
 		return
 	}
-	var input api.CreateInvitationRequest
+	principal := principalFromContext(r.Context())
+	manager := managingMember(principal)
+	if err := manager.Authorize(); err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	if !s.emailConfigured() {
+		writeError(w, unavailable(codedError{code: "service_unavailable", message: "email delivery is not configured, so members cannot be invited"}))
+		return
+	}
+	var input api.CreateInvitationsRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
 		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
-	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.tx, s.authKeys.Invitation, managingMember(principalFromContext(r.Context())), org.InvitationInput{
-		Email:         input.Email,
+	inviter, err := identity.LoadAccount(r.Context(), s.db, principal)
+	if err != nil {
+		writeError(w, identityError(err))
+		return
+	}
+	// The send and the commit outlive a closed tab or a proxy timeout, so a
+	// sent batch is not rolled back by the caller leaving, and together they
+	// are bounded regardless of the provider or batch size.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), invitationRequestTimeout)
+	defer cancel()
+	created, err := org.CreateInvitations(ctx, s.tx, s.authKeys.Invitation, manager, org.InvitationInput{
+		Emails:        input.Emails,
 		Role:          input.Role,
 		ExpiresInDays: input.ExpiresInDays,
+	}, func(ctx context.Context, invitations []org.NewInvitation) error {
+		messages := make([]email.Message, len(invitations))
+		for i, created := range invitations {
+			messages[i] = invitationEmailMessage(inviter.DisplayName, inviter.OrgName, created.Invitation, s.inviteURL(created.RawToken))
+		}
+		return s.mailer.SendEmails(ctx, messages)
 	})
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
-	summary, err := invitationSummaryFromRecord(invitation)
-	if err != nil {
-		writeError(w, errors.New("format invitation"))
-		return
+	results := make([]api.InvitationResult, len(created))
+	var failure error
+	for i, result := range created {
+		results[i] = api.InvitationResult{Email: result.Email, Status: api.InvitationResultInvited}
+		if result.Err == nil {
+			continue
+		}
+		results[i].Status = api.InvitationResultFailed
+		results[i].Error = invitationResultError(result.Email, result.Err)
+		if code := results[i].Error.Code; failure == nil && (code == "email_failed" || code == "email_rejected" || code == "internal_error") {
+			failure = result.Err
+		}
 	}
-	writeJSON(w, http.StatusCreated, api.CreateInvitationResponse{
-		InvitationSummary: summary,
-		InviteURL:         s.inviteURL(rawToken),
-	})
+	if failure != nil {
+		s.log.Warn("create invitations failed", "error", failure)
+	}
+	writeJSON(w, http.StatusOK, api.CreateInvitationsResponse{Results: results})
+}
+
+// invitationRequestTimeout bounds creating, emailing and committing the
+// invitations of one request.
+const invitationRequestTimeout = 30 * time.Second
+
+// invitationResultError is the public error of one failed address. When an
+// SMTP server refused one recipient, that address says so; the others of the
+// batch share the delivery failure.
+func invitationResultError(address string, err error) *api.HTTPError {
+	var refused email.RecipientError
+	var input org.InputError
+	switch {
+	case errors.As(err, &input):
+		return &api.HTTPError{Code: "invalid_email", Message: err.Error()}
+	case errors.Is(err, org.ErrInvitationActiveMember):
+		return &api.HTTPError{Code: "already_member", Message: err.Error()}
+	case errors.Is(err, org.ErrInvitationPending):
+		return &api.HTTPError{Code: "invitation_pending", Message: err.Error()}
+	case errors.Is(err, org.ErrOwnerRoleRequired):
+		return &api.HTTPError{Code: "owner_role_required", Message: err.Error()}
+	case errors.As(err, &refused) && refused.Address == address:
+		return &api.HTTPError{Code: "email_rejected", Message: "The email server refused this address"}
+	case errors.Is(err, org.ErrInvitationNotDelivered):
+		return &api.HTTPError{Code: "email_failed", Message: "Invitation emails could not be sent"}
+	default:
+		return &api.HTTPError{Code: "internal_error", Message: "Invitation could not be created"}
+	}
+}
+
+func invitationEmailMessage(inviterName string, orgName string, invitation db.Invitation, inviteURL string) email.Message {
+	expiresAt := invitation.ExpiresAt.Time.UTC()
+	return email.Message{
+		To:      invitation.InviteeEmail,
+		Subject: fmt.Sprintf("%s invited you to %s on Helmr", inviterName, orgName),
+		PlainText: fmt.Sprintf(
+			"%s invited you to join the %s organization on Helmr with the %s role.\n\n"+
+				"Open this link to accept the invitation:\n\n%s\n\n"+
+				"This invitation expires at %s. If you did not expect it, you can ignore this email.\n",
+			inviterName, orgName, invitation.Role, inviteURL, expiresAt.Format("January 2, 2006 15:04 MST"),
+		),
+		Link: &email.Link{
+			Email:     invitation.InviteeEmail,
+			Purpose:   "invitation",
+			URL:       inviteURL,
+			ExpiresAt: expiresAt,
+		},
+	}
 }
 
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
@@ -249,21 +341,6 @@ func memberSummaryFromUpdated(updated org.UpdatedMember) (api.MemberSummary, err
 		UpdatedAt:   pgvalue.Time(member.UpdatedAt),
 		DisabledAt:  pgvalue.TimePtr(member.DisabledAt),
 	}, nil
-}
-
-func invitationSummaryFromRecord(record db.Invitation) (api.InvitationSummary, error) {
-	return invitationSummary(
-		record.ID,
-		record.InviteeEmail,
-		record.Role,
-		record.InvitedByUserID,
-		record.CreatedAt,
-		record.ExpiresAt,
-		record.AcceptedAt,
-		record.AcceptedByUserID,
-		record.RevokedAt,
-		record.RevokedByUserID,
-	)
 }
 
 func invitationSummaryFromListRow(row db.ListInvitationsRow) (api.InvitationSummary, error) {

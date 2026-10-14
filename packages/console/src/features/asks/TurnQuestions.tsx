@@ -1,7 +1,10 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { For, Show, createEffect, on } from "solid-js";
+import { createMemo, For, Show, createEffect, on } from "solid-js";
 import { askConsolePath, listAsks, type SessionAddress } from "../../lib/sessions";
-import { ui } from "../../ui/styles";
+import { LoadMore, PrimaryLink } from "../../ui/DataTable";
+import { List, ListItem } from "../../ui/List";
+import { QueryState } from "../../ui/QueryState";
+import { StatusBadge } from "../../ui/StatusBadge";
 
 export function TurnQuestions(props: { address: SessionAddress; turnID: string; polling: boolean }) {
   const asks = createInfiniteQuery(() => ({
@@ -13,9 +16,20 @@ export function TurnQuestions(props: { address: SessionAddress; turnID: string; 
   createEffect(on(() => props.polling, (active, previous) => {
     if (previous && !active) void asks.refetch();
   }));
-  return <div>
-    <Show when={asks.isError}><p role="alert">Questions could not be loaded.</p></Show>
-    <For each={asks.data?.pages.flatMap(page => page.items)}>{ask => <p><a class="underline" href={askConsolePath({ ...props.address, turnID: props.turnID, askID: ask.id })}>Question — {ask.status}</a></p>}</For>
-    <Show when={asks.hasNextPage}><button class={ui.secondaryButton} disabled={asks.isFetchingNextPage} onClick={() => void asks.fetchNextPage()}>Load more questions</button></Show>
-  </div>;
+  const items = createMemo(() => asks.data?.pages.flatMap(page => page.items) ?? []);
+  return <QueryState query={asks} error={() => "Questions could not be loaded."}>
+    {() => (
+      <Show when={items().length > 0}>
+        <List
+          label="Questions"
+          footer={<Show when={asks.hasNextPage}><LoadMore count={items().length} noun={{ one: "question", other: "questions" }} hasMore={asks.hasNextPage} loading={asks.isFetchingNextPage} failed={asks.isFetchNextPageError} onLoadMore={() => void asks.fetchNextPage()} /></Show>}
+        >
+          <For each={items()}>{ask => <ListItem line class="gap-2">
+            <PrimaryLink href={askConsolePath({ ...props.address, turnID: props.turnID, askID: ask.id })}>Question</PrimaryLink>
+            <StatusBadge resource="question" status={ask.status} />
+          </ListItem>}</For>
+        </List>
+      </Show>
+    )}
+  </QueryState>;
 }

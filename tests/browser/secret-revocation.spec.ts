@@ -30,14 +30,15 @@ test("Secret revocation explains running Turn interruption and retained pending 
   await page.goto(`/settings/secrets?project=${projectID}&environment=${environmentID}`);
   for (const accept of [false, true]) {
     await page.getByRole("button", { name: "Actions for SYNTHETIC_TOKEN" }).click();
-    const pending = page.waitForEvent("dialog");
-    const click = page.getByRole("button", { name: "Revoke", exact: true }).click();
-    const dialog = await pending;
-    expect(dialog.type()).toBe("confirm");
-    expect(dialog.message()).toContain("Affected running Turns may be interrupted and fail to complete.");
-    expect(dialog.message()).toContain("Pending inputs are retained but cannot run on affected Computers.");
-    if (accept) await dialog.accept(); else await dialog.dismiss();
-    await click;
+    await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Revoke secret" });
+    await expect(dialog).toContainText("SYNTHETIC_TOKEN");
+    await expect(dialog).toContainText("Development");
+    await expect(dialog).toContainText("Affected running turns may be interrupted and fail to complete.");
+    await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
+    if (accept) await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
+    else await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
     if (accept) await expect.poll(() => revocations).toBe(1);
     else expect(revocations).toBe(0);
   }

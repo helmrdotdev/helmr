@@ -1,175 +1,70 @@
 import { returnPath } from "../lib/continuation";
-import { A, useNavigate, useLocation } from "@solidjs/router";
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
-import { createProject, listRegions } from "../lib/projects";
+import { useNavigate, useLocation } from "@solidjs/router";
+import { useQueryClient } from "@tanstack/solid-query";
+import { createMemo, createSignal, Show } from "solid-js";
+import { createProjectDraft } from "../features/projects/forms";
+import { createSignOut, onboardingSteps } from "../features/projects/onboarding";
+import { errorDetails, errorMessage } from "../lib/error";
+import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { rememberProjectScope } from "../lib/scope";
-import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
-import { PageHeader } from "../ui/PageHeader";
+import { AuthError, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { FormActions } from "../ui/Field";
+import { Steps } from "../ui/Steps";
 import { ui } from "../ui/styles";
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
-
-function createErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
 
 export function ProjectNew() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const [name, setName] = createSignal("");
-  const [slug, setSlug] = createSignal("");
-  const [slugTouched, setSlugTouched] = createSignal(false);
-  const [selectedRegionID, setSelectedRegionID] = createSignal("");
+  const me = useMe();
+  const draft = createProjectDraft();
+  const signOut = createSignOut();
   const [submitting, setSubmitting] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
-  const regions = createQuery(() => ({
-    queryKey: ["regions"],
-    queryFn: listRegions,
-    enabled: !!me.data?.org_id,
-    retry: false,
-    staleTime: 60_000,
-  }));
-  const regionOptions = createMemo(() => regions.data?.regions ?? []);
+  const [error, setError] = createSignal<{ message: string; details: string | undefined } | null>(null);
   const firstProject = createMemo(() => me.data?.project_required === true);
-
-  createEffect(() => {
-    if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
-  });
-
+  const destination = () => returnPath(new URLSearchParams(location.search).get("next"));
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    const nextName = name().trim();
-    const nextSlug = slug().trim();
-    const nextRegionID = selectedRegionID().trim();
-    if (!nextName || !nextSlug || !nextRegionID) {
-      setError("Name, Project ID, and region are required.");
-      return;
-    }
     setSubmitting(true);
     setError(null);
     try {
       const wasFirstProject = firstProject();
-      const project = await createProject({
-        name: nextName,
-        project: nextSlug,
-        default_region_id: nextRegionID,
-      });
+      const project = await draft.submit();
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate(returnPath(new URLSearchParams(location.search).get("next")), { replace: wasFirstProject });
+      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+      navigate(destination(), { replace: wasFirstProject });
     } catch (e) {
-      setError(createErrorMessage(e));
+      setError({ message: errorMessage(e, "The project could not be created. Try again."), details: errorDetails(e) });
     } finally {
       setSubmitting(false);
     }
   }
 
-  const form = (): JSX.Element => (
-    <form class={firstProject() ? undefined : "max-w-115"} onSubmit={submit}>
-      <label class={ui.field}>
-        <span>Name</span>
-        <input
-          type="text"
-          class={ui.input}
-          value={name()}
-          onInput={(event) => {
-            setName(event.currentTarget.value);
-            if (!slugTouched()) setSlug(slugify(event.currentTarget.value));
-          }}
-          placeholder="My app"
-          autocomplete="off"
-          autofocus
-        />
-      </label>
-      <Show when={!regions.isPending && regionOptions().length === 0}>
-        <div class={ui.warning} role="status">
-          A platform Region is required before a project can be created.
-          <Show when={me.data?.admin}> <A class="text-console-accent" href="/admin/regions">Create a Region</A>.</Show>
-        </div>
-      </Show>
-      <label class={ui.field}>
-        <span>Project ID</span>
-        <input
-          type="text"
-          class={ui.input}
-          value={slug()}
-          onInput={(event) => {
-            setSlugTouched(true);
-            setSlug(event.currentTarget.value);
-          }}
-          placeholder="my-app"
-          autocomplete="off"
-          spellcheck={false}
-        />
-      </label>
-      <label class={ui.field}>
-        <span>Region</span>
-        <select
-          class={ui.input}
-          value={selectedRegionID()}
-          onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
-          disabled={regions.isPending || regionOptions().length === 0}
-        >
-          <For each={regionOptions()}>
-            {(region) => (
-              <option value={region.id}>
-                {region.display_name || region.id}
-              </option>
-            )}
-          </For>
-        </select>
-      </label>
-      <Show when={error()}>
-        <p class={ui.fieldError} role="alert">{error()}</p>
-      </Show>
-      <div class={firstProject() ? undefined : ui.actionRow}>
-        <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim() || !selectedRegionID().trim()}>
-          {submitting() ? "Creating..." : "Create"}
-        </button>
-      </div>
-    </form>
-  );
-
   return (
-    <Show when={!me.isPending && !regions.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
-      <Show
-        when={firstProject()}
-        fallback={
-    <div class={ui.page}>
-      <PageHeader title="New project" />
-
-      {form()}
-    </div>
-        }
-      >
-        <AuthScreen>
-          <AuthTitle>Create your first project</AuthTitle>
-          {form()}
-        </AuthScreen>
-      </Show>
+    <Show when={!me.isPending && !draft.loading()} fallback={<AuthWorking>Loading...</AuthWorking>}>
+      <AuthWindow step={firstProject() ? "Step 2 of 2" : undefined}>
+        <AuthTitle>{firstProject() ? "Create your first project" : "New project"}</AuthTitle>
+        <Show when={firstProject()}>
+          <div class={ui.blockStack}>
+            <Steps label="Setup steps" steps={onboardingSteps("project")} />
+          </div>
+        </Show>
+        <form class="mt-3.5" onSubmit={submit}>
+          <draft.Fields />
+          <Show when={error() ?? signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+          <FormActions
+            submitLabel="Create"
+            busyLabel="Creating..."
+            busy={submitting()}
+            disabled={signOut.busy() || !draft.valid()}
+            cancelLabel={firstProject() ? signOut.label() : "Cancel"}
+            cancelDisabled={signOut.busy()}
+            onCancel={() => (firstProject() ? void signOut.run() : navigate(destination()))}
+          />
+        </form>
+      </AuthWindow>
     </Show>
   );
 }

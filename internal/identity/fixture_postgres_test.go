@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 	"uuid"
@@ -78,12 +79,20 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	t.Helper()
 	owner := f.user(t, "Owner", "")
 	f.member(t, orgID, owner, db.OrgMemberRoleOwner)
-	invitation, rawToken, err := org.CreateInvitation(t.Context(), f.pool, f.keys.Invitation,
-		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, Role: auth.RoleOwner}, org.InvitationInput{Email: email, Role: role})
+	var delivered org.NewInvitation
+	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
+		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, Role: auth.RoleOwner}, org.InvitationInput{Emails: []string{email}, Role: role},
+		func(_ context.Context, invitations []org.NewInvitation) error {
+			delivered = invitations[0]
+			return nil
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return invitation, rawToken
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
+	}
+	return delivered.Invitation, delivered.RawToken
 }
 
 func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID) string {

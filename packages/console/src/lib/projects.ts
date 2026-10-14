@@ -140,3 +140,10 @@ export function getProjectSettings(project: string): Promise<ProjectSettings> {
 export function updateProjectSettings(project: string, input: ProjectSettings): Promise<ProjectSettings> {
   return request<ProjectSettings>(`/api/projects/${encodeURIComponent(project)}/settings`, { method: "PATCH", body: JSON.stringify(input) });
 }
+
+const PROTECTED_ENVIRONMENT_IDS = new Set(["production", "staging"]);
+
+// Protected Environments carry a warning stripe in the bar and a "protected" tag.
+export function isProtectedEnvironment(environment: Pick<Environment, "environment">): boolean {
+  return PROTECTED_ENVIRONMENT_IDS.has(environment.environment);
+}

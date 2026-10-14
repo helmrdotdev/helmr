@@ -1,45 +1,58 @@
-import { scopedConsoleHref, definitionHref, type DefinitionScope } from "../lib/definitions";
-import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
+import { createMemo, For, Show, type JSX } from "solid-js";
+import { SectionLayout } from "../components/SectionLayout";
+import { ComputerStatus } from "../features/computers/ComputerStatus";
 import { computerHref } from "../features/computers/navigation";
-import { ApiError } from "../lib/api";
-import { useRouteScope } from "../lib/scope";
+import { deploymentHref } from "../features/deployments/navigation";
+import { listTemplateDefinitions, templateResources } from "../lib/definitions";
+import { getCurrentDeployment } from "../lib/deployments";
+import { errorMessage } from "../lib/error";
+import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { PageHeader } from "../ui/PageHeader";
+import { type LinkTabItem } from "../ui/Tabs";
+import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
-import { StatusBadge } from "../ui/StatusBadge";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
-function computersErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "forbidden") {
-    return "You do not have permission to view Computers.";
-  }
-  if (error instanceof ApiError) return error.message;
-  return "Could not load Computers.";
-}
+const computersErrorMessage = (error: unknown) =>
+  errorMessage(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
 
-function ComputerRow(props: { computer: ComputerListItem; scope: DefinitionScope }) {
+function ComputerRow(props: { computer: ComputerListItem }) {
   return (
     <tr>
-      <td><IDText value={props.computer.id} mode="link" href={scopedConsoleHref(computerHref(props.computer.id), props.scope)} /></td>
+      <td><IDText value={props.computer.id} mode="link" href={computerHref(props.computer.id)} /></td>
+      <td><ComputerStatus computer={props.computer} /></td>
       <td>
-        <Show when={props.computer.key} fallback={<span class="text-console-faint">—</span>}>
+        <Show when={props.computer.key} fallback={<EmptyCell />}>
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", props.computer.template, { ...props.scope, deploymentID: props.computer.deployment_id })}>{props.computer.template}</a></td>
-      <td><StatusBadge resource="computer" status={props.computer.status} /><span class="ml-2">{props.computer.residency}</span></td>
+      <td><code>{props.computer.template}</code></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
     </tr>
   );
 }
 
-export function Computers() {
-  const scope = useRouteScope();
+type Section = "computers" | "templates";
+const SECTION_TABS: LinkTabItem<Section>[] = [
+  { value: "computers", label: "Computers", href: "/computers" },
+  { value: "templates", label: "Templates", href: "/templates" },
+];
+
+// The Computers section: Computers and the Templates that create them.
+export function ComputersSection(props: { children?: JSX.Element }) {
+  return (
+    <SectionLayout id="computers-section" title="Computers" tabs={SECTION_TABS}>
+      {props.children}
+    </SectionLayout>
+  );
+}
+
+export function ComputerList() {
+  const scope = useScopeIDs();
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
   const computers = createInfiniteQuery(() => ({
@@ -56,40 +69,79 @@ export function Computers() {
   const items = createMemo(() => computers.data?.pages.flatMap((page) => page.computers) ?? []);
 
   return (
-    <section class={ui.page}>
-      <PageHeader
-        title="Computers"
-        subtitle="Durable execution environments for Sessions, commands, and files."
-      />
-
-      <Show when={computers.isError}>
-        <StatePanel error={computersErrorMessage(computers.error)} />
-      </Show>
-      <Show when={!computers.isPending} fallback={<StatePanel loading="Loading Computers..." />}>
-        <Show
-          when={items().length > 0}
-          fallback={<StatePanel empty="No Computers yet." hint="Start an Agent through the CLI or Slack, or create a Computer with helmr computer create." />}
+    <QueryState
+      query={computers}
+      pending="Loading computers..."
+      error={computersErrorMessage}
+      empty={{
+        when: (data) => data.pages.every((page) => page.computers.length === 0),
+        title: "No computers yet.",
+        hint: "Start an agent through the CLI or Slack, or create a computer with helmr computer create.",
+      }}
+    >
+      {() => (
+        <DataTable
+          columns={["Computer", "Status", "Key", "Template", "Last activity", "Created"]}
+          minWidth="min-w-190"
+          footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
-          <DataTable columns={["Computer", "Key", "Definition", "Status", "Last activity", "Created"]} minWidth="min-w-200">
-            <For each={items()}>
-              {(computer) => <ComputerRow computer={computer} scope={{ projectID: projectID(), environmentID: environmentID() }} />}
-            </For>
-          </DataTable>
-          <Show when={computers.hasNextPage}>
-            <div class={ui.actionRow}>
-              <button
-                type="button"
-                class={ui.secondaryButton}
-                disabled={computers.isFetchingNextPage}
-                onClick={() => void computers.fetchNextPage()}
-              >
-                {computers.isFetchingNextPage ? "Loading..." : "Load more"}
-              </button>
-            </div>
-          </Show>
-        </Show>
-      </Show>
+          <For each={items()}>{(computer) => <ComputerRow computer={computer} />}</For>
+        </DataTable>
+      )}
+    </QueryState>
+  );
+}
 
-    </section>
+const templatesFailure = (error: unknown) => errorMessage(error, "Could not load templates.");
+
+// The Templates of the current Deployment, for creating Computers.
+export function TemplateList() {
+  const scope = useScopeIDs();
+  const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: !!scope().projectID && !!scope().environmentID, retry: false, refetchInterval: 15_000 }));
+  // Pin every page to the observed current Deployment. Promotion changes this
+  // query key, so pages from different definitions cannot be combined.
+  const definitions = createInfiniteQuery(() => ({
+    queryKey: ["templates", "current-definitions", scope().projectID, scope().environmentID, current.data?.id],
+    queryFn: async ({ pageParam }) => {
+      const page = await listTemplateDefinitions({ ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 });
+      return { items: page.templates, next_cursor: page.next_cursor };
+    },
+    initialPageParam: "", getNextPageParam: page => page.next_cursor,
+    enabled: !!current.data && !current.isError, retry: false,
+  }));
+  const items = createMemo(() => definitions.data?.pages.flatMap(page => page.items) ?? []);
+  return (
+    <QueryState
+      query={current}
+      pending="Loading current deployment..."
+      error={templatesFailure}
+      empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Deploy your code to make its templates available here." }}
+    >
+      {deployment => <>
+        <p class={cx(ui.muted, "mb-3")}>Templates in the current deployment <IDText value={deployment()!.id} mode="link" href={deploymentHref(deployment()!.id)} />, for creating computers.</p>
+        <QueryState
+          query={definitions}
+          pending="Loading templates..."
+          error={templatesFailure}
+          empty={{
+            when: (data) => data.pages.every(page => page.items.length === 0),
+            title: "No templates in the current deployment.",
+            hint: "Add templates in your code and deploy them.",
+          }}
+        >
+          {() => (
+            <DataTable
+              columns={["Template", "Resources"]}
+              footer={<LoadMore count={items().length} noun={{ one: "template", other: "templates" }} hasMore={definitions.hasNextPage} loading={definitions.isFetchingNextPage} failed={definitions.isFetchNextPageError} onLoadMore={() => void definitions.fetchNextPage()} />}
+            >
+              <For each={items()}>{item => <tr>
+                <td><code>{item.template}</code></td>
+                <td>{templateResources(item)}</td>
+              </tr>}</For>
+            </DataTable>
+          )}
+        </QueryState>
+      </>}
+    </QueryState>
   );
 }

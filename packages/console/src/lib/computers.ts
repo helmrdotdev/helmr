@@ -12,7 +12,7 @@ export type Computer = {
   template: string;
   deployment_id: string;
   status: ComputerStatus;
-  residency: "cold" | "starting" | "running" | "parking" | "parked" | "restoring" | "unavailable";
+  residency: "cold" | "starting" | "running" | "parking" | "restoring" | "unavailable";
   error?: { code: string; message: string };
   secrets: ComputerSecret[];
   last_activity_at: string;

@@ -9,6 +9,8 @@ const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const path = `${base}/sessions/${sessionID}/turns/${turnID}/asks/${askID}`;
 const url = `/sessions/${sessionID}/turns/${turnID}/asks/${askID}?project=${projectID}&environment=${environmentID}`;
 const now = "2026-10-06T00:00:00Z";
+// The value of one rail entry on the Question page.
+const detail = (page: Page, label: string) => page.getByRole("complementary").locator("div").filter({ has: page.locator("dt", { hasText: label }) }).locator("dd");
 async function scope(page: Page) {
   const environment = {
     environment: environmentID, project: projectID,
@@ -76,7 +78,7 @@ test("pending questions expose complete content and exact CLI commands as read-o
     { id: "a", label: "First", description: "Full description", value: { v: 1 } }, { id: "b", label: "Second", value: null },
   ] };
   const { writes } = await fixture(page, control);
-  expect(JSON.parse(await page.getByLabel("Answer control").innerText())).toEqual(control);
+  expect(JSON.parse(await page.getByRole("region", { name: "Answer control" }).locator("pre").innerText())).toEqual(control);
   const origin = new URL(page.url()).origin;
   const guide = page.getByRole("region", { name: "Answer through CLI" });
   await expect(guide).toContainText(`helmr login '${origin}'`);
@@ -94,8 +96,9 @@ test("question observation replaces CLI guidance with the recorded answer and at
   await expect(page.getByLabel("Answer through CLI")).toBeVisible();
   setState({ ...question({ type: "text" }), status: "responded", answer: "", responded_at: now, responded_by_user_id: userID });
   await page.clock.fastForward(5_000);
-  await expect(page.getByLabel("Recorded answer")).toHaveText('""');
-  await expect(page.getByText(`Answered by user: ${userID}`)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Recorded answer" }).locator("pre")).toHaveText('""');
+  await expect(detail(page, "Answered by")).toContainText("User");
+  await expect(detail(page, "Answered by").getByTitle(userID)).toBeVisible();
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   expect(writes).toEqual([]);
   setState({ id: askID, session_id: sessionID, turn_id: turnID, status: "responded", created_at: now, responded_at: now, responded_by_user_id: userID, payload_expired: true });
@@ -103,14 +106,26 @@ test("question observation replaces CLI guidance with the recorded answer and at
   await expect(page.getByText("The question and answer payloads have expired.")).toBeVisible();
   await expect(page.getByLabel("Recorded answer")).toHaveCount(0);
   await expect(page.getByLabel("Answer control")).toHaveCount(0);
-  await expect(page.getByText(`Answered by user: ${userID}`)).toBeVisible();
+  await expect(detail(page, "Answered by")).toContainText("User");
+  await expect(detail(page, "Answered by").getByTitle(userID)).toBeVisible();
 });
 
 test("withdrawn questions retain the prompt without offering a response", async ({ page }) => {
   const { setState } = await fixture(page, { type: "text" });
   setState({ ...question({ type: "text" }), status: "cancelled", cancelled_at: now });
   await page.reload();
-  await expect(page.getByText("Status: cancelled", { exact: true })).toBeVisible();
+  await expect(detail(page, "Status")).toHaveText("Cancelled");
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   await expect(page.locator("form")).toHaveCount(0);
+});
+
+test("the Question breadcrumb leads through the Agent to its Session", async ({ page }) => {
+  await scope(page);
+  await page.route(`**${base}/sessions/${sessionID}`, route => route.fulfill({ json: { id: sessionID, agent: "sales", status: "open", holds: [], created_at: now } }));
+  await page.route(`**${path}**`, route => route.fulfill({ json: question({ type: "text" }) }));
+  await page.goto(url);
+  const crumbs = page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link");
+  await expect(crumbs).toHaveText(["Agents", "sales", "Session"]);
+  await expect(crumbs.nth(1)).toHaveAttribute("href", "/agents/sales");
+  await expect(crumbs.nth(2)).toHaveAttribute("href", `/sessions/${sessionID}`);
 });

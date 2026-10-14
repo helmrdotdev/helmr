@@ -1,14 +1,24 @@
 import { A, Navigate, Route, Router, useLocation } from "@solidjs/router";
-import { createQuery } from "@tanstack/solid-query";
 import type { JSX } from "solid-js";
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Show } from "solid-js";
+import { AppBar, type NavItem } from "./components/AppBar";
+import { ProfileMenu } from "./components/ProfileMenu";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
-import { ScopeSwitcher } from "./components/ScopeSwitcher";
+import { ScopeSelector } from "./components/ScopeSelector";
+import { CommandPalette } from "./components/CommandPalette";
+import { attentionTotal, useAttention } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
-import { getMe, logout } from "./lib/auth";
+import { onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
+import { useMe } from "./lib/me";
+import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
+import { logout } from "./lib/auth";
+import { formatRole } from "./components/ProfileMenu";
+import { Notice } from "./ui/Notice";
+import { AuthWorking } from "./ui/AuthWindow";
+import { Page } from "./ui/Page";
 import { cx, ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
@@ -16,19 +26,18 @@ import { Login } from "./routes/login";
 import { AuthSlackLink } from "./routes/auth-slack-link";
 import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
-import { SlackSettings } from "./routes/slack-settings";
-import { AuthGitHubCallback } from "./routes/auth-github-callback";
-import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
-import { Templates, AgentDefinitionDetail, TemplateDetail } from "./routes/definitions";
-import { Agents, AgentDetail } from "./routes/agents";
-import { Sessions } from "./routes/sessions";
-import { Computers } from "./routes/computers";
+import { AccountSettings } from "./routes/account-settings";
+import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
+import { SessionList } from "./routes/sessions";
+import { TriggerList } from "./routes/triggers";
+import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab } from "./routes/agents";
+import { ComputersSection, ComputerList, TemplateList } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
-import { Projects } from "./routes/projects";
+import { ProjectSettings } from "./routes/project-settings";
 import { Environments } from "./routes/environments";
 import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
@@ -37,155 +46,19 @@ import { Device } from "./routes/device";
 import { ComputerDetail } from "./routes/computer-detail";
 import { QuestionDetail } from "./routes/question-detail";
 import { SessionDetail } from "./routes/session-detail";
+import { NotFound, NotFoundWindow } from "./routes/not-found";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
-
-function TabLink(props: { href: string; children: JSX.Element }) {
-  const location = useLocation();
-  const active = () =>
-    location.pathname === props.href ||
-    (props.href !== "/" && location.pathname.startsWith(`${props.href}/`));
-
-  return (
-    <A
-      href={props.href}
-      class={cx(ui.tabLink, active() ? ui.tabLinkActive : ui.tabLinkHover)}
-    >
-      {props.children}
-    </A>
-  );
-}
-
-function formatRole(role: string | null | undefined): string {
-  if (!role) return "Member";
-  return role
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function initialsFor(value: string): string {
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return `${parts[0]!.charAt(0)}${parts[parts.length - 1]!.charAt(0)}`.toUpperCase();
-}
-
-function ProfileMenu() {
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
-  const [open, setOpen] = createSignal(false);
-  const [imageFailed, setImageFailed] = createSignal(false);
-  let wrapperRef: HTMLDivElement | undefined;
-
-  const displayName = createMemo(() => me.data?.display_name?.trim() || me.data?.user_id || "Account");
-  const role = createMemo(() => formatRole(me.data?.role));
-  const imageURL = createMemo(() => me.data?.profile_image_url?.trim() || null);
-  const showImage = createMemo(() => !!imageURL() && !imageFailed());
-  const initials = createMemo(() => initialsFor(displayName()));
-
-  onMount(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      if (!wrapperRef?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    onCleanup(() => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    });
-  });
-
-  return (
-    <div class={"relative shrink-0"} ref={wrapperRef}>
-      <button
-        type="button"
-        class={"grid size-7 cursor-pointer place-items-center overflow-hidden rounded-xs border border-console-border bg-[linear-gradient(to_bottom,#fbfcfd_0%,#eef1f3_100%)] p-0 font-mono text-[10px] font-medium leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-[linear-gradient(to_bottom,#f3f5f7_0%,#dfe5ea_100%)] hover:text-console-text focus-visible:outline-2 focus-visible:outline-console-accent-soft data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text"}
-        data-open={open() ? "true" : "false"}
-        aria-haspopup="menu"
-        aria-expanded={open()}
-        aria-label="Open profile menu"
-        onClick={() => setOpen((value) => !value)}
-      >
-        <Show
-          when={showImage()}
-          fallback={<span class={"select-none leading-none"}>{initials()}</span>}
-        >
-          <img
-            src={imageURL()!}
-            alt=""
-            class={"size-full object-cover grayscale-[0.15]"}
-            referrerpolicy="no-referrer"
-            onError={() => setImageFailed(true)}
-          />
-        </Show>
-      </button>
-
-      <Show when={open()}>
-        <div
-          class={"absolute right-0 top-[calc(100%+7px)] z-50 w-56 overflow-hidden border border-console-border-strong bg-console-surface shadow-[2px_2px_0_rgb(15_23_42/0.12)]"}
-          role="menu"
-          aria-label="Profile"
-        >
-          <div class={"border-b border-console-border bg-console-bg-panel px-3 py-2.5"}>
-            <div class={"truncate text-[12.5px] font-medium leading-tight text-console-text"}>{displayName()}</div>
-            <div class={"mt-0.75 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>{role()}</div>
-          </div>
-          <div class={"p-1"}>
-            <A
-              href="/account/slack"
-              class={ui.scopeAction}
-              role="menuitem"
-              onClick={() => setOpen(false)}
-            >
-              Slack account
-            </A>
-            <Show when={me.data?.admin}>
-              <A
-                href="/admin"
-                class={ui.scopeAction}
-                role="menuitem"
-                onClick={() => setOpen(false)}
-              >
-                Admin
-              </A>
-            </Show>
-            <button
-              type="button"
-              class={cx(ui.scopeAction, "text-console-danger hover:text-console-danger")}
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                void logout();
-              }}
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-}
 
 function SettingsLink() {
   const location = useLocation();
   const active = () => location.pathname.startsWith("/settings");
   return (
     <A
-      href="/settings/projects"
-      class={cx(
-        "grid size-7 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text",
-        active() && "border-console-border-strong bg-console-bg-panel text-console-text",
-      )}
+      href="/settings/project"
+      class={ui.iconButton}
+      data-open={active() ? "true" : "false"}
+      aria-current={active() ? "page" : undefined}
       aria-label="Settings"
       title="Settings"
     >
@@ -197,29 +70,71 @@ function SettingsLink() {
   );
 }
 
+// The phone menu's Settings and account entries.
+function DrawerAccount(props: { close: () => void }) {
+  const me = useMe();
+  const location = useLocation();
+  const item = (active: boolean) => cx(ui.drawerItem, active ? ui.activeBar : ui.drawerItemIdle);
+  return (
+    <div class="flex flex-col gap-0.5 p-2">
+      <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && location.pathname !== "/settings/account")} onClick={props.close}>Settings</A>
+      <A href="/settings/account" class={item(location.pathname === "/settings/account")} onClick={props.close}>Account settings</A>
+      <Show when={me.data?.admin}>
+        <A href="/admin" class={item(false)} onClick={props.close}>Admin</A>
+      </Show>
+      <button
+        type="button"
+        class={cx(ui.drawerItem, ui.drawerItemIdle)}
+        onClick={() => {
+          props.close();
+          void logout();
+        }}
+      >
+        Sign out
+      </button>
+      <p class="m-0 truncate px-2.5 py-2 font-mono text-chrome text-console-muted">
+        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.role)}
+      </p>
+    </div>
+  );
+}
+
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
+  const attention = useAttention();
+  const nav: NavItem[] = [
+    { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
+    { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
+    { href: "/computers", label: "Computers", match: ["/templates"] },
+    { href: "/deployments", label: "Deployments" },
+  ];
+  const protectedColor = () => {
+    const environment = scope.selectedEnvironment();
+    return environment && isProtectedEnvironment(environment) ? environment.color_hex : undefined;
+  };
   return (
-    <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text antialiased"}>
-      <header class={"sticky top-0 z-30 flex h-10 items-center gap-3 border-b border-console-border-strong bg-[linear-gradient(to_bottom,#fafafa_0%,#eceff2_100%)] px-5 max-[860px]:px-3"}>
-        <ScopeSwitcher />
-        <span class={"h-5 w-px shrink-0 bg-console-border"} aria-hidden="true" />
-        <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
-          <TabLink href="/">Overview</TabLink>
-          <TabLink href="/agents">Agents</TabLink>
-          <TabLink href="/sessions">Sessions</TabLink>
-          <TabLink href="/templates">Templates</TabLink>
-          <TabLink href="/computers">Computers</TabLink>
-          <TabLink href="/deployments">Deployments</TabLink>
-        </nav>
-        <div class={"flex items-center gap-2"}>
-          <SettingsLink />
-          <ProfileMenu />
-        </div>
-      </header>
+    <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
+      <AppBar
+        leading={<ScopeSelector />}
+        nav={nav}
+        trailing={<><CommandPalette /><div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div></>}
+        protectedColor={protectedColor()}
+        drawerEnd={(close) => <DrawerAccount close={close} />}
+      />
       <Show when={scope.error()}>
-        <div class={"border-b border-[#e6aaa4] bg-[#fff1ef] px-5 py-2 text-[13px] font-medium text-console-danger"} role="alert">Could not load projects.</div>
+        <Notice tone="danger" variant="bar" class="font-medium">Could not load projects.</Notice>
       </Show>
+      <div role="status" aria-live="polite">
+        <Show when={scope.notice()}>
+          {(notice) => (
+            <Notice tone="info" variant="bar" role="none" onDismiss={() => scope.dismissNotice()}>
+              {notice().kind === "switched"
+                ? `Switched to ${notice().projectName} / ${notice().environmentName} from the link.`
+                : `The link's project or environment is not available; showing ${notice().projectName} / ${notice().environmentName}.`}
+            </Notice>
+          )}
+        </Show>
+      </div>
       <main class={"min-w-0 flex-1"}>{props.children}</main>
     </div>
   );
@@ -235,8 +150,19 @@ const wrap = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
-const wrapSettings = (Inner: () => JSX.Element) => () => (
+// A page with sub-pages: the layout stays mounted while its child routes change.
+const wrapLayout = (Layout: (props: { children?: JSX.Element }) => JSX.Element) => (props: { children?: JSX.Element }) => (
   <RequireAuth>
+    <ScopeProvider>
+      <AppShell>
+        <Layout>{props.children}</Layout>
+      </AppShell>
+    </ScopeProvider>
+  </RequireAuth>
+);
+
+const wrapSettings = (Inner: () => JSX.Element, requirement: AuthRequirement = "project") => () => (
+  <RequireAuth requirement={requirement}>
     <ScopeProvider>
       <AppShell>
         <SettingsLayout>
@@ -247,20 +173,25 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
-const wrapAccount = (Inner: () => JSX.Element) => () => (
-  <RequireAuth requirement="organization">
-    <div class="min-h-dvh text-sm text-console-text">
-      <header class="flex h-10 items-center justify-between border-b border-console-border-strong bg-console-surface px-5">
-        <A href="/" class={ui.tabLink}>Helmr Console</A>
-        <ProfileMenu />
-      </header>
-      <main class={ui.page}>
-        <p class={ui.h3}>Your account</p>
-        <div class="mt-3"><Inner /></div>
-      </main>
-    </div>
-  </RequireAuth>
-);
+// Signed-in accounts see a missing page inside the console; anyone else sees it
+// in a window, without being sent to sign in first.
+function Missing() {
+  const me = useMe();
+  const inConsole = () => !!me.data && !onboardingRedirectPath(me.data, "organization");
+  return (
+    <Show when={!me.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
+      <Show when={inConsole()} fallback={<NotFoundWindow />}>
+        <ScopeProvider>
+          <AppShell>
+            <Page>
+              <NotFound />
+            </Page>
+          </AppShell>
+        </ScopeProvider>
+      </Show>
+    </Show>
+  );
+}
 
 const wrapAdmin = (Inner: () => JSX.Element) => () => (
   <RequireAdmin>
@@ -285,16 +216,22 @@ export function App() {
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
-      <Route path="/agents" component={wrap(Agents)} />
-      <Route path="/deployments/:deployment_id/agents/:agent" component={wrap(AgentDefinitionDetail)} />
-      <Route path="/deployments/:deployment_id/templates/:template" component={wrap(TemplateDetail)} />
-      <Route path="/agents/:agent" component={wrap(AgentDetail)} />
-      <Route path="/templates" component={wrap(Templates)} />
-      <Route path="/templates/:template" component={wrap(TemplateDetail)} />
-      <Route path="/sessions" component={wrap(Sessions)} />
+      <Route component={wrapLayout(AgentsSection)}>
+        <Route path="/agents" component={AgentList} />
+        <Route path="/sessions" component={SessionList} />
+        <Route path="/triggers" component={TriggerList} />
+      </Route>
+      <Route path="/agents/:agent" component={wrapLayout(AgentDetail)}>
+        <Route path="/" component={AgentSessionsTab} />
+        <Route path="/triggers" component={AgentTriggersTab} />
+        <Route path="/slack" component={AgentSlackTab} />
+      </Route>
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
-      <Route path="/computers" component={wrap(Computers)} />
+      <Route component={wrapLayout(ComputersSection)}>
+        <Route path="/computers" component={ComputerList} />
+        <Route path="/templates" component={TemplateList} />
+      </Route>
       <Route path="/computers/:computer_id" component={wrap(ComputerDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
       <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
@@ -304,13 +241,14 @@ export function App() {
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
       <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 
-      <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
-      <Route path="/settings/projects" component={wrapSettings(Projects)} />
+      <Route path="/settings" component={() => <Navigate href="/settings/project" />} />
+      <Route path="/settings/account" component={wrapSettings(AccountSettings, "organization")} />
+      <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
-      <Route path="/settings/members" component={wrapSettings(Members)} />
-      <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
-      <Route path="/account/slack" component={wrapAccount(SlackSettings)} />
+      <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
+      <Route path="/settings/members" component={wrapSettings(Members)} />
+      <Route path="*" component={Missing} />
     </Router>
   );
 }

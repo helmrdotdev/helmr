@@ -15,6 +15,9 @@ type MeResponse struct {
 	ProjectRequired      bool     `json:"project_required"`
 	AccessRequired       bool     `json:"access_required"`
 	SetupTokenRequired   bool     `json:"setup_token_required"`
+	// EmailDelivery reports whether this installation can send email, which
+	// inviting members requires.
+	EmailDelivery bool `json:"email_delivery"`
 }
 
 type GitHubAuthStartRequest struct {

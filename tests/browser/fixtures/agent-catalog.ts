@@ -19,7 +19,8 @@ export async function createAgentCatalog(page: Page) {
   const environmentInternalID = execFileSync("bash", ["tests/browser/fixtures/agent-catalog.sh", environment.environment, deploymentID, `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`], { cwd: process.cwd(), encoding: "utf8" }).trim();
   await page.goto("/settings/environments");
   const environmentRow = page.getByRole("row").filter({ hasText: slug });
-  await environmentRow.getByRole("button", { name: "Use", exact: true }).click();
-  await expect(environmentRow.getByText("Current", { exact: true })).toBeVisible();
+  await environmentRow.getByRole("button", { name: /^Actions for / }).click();
+  await page.getByRole("menuitem", { name: "Use", exact: true }).click();
+  await expect(environmentRow.getByText("Working", { exact: true })).toBeVisible();
   return { deploymentID, environmentID: environment.environment, environmentInternalID, scope: `project=${projectID}&environment=${environment.environment}`, base: `/api/projects/${projectID}/environments/${environment.environment}` };
 }

@@ -1,32 +1,29 @@
-import { useSearchParams } from "@solidjs/router";
+import { A, useSearchParams } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
-import { ApiError } from "../lib/api";
 import { startGitHubInvite, startInviteMagicLink } from "../lib/auth";
-import { errorMessage } from "../lib/error";
-import { AuthActions, AuthCopy, AuthDivider, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
+import { AuthActions, AuthCopy, AuthDivider, AuthError, AuthMissing, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
+
+const failure = (error: unknown) => describeFailure(error, AUTH_MESSAGES, "This invite could not be accepted. Try again, or ask for a new invite link.");
 
 export function Invite() {
   const [params] = useSearchParams();
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<Failure | null>(null);
   const [sent, setSent] = createSignal(false);
   const [sentEmail, setSentEmail] = createSignal<string | null>(null);
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
   const [token, setToken] = createSignal<string | null>(null);
+  const [checked, setChecked] = createSignal(false);
   const [magicBusy, setMagicBusy] = createSignal(false);
   const [githubBusy, setGitHubBusy] = createSignal(false);
 
-  onMount(async () => {
+  onMount(() => {
     const tokenRaw = params["token"];
-    const token = Array.isArray(tokenRaw) ? tokenRaw[0] : tokenRaw;
+    const value = Array.isArray(tokenRaw) ? tokenRaw[0] : tokenRaw;
     history.replaceState({}, "", "/invite");
-
-    if (!token) {
-      setError("Missing invite token.");
-      return;
-    }
-
-    setToken(token);
+    setToken(value || null);
+    setChecked(true);
   });
 
   async function sendMagicLink() {
@@ -40,8 +37,7 @@ export function Invite() {
       setSentEmail(result.email ?? null);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
+      setError(failure(e));
     } finally {
       setMagicBusy(false);
     }
@@ -56,43 +52,29 @@ export function Invite() {
       const { redirect_url } = await startGitHubInvite(currentToken);
       window.location.href = redirect_url;
     } catch (e) {
-      const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
+      setError(failure(e));
       setGitHubBusy(false);
     }
   }
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <Show when={token()} fallback={
-        <>
-          <AuthTitle>Invite failed</AuthTitle>
-          <p class={ui.error}>{error() ?? "Missing invite token."}</p>
-          <a href="/login">Back to login</a>
-        </>
-      }>
-        <Show when={error()}>
-          <p class={ui.error}>{error()}</p>
+        <Show when={checked()}>
+          <AuthMissing title="This invite link is incomplete" action={<A class={ui.secondaryButton} href="/login">Back to login</A>}>
+            The link is missing its invitation. Open the full link from your invite email, or ask the person who invited you for a new one.
+          </AuthMissing>
         </Show>
+      }>
         <Show when={sent()} fallback={
           <>
             <AuthTitle>Accept invite</AuthTitle>
             <AuthCopy>Choose how to verify this invitation.</AuthCopy>
-            <button
-              class={ui.button}
-              type="button"
-              onClick={continueWithGitHub}
-              disabled={githubBusy() || magicBusy()}
-            >
+            <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
               {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
             </button>
             <AuthDivider>OR</AuthDivider>
-            <button
-              class={ui.secondaryButton}
-              type="button"
-              onClick={sendMagicLink}
-              disabled={githubBusy() || magicBusy()}
-            >
+            <button class={ui.secondaryButton} type="button" onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
               {magicBusy() ? "Sending..." : "Send invite link"}
             </button>
           </>
@@ -111,38 +93,23 @@ export function Invite() {
           </Show>
           <Show when={debugURL()}>
             {(url) => (
-              <button
-                class={ui.secondaryButton}
-                type="button"
-                onClick={() => {
-                  window.location.href = url();
-                }}
-              >
+              <button class={ui.secondaryButton} type="button" onClick={() => { window.location.href = url(); }}>
                 Continue with dev link
               </button>
             )}
           </Show>
           <AuthDivider>OR</AuthDivider>
           <AuthActions>
-            <button
-              class={ui.button}
-              type="button"
-              onClick={continueWithGitHub}
-              disabled={githubBusy() || magicBusy()}
-            >
-              {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
-            </button>
-            <button
-              class={ui.secondaryButton}
-              type="button"
-              onClick={sendMagicLink}
-              disabled={githubBusy() || magicBusy()}
-            >
+            <button class={ui.secondaryButton} type="button" onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
               {magicBusy() ? "Sending..." : "Send another invite link"}
+            </button>
+            <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
+              {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
             </button>
           </AuthActions>
         </Show>
+        <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
       </Show>
-    </AuthScreen>
+    </AuthWindow>
   );
 }

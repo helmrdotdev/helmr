@@ -187,8 +187,9 @@ when the Environment has no current Deployment. Registration alone does not mean
 an Agent has ever been active. Existing connections remain manageable by an
 organization owner or admin.
 
-Deployment details are read-only snapshots. Follow an Agent or Template link
-there to inspect that exact definition; Session and Computer links also preserve
-their original Deployment. Promote from the Deployment list to change current.
+Deployment details are read-only snapshots. They list each Agent with its
+Template and each Template with its resources; Sessions and Computers link to the
+Deployment they were created from. Promote from the Deployment list to change
+current.
 Read access to definitions and history does not grant permission to create or
 control work.

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  /* Surfaces and lines */
   --console-bg: #f9fafb;
   --console-bg-panel: #f7f8f9;
   --console-surface: #ffffff;
@@ -9,22 +10,59 @@
   --console-border: rgba(15, 23, 42, 0.16);
   --console-border-strong: rgba(15, 23, 42, 0.22);
   --console-border-soft: rgba(15, 23, 42, 0.1);
+
+  /* Text. Muted and subtle both meet WCAG AA (4.5:1) on every surface above and
+     on the bar gradient; subtle stays the lighter of the two for labels and hints.
+     Faint is decorative only: empty-value dashes and placeholders. */
   --console-text: #111827;
-  --console-muted: rgba(17, 24, 39, 0.6);
-  --console-subtle: rgba(17, 24, 39, 0.42);
+  --console-muted: rgba(17, 24, 39, 0.68);
+  --console-subtle: rgba(17, 24, 39, 0.62);
   --console-faint: rgba(17, 24, 39, 0.28);
+
+  /* Accent and focus */
   --console-accent: #315fce;
   --console-accent-hover: #254ba7;
   --console-accent-soft: rgba(49, 95, 206, 0.09);
+  --console-focus: rgba(49, 95, 206, 0.6);
+  --console-control-ring: rgba(49, 95, 206, 0.12);
+
+  /* Tones: each is a triple of text (the bare name), tinted background and border,
+     used together by badges, notices and tinted buttons. Text meets AA on its
+     own background. */
+  --console-info: #395f8f;
+  --console-info-bg: #eef4ff;
+  --console-info-border: #9bb9e8;
+  --console-warning: #8a5f12;
+  --console-warning-bg: #fff7df;
+  --console-warning-border: #e5c26e;
   --console-success: #55715d;
-  --console-warning: #9a6b16;
+  --console-success-bg: #eef7f0;
+  --console-success-border: #a8c3ad;
   --console-danger: #b43f37;
+  --console-danger-bg: #fff1ef;
+  --console-danger-border: #e6aaa4;
+  --console-neutral: var(--console-muted);
+  --console-neutral-bg: var(--console-bg-panel);
+  --console-neutral-border: var(--console-border);
   /* Danger text on an untinted surface (row menu items): a clearer red than
      --console-danger, which reads near-black at 11.5px without a tinted background. */
   --console-danger-text: #cf3328;
-  --console-info: #395f8f;
-  --console-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
-  --console-sans: "Inter", "IBM Plex Sans", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
+  /* Outline and solid fill of destructive buttons. */
+  --console-danger-outline: #d77b73;
+  --console-danger-solid: #9f312b;
+  --console-danger-ring: rgba(180, 63, 55, 0.12);
+
+  /* Classic bar and button gradients. */
+  --console-gradient-bar: linear-gradient(to bottom, #fafafa 0%, #eceff2 100%);
+  --console-gradient-button: linear-gradient(to bottom, #fbfcfd 0%, #eef1f3 100%);
+  --console-gradient-button-hover: linear-gradient(to bottom, #f3f5f7 0%, #dfe5ea 100%);
+  --console-gradient-pressed: linear-gradient(to bottom, #e3e7ec 0%, #d5dbe2 100%);
+  --console-progress-stripes: repeating-linear-gradient(-45deg, #315fce 0 6px, #5f84dc 6px 12px);
+
+  --console-scrollbar: rgba(15, 23, 42, 0.28);
+
+  --console-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
+  --console-sans: "Inter", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
 }
 
 @theme inline {
@@ -43,35 +81,129 @@
   --color-console-accent: var(--console-accent);
   --color-console-accent-hover: var(--console-accent-hover);
   --color-console-accent-soft: var(--console-accent-soft);
-  --color-console-success: var(--console-success);
-  --color-console-warning: var(--console-warning);
-  --color-console-danger: var(--console-danger);
-  --color-console-danger-text: var(--console-danger-text);
+  --color-console-focus: var(--console-focus);
   --color-console-info: var(--console-info);
+  --color-console-info-bg: var(--console-info-bg);
+  --color-console-info-border: var(--console-info-border);
+  --color-console-warning: var(--console-warning);
+  --color-console-warning-bg: var(--console-warning-bg);
+  --color-console-warning-border: var(--console-warning-border);
+  --color-console-success: var(--console-success);
+  --color-console-success-bg: var(--console-success-bg);
+  --color-console-success-border: var(--console-success-border);
+  --color-console-danger: var(--console-danger);
+  --color-console-danger-bg: var(--console-danger-bg);
+  --color-console-danger-border: var(--console-danger-border);
+  --color-console-neutral: var(--console-neutral);
+  --color-console-neutral-bg: var(--console-neutral-bg);
+  --color-console-neutral-border: var(--console-neutral-border);
+  --color-console-danger-text: var(--console-danger-text);
+  --color-console-danger-outline: var(--console-danger-outline);
+  --color-console-danger-solid: var(--console-danger-solid);
   --font-console-mono: var(--console-mono);
   --font-console-sans: var(--console-sans);
+  --font-sans: var(--console-sans);
+  --font-mono: var(--console-mono);
+
+  /* The type set. Nothing in the console uses a size outside it, apart from
+     page and section headings. */
+  --text-body: 12.5px;
+  --text-control: 12px;
+  --text-chrome: 11.5px;
+  --text-badge: 11px;
+  --text-micro: 10.5px;
+
+  /* Control rings and the pressed segment; containers have no shadow. */
+  --shadow-console-control-focus: 0 0 0 2px var(--console-control-ring);
+  --shadow-console-control-invalid: 0 0 0 2px var(--console-danger-ring);
+  --shadow-console-pressed: inset 0 1px 2px rgb(15 23 42 / 0.18);
 }
 
-html {
-  color-scheme: light;
+@utility gradient-bar {
+  background-image: var(--console-gradient-bar);
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  background:
-    repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.018) 0 1px, transparent 1px 4px),
-    radial-gradient(circle, rgba(15, 23, 42, 0.04) 0.7px, transparent 0.85px),
-    var(--console-bg);
-  background-size: auto, 12px 12px, auto;
-  color: var(--console-text);
-  font-family: var(--console-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@utility gradient-button {
+  background-image: var(--console-gradient-button);
 }
 
-code,
-pre,
-kbd {
-  font-family: var(--console-mono);
+@utility gradient-button-hover {
+  background-image: var(--console-gradient-button-hover);
+}
+
+@utility gradient-pressed {
+  background-image: var(--console-gradient-pressed);
+}
+
+/* A horizontally scrolling table fades out at its right edge while more columns
+   sit past it. The fade follows the scroll position (a scroll-driven animation),
+   so it disappears at the end and never shows when nothing overflows. */
+@property --console-scroll-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes console-scroll-fade {
+  from {
+    --console-scroll-fade: 24px;
+  }
+  to {
+    --console-scroll-fade: 0px;
+  }
+}
+
+@utility scroll-fade-x {
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--console-scroll-fade));
+  animation: console-scroll-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+@utility progress-stripes {
+  background-image: var(--console-progress-stripes);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    background:
+      repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.018) 0 1px, transparent 1px 4px),
+      radial-gradient(circle, rgba(15, 23, 42, 0.04) 0.7px, transparent 0.85px),
+      var(--console-bg);
+    background-size: auto, 12px 12px, auto;
+    color: var(--console-text);
+    font-family: var(--console-sans);
+  }
+
+  code,
+  pre,
+  kbd {
+    font-family: var(--console-mono);
+  }
+
+  /* One visible keyboard focus ring for every interactive element. Text controls
+     draw their own accent border and ring on focus instead. Every element carries
+     the ring's colour unfocused too, so a `transition` utility (which animates
+     outline-color) never fades the ring in from the text colour. Components never
+     set an outline colour of their own. */
+  *,
+  ::before,
+  ::after {
+    outline-color: var(--console-focus);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--console-focus);
+    outline-offset: 1px;
+  }
+
+  input:not([type="checkbox"], [type="radio"], [type="color"]):focus-visible,
+  textarea:focus-visible {
+    outline: none;
+  }
 }

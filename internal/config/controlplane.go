@@ -188,6 +188,9 @@ func validateControlPlaneEmailConfig(cfg *ControlPlane) error {
 			return errors.New("EMAIL_PROVIDER=smtp is required when SMTP config is set")
 		}
 	case EmailProviderLog:
+		if cfg.DeploymentMode == DeploymentModeManagedCloud {
+			return errors.New("EMAIL_PROVIDER=log is for local development and is not allowed when DEPLOYMENT_MODE is managed-cloud")
+		}
 		if cfg.ResendAPIKey != "" || cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
 			return errors.New("EMAIL_PROVIDER=log cannot be combined with SMTP or Resend config")
 		}

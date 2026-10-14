@@ -25,22 +25,27 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
 
 ## Create the Agent's Slack app
 
-1. In the Console, select the Environment, open **Agents**, and choose the Agent.
-   Under **Slack Connection**, choose **Manage Slack connection**.
+1. In the Console, select the Environment, open **Agents**, choose the Agent,
+   and open its **Slack** tab. The tab walks you through the setup in four
+   numbered steps.
 2. Choose **Connect Slack**. Each Agent has one Slack connection per
    Environment.
 3. Choose **Create app in Slack**. Slack opens with an app manifest already
    filled in: the app name, bot user, the scopes Helmr needs, and the event and
    interactivity URLs for this connection. The manifest is also shown in the
    Console if you prefer to paste it.
-4. Create the app. From the app's **Basic Information** page in Slack, copy the
-   **Client ID**, **Client Secret** and **Signing Secret**.
+4. Create the app, then choose **I created the app** in the Console. From the
+   app's **Basic Information** page in Slack, copy the **Client ID**,
+   **Client Secret** and **Signing Secret**.
 5. In the Console, enter the three values and choose **Save app credentials**.
    If Slack reported that the event URL could not be verified, retry the
    verification in Slack now.
 6. Choose **Install app in Slack** and approve the installation.
 
-The connection shows the app and workspace once it is connected.
+The Slack tab shows the app and workspace once it is connected. From the same
+tab you can update the app credentials, reauthorize the app, or disconnect it.
+Before installation, **Discard setup** releases the Agent's connection without
+deleting the app in Slack.
 
 ## Use it in a channel
 
@@ -65,8 +70,9 @@ their Slack account once per workspace:
 - From Slack: the first time they request work or answer a question, the app
   sends them a link that asks them to sign in to Helmr and confirm both accounts.
   Their first action is not applied; they repeat it after linking.
-- From the Console: **Slack account** in the account menu lists linked
-  identities. Choose a workspace and **Verify Slack identity**.
+- From the Console: open **Account settings** from the profile menu; **My
+  account** lists linked identities under **Your Slack identity**. Choose a
+  workspace and **Verify Slack identity**.
 
 Linking uses the person's existing Helmr permissions. Unlinking stops future
 requests and answers from that Slack account; work already accepted continues.

@@ -1,31 +1,34 @@
+import { isOrganizationAdmin, useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
+import { errorMessage } from "../lib/error";
 import {
-  createInvitation,
+  createInvitations,
   invitationResourceID,
   listInvitations,
   listMembers,
+  MAX_INVITATIONS_PER_REQUEST,
   memberResourceID,
+  parseInviteEmails,
   removeMember,
   revokeInvitation,
   updateMemberRole,
+  type InvitationResult,
   type MemberRole,
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { ActionMenu } from "../ui/ActionMenu";
-import { DataTable } from "../ui/DataTable";
-import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { DataTable, EmptyCell, LoadMore, RowActions, RowError } from "../ui/DataTable";
+import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
+import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
-import { SectionHeader } from "../ui/SectionHeader";
+import { Notice } from "../ui/Notice";
+import { QueryState } from "../ui/QueryState";
 import { Select, type SelectOption } from "../ui/Select";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { createRowActions } from "../ui/rowActions";
+import { cx, toneClass, ui } from "../ui/styles";
 
 const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
 
@@ -37,31 +40,38 @@ const NON_OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [
 
 const OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
 
+const EMAIL_FAILED_MESSAGE = "Invitation emails could not be sent. Nobody was invited.";
+const NO_EMAIL_DELIVERY = "Email delivery is not set up for this Helmr installation, so members can't be invited.";
+
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",
-  invalid_email: "Enter a valid email address.",
-  already_member: "That email address is already a member.",
   not_found: "This member or invitation is no longer available.",
+  service_unavailable: NO_EMAIL_DELIVERY,
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
-function membersErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return MEMBERS_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
-  }
-  return INTERNAL_ERROR_MESSAGE;
+const membersErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, MEMBERS_ERROR_MESSAGES);
+
+// Why one address of an invitation request was not invited.
+const INVITATION_FAILURE_REASONS: Record<string, string> = {
+  invalid_email: "Not a valid email address",
+  already_member: "Already a member",
+  invitation_pending: "Already has a pending invitation",
+  owner_role_required: "Has a pending owner invitation",
+  email_failed: "Invitation emails could not be sent",
+  email_rejected: "Refused by the email server",
+};
+
+function invitationFailureReason(result: InvitationResult): string {
+  return INVITATION_FAILURE_REASONS[result.error?.code ?? ""] ?? "Invitation could not be created";
 }
 
 function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
 }
 
-function memberEmail(member: OrganizationMember): string {
-  return member.email ?? "-";
-}
-
 function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
-  if (role === "owner" || role === "admin") return true;
+  if (isOrganizationAdmin(role)) return true;
   return (permissions ?? []).some((permission) =>
     [
       "members:write",
@@ -74,51 +84,44 @@ function canManageFromMe(role?: string | null, permissions?: string[]): boolean 
   );
 }
 
-function validInviteEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function CreateInviteModal(props: {
+function InviteMembersDialog(props: {
   currentUserRole: string | null | undefined;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onInvited: (results: InvitationResult[]) => Promise<void>;
 }) {
-  const [email, setEmail] = createSignal("");
+  const [text, setText] = createSignal("");
   const [role, setRole] = createSignal<MemberRole>("developer");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [inviteURL, setInviteURL] = createSignal<string | null>(null);
-  const [copyState, setCopyState] = createSignal<string | null>(null);
-
-  const closeAndClear = () => {
-    setEmail("");
-    setRole("developer");
-    setInviteURL(null);
-    setCopyState(null);
-    setError(null);
-    props.onClose();
-  };
 
   const roleOptions = createMemo(() =>
     props.currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS,
   );
+  const entries = createMemo(() => parseInviteEmails(text()));
+  const valid = createMemo(() => entries().filter((entry) => entry.state === "valid").map((entry) => entry.email));
+  const invalidCount = () => entries().filter((entry) => entry.state === "invalid").length;
+  const duplicateCount = () => entries().filter((entry) => entry.state === "duplicate").length;
+  const overLimit = () => valid().length > MAX_INVITATIONS_PER_REQUEST;
+  const summary = () => [
+    `${valid().length} to invite`,
+    invalidCount() > 0 ? `${invalidCount()} invalid` : "",
+    duplicateCount() > 0 ? `${duplicateCount()} ${duplicateCount() === 1 ? "duplicate" : "duplicates"}` : "",
+  ].filter(Boolean).join(" · ");
 
-  const submit = async (event: Event) => {
-    event.preventDefault();
+  const submit = async () => {
+    if (valid().length === 0 || overLimit()) return;
     setError(null);
-    setCopyState(null);
-    if (!validInviteEmail(email())) {
-      setError(MEMBERS_ERROR_MESSAGES["invalid_email"] ?? INTERNAL_ERROR_MESSAGE);
-      return;
-    }
     setSubmitting(true);
     try {
-      const result = await createInvitation({
-        email: email().trim(),
-        role: role(),
-      });
-      setInviteURL(result.invite_url);
-      await props.onCreated();
+      const results = await createInvitations({ emails: valid(), role: role() });
+      // When no email could be sent nothing was created: keep the form and its
+      // addresses so the same invitations can be sent again.
+      if (results.every((result) => result.error?.code === "email_failed" || result.error?.code === "email_rejected")) {
+        const refused = results.find((result) => result.error?.code === "email_rejected");
+        setError(refused ? `${EMAIL_FAILED_MESSAGE} The email server refused ${refused.email}.` : EMAIL_FAILED_MESSAGE);
+        return;
+      }
+      await props.onInvited(results);
     } catch (createError) {
       setError(membersErrorMessage(createError));
     } finally {
@@ -126,84 +129,98 @@ function CreateInviteModal(props: {
     }
   };
 
-  const copyInviteURL = async () => {
-    const url = inviteURL();
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopyState("Copied");
-    } catch {
-      setCopyState("Copy failed");
-    }
-  };
-
   return (
-    <Modal
-      title={inviteURL() ? "Invite created" : "Invite member"}
-      onClose={closeAndClear}
-      closeDisabled={submitting()}
+    <FormDialog
+      title="Invite members"
+      intro="Invitations expire after 7 days."
+      submitLabel="Invite"
+      busyLabel="Inviting..."
+      busy={submitting()}
+      disabled={valid().length === 0 || overLimit()}
+      error={error()}
+      onSubmit={() => void submit()}
+      onClose={props.onClose}
     >
-      <Show when={inviteURL()} keyed fallback={
-        <form onSubmit={submit}>
-          <p class={ui.modalIntro}>Create an email invitation for this organization.</p>
-          <label class={ui.field}>
-            <span>Email</span>
-            <input
-              class={ui.input}
-              type="email"
-              value={email()}
-              autocomplete="email"
-              onInput={(event) => setEmail(event.currentTarget.value)}
-              autofocus
-            />
-          </label>
-          <label class={ui.field}>
-            <span>Role</span>
-            <Select<MemberRole>
-              value={role()}
-              options={roleOptions()}
-              onChange={setRole}
-              ariaLabel="Invitation role"
-              minWidth="100%"
-            />
-          </label>
-          <Show when={error()}>
-            <p class={ui.error} role="alert">{error()}</p>
-          </Show>
-          <div class={ui.modalActions}>
-            <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={closeAndClear}>
-              Cancel
-            </button>
-            <button class={ui.button} type="submit" disabled={submitting() || email().trim() === ""}>
-              {submitting() ? "Creating..." : "Create invite"}
-            </button>
-          </div>
-        </form>
-      }>
-        {(url) => (
-          <>
-            <p class={ui.modalIntro}>Share this invitation link with the new member.</p>
-            <code class={ui.rawKey}>{url}</code>
-            <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} onClick={closeAndClear}>Done</button>
-              <button class={ui.button} type="button" onClick={copyInviteURL}>Copy link</button>
-            </div>
-            <Show when={copyState()}>
-              <p class={ui.inlineState} role="status">{copyState()}</p>
-            </Show>
-          </>
-        )}
+      <Field
+        label="Emails"
+        hint="Separate addresses with commas, spaces or new lines."
+        error={overLimit() ? `Invite at most ${MAX_INVITATIONS_PER_REQUEST} people at a time.` : null}
+      >
+        <TextArea value={text()} rows={4} autocomplete="off" spellcheck={false} onInput={(event) => setText(event.currentTarget.value)} autofocus />
+      </Field>
+      <Show when={entries().length > 0}>
+        <div class="mb-3 grid gap-1.5">
+          <p class={cx("m-0", ui.fieldHint)} aria-live="polite">{summary()}</p>
+          <ul class="m-0 flex max-h-28 list-none flex-wrap gap-1 overflow-y-auto p-0" aria-label="Recipients">
+            <For each={entries()}>
+              {(entry) => (
+                <li
+                  class={cx(
+                    "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-badge",
+                    entry.state === "valid" ? "border-console-border-strong bg-console-bg-panel text-console-text" : entry.state === "invalid" ? toneClass.danger : toneClass.neutral,
+                  )}
+                >
+                  {entry.email}
+                  <Show when={entry.state !== "valid"}>
+                    <span class="font-sans">· {entry.state === "invalid" ? "invalid" : "duplicate"}</span>
+                  </Show>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
       </Show>
-    </Modal>
+      <Field label="Role">
+        <Select<MemberRole> value={role()} options={roleOptions()} onChange={setRole} minWidth="100%" />
+      </Field>
+    </FormDialog>
   );
 }
+
+// The outcome of an invitation request: how many people were invited, then
+// each address that was not, with why.
+function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: () => void }) {
+  const invited = () => props.results.filter((result) => result.status === "invited").length;
+  const failed = () => props.results.filter((result) => result.status === "failed");
+  return (
+    <Dialog title="Invitations" onClose={props.onClose}>
+      <div class={ui.blockStack}>
+        <Show when={invited() > 0}>
+          <p class="m-0 text-body leading-normal text-console-text">Invited {invited()} {invited() === 1 ? "person" : "people"}.</p>
+        </Show>
+        <Show when={failed().length > 0}>
+          <div class="grid gap-1.5">
+            <p class="m-0 text-body leading-normal text-console-text">Couldn't invite {failed().length}:</p>
+            <ul class="m-0 grid list-none gap-1 p-0" aria-label="Not invited">
+              <For each={failed()}>
+                {(result) => (
+                  <li class="text-body leading-normal text-console-muted">
+                    <span class="font-mono text-chrome text-console-text">{result.email}</span> · {invitationFailureReason(result)}
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        </Show>
+      </div>
+      <div class={ui.modalActions}>
+        <button type="button" class={ui.button} onClick={props.onClose}>Done</button>
+      </div>
+    </Dialog>
+  );
+}
+
+// One table for the organization: members, then pending invitations in the
+// server's order (the invited email as the member, invited time as joined), with
+// the status telling them apart.
+const COLUMNS = ["Member", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }] as const;
 
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
   isCurrentUser: boolean;
   currentUserRole: string | null | undefined;
-  action: { id: string; action: "role" | "remove" } | null;
+  busy: boolean;
   error: string | null;
   onRoleChange: (member: OrganizationMember, role: MemberRole) => void;
   onRemove: (member: OrganizationMember) => void;
@@ -222,97 +239,65 @@ function MemberRow(props: {
   });
   const canChangeRole = () => isActive() && props.canManage && id() !== "" && roleOptions().length > 1 && (!isOwner() || props.currentUserRole === "owner");
   const canRemove = () => isActive() && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
-  const busy = (action: "role" | "remove") => props.action?.id === id() && props.action.action === action;
   return (
-    <tr>
-      <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
-      <td><IDText value={props.member.user_id} /></td>
-      <td>{memberEmail(props.member)}</td>
-      <td>
-        <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
-          <Select<MemberRole>
-            value={props.member.role}
-            options={roleOptions()}
-            onChange={(nextRole) => props.onRoleChange(props.member, nextRole)}
-            disabled={busy("role")}
-            ariaLabel={`Role for ${memberName(props.member)}`}
-            minWidth="132px"
-          />
-        </Show>
-      </td>
-      <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
-      <td><RelativeTime value={props.member.created_at} /></td>
-      <td class={ui.actionsCell}>
-        <Show when={canRemove()} fallback={<span class={ui.muted}>No actions</span>}>
-          <ActionMenu
-            label={`Actions for ${memberName(props.member)}`}
-            items={[{
-              label: "Remove",
-              busyLabel: busy("remove") ? "Removing..." : undefined,
-              disabled: busy("remove"),
-              tone: "danger",
-              onSelect: () => props.onRemove(props.member),
-            }]}
-          />
-        </Show>
-        <Show when={props.error}>
-          <p class={ui.rowError} role="alert">{props.error}</p>
-        </Show>
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
+        <td><Show when={props.member.email} fallback={<EmptyCell />}>{props.member.email}</Show></td>
+        <td>
+          <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
+            <Select<MemberRole>
+              value={props.member.role}
+              options={roleOptions()}
+              onChange={(nextRole) => props.onRoleChange(props.member, nextRole)}
+              disabled={props.busy}
+              ariaLabel={`Role for ${memberName(props.member)}`}
+              minWidth="132px"
+            />
+          </Show>
+        </td>
+        <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
+        <td><RelativeTime value={props.member.created_at} /></td>
+        <RowActions
+          label={`Actions for ${memberName(props.member)}`}
+          items={canRemove() ? [{ label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) }] : []}
+        />
+      </tr>
+      <RowError columns={COLUMNS.length} message={props.error} />
+    </>
   );
 }
 
 function InvitationRow(props: {
   invitation: OrganizationInvitation;
   canManage: boolean;
-  action: { id: string; action: "revoke" } | null;
-  error: string | null;
   onRevoke: (invitation: OrganizationInvitation) => void;
 }) {
   const id = () => invitationResourceID(props.invitation);
-  const busy = () => props.action?.id === id() && props.action.action === "revoke";
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
+      <td>{props.invitation.email}</td>
       <td><StatusBadge resource="role" status={props.invitation.role} /></td>
-      <td><StatusBadge resource="invitation" status={props.invitation.status ?? "pending"} /></td>
-      <td><RelativeTime value={props.invitation.expires_at} /></td>
-      <td class={ui.actionsCell}>
-        <Show when={props.canManage} fallback={<span class={ui.muted}>No actions</span>}>
-          <ActionMenu
-            label={`Actions for ${props.invitation.email}`}
-            items={[{
-              label: "Revoke",
-              busyLabel: busy() ? "Revoking..." : undefined,
-              disabled: id() === "" || busy(),
-              tone: "danger",
-              onSelect: () => props.onRevoke(props.invitation),
-            }]}
-          />
-        </Show>
-        <Show when={props.error}>
-          <p class={ui.rowError} role="alert">{props.error}</p>
-        </Show>
-      </td>
+      <td><StatusBadge resource="member" status="invited" /></td>
+      <td><RelativeTime value={props.invitation.created_at} /></td>
+      <RowActions
+        label={`Actions for ${props.invitation.email}`}
+        items={props.canManage && id() !== "" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.invitation) }] : []}
+      />
     </tr>
   );
 }
 
 export function Members() {
   const queryClient = useQueryClient();
-  const [modalOpen, setModalOpen] = createSignal(false);
-  const [memberAction, setMemberAction] = createSignal<{ id: string; action: "role" | "remove" } | null>(null);
-  const [memberError, setMemberError] = createSignal<{ id: string; message: string } | null>(null);
-  const [invitationAction, setInvitationAction] = createSignal<{ id: string; action: "revoke" } | null>(null);
-  const [invitationError, setInvitationError] = createSignal<{ id: string; message: string } | null>(null);
+  const [inviting, setInviting] = createSignal(false);
+  const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
+  const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
+  const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
+  const memberRows = createRowActions<"role">();
 
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
   const members = createQuery(() => ({
     queryKey: ["members"],
     queryFn: listMembers,
@@ -327,6 +312,9 @@ export function Members() {
   }));
 
   const canManage = createMemo(() => canManageFromMe(me.data?.role, me.data?.permissions));
+  const emailDelivery = () => me.data?.email_delivery === true;
+  // The server lists pending invitations, newest first; further pages are
+  // appended in that order.
   const pendingInvitations = createMemo(() =>
     invitations.data?.pages.flatMap((page) => page.invitations) ?? [],
   );
@@ -341,48 +329,10 @@ export function Members() {
   const changeMemberRole = async (member: OrganizationMember, role: MemberRole) => {
     const id = memberResourceID(member);
     if (!id || role === member.role) return;
-    setMemberError(null);
-    setMemberAction({ id, action: "role" });
-    try {
+    await memberRows.run(id, "role", async () => {
       await updateMemberRole(id, role, member.role);
       await queryClient.invalidateQueries({ queryKey: ["members"] });
-    } catch (error) {
-      setMemberError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setMemberAction(null);
-    }
-  };
-
-  const remove = async (member: OrganizationMember) => {
-    const id = memberResourceID(member);
-    if (!id) return;
-    if (!window.confirm(`Remove ${memberName(member)} from this organization?`)) return;
-    setMemberError(null);
-    setMemberAction({ id, action: "remove" });
-    try {
-      await removeMember(id);
-      await queryClient.invalidateQueries({ queryKey: ["members"] });
-    } catch (error) {
-      setMemberError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setMemberAction(null);
-    }
-  };
-
-  const revoke = async (invitation: OrganizationInvitation) => {
-    const id = invitationResourceID(invitation);
-    if (!id) return;
-    if (!window.confirm(`Revoke invitation for ${invitation.email}?`)) return;
-    setInvitationError(null);
-    setInvitationAction({ id, action: "revoke" });
-    try {
-      await revokeInvitation(id);
-      await queryClient.invalidateQueries({ queryKey: ["invitations"] });
-    } catch (error) {
-      setInvitationError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setInvitationAction(null);
-    }
+    }, membersErrorMessage);
   };
 
   const isCurrentUser = (member: OrganizationMember) =>
@@ -392,108 +342,117 @@ export function Members() {
     <>
       <PageHeader
         title="Members"
-        subtitle="Organization members, roles, and pending email invitations."
         actions={
           <Show when={canManage()}>
-            <button class={ui.button} type="button" onClick={() => setModalOpen(true)}>
-              Invite member
+            <button class={ui.button} type="button" disabled={!emailDelivery()} onClick={() => setInviting(true)}>
+              Invite members
             </button>
           </Show>
         }
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <p class={cx(ui.hasMoreBanner, "border-[#9bb9e8] bg-[#eef4ff] text-console-info")} role="status">
-          Member settings require admin access.
-        </p>
+        <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
+      </Show>
+      <Show when={canManage() && !emailDelivery()}>
+        <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
       </Show>
 
-      <Show when={members.isError}>
-        <StatePanel error={membersErrorMessage(members.error)} />
-      </Show>
-
-      <section class={"mb-7"}>
-        <SectionHeader
-          title="Current members"
-          count={members.data?.members.length}
-          subtitle="Active and disabled accounts currently associated with this organization."
-        />
-        <Show when={!members.isPending} fallback={<StatePanel loading="Loading members..." />}>
-          <Show when={(members.data?.members.length ?? 0) > 0} fallback={<StatePanel empty="No members found." />}>
-            <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
-              <For each={members.data?.members ?? []}>
-                {(member) => {
-                  const id = memberResourceID(member);
-                  return (
-                    <MemberRow
-                      member={member}
-                      canManage={canManage()}
-                      isCurrentUser={isCurrentUser(member)}
-                      currentUserRole={me.data?.role}
-                      action={memberAction()}
-                      error={memberError()?.id === id ? memberError()?.message ?? null : null}
-                      onRoleChange={changeMemberRole}
-                      onRemove={remove}
-                    />
-                  );
-                }}
-              </For>
-            </DataTable>
+      <QueryState
+        query={members}
+        pending="Loading members..."
+        error={membersErrorMessage}
+      >
+        {(data) => <>
+          <Show when={invitations.isError && !invitations.isFetchNextPageError}>
+            <Notice
+              tone="danger"
+              class="mb-3"
+              action={<button type="button" class={ui.compactButton} onClick={() => void invitations.refetch()}>Retry</button>}
+            >
+              Could not load invitations.
+            </Notice>
           </Show>
-        </Show>
-      </section>
+          <DataTable
+            columns={COLUMNS}
+            minWidth="min-w-210"
+            footer={<LoadMore count={data().members.length} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
+          >
+            <For each={data().members}>
+              {(member) => (
+                <MemberRow
+                  member={member}
+                  canManage={canManage()}
+                  isCurrentUser={isCurrentUser(member)}
+                  currentUserRole={me.data?.role}
+                  busy={memberRows.busy(memberResourceID(member))}
+                  error={memberRows.error(memberResourceID(member))}
+                  onRoleChange={changeMemberRole}
+                  onRemove={setRemoving}
+                />
+              )}
+            </For>
+            <For each={pendingInvitations()}>
+              {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
+            </For>
+          </DataTable>
+        </>}
+      </QueryState>
 
-      <section>
-        <SectionHeader
-          title="Pending invitations"
-          count={pendingInvitations().length}
-          subtitle="Email invitations that have not been accepted yet."
-        />
-
-        <Show when={invitations.isError}>
-          <StatePanel error={membersErrorMessage(invitations.error)} />
-        </Show>
-
-        <Show when={!invitations.isPending} fallback={<StatePanel loading="Loading invitations..." />}>
-          <Show when={pendingInvitations().length > 0} fallback={<StatePanel empty="No pending invitations." />}>
-            <DataTable columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
-              <For each={pendingInvitations()}>
-                {(invitation) => {
-                  const id = invitationResourceID(invitation);
-                  return (
-                    <InvitationRow
-                      invitation={invitation}
-                      canManage={canManage()}
-                      action={invitationAction()}
-                      error={invitationError()?.id === id ? invitationError()?.message ?? null : null}
-                      onRevoke={revoke}
-                    />
-                  );
-                }}
-              </For>
-            </DataTable>
-            <Show when={invitations.hasNextPage}>
-              <div class={ui.actionRow}>
-                <button
-                  type="button"
-                  class={ui.secondaryButton}
-                  disabled={invitations.isFetchingNextPage}
-                  onClick={() => void invitations.fetchNextPage()}
-                >
-                  {invitations.isFetchingNextPage ? "Loading..." : "Load more invitations"}
-                </button>
-              </div>
-            </Show>
-          </Show>
-        </Show>
-      </section>
-
-      <Show when={modalOpen()}>
-        <CreateInviteModal
-          onClose={() => setModalOpen(false)}
-          onCreated={invalidateMembers}
+      <Show when={inviting()}>
+        <InviteMembersDialog
           currentUserRole={me.data?.role}
+          onClose={() => setInviting(false)}
+          onInvited={async (results) => {
+            setInviting(false);
+            setInviteResults(results);
+            await invalidateMembers();
+          }}
         />
+      </Show>
+
+      <Show when={inviteResults()}>
+        {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
+      </Show>
+
+      <Show when={removing()}>
+        {(member) => (
+          <ConfirmDialog
+            title="Remove member"
+            confirmLabel="Remove"
+            busyLabel="Removing..."
+            tone="danger"
+            target={memberName(member())}
+            errorMessage={membersErrorMessage}
+            onClose={() => setRemoving(null)}
+            onConfirm={async () => {
+              await removeMember(memberResourceID(member()));
+              await queryClient.invalidateQueries({ queryKey: ["members"] });
+            }}
+          >
+            They lose access to this organization.
+          </ConfirmDialog>
+        )}
+      </Show>
+
+      <Show when={revoking()}>
+        {(invitation) => (
+          <ConfirmDialog
+            title="Revoke invitation"
+            confirmLabel="Revoke"
+            busyLabel="Revoking..."
+            tone="danger"
+            target={invitation().email}
+            errorMessage={membersErrorMessage}
+            onClose={() => setRevoking(null)}
+            onConfirm={async () => {
+              await revokeInvitation(invitationResourceID(invitation()));
+              await queryClient.invalidateQueries({ queryKey: ["invitations"] });
+            }}
+          >
+            The invitation link stops working.
+          </ConfirmDialog>
+        )}
       </Show>
     </>
   );

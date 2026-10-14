@@ -57,13 +57,31 @@ type ListInvitationsResponse struct {
 	NextCursor  string              `json:"next_cursor,omitempty"`
 }
 
-type CreateInvitationRequest struct {
-	Email         string `json:"email"`
-	Role          string `json:"role"`
-	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
+// CreateInvitationsRequest invites up to 50 email addresses with one role and
+// expiry.
+type CreateInvitationsRequest struct {
+	Emails        []string `json:"emails"`
+	Role          string   `json:"role"`
+	ExpiresInDays *int     `json:"expires_in_days,omitempty"`
 }
 
-type CreateInvitationResponse struct {
-	InvitationSummary
-	InviteURL string `json:"invite_url"`
+type InvitationResultStatus string
+
+const (
+	InvitationResultInvited InvitationResultStatus = "invited"
+	InvitationResultFailed  InvitationResultStatus = "failed"
+)
+
+// InvitationResult is the outcome for one distinct address of the request:
+// invited, meaning the invitation was emailed, or failed with its error.
+type InvitationResult struct {
+	Email  string                 `json:"email"`
+	Status InvitationResultStatus `json:"status"`
+	Error  *HTTPError             `json:"error,omitempty"`
+}
+
+// CreateInvitationsResponse lists one result per distinct requested address,
+// in request order.
+type CreateInvitationsResponse struct {
+	Results []InvitationResult `json:"results"`
 }

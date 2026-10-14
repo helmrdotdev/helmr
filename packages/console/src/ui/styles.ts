@@ -2,148 +2,198 @@ export function cx(...classes: Array<string | false | null | undefined>): string
   return classes.filter(Boolean).join(" ");
 }
 
+export type Tone = "info" | "warning" | "success" | "danger" | "neutral";
+
+// Text, background and border of one tone, used together by badges and notices.
+export const toneClass: Record<Tone, string> = {
+  info: "border-console-info-border bg-console-info-bg text-console-info",
+  warning: "border-console-warning-border bg-console-warning-bg text-console-warning",
+  success: "border-console-success-border bg-console-success-bg text-console-success",
+  danger: "border-console-danger-border bg-console-danger-bg text-console-danger",
+  neutral: "border-console-neutral-border bg-console-neutral-bg text-console-neutral",
+};
+
+// A button without its size; `buttonBase` is the 28px control size and
+// `compactButton` the one 24px size.
+const buttonFrame =
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border py-0 font-mono text-chrome font-medium leading-none transition duration-100 disabled:cursor-not-allowed disabled:opacity-45";
+const buttonBase = cx(buttonFrame, "h-7 min-h-7 px-2.5");
+const secondaryTone =
+  "border-console-border gradient-button text-console-text hover:border-console-border-strong hover:gradient-button-hover hover:text-console-text";
+
+const closeButtonBase =
+  "grid shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
+
+// The header of a container: 32px like a table's column header row. The
+// base sets no colour; add the default or danger variant.
+const containerHeaderBase = "flex h-8 min-h-8 shrink-0 items-center justify-between gap-2 border-b px-3 last:border-b-0";
+
+// Border, focus ring and invalid state shared by every form control; each control
+// adds its own size and font.
+const controlFrame =
+  "rounded-xs border border-console-border text-console-text outline-none transition hover:border-console-border-strong focus:border-console-accent focus:shadow-console-control-focus aria-[invalid=true]:border-console-danger-outline aria-[invalid=true]:shadow-console-control-invalid";
+
 export const ui = {
-  tabLink:
-    "relative flex h-6.5 cursor-pointer items-center rounded-xs border border-transparent px-2.5 font-mono text-[11.5px] font-medium text-console-muted transition duration-100",
-  tabLinkHover:
-    "hover:border-console-border-strong hover:bg-console-surface-muted hover:text-console-text",
-  tabLinkActive:
-    "border-transparent bg-transparent text-console-text after:absolute after:bottom-0.75 after:left-2.5 after:right-2.5 after:h-px after:bg-console-accent",
+  // Type and labels
+  microLabel: "font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle",
+  h1: "m-0 text-[1.32rem] font-medium leading-[1.12] text-console-text",
+  h2: "m-0 text-[0.9rem] font-medium leading-tight text-console-text",
+  muted: "text-body text-console-muted",
+  monoLink: "cursor-pointer font-mono text-chrome text-console-accent hover:text-console-accent-hover",
+
+  // Spacing rules: buttons in a group sit 8px apart, page sections stack at 24px,
+  // blocks inside a container, dialog or list row sit 12px apart.
+  buttonGroup: "flex flex-wrap items-center gap-2",
+  sectionStack: "flex flex-col gap-6",
+  blockStack: "flex flex-col gap-3",
+
+  // Containers, in the page (Panel, DataTable, List, KeyValueList, DangerZone) and
+  // floating (Popover, Dialog, AuthWindow): one border, no shadow, one header.
+  container: "border border-console-border-strong bg-console-surface",
+  containerHeader: cx(containerHeaderBase, "border-console-border bg-console-bg-panel"),
+  containerHeaderDanger: cx(containerHeaderBase, "border-console-danger-border bg-console-danger-bg"),
+  containerTitle: "m-0 min-w-0 truncate text-body font-medium leading-snug",
+  containerCount: "ml-2 font-mono text-chrome font-normal text-console-subtle",
+  containerActions: "flex shrink-0 items-center gap-2",
+  // The 12px gap is the only spacing between the body's blocks: direct children
+  // drop their vertical margins (QueryState's refetch notice keeps its margin in
+  // page flow). A table or list (`data-list-frame`) that is a direct child loses
+  // its own frame: it runs to the container's edges, with a divider above and
+  // below only where other blocks sit. Nested deeper, it keeps its frame.
+  // An empty state that is a direct child drops its dashed border and tint: the
+  // container already frames it.
+  containerBody:
+    "flex flex-col gap-3 p-3 [&>*]:my-0 [&>[data-list-frame]]:-mx-3 [&>[data-list-frame]]:border-x-0 [&>[data-list-frame]]:border-console-border [&>[data-list-frame]:first-child]:-mt-3 [&>[data-list-frame]:first-child]:border-t-0 [&>[data-list-frame]:last-child]:-mb-3 [&>[data-list-frame]:last-child]:border-b-0 [&>[data-empty-state]]:border-0 [&>[data-empty-state]]:bg-transparent [&>[data-empty-state]]:py-4",
+
+  // Navigation
   settingsNavLink:
-    "relative flex h-7.5 cursor-pointer items-center rounded-xs px-2.25 font-mono text-[11.5px] font-medium text-console-muted transition-colors",
-  settingsNavLinkHover:
-    "hover:bg-console-surface-muted hover:text-console-text",
-  settingsNavLinkActive:
-    "bg-console-accent-soft text-console-text before:absolute before:-left-2.5 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-console-accent max-[960px]:before:hidden",
-  selectTrigger:
-    "flex h-7 min-w-full cursor-pointer items-center justify-between gap-2 rounded-xs border border-console-border bg-console-surface-raised px-2.5 py-0 text-left font-mono text-[11.5px] font-medium text-console-text transition hover:border-console-border-strong hover:bg-white focus-visible:outline-2 focus-visible:outline-console-accent-soft disabled:cursor-not-allowed disabled:opacity-50",
-  selectMenu:
-    "fixed z-50 max-h-[min(260px,calc(100vh-16px))] max-w-[calc(100vw-16px)] overflow-y-auto rounded-[3px] border border-console-border-strong bg-console-surface p-0.75 shadow-[0_16px_36px_rgb(15_23_42/0.12)]",
-  selectOption:
-    "grid min-h-6 w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left font-mono text-[11px] font-medium text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel",
-  selectedOption:
-    "border-console-accent bg-console-accent-soft text-console-text hover:border-console-accent hover:bg-console-accent-soft",
-  scopeTrigger:
-    "flex h-6.5 cursor-pointer max-w-107.5 items-center gap-1.5 rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-[11px] text-console-text transition hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-50 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel",
+    "relative flex h-7.5 cursor-pointer items-center rounded-xs px-2.25 font-mono text-chrome font-medium text-console-muted transition-colors",
+  settingsNavLinkHover: "hover:bg-console-surface-muted hover:text-console-text",
+  // The current item in the app bar: a section tab, or the Settings button while
+  // Settings is open (`iconButton`'s open state uses exactly these tokens). The
+  // same box as a bar control's hover.
+  barItemCurrent: "border-console-border-strong bg-console-bg-panel text-console-text",
+  // The current item of a vertical list (settings navigation, the phone drawer):
+  // the accent tint and a 2px accent bar on its inner left edge. Page tabs mark
+  // the current tab with a 1px underline on the bottom edge instead. The item
+  // must be `relative`.
+  activeBar:
+    "bg-console-accent-soft text-console-text before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-console-accent before:content-['']",
+
+  // Phone menu drawer: 44px targets. The base sets no colour; add the idle or
+  // active variant.
+  drawerItem:
+    "relative flex h-11 min-h-11 w-full cursor-pointer items-center gap-2 rounded-xs border-0 px-2.5 text-left font-mono text-control font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+  drawerItemIdle: "bg-transparent text-console-muted hover:bg-console-bg-panel hover:text-console-text",
+
+  // Environment rows in the Settings Environment rail
   scopeItem:
-    "grid min-h-6 w-full cursor-pointer grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left font-mono text-[11px] font-medium text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel",
-  scopeItemPreviewed: "border-console-border bg-console-bg-panel text-console-text",
+    "grid min-h-6 w-full cursor-pointer grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left font-mono text-badge font-medium text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel",
   scopeItemSelected:
     "border-console-accent bg-console-accent-soft text-console-text hover:border-console-accent hover:bg-console-accent-soft",
+  // A full-width text action inside a popover (profile menu).
   scopeAction:
-    "flex h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-xs border-0 bg-transparent px-2 font-mono text-[11px] font-medium text-console-muted transition hover:bg-white hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
-  logTab:
-    "relative inline-flex h-9 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3 py-0 font-mono text-[11.5px] font-medium text-console-muted transition-colors hover:text-console-text",
-  logTabActive:
-    "text-console-text after:absolute after:-bottom-px after:left-3 after:right-3 after:h-px after:bg-console-accent",
-  button:
-    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-accent bg-console-accent px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-white transition duration-100 hover:border-console-accent-hover hover:bg-console-accent-hover active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45",
-  secondaryButton:
-    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-console-border bg-[linear-gradient(to_bottom,#fbfcfd_0%,#eef1f3_100%)] px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-console-text transition duration-100 hover:border-console-border-strong hover:bg-[linear-gradient(to_bottom,#f3f5f7_0%,#dfe5ea_100%)] hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
-  ghostButton:
-    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-[11.5px] font-medium leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
-  dangerOutlineButton:
-    "inline-flex h-7 min-h-7 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-xs border border-[#d77b73] bg-[#fff1ef] px-2.5 py-0 font-mono text-[11.5px] font-medium leading-none text-console-danger transition duration-100 hover:border-[#9f312b] hover:bg-[#9f312b] hover:text-white disabled:cursor-not-allowed disabled:opacity-45",
+    "flex h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-xs border-0 bg-transparent px-2 font-mono text-badge font-medium text-console-muted transition hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
+
+  // Buttons
+  button: cx(
+    buttonBase,
+    "border-console-accent bg-console-accent text-white hover:border-console-accent-hover hover:bg-console-accent-hover active:translate-y-px",
+  ),
+  secondaryButton: cx(buttonBase, secondaryTone),
+  // The one 24px button: container header actions, table and list footers,
+  // notice actions, a code block's Copy and a queue row's action.
+  compactButton: cx(buttonFrame, "h-6 min-h-6 px-2", secondaryTone),
+  dangerOutlineButton: cx(
+    buttonBase,
+    "border-console-danger-outline bg-console-danger-bg text-console-danger hover:border-console-danger-solid hover:bg-console-danger-solid hover:text-white",
+  ),
+  // A square 28px icon button for bar and row chrome (settings, row menus).
   iconButton:
-    "inline-flex size-5 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent p-0 text-base leading-none text-console-muted transition duration-100 hover:bg-console-bg-panel hover:text-console-text",
-  actionMenuTrigger:
-    "inline-flex size-7 cursor-pointer items-center justify-center rounded-xs border border-transparent bg-transparent p-0 leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text focus-visible:outline-2 focus-visible:outline-console-accent-soft disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
-  actionMenu:
-    "fixed z-50 max-h-[min(260px,calc(100vh-16px))] overflow-y-auto rounded-xs border border-console-border-strong bg-console-surface p-0.75 shadow-[0_16px_36px_rgb(15_23_42/0.14)]",
+    "inline-grid size-7 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 leading-none text-console-muted transition duration-100 hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel data-[open=true]:text-console-text",
+  // The close control: 24px in a container header (dialogs), 20px in a
+  // dismissible notice. The base sets no size.
+  closeButton: cx(closeButtonBase, "size-6"),
+  noticeCloseButton: cx(closeButtonBase, "size-5"),
+  closeIcon:
+    "relative block size-2.5 before:absolute before:left-1/2 before:top-0 before:h-full before:w-px before:-translate-x-1/2 before:rotate-45 before:bg-current before:content-[''] after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:-rotate-45 after:bg-current after:content-['']",
+
+  // Popovers and menus: the container border, no shadow.
+  popover: "fixed z-50 flex flex-col overflow-hidden border border-console-border-strong bg-console-surface",
   // The base sets no colour: two Tailwind colour utilities on one element resolve
   // by stylesheet order, so only the tone variant may set `text-*`.
   actionMenuItemBase:
-    "flex min-h-7 w-full cursor-pointer items-center justify-start whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2.5 py-1 text-left font-mono text-[11.5px] font-medium leading-snug transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45",
+    "flex min-h-7 w-full cursor-pointer items-center justify-start whitespace-nowrap rounded-xs border border-transparent bg-transparent px-2.5 py-1 text-left font-mono text-chrome font-medium leading-snug transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45",
   actionMenuItemDefault:
     "text-console-text hover:border-console-border hover:bg-console-bg-panel hover:text-console-text focus-visible:border-console-border focus-visible:bg-console-bg-panel focus-visible:text-console-text",
   actionMenuItemDanger:
-    "text-console-danger-text hover:border-[#d77b73] hover:bg-[#fff1ef] hover:text-console-danger-text focus-visible:border-[#d77b73] focus-visible:bg-[#fff1ef] focus-visible:text-console-danger-text",
+    "text-console-danger-text hover:border-console-danger-outline hover:bg-console-danger-bg hover:text-console-danger-text focus-visible:border-console-danger-outline focus-visible:bg-console-danger-bg focus-visible:text-console-danger-text",
   actionMenuSeparator: "my-1 border-t border-console-border",
-  input:
-    "h-7 min-h-7 w-full rounded-xs border border-console-border bg-white px-2.5 py-0 text-[12px] leading-none text-console-text outline-none transition placeholder:text-console-faint hover:border-console-border-strong focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]",
-  textarea:
-    "min-h-17 w-full resize-y rounded-xs border border-console-border bg-white px-2.5 py-2 text-[12px] leading-snug text-console-text outline-none transition placeholder:text-console-faint hover:border-console-border-strong focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]",
-  field:
-    "mb-3 grid gap-1 text-[11.5px] font-medium text-console-muted [&>span]:font-medium [&>span]:text-console-text",
-  fieldError: "-mt-1 text-xs font-medium text-console-danger",
+  selectTrigger: cx(
+    "flex h-7 min-h-7 min-w-full cursor-pointer items-center justify-between gap-2 bg-console-surface-raised px-2.5 py-0 text-left text-control leading-none hover:bg-console-surface focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[open=true]:border-console-border-strong",
+    controlFrame,
+  ),
+  selectOption:
+    "grid min-h-6 w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left text-control text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel focus-visible:outline-none focus-visible:border-console-border focus-visible:bg-console-bg-panel",
+  selectedOption:
+    "border-console-accent bg-console-accent-soft text-console-text hover:border-console-accent hover:bg-console-accent-soft",
+
+  // Form controls
+  input: cx("h-7 min-h-7 w-full bg-console-surface px-2.5 py-0 text-control leading-none placeholder:text-console-faint", controlFrame),
+  monoInput: cx("h-7 min-h-7 w-full bg-console-surface px-2.5 py-0 font-mono text-chrome leading-none placeholder:text-console-faint", controlFrame),
+  textarea: cx("min-h-17 w-full resize-y bg-console-surface px-2.5 py-2 text-control leading-snug placeholder:text-console-faint", controlFrame),
+  fieldLabel: "text-chrome font-medium text-console-text",
+  fieldHint: "text-chrome font-normal leading-snug text-console-muted",
   fieldSet: "mb-3 mt-1 border-0 p-0",
-  fieldLegend: "mb-2 p-0 text-[12px] font-medium text-console-text",
-  h1: "m-0 text-[1.32rem] font-medium leading-[1.12] text-console-text",
-  h2: "m-0 text-[0.9rem] font-medium leading-tight text-console-text",
-  h3: "m-0 font-mono text-[0.68rem] font-medium uppercase tracking-[0.06em] text-console-subtle",
-  page: "mx-auto w-full max-w-310 px-5 pb-12 pt-10",
-  pageHeader: "mb-4 flex items-start justify-between gap-4 max-sm:flex-col max-sm:items-stretch",
-  pageTitle: "flex items-center gap-2.5",
-  pageSubtitle: "mt-1.5 max-w-180 text-[12.5px] leading-normal text-console-muted",
-  backLink:
-    "mb-2 inline-flex cursor-pointer items-center gap-1 font-mono text-xs font-medium text-console-muted before:text-console-subtle before:content-['←'] hover:text-console-text",
-  toolbar: "mb-3 flex flex-wrap items-center justify-between gap-2.5",
+  fieldLegend: "mb-2 p-0 text-control font-medium text-console-text",
+  segment:
+    "h-6.5 cursor-pointer whitespace-nowrap border-0 border-l border-console-border-strong gradient-button px-2.5 font-mono text-chrome font-medium text-console-text first:border-l-0 hover:gradient-button-hover disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:gradient-pressed aria-pressed:shadow-console-pressed",
+  choiceCard:
+    "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-console-surface has-checked:border-console-accent has-checked:bg-console-accent-soft [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-control [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-chrome [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
+
+  // Page structure
+  page: "mx-auto w-full max-w-310 px-5 pb-12 pt-4",
+  // Breadcrumb slot, then the title row with the actions on the right (PageHeader).
+  pageHeader: "mb-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 max-sm:grid-cols-1",
+  pageTitle: "flex min-h-7 items-center gap-2.5",
+  pageSubtitle: "mt-1.5 max-w-180 text-body leading-normal text-console-muted",
+  toolbar: "mb-3 flex flex-wrap items-center justify-between gap-2",
   toolbarSide: "flex flex-wrap items-center gap-2",
-  filterField: "inline-flex items-center gap-2 font-mono text-[11.5px] font-medium text-console-muted",
+  modalActions: "mt-3 flex flex-wrap justify-end gap-2",
+  modalIntro: "mb-3 text-body leading-normal text-console-muted",
+
+  // Tables
+  // Column headers: mono, uppercase, semibold muted on a hairline-strong rule;
+  // code in cells is body text colour. Horizontal overflow fades at the right
+  // edge (`scroll-fade-x`).
   tableWrap:
-    "overflow-x-auto border border-console-border-strong bg-console-surface [scrollbar-color:rgba(15,23,42,0.28)_#ffffff] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-white [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-[10px] [&_thead_th]:font-medium [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-subtle [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-[12.5px] [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-[11.5px] [&_tbody_td_code]:text-console-muted",
+    "scroll-fade-x overflow-x-auto [scrollbar-color:var(--console-scrollbar)_var(--console-surface)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-console-surface [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-console-surface [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border-strong [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-micro [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-muted [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-body [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-chrome [&_tbody_td_code]:text-console-text",
+  tableFooter:
+    "flex h-9 items-center gap-3 border-t border-console-border bg-console-surface px-3 font-mono text-chrome text-console-muted",
   actionsCell: "w-px whitespace-nowrap",
-  error: "mt-3 text-[12.5px] font-medium text-console-danger",
-  rowError: "mt-1.5 text-xs font-medium leading-snug text-console-danger",
-  muted: "text-[12.5px] text-console-muted",
+  emptyCell: "text-console-faint",
+
+  // Feedback
+  error: "mt-3 text-body font-medium text-console-danger",
   emptyState:
-    "m-0 flex flex-col items-center gap-1.5 border border-dashed border-console-border bg-console-bg-panel px-5 py-7 text-center text-[12.5px] text-console-muted",
-  hasMoreBanner:
-    "mb-3 border border-[#d6a33f]/35 bg-[#fff7df] px-3 py-2 text-[12.5px] text-[#7b5a12]",
-  inlineState: "mt-2.5 text-[12.5px] font-medium text-console-accent",
-  modalBackdrop: "fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-3 backdrop-blur-[2px]",
-  modal:
-    "flex max-h-[min(82vh,620px)] w-full max-w-115 flex-col overflow-hidden border border-console-border-strong bg-console-surface shadow-[2px_2px_0_rgb(15_23_42/0.12)] outline-none",
-  modalHeader:
-    "flex min-h-9 shrink-0 items-center justify-between gap-3 border-b border-console-border bg-console-bg-panel px-3.5 py-2.5",
-  modalTitle: "m-0 min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-console-text",
-  modalCloseButton:
-    "grid size-5 shrink-0 cursor-pointer place-items-center rounded-xs border border-transparent bg-transparent p-0 text-console-muted transition hover:border-console-border hover:bg-white hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
-  modalCloseIcon:
-    "relative block size-2.5 before:absolute before:left-1/2 before:top-0 before:h-full before:w-px before:-translate-x-1/2 before:rotate-45 before:bg-current before:content-[''] after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:-rotate-45 after:bg-current after:content-['']",
-  modalBody: "min-h-0 overflow-y-auto px-3.5 py-3.5",
-  modalIntro: "mb-3 text-[12.5px] leading-normal text-console-muted",
-  actionRow: "mt-3 flex flex-wrap justify-end gap-1.5",
-  modalActions: "mt-3 flex flex-wrap justify-end gap-1.5",
-  warning:
-    "mb-3 border border-[#d6a33f]/35 bg-[#fff7df] px-3 py-2 text-[12.5px] leading-normal text-[#7b5a12]",
+    "m-0 flex flex-col items-center gap-1.5 border border-dashed border-console-border bg-console-bg-panel px-5 py-7 text-center text-body text-console-muted",
+  notice: "flex items-center gap-2.5 border px-3 py-2 text-body leading-normal",
+  noticeBar: "flex items-center gap-3 border-b px-5 py-1.5 text-body leading-normal max-[860px]:px-3",
+
+  // Code and values
   codeBlock:
-    "m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-[12px] leading-normal text-console-text",
-  rawKey:
-    "block select-all overflow-x-auto whitespace-nowrap border border-console-border bg-console-bg-panel p-3 font-mono text-[12px] leading-normal text-console-text",
-  scopeTarget:
-    "mb-3 grid gap-1.5 border border-console-border-strong bg-console-bg-panel px-3 py-2.5 text-[12px] [&>span]:font-mono [&>span]:text-[10.5px] [&>span]:font-medium [&>span]:uppercase [&>span]:tracking-[0.04em] [&>span]:text-console-subtle [&>strong]:text-[13px] [&>strong]:font-medium [&>strong]:leading-tight [&>strong]:text-console-text [&>div]:flex [&>div]:min-w-0 [&>div]:flex-wrap [&>div]:items-center [&>div]:gap-1.5 [&>div]:font-mono [&>div]:text-[11px] [&>div]:text-console-muted [&_code]:text-[10.5px] [&_code]:text-console-subtle",
-  scopeTargetDot: "inline-block size-1.5 shrink-0 rounded-full",
-  permissionOption:
-    "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-white [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-[12px] [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-[11.5px] [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
-  panel:
-    "w-full max-w-98 border border-console-border-strong bg-console-surface px-4 pb-4 pt-4 text-console-text shadow-[2px_2px_0_rgb(15_23_42/0.12)] [:where(&_a)]:mt-3 [:where(&_a)]:inline-block [:where(&_a)]:cursor-pointer [:where(&_a)]:text-[12.5px] [:where(&_a)]:text-console-accent [:where(&_a:hover)]:text-console-accent-hover [&_button]:w-full [&_p]:text-[12.5px] [&_p]:leading-normal [&_p]:text-console-muted",
+    "m-0 max-h-130 overflow-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel px-4 py-3 font-mono text-control leading-normal text-console-text",
+
+  // Auth windows
   authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
-  authCopy: "mb-3.5 text-[12.5px] leading-normal text-console-muted",
+  authCopy: "mb-3.5 text-body leading-normal text-console-muted",
   authActions: "mt-3 flex flex-col gap-1.5",
   authDivider:
-    "my-3.5 flex items-center gap-3 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-console-subtle [&>span:first-child]:h-px [&>span:first-child]:flex-1 [&>span:first-child]:bg-console-border [&>span:last-child]:h-px [&>span:last-child]:flex-1 [&>span:last-child]:bg-console-border",
+    "my-3.5 flex items-center gap-3 font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle [&>span:first-child]:h-px [&>span:first-child]:flex-1 [&>span:first-child]:bg-console-border [&>span:last-child]:h-px [&>span:last-child]:flex-1 [&>span:last-child]:bg-console-border",
   authCode:
     "my-3.5 block w-full border border-console-border-strong bg-console-bg-panel p-3 text-center font-mono text-[1.25rem] font-medium tracking-[0.16em] text-console-accent",
-  authStatus: "mb-2 text-[12.5px] font-medium text-console-text",
 };
 
 export function actionMenuItemClass(tone: "default" | "danger" | undefined): string {
   return cx(ui.actionMenuItemBase, tone === "danger" ? ui.actionMenuItemDanger : ui.actionMenuItemDefault);
-}
-
-export function envDotClass(tone: "danger" | "warning" | "info" | "purple" | "success" | "neutral"): string {
-  const tones = {
-    danger: "bg-console-danger",
-    warning: "bg-console-warning",
-    info: "bg-console-info",
-    purple: "bg-[#7c5cff]",
-    success: "bg-console-success",
-    neutral: "bg-console-faint",
-  };
-  return cx("inline-block size-1.5 shrink-0 rounded-full", tones[tone]);
-}
-
-export function envDotStyle(colorHex: string): Record<string, string> {
-  return { "background-color": colorHex };
 }
