@@ -818,3 +818,31 @@ test("non-JSON result is result_invalid, while a throwing validator is handler_f
     assert.equal(outcome.error?.code, throwing ? "handler_failed" : "result_invalid")
   }
 })
+
+
+test("default invocation rejects non-text input before the authored handler", async () => {
+  let handled = false
+  const { runtime, calls } = fixture({ turn: () => { handled = true; return null } })
+  const outcome = await runtime.dispatch({ ...request(), input: [{ type: "file", path: "/private" }] })
+  assert.equal(outcome.status, "failed")
+  assert.equal(outcome.error?.code, "input_invalid")
+  assert.equal(handled, false)
+  assert.equal(calls.includes("finalize"), false)
+})
+
+test("live messages reject non-text content before the authored callback", async () => {
+  const ready = deferred<void>(), release = deferred<void>()
+  let callbacks = 0
+  const { runtime } = fixture({ turn: async turn => {
+    await turn.onMessage(() => { callbacks++ })
+    ready.resolve(); await release.promise; return null
+  } })
+  const result = runtime.dispatch(request())
+  await ready.promise
+  try {
+    await assert.rejects(runtime.deliverMessage("turn-1", "invalid", [{ type: "file", path: "/private" }] as unknown as InputContent, { kind: "user" }))
+    assert.equal(callbacks, 0)
+    await runtime.deliverMessage("turn-1", "valid", textInput("follow-up"), { kind: "user" })
+    assert.equal(callbacks, 1)
+  } finally { release.resolve(); await result }
+})

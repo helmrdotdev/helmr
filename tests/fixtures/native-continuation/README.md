@@ -19,6 +19,9 @@ When the x86 Linux build shell itself runs inside Docker Desktop with the local
 Docker socket mounted, set `HELMR_NATIVE_REGISTRY_HOST=host.docker.internal` so
 it reaches the daemon's published loopback registry. A direct Linux host uses
 the default `127.0.0.1`. Neither mode publishes a registry beyond host loopback.
+If the isolated builder cannot reach its default public DNS servers, set
+`HELMR_NATIVE_BUILD_DNS` to one reachable DNS server IP for this build. This configures
+only the temporary builder; it does not change the host or running services.
 
 The builder, Runtime and local SDK packages are built from that checkout. The
 example dependencies are installed only after their local SDK/protocol packages

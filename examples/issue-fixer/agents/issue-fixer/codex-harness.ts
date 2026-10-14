@@ -127,8 +127,7 @@ export class CodexHarness {
       registration = turn.onMessage(async value => {
         const operation = this.active
         if (!operation || operation.turn !== turn || !operation.accepting) throw new MessageRejected("Native Turn input is closed")
-        let text: string
-        try { text = steeringText(value.content) } catch { throw new MessageRejected("Valid message content or steering text is required") }
+        const text = steeringText(value.content)
         const native = await operation.starting.promise
         if (!operation.accepting || this.active !== operation) throw new MessageRejected("Native Turn input is closed")
         try {

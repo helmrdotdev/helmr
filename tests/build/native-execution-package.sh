@@ -66,6 +66,13 @@ cat > "$tmp/buildkitd.toml" <<EOF
   http = true
   insecure = true
 EOF
+# Isolated builder DNS may need the host network's reachable resolver.
+if [[ -n ${HELMR_NATIVE_BUILD_DNS:-} ]]; then
+  python3 - "$HELMR_NATIVE_BUILD_DNS" >> "$tmp/buildkitd.toml" <<'DNS'
+import ipaddress,json,sys
+print("[dns]\n  nameservers = " + json.dumps([str(ipaddress.ip_address(sys.argv[1]))]))
+DNS
+fi
 docker buildx create --name "$fixture_builder" --driver docker-container \
   --driver-opt network=host --buildkitd-config "$tmp/buildkitd.toml" >/dev/null
 docker buildx inspect --bootstrap "$fixture_builder" >/dev/null

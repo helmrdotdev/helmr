@@ -45,7 +45,6 @@ test("content conversion encodes JSON and rejects unsupported files", () => {
   expect(nativeText([{ type: "text", text: "hel" }, { type: "text", text: "lo" }])).toBe("hello")
   expect(nativeText([{ type: "text", text: "inspect" }, { type: "json", value: { n: 3 } }])).toBe('inspect\n{"n":3}')
   expect(steeringText([{ type: "text", text: "stop editing" }])).toBe("stop editing")
-  expect(() => steeringText([{ type: "file", path: "/private" }])).toThrow()
 })
 
 test("Codex skip and notes stay distinct from None of the above and free text", async () => {

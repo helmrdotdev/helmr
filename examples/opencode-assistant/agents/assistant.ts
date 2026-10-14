@@ -1,4 +1,4 @@
-import { normalizeInput } from "@helmr/sdk/internal"
+import type { InputContent } from "@helmr/sdk"
 import { agent, template, image, MessageRejected } from "@helmr/sdk"
 import { OpenCodeHarness } from "./opencode"
 
@@ -38,8 +38,8 @@ export const assistant = agent({
   },
 })
 
-export function inputText(value: unknown): string {
-  const text = normalizeInput(value).map(part => part.text).join("")
+export function inputText(value: InputContent): string {
+  const text = value.map(part => part.text).join("")
   if (!text.trim()) throw new Error("Send a nonempty text message")
   return text
 }

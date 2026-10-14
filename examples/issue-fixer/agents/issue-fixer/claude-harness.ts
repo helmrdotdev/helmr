@@ -185,8 +185,7 @@ export class ClaudeHarness {
       registration = turn.onMessage(async value => {
         const operation = this.active
         if (!operation || operation.turn !== turn) throw new MessageRejected("Native Turn input is closed")
-        let text: string
-        try { text = steeringText(value.content) } catch { throw new MessageRejected("Valid message content or steering text is required") }
+        const text = steeringText(value.content)
         this.submit(operation, text)
       })
       this.messageRegistrations.set(turn, registration)
