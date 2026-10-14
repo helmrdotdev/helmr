@@ -1,16 +1,13 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { useQueryClient } from "@tanstack/solid-query";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { scopeSwitchPath } from "../lib/scope-navigation";
-import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS } from "../features/projects/display";
-import { errorMessage } from "../lib/error";
-import { createEnvironment, createProject, listRegions } from "../lib/projects";
+import { defaultEnvironmentColor } from "../features/projects/display";
+import { NewEnvironmentDialog, NewProjectDialog } from "../features/projects/forms";
 import { rememberProjectScope, useScope } from "../lib/scope";
-import { FormDialog } from "../ui/Dialog";
 import { EnvDot } from "../ui/EnvChip";
-import { ColorField, createDerivedSlug, Field, SearchInput, SlugInput, TextInput } from "../ui/Field";
+import { SearchInput } from "../ui/Field";
 import { Popover } from "../ui/Popover";
-import { Select } from "../ui/Select";
 import { cx, toneClass, ui } from "../ui/styles";
 
 type CreateMode = "project" | "environment" | null;
@@ -35,25 +32,9 @@ export function ScopeSwitcher() {
   const [projectQuery, setProjectQuery] = createSignal("");
   const [envQuery, setEnvQuery] = createSignal("");
   const [creating, setCreating] = createSignal<CreateMode>(null);
-  const [formName, setFormName] = createSignal("");
-  const slug = createDerivedSlug(formName);
-  const [selectedRegionID, setSelectedRegionID] = createSignal("");
-  const [chosenColor, setChosenColor] = createSignal<string | null>(null);
-  const formColorHex = () => chosenColor() ?? defaultEnvironmentColor(slug.value());
-  const [submitting, setSubmitting] = createSignal(false);
-  const [formError, setFormError] = createSignal<string | null>(null);
-
   let projectSearchRef: HTMLInputElement | undefined;
 
   const activeProject = createMemo(() => scope.selectedProject());
-  const regions = createQuery(() => ({
-    queryKey: ["regions"],
-    queryFn: listRegions,
-    retry: false,
-    staleTime: 60_000,
-  }));
-  const regionOptions = createMemo(() => regions.data?.regions ?? []);
-
   const filteredProjects = createMemo(() => {
     const q = projectQuery().trim().toLowerCase();
     if (!q) return scope.projects();
@@ -71,31 +52,10 @@ export function ScopeSwitcher() {
     );
   });
 
-  createEffect(() => {
-    if (creating() !== "project") return;
-    if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
-  });
-
-  function resetForm() {
-    setFormName("");
-    slug.reset();
-    setSelectedRegionID("");
-    setChosenColor(null);
-    setFormError(null);
-    setSubmitting(false);
-  }
-
   function startCreate(mode: Exclude<CreateMode, null>) {
     if (mode === "environment" && !activeProject()) return;
-    resetForm();
     setOpen(false);
     setCreating(mode);
-  }
-
-  function cancelForm() {
-    if (submitting()) return;
-    setCreating(null);
-    resetForm();
   }
 
   const toggle = () => {
@@ -116,61 +76,6 @@ export function ScopeSwitcher() {
     navigate(scopeSwitchPath(location.pathname));
     setOpen(false);
   };
-
-  async function submitCreateProject() {
-    const name = formName().trim();
-    const projectID = slug.value().trim();
-    const regionID = selectedRegionID().trim();
-    if (!name || !projectID || !regionID) {
-      setFormError("Name, Project ID, and region are required.");
-      return;
-    }
-    setFormError(null);
-    setSubmitting(true);
-    try {
-      const project = await createProject({ name, project: projectID, default_region_id: regionID });
-      const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
-      rememberProjectScope(project);
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      scope.setSelectedProjectID(project.project);
-      scope.setSelectedEnvironmentID(environment?.environment ?? "");
-      navigate(scopeSwitchPath(location.pathname));
-      setCreating(null);
-      resetForm();
-    } catch (error) {
-      setFormError(errorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitCreateEnvironment() {
-    const projectID = scope.selectedProjectID();
-    if (!projectID) {
-      setFormError("Pick a project first.");
-      return;
-    }
-    const name = formName().trim();
-    const environmentID = slug.value().trim();
-    if (!name || !environmentID) {
-      setFormError("Name and Environment ID are required.");
-      return;
-    }
-    setFormError(null);
-    setSubmitting(true);
-    try {
-      const env = await createEnvironment(projectID, { name, environment: environmentID, color_hex: formColorHex() });
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      scope.setSelectedEnvironmentID(env.environment);
-      navigate(scopeSwitchPath(location.pathname));
-      setCreating(null);
-      resetForm();
-    } catch (error) {
-      setFormError(errorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   const selectedEnvironment = createMemo(() => scope.selectedEnvironment());
   const hasNoProjects = createMemo(() => !scope.isLoading() && scope.projects().length === 0);
@@ -327,53 +232,33 @@ export function ScopeSwitcher() {
       </Popover>
 
       <Show when={creating() === "project"}>
-        <FormDialog
-          title="New project"
-          submitLabel="Create"
-          busyLabel="Creating..."
-          busy={submitting()}
-          disabled={!formName().trim() || !slug.value().trim() || !selectedRegionID().trim()}
-          error={formError()}
-          onSubmit={() => void submitCreateProject()}
-          onClose={cancelForm}
-        >
-          <Field label="Name">
-            <TextInput value={formName()} onInput={(event) => setFormName(event.currentTarget.value)} placeholder="My app" autocomplete="off" autofocus />
-          </Field>
-          <Field label="Project ID">
-            <SlugInput slug={slug} placeholder="my-app" />
-          </Field>
-          <Field label="Region">
-            <Select
-              value={selectedRegionID()}
-              options={regionOptions().map((region) => ({ value: region.id, label: region.display_name || region.id }))}
-              onChange={setSelectedRegionID}
-              disabled={regions.isPending || regionOptions().length === 0}
-              minWidth="100%"
-            />
-          </Field>
-        </FormDialog>
+        <NewProjectDialog
+          onClose={() => setCreating(null)}
+          onCreated={async (project) => {
+            const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
+            rememberProjectScope(project);
+            await queryClient.invalidateQueries({ queryKey: ["projects"] });
+            scope.setSelectedProjectID(project.project);
+            scope.setSelectedEnvironmentID(environment?.environment ?? "");
+            navigate(scopeSwitchPath(location.pathname));
+            setCreating(null);
+          }}
+        />
       </Show>
 
-      <Show when={creating() === "environment"}>
-        <FormDialog
-          title={activeProject() ? `New environment in ${activeProject()!.name}` : "New environment"}
-          submitLabel="Create"
-          busyLabel="Creating..."
-          busy={submitting()}
-          disabled={!formName().trim() || !slug.value().trim()}
-          error={formError()}
-          onSubmit={() => void submitCreateEnvironment()}
-          onClose={cancelForm}
-        >
-          <Field label="Name">
-            <TextInput value={formName()} onInput={(event) => setFormName(event.currentTarget.value)} placeholder="Preview" autocomplete="off" autofocus />
-          </Field>
-          <Field label="Environment ID">
-            <SlugInput slug={slug} placeholder="preview" />
-          </Field>
-          <ColorField value={formColorHex()} onChange={setChosenColor} presets={ENVIRONMENT_COLOR_PRESETS} ariaLabel="Environment color" />
-        </FormDialog>
+      <Show when={creating() === "environment" && activeProject()}>
+        {(project) => (
+          <NewEnvironmentDialog
+            project={project()}
+            onClose={() => setCreating(null)}
+            onCreated={async (environment) => {
+              await queryClient.invalidateQueries({ queryKey: ["projects"] });
+              scope.setSelectedEnvironmentID(environment.environment);
+              navigate(scopeSwitchPath(location.pathname));
+              setCreating(null);
+            }}
+          />
+        )}
       </Show>
     </div>
   );

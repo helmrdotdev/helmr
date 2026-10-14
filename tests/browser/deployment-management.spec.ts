@@ -83,12 +83,12 @@ test("Computer exposes independently paged Sessions and Commands with pinned Tem
   await page.goto(`/computers/${computer}`);
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
-  await expect(page.getByText("unreconciled", { exact: true })).toBeVisible();
-  await expect(page.getByText("running", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unreconciled", { exact: true })).toBeVisible();
+  await expect(page.getByText("Running", { exact: true })).toBeVisible();
   const templateLink = page.getByRole("link", { name: "browser", exact: true });
   await expect(templateLink).toHaveAttribute("href", `/deployments/${deploymentID}/templates/browser`);
-  await page.getByRole("button", { name: "Load more sessions", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Load more sessions", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more Sessions", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Load more Sessions", exact: true })).toHaveCount(0);
   expect(requestPaths.some(path => path.endsWith("/sessions?cursor=sessions-page-2"))).toBe(true);
   expect(requestPaths.some(path => path.includes("/commands?cursor="))).toBe(false);
   expect(requestPaths.some(path => path.includes("/members"))).toBe(false);

@@ -28,7 +28,7 @@ export function Panel(props: {
     >
       <section class={cx(ui.window, props.class)} aria-label={props.title}>
         <div class={ui.titleStrip}>
-          <span class="truncate">{props.title}</span>
+          <h2 class="m-0 min-w-0 flex-1 truncate font-mono text-micro font-normal">{props.title}</h2>
           <Show when={props.actions}><div class="flex items-center gap-1">{props.actions}</div></Show>
         </div>
         <div class={cx(ui.windowStack, "p-3")}>{props.children}</div>

@@ -12,7 +12,8 @@ import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
 import { BrandMark } from "./ui/BrandMark";
 import { Notice } from "./ui/Notice";
-import { ui } from "./ui/styles";
+import { Page } from "./ui/Page";
+import { cx, ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
@@ -20,8 +21,7 @@ import { AuthSlackLink } from "./routes/auth-slack-link";
 import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { SlackSettings } from "./routes/slack-settings";
-import { AuthGitHubCallback } from "./routes/auth-github-callback";
-import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
+import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
 import { Templates, AgentDefinitionDetail, TemplateDetail } from "./routes/definitions";
 import { Agents, AgentDetail } from "./routes/agents";
 import { Sessions } from "./routes/sessions";
@@ -130,9 +130,11 @@ const wrapAccount = (Inner: () => JSX.Element) => () => (
   <RequireAuth requirement="organization">
     <div class="min-h-dvh text-sm text-console-text">
       <AppBar leading={<BrandMark href="/" />} trailing={<ProfileMenu />} />
-      <main class={ui.page}>
-        <p class={ui.h3}>Your account</p>
-        <div class="mt-3"><Inner /></div>
+      <main>
+        <Page>
+          <p class={cx(ui.h3, "mb-3")}>Your account</p>
+          <Inner />
+        </Page>
       </main>
     </div>
   </RequireAuth>

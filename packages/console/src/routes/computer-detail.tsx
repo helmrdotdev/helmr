@@ -14,12 +14,13 @@ import {
   listComputerCommands,
   type ComputerScope,
 } from "../lib/computers";
-import { DataTable } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
+import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
@@ -52,21 +53,27 @@ function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; k
   const items = createMemo(() => usage.data?.pages.flatMap(page => page.items) ?? []);
   return <Panel title={title()}>
     <p class={ui.muted}>Currently using this Computer, including work awaiting cleanup.</p>
-    <Show when={usage.isError}><StatePanel error={actionErrorMessage(usage.error, `Could not load ${props.kind}.`)} /></Show>
-    <Show when={usage.isPending}><StatePanel loading={`Loading ${props.kind}...`} /></Show>
-    <Show when={usage.data}>
-      <Show when={items().length > 0} fallback={<StatePanel empty={`No ${props.kind} are using this Computer.`} />}>
-        <DataTable columns={["ID", "Usage"]} minWidth="min-w-0">
+    <QueryState
+      query={usage}
+      pending={`Loading ${props.kind}...`}
+      error={(error) => actionErrorMessage(error, `Could not load ${props.kind}.`)}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${props.kind} are using this Computer.` }}
+    >
+      {() => (
+        <DataTable
+          columns={[props.kind === "sessions" ? "Session" : "Command", "Usage"]}
+          minWidth="min-w-0"
+          footer={<LoadMore count={items().length} noun={title()} hasMore={usage.hasNextPage} loading={usage.isFetchingNextPage} failed={usage.isFetchNextPageError} onLoadMore={() => void usage.fetchNextPage()} />}
+        >
           <For each={items()}>{item => <tr>
             <td><Show when={props.kind === "sessions"} fallback={<IDText value={item.id} />}>
               <IDText value={item.id} mode="link" href={sessionConsolePath(item.id)} />
             </Show></td>
-            <td>{item.usage_state}</td>
+            <td><StatusBadge resource="computer_usage" status={item.usage_state} /></td>
           </tr>}</For>
         </DataTable>
-      </Show>
-      <Show when={usage.hasNextPage}><button class={ui.secondaryButton} disabled={usage.isFetchingNextPage} onClick={() => void usage.fetchNextPage()}>Load more {props.kind}</button></Show>
-    </Show>
+      )}
+    </QueryState>
   </Panel>;
 }
 
@@ -86,7 +93,7 @@ export function ComputerDetail() {
   }));
 
   return (
-    <section class={ui.page}>
+    <Page>
       <PageHeader
         title="Computer"
         breadcrumb={[{ href: "/computers", label: "Computers" }]}
@@ -95,66 +102,51 @@ export function ComputerDetail() {
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
 
-      <Show when={computerID() !== ""} fallback={<StatePanel error="Computer ID is required." />}>
-        <Show when={hasScope()} fallback={<StatePanel empty="Select a project and environment." />}>
-          <Show when={!computer.isPending} fallback={<StatePanel loading="Loading Computer..." />}>
-            <Show
-              when={computer.data}
-              fallback={
-                <StatePanel empty={computerErrorMessage(computer.error)}>
-                  <button class={ui.secondaryButton} type="button" onClick={() => void computer.refetch()}>
-                    Retry
-                  </button>
-                </StatePanel>
+      <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
+        <QueryState query={computer} pending="Loading Computer..." error={computerErrorMessage}>
+          {(current) => (
+            <DetailLayout
+              rail={
+                <KeyValueList title="Computer details">
+                  <KeyValue label="Status"><StatusBadge resource="computer" status={current().status} /></KeyValue>
+                  <KeyValue label="Residency">{current().residency}</KeyValue>
+                  <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
+                  <KeyValue label="Key">
+                    <Show when={current().key}>{(key) => <code>{key()}</code>}</Show>
+                  </KeyValue>
+                  <KeyValue label="Created from"><PrimaryLink href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</PrimaryLink></KeyValue>
+                  <KeyValue label="Deployment">
+                    <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
+                  </KeyValue>
+                  <KeyValue label="Last activity"><RelativeTime value={current().last_activity_at} /></KeyValue>
+                  <KeyValue label="Created"><RelativeTime value={current().created_at} /></KeyValue>
+                  <KeyValue label="Updated"><RelativeTime value={current().updated_at} /></KeyValue>
+                </KeyValueList>
               }
             >
-              {(current) => (
-                <DetailLayout
-                  rail={
-                  <KeyValueList title="Computer details">
-                    <KeyValue label="Status"><StatusBadge resource="computer" status={current().status} /></KeyValue>
-                    <KeyValue label="Residency">{current().residency}</KeyValue>
-                    <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
-                    <KeyValue label="Key">
-                      <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
-                    </KeyValue>
-                    <KeyValue label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></KeyValue>
-                    <KeyValue label="Deployment">
-                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
-                    </KeyValue>
-                    <KeyValue label="Last activity"><RelativeTime value={current().last_activity_at} /></KeyValue>
-                    <KeyValue label="Created"><RelativeTime value={current().created_at} /></KeyValue>
-                    <KeyValue label="Updated"><RelativeTime value={current().updated_at} /></KeyValue>
-                  </KeyValueList>
-                  }
-                >
-                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="sessions" />
-                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="commands" />
-                    <Panel title="Secret placements">
-                      <Show when={current().secrets.length > 0} fallback={<StatePanel empty="No Secrets are attached." />}>
-                        <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
-                          <For each={current().secrets}>
-                            {(secret) => (
-                              <tr>
-                                <td><code>{secret.secret}</code></td>
-                                <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
-                                <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
-                                <td>{secret.env?.allowedOrigins?.join(", ") ?? "—"}</td>
-                              </tr>
-                            )}
-                          </For>
-                        </DataTable>
-                      </Show>
-                    </Panel>
-
-                    <p class={ui.muted}>Use the CLI to run commands or delete this Computer.</p>
-                </DetailLayout>
-              )}
-            </Show>
-          </Show>
-        </Show>
+              <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="sessions" />
+              <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="commands" />
+              <Panel title="Secret placements">
+                <Show when={current().secrets.length > 0} fallback={<EmptyState title="No Secrets are attached." />}>
+                  <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
+                    <For each={current().secrets}>
+                      {(secret) => (
+                        <tr>
+                          <td><code>{secret.secret}</code></td>
+                          <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
+                          <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
+                          <td><Show when={secret.env?.allowedOrigins?.length} fallback={<EmptyCell />}>{secret.env?.allowedOrigins?.join(", ")}</Show></td>
+                        </tr>
+                      )}
+                    </For>
+                  </DataTable>
+                </Show>
+              </Panel>
+              <p class={ui.muted}>Use the CLI to run commands or delete this Computer.</p>
+            </DetailLayout>
+          )}
+        </QueryState>
       </Show>
-
-    </section>
+    </Page>
   );
 }

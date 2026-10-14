@@ -68,7 +68,7 @@ export function definitionHref(kind: DefinitionKind, id: string, deploymentID: s
   return `/deployments/${encodeURIComponent(deploymentID)}/${kind}/${encodeURIComponent(id)}`;
 }
 
-type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
+export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
 export function agentHref(agent: string): string {
   return `/agents/${encodeURIComponent(agent)}`;
 }

@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { Field } from "./Field";
+import { ChoiceCards, Field, TextInput } from "./Field";
 import { Select } from "./Select";
 import { ui } from "./styles";
 
@@ -11,12 +11,14 @@ const units = [
 ];
 const maxSeconds = 9223372036854775807n;
 
-const MODES = [
-  { value: "never", label: "Never expire" },
-  { value: "duration", label: "Keep for a duration" },
+type Mode = "never" | "duration";
+
+const MODES: { value: Mode; label: string; description: string }[] = [
+  { value: "never", label: "Never expire", description: "Automatic expiry is disabled. Previously expired content cannot be restored." },
+  { value: "duration", label: "Keep for a duration", description: "Expiry deletes inputs, results, messages, questions, answers and event content. Open Sessions keep their history." },
 ];
 
-export type HistoryRetentionDraft = { mode: string; amount: string; unit: number };
+export type HistoryRetentionDraft = { mode: Mode; amount: string; unit: number };
 
 export function historyRetentionDraft(policy: string): HistoryRetentionDraft {
   if (policy === "never") return { mode: "never", amount: "30", unit: 86400 };
@@ -44,23 +46,20 @@ export function historyRetentionPolicy(draft: HistoryRetentionDraft): string {
 
 export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; onChange: (value: HistoryRetentionDraft) => void }) {
   return (
-    <fieldset>
-      <legend>Session history retention</legend>
+    <fieldset class="m-0 border-0 p-0">
+      <legend class={ui.fieldLegend}>Session history retention</legend>
       <p class={ui.muted}>Applies to all remaining Session history in every Environment of this Project.</p>
-      <Field label="History retention">
-        <Select
-          value={props.value.mode}
-          options={MODES}
-          onChange={mode => props.onChange({ ...props.value, mode })}
-          minWidth="100%"
-        />
-      </Field>
-      <Show when={props.value.mode === "duration"} fallback={<p class={ui.muted}>Automatic expiry is disabled. Previously expired content cannot be restored.</p>}>
+      <ChoiceCards
+        label="History retention"
+        name="history-retention"
+        value={props.value.mode}
+        options={MODES}
+        onChange={mode => props.onChange({ ...props.value, mode })}
+      />
+      <Show when={props.value.mode === "duration"}>
         <div class="flex gap-2">
-          <label class={ui.field}>
-            <span>Retention period</span>
-            <input
-              class={ui.input}
+          <Field label="Retention period" class="flex-1">
+            <TextInput
               type="number"
               min="1"
               max={String(maxSeconds / BigInt(props.value.unit))}
@@ -69,8 +68,8 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
               value={props.value.amount}
               onInput={event => props.onChange({ ...props.value, amount: event.currentTarget.value })}
             />
-          </label>
-          <Field label="Unit">
+          </Field>
+          <Field label="Unit" class="flex-1">
             <Select
               value={String(props.value.unit)}
               options={units.map(unit => ({ value: String(unit.seconds), label: unit.label }))}
@@ -79,7 +78,7 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
             />
           </Field>
         </div>
-        <p class={ui.muted}>The period starts after a Session ends and its pending work finishes. Expiry deletes inputs, results, messages, questions, answers and event content. Open Sessions keep their history.</p>
+        <p class={ui.muted}>The period starts after a Session ends and its pending work finishes.</p>
         <p class={ui.muted}>Session identities and statuses, Computer files, and administrative audit records are separate. Very short periods can expire content before a delayed reader fetches it.</p>
       </Show>
     </fieldset>

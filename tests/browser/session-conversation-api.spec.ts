@@ -62,7 +62,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   await expect(page.getByText("kept while saving", { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Second visible progress", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Question — responded" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem").filter({ has: page.getByRole("link", { name: "Question", exact: true }) })).toContainText("Responded");
   const after = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json();
   expect(after.turns.map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["finalizing", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "kept while saving" }]],
@@ -130,12 +130,11 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
   await page.goto(`/settings/secrets?${f.scope}`);
   await page.getByRole("button", { name: "Actions for BROWSER_REVOCATION" }).click();
-  const confirmation = page.waitForEvent("dialog");
-  const click = page.getByRole("button", { name: "Revoke", exact: true }).click();
-  const dialog = await confirmation;
-  expect(dialog.message()).toContain("Pending inputs are retained but cannot run on affected Computers.");
-  await dialog.accept();
-  await click;
+  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Revoke secret" });
+  await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected Computers.");
+  await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
   const turns = async () => (await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json()).turns;
   await expect.poll(async () => (await turns()).map((turn: { status: string }) => turn.status)).toEqual(["interrupted", "queued"]);

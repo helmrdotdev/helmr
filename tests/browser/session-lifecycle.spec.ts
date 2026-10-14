@@ -245,11 +245,11 @@ test("Session closure refreshes final progress and questions before another poll
     else await route.fallback();
   });
   await page.goto(url);
-  await expect(page.getByRole("link", { name: "Question — pending" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Pending");
   await page.getByRole("button", { name: "Cancel Session", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Cancel Session", exact: true }).click();
   await expect(page.getByText("Last published output", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Question — cancelled" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Cancelled");
 });
 
 test("expired Turn content remains distinct from empty input and a null result", async ({ page }) => {

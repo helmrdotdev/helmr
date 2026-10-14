@@ -6,7 +6,7 @@ import { cx, ui } from "./styles";
 // The centered window for sign-in, invites, callbacks, Slack linking, device
 // approval, access and onboarding screens. `step` shows onboarding progress in the
 // title strip ("Step 1 of 2").
-export function AuthWindow(props: { children: JSX.Element; step?: string }) {
+export function AuthWindow(props: { children: JSX.Element; step?: string | undefined }) {
   return (
     <main class="grid min-h-dvh place-items-center bg-transparent px-4 py-6">
       <section class={cx(ui.window, "w-full max-w-98 text-console-text")}>
@@ -58,10 +58,10 @@ export function AuthWorking(props: { children: JSX.Element }) {
 
 // An actionable failure: a human message, the next step, and the technical
 // detail folded away for support.
-export function AuthError(props: { title: string; message: string; details?: string | undefined; action?: JSX.Element }) {
+export function AuthError(props: { title?: string; message: string; details?: string | undefined; action?: JSX.Element }) {
   return (
     <>
-      <AuthTitle>{props.title}</AuthTitle>
+      <Show when={props.title}><AuthTitle>{props.title}</AuthTitle></Show>
       <p class="font-medium text-console-danger!" role="alert">{props.message}</p>
       <Show when={props.details}>
         <details class="mt-2 text-chrome text-console-muted">

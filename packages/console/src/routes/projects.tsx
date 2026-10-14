@@ -5,12 +5,15 @@ import { errorMessage } from "../lib/error";
 import { hasPermission } from "../lib/auth";
 import { getProjectSettings, updateProjectSettings, updateProject } from "../lib/projects";
 import { useScope } from "../lib/scope";
+import { ConfirmDialog } from "../ui/Dialog";
+import { Field, FormActions, TextInput } from "../ui/Field";
 import { HistoryRetentionFields, historyRetentionDraft, historyRetentionPolicy, historyRetentionSeconds, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
 import { IDText } from "../ui/IDText";
+import { InlineStatus, Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
-import { StatePanel } from "../ui/StatePanel";
-import { ui } from "../ui/styles";
-
+import { Panel } from "../ui/Panel";
+import { EmptyState, QueryState } from "../ui/QueryState";
+import { cx, ui } from "../ui/styles";
 
 export function Projects() {
   const scope = useScope();
@@ -20,7 +23,6 @@ export function Projects() {
   const [saveError, setSaveError] = createSignal<string | null>(null);
 
   const project = createMemo(() => scope.selectedProject());
-  const hasProject = createMemo(() => !!project());
   const dirty = createMemo(() => {
     const current = project();
     if (!current) return false;
@@ -56,41 +58,32 @@ export function Projects() {
 
   return (
     <>
-      <PageHeader title="Project" subtitle="Profile and settings shared by every Environment in the selected Project." />
+      <PageHeader
+        title="Project"
+        subtitle="Profile and settings shared by every Environment in the selected Project."
+        meta={<Show when={project()}>{(current) => <span class="inline-flex items-baseline gap-1.5">Project ID <IDText value={current().project} mode="full" /></span>}</Show>}
+      />
 
-      <Show when={hasProject()} fallback={<StatePanel empty="No project selected." />}>
-        <form class="max-w-220 border border-console-border-strong bg-console-surface px-4 py-4" onSubmit={submitProject}>
-          <h2 class={ui.h2}>Profile</h2>
-          <label class={ui.field}>
-            <span>Name</span>
-            <input
-              type="text"
-              class={ui.input}
-              value={name()}
-              onInput={(event) => {
-                setName(event.currentTarget.value);
-              }}
-              autocomplete="off"
-            />
-          </label>
-          <label class={ui.field}>
-            <span>Project ID</span>
-            <IDText value={project()?.project ?? ""} mode="full" />
-          </label>
-          <Show when={saveError()}>
-            <p class={ui.fieldError} role="alert">{saveError()}</p>
-          </Show>
-          <div class={ui.actionRow}>
-            <button
-              class={ui.button}
-              type="submit"
-              disabled={saving() || !dirty() || !name().trim()}
-            >
-              {saving() ? "Saving..." : "Save changes"}
-            </button>
+      <Show when={project()} fallback={<EmptyState title="No project selected." />}>
+        {(current) => (
+          <div class={cx(ui.sectionStack, "max-w-220")}>
+            <Panel title="Profile">
+              <form onSubmit={submitProject}>
+                <Field label="Name" error={saveError()}>
+                  <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} autocomplete="off" />
+                </Field>
+                <FormActions
+                  submitLabel="Save changes"
+                  busyLabel="Saving..."
+                  busy={saving()}
+                  disabled={!dirty() || !name().trim()}
+                  onCancel={() => { setName(current().name); setSaveError(null); }}
+                />
+              </form>
+            </Panel>
+            <ProjectHistorySettings project={current().project} />
           </div>
-        </form>
-        <ProjectHistorySettings project={project()!.project} />
+        )}
       </Show>
     </>
   );
@@ -108,12 +101,14 @@ function ProjectHistorySettings(props: { project: string }) {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
+  const [shortening, setShortening] = createSignal<string | null>(null);
   const canManage = () => hasPermission(me.data, "projects.manage");
 
-  createEffect(() => {
+  const reset = () => {
     const current = settings.data;
     if (current) setDraft(historyRetentionDraft(current.history_retention));
-  });
+  };
+  createEffect(reset);
   createEffect(() => {
     props.project;
     setError(null);
@@ -127,55 +122,77 @@ function ProjectHistorySettings(props: { project: string }) {
     }
   };
 
-  async function submit(event: SubmitEvent) {
-    event.preventDefault();
-    if (!canManage() || !settings.data || saving()) return;
-    setError(null);
-    setSaved(false);
+  async function save(next: string) {
     const project = props.project;
+    setSaving(true);
     try {
-      const next = historyRetentionPolicy(draft());
-      const before = historyRetentionSeconds(settings.data.history_retention);
-      const after = historyRetentionSeconds(next);
-      if (after !== null && (before === null || after < before) &&
-        !window.confirm("Shorten history retention? Older Session content in every Environment may be permanently deleted on the next cleanup pass. This cannot be undone.")) return;
-      setSaving(true);
       const result = await updateProjectSettings(project, { history_retention: next });
       queryClient.setQueryData(["project-settings", project], result);
       if (props.project === project) setSaved(true);
-    } catch (error) {
-      if (props.project === project) setError(error instanceof Error ? error.message : "Could not save history retention.");
+    } catch (cause) {
+      if (props.project === project) setError(errorMessage(cause, "Could not save history retention."));
     } finally {
       setSaving(false);
     }
   }
 
+  function submit(event: SubmitEvent) {
+    event.preventDefault();
+    if (!canManage() || !settings.data || saving()) return;
+    setError(null);
+    setSaved(false);
+    let next: string;
+    try {
+      next = historyRetentionPolicy(draft());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save history retention.");
+      return;
+    }
+    const before = historyRetentionSeconds(settings.data.history_retention);
+    const after = historyRetentionSeconds(next);
+    if (after !== null && (before === null || after < before)) setShortening(next);
+    else void save(next);
+  }
+
   return (
-    <section class="mt-4 max-w-220 border border-console-border-strong bg-console-surface px-4 py-4">
-      <h2 class={ui.h2}>Session history</h2>
-      <Show when={!settings.isPending} fallback={<p class={ui.muted}>Loading history retention...</p>}>
-        <Show when={!settings.isError} fallback={
-          <p class={ui.fieldError} role="alert">
-            Could not load history retention. <button type="button" class={ui.secondaryButton} onClick={() => settings.refetch()}>Retry</button>
-          </p>
-        }>
+    <Panel title="Session history">
+      <QueryState query={settings} pending="Loading history retention..." error={() => "Could not load history retention."}>
+        {() => (
           <form onSubmit={submit}>
-            <fieldset disabled={!canManage() || saving()}>
+            <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>
               <HistoryRetentionFields value={draft()} onChange={value => { setDraft(value); setSaved(false); }} />
             </fieldset>
             <Show when={!canManage()}><p class={ui.muted}>Only Owners and Admins can change this setting.</p></Show>
-            <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
-            <Show when={saved()}><p role="status">History retention saved.</p></Show>
+            <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
             <Show when={canManage()}>
-              <div class={ui.actionRow}>
-                <button class={ui.button} type="submit" disabled={saving() || !dirty()}>
-                  {saving() ? "Saving..." : "Save history retention"}
-                </button>
+              <div class="flex flex-wrap items-center justify-end gap-3">
+                <Show when={saved()}><InlineStatus class="mt-3">History retention saved.</InlineStatus></Show>
+                <FormActions
+                  submitLabel="Save history retention"
+                  busyLabel="Saving..."
+                  busy={saving()}
+                  disabled={!dirty()}
+                  onCancel={() => { reset(); setError(null); setSaved(false); }}
+                />
               </div>
             </Show>
           </form>
-        </Show>
+        )}
+      </QueryState>
+      <Show when={shortening()}>
+        {(next) => (
+          <ConfirmDialog
+            title="Shorten history retention"
+            confirmLabel="Shorten retention"
+            busyLabel="Saving..."
+            tone="danger"
+            onClose={() => setShortening(null)}
+            onConfirm={() => save(next())}
+          >
+            Older Session content in every Environment may be permanently deleted on the next cleanup pass. This cannot be undone.
+          </ConfirmDialog>
+        )}
       </Show>
-    </section>
+    </Panel>
   );
 }

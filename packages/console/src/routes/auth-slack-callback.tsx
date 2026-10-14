@@ -1,13 +1,30 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { ApiError } from "../lib/api";
+import { describeFailure, type Failure } from "../lib/error";
 import { finishSlackAuthorization } from "../lib/slack";
-import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { AuthCopy, AuthError, AuthWindow, AuthWorking } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
+
+const MESSAGES = {
+  bad_request: "The Slack authorization expired, was cancelled, or was started by a different account.",
+  forbidden: "This Slack connection is no longer available, or your account can no longer manage it.",
+  conflict: "This Slack connection changed while you were authorizing it.",
+  service_unavailable: "Slack is not configured on this server.",
+  unauthorized: "Your Helmr sign-in expired during Slack authorization.",
+};
+
+// What to do next, by what went wrong.
+const NEXT_STEPS: Record<string, string> = {
+  forbidden: "Ask an organization owner or admin to check the Agent’s Slack connection.",
+  service_unavailable: "Ask an administrator to configure the Slack integration, then start authorization again.",
+};
+const DEFAULT_NEXT_STEP = "Sign in with the account and organization that started this connection, then start authorization again from the Agent’s Slack connection.";
 
 export function AuthSlackCallback() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [error, setError] = createSignal<string | null>(null);
+  const [failure, setFailure] = createSignal<(Failure & { nextStep: string }) | null>(null);
   let mounted = true;
   onCleanup(() => { mounted = false; });
   onMount(async () => {
@@ -21,15 +38,26 @@ export function AuthSlackCallback() {
       const result = await finishSlackAuthorization(input);
       if (mounted) navigate(result.return_url || "/deployments", { replace: true });
     } catch (e) {
-      if (mounted) setError(e instanceof Error ? e.message : "Slack authorization could not be completed.");
+      if (!mounted) return;
+      const code = e instanceof ApiError ? e.code : "";
+      setFailure({ ...describeFailure(e, MESSAGES, "Slack authorization could not be completed."), nextStep: NEXT_STEPS[code] ?? DEFAULT_NEXT_STEP });
     }
   });
-  return <AuthWindow>
-    <Show when={error()} fallback={<AuthCopy>Connecting Slack...</AuthCopy>}>
-      <AuthTitle>Slack connection needs attention</AuthTitle>
-      <p class={ui.error}>{error()}</p>
-      <AuthCopy>Sign in with the account and organization that started this connection, then start authorization again.</AuthCopy>
-      <A href="/deployments">Return to Agents</A>
+  return (
+    <Show when={failure()} fallback={<AuthWorking>Connecting Slack...</AuthWorking>}>
+      {(current) => (
+        <AuthWindow>
+          <AuthError
+            title="Slack connection needs attention"
+            message={current().message}
+            details={current().details}
+            action={<>
+              <AuthCopy>{current().nextStep}</AuthCopy>
+              <A class={ui.secondaryButton} href="/agents">Return to Agents</A>
+            </>}
+          />
+        </AuthWindow>
+      )}
     </Show>
-  </AuthWindow>;
+  );
 }

@@ -4,6 +4,7 @@ import { ApiError } from "../lib/api";
 import { onboardingRedirectPath, type AuthRequirement } from "../lib/auth";
 import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
+import { errorDetails } from "../lib/error";
 import { AuthError, AuthWorking, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
@@ -29,6 +30,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
           <AuthError
             title="Could not load your account"
             message="Please try again."
+            details={errorDetails(me.error)}
             action={<button type="button" class={ui.button} onClick={() => void me.refetch()}>Retry</button>}
           />
         </AuthWindow>
