@@ -14,5 +14,8 @@
   "dependencies": {
     "@helmr/sdk": "latest",
     "zod": "^4.6.2"
+  },
+  "scripts": {
+    "test": "bun build tests/command-cancellation.test.ts --target=node --outfile dist/tests/command-cancellation.test.js && node --test dist/tests/command-cancellation.test.js"
   }
 }

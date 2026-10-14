@@ -99,48 +99,17 @@ is held until someone resumes it.
 
 An Agent is ordinary Node.js code running in a Linux Computer, so any agent
 harness or SDK can run inside it. Install the tool in the Computer image, start
-it in `init` and drive it from `turn`. This example runs OpenCode and keeps one
-OpenCode conversation for the whole Session:
+it in `init` and drive it from `turn`. The complete
+[OpenCode example](https://github.com/helmrdotdev/helmr/tree/main/examples/opencode-assistant)
+keeps one native conversation for the Session, filters events to that
+conversation, handles native failures, and connects Turn cancellation to native
+abort and completion.
 
-```ts
-import { agent, template, image } from "@helmr/sdk"
-import { createOpencode } from "@opencode-ai/sdk/v2"
-
-export const coderComputer = template({
-  id: "coder",
-  image: image("coder")
-    .from("node:24-bookworm-slim")
-    .run(["npm", "install", "-g", "opencode-ai"])
-    .workdir("/workspace"),
-  resources: { cpu: 1, memory: "1GiB" },
-  // Bind the model provider's API key from an Environment Secret here.
-})
-
-export const coder = agent({
-  id: "coder",
-  template: coderComputer,
-  maxTurnDuration: "15m",
-  async init(ctx) {
-    const { client } = await createOpencode({ signal: ctx.signal })
-    const { data: session } = await client.session.create({}, { throwOnError: true })
-    return { client, sessionID: session.id }
-  },
-  async turn(turn, { initResult: { client, sessionID } }) {
-    const events = await client.event.subscribe()
-    await client.session.promptAsync({
-      sessionID,
-      parts: turn.input.map((part) => ({ type: "text", text: part.text })),
-    })
-    for await (const event of events.stream) {
-      if (event.type === "session.idle") break
-    }
-    return null
-  },
-})
-```
-
-Follow the harness's own permission and cancellation model, and connect
-`turn.signal` to it so an interruption stops the harness's work. Bind model
+Follow the harness's own permission and cancellation model. Connect
+`turn.signal` to it and wait for its work to stop before the Turn handler settles.
+Helmr owns the Session and Turn lifecycle; the Agent owns adaptation to the
+harness's native protocol. If the [cleanup period](/docs/reference/sdk/agent#cancellation-and-native-sdks)
+expires, Helmr terminates the Session process tree and requires explicit recovery. Bind model
 credentials with [Secrets](/docs/concepts/secrets).
 
 ## Triggers
