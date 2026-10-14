@@ -103,6 +103,8 @@
   --color-console-danger-solid: var(--console-danger-solid);
   --font-console-mono: var(--console-mono);
   --font-console-sans: var(--console-sans);
+  --font-sans: var(--console-sans);
+  --font-mono: var(--console-mono);
 
   /* The type set. Nothing in the console uses a size outside it, apart from
      page and section headings. */
