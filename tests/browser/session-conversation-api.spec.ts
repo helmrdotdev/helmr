@@ -130,9 +130,9 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
   await page.goto(`/settings/secrets?${f.scope}`);
   await page.getByRole("button", { name: "Actions for BROWSER_REVOCATION" }).click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Revoke secret" });
-  await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected Computers.");
+  await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
   await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
@@ -143,7 +143,7 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   await expect(page.getByText("retained after revocation", { exact: false })).toBeVisible();
   expect((await (await page.request.get(f.askBase)).json()).status).toBe("cancelled");
   await page.reload();
-  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("real-api-secret-blocked-queue.png"), fullPage: true });
   const held = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
   const release = await page.request.post(`${f.base}/sessions/${f.sessionID}/resume`, { data: { hold_id: held.holds[0].id, idempotency_key: crypto.randomUUID() } });
@@ -159,9 +159,9 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   expect((await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["interrupted", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "retained after revocation" }]],
   ]);
-  await page.getByRole("button", { name: "Cancel Session", exact: true }).click();
-  const cancel = page.getByRole("dialog", { name: "Cancel Session", exact: true });
-  await cancel.getByRole("button", { name: "Cancel Session", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  const cancel = page.getByRole("dialog", { name: "Cancel session", exact: true });
+  await cancel.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(cancel).toHaveCount(0);
   await expect.poll(async () => (await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["interrupted", [{ type: "text", text: "retained" }]], ["cancelled", [{ type: "text", text: "retained after revocation" }]],

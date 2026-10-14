@@ -23,6 +23,10 @@ function groupItems(items: ActionMenuItem[]): { main: ActionMenuItem[]; danger: 
   return { main, danger };
 }
 
+// The row menu: a menu of menuitems. Opening focuses the first item; arrow keys,
+// Home and End move between items (items are out of the tab order), Enter
+// chooses; Space also chooses action buttons. Escape and Tab close onto the
+// trigger.
 export function ActionMenu(props: {
   items: ActionMenuItem[];
   label?: string;
@@ -80,6 +84,8 @@ export function ActionMenu(props: {
         fallback={
           <button
             type="button"
+            role="menuitem"
+            tabIndex={-1}
             class={itemClass()}
             disabled={item.disabled}
             onClick={() => {
@@ -94,6 +100,8 @@ export function ActionMenu(props: {
       >
         {(href) => (
           <a
+            role="menuitem"
+            tabIndex={-1}
             class={itemClass()}
             href={href()}
             target={item.external ? "_blank" : undefined}
@@ -116,7 +124,7 @@ export function ActionMenu(props: {
         data-open={open() ? "true" : "false"}
         aria-controls={popoverId}
         aria-expanded={open()}
-        aria-haspopup="true"
+        aria-haspopup="menu"
         aria-label={props.label ?? "Actions"}
         onClick={() => (open() ? setOpen(false) : openMenu())}
       >
@@ -132,7 +140,7 @@ export function ActionMenu(props: {
         anchor={trigger()}
         onDismiss={() => setOpen(false)}
         id={popoverId}
-        role="group"
+        role="menu"
         label={props.label ?? "Actions"}
         align="end"
         minWidth={160}

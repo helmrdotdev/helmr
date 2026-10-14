@@ -22,9 +22,9 @@ export function TurnQuestions(props: { address: SessionAddress; turnID: string; 
       <Show when={items().length > 0}>
         <List
           label="Questions"
-          footer={<Show when={asks.hasNextPage}><LoadMore count={items().length} noun={{ one: "Question", other: "Questions" }} hasMore={asks.hasNextPage} loading={asks.isFetchingNextPage} failed={asks.isFetchNextPageError} onLoadMore={() => void asks.fetchNextPage()} /></Show>}
+          footer={<Show when={asks.hasNextPage}><LoadMore count={items().length} noun={{ one: "question", other: "questions" }} hasMore={asks.hasNextPage} loading={asks.isFetchingNextPage} failed={asks.isFetchNextPageError} onLoadMore={() => void asks.fetchNextPage()} /></Show>}
         >
-          <For each={items()}>{ask => <ListItem class="flex items-center gap-2">
+          <For each={items()}>{ask => <ListItem line class="gap-2">
             <PrimaryLink href={askConsolePath({ ...props.address, turnID: props.turnID, askID: ask.id })}>Question</PrimaryLink>
             <StatusBadge resource="question" status={ask.status} />
           </ListItem>}</For>

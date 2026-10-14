@@ -12,7 +12,7 @@ export type NavItem = { href: string; label: string; match?: readonly string[]; 
 function NavCount(props: { count: number | undefined }) {
   return (
     <Show when={(props.count ?? 0) > 0}>
-      <span class={cx("rounded-xs border px-1 font-mono text-micro leading-normal", toneClass.warning)} aria-hidden="true">{props.count}</span>
+      <span class={cx("rounded-xs border px-1 py-px font-mono text-micro leading-none", toneClass.warning)} aria-hidden="true">{props.count}</span>
     </Show>
   );
 }
@@ -22,11 +22,14 @@ function navLabel(item: NavItem): string | undefined {
   return count > 0 ? `${item.label}, ${count} waiting` : undefined;
 }
 
+// A bar tab: 26px, a transparent border until hovered or current. Hover and the
+// current tab share the bar's current-item box (`ui.barItemCurrent`), the same
+// box the Settings button shows while Settings is open; the count badge sits
+// inside it.
 const NAV_TAB =
-  "relative flex h-6.5 shrink-0 cursor-pointer items-center rounded-xs border border-transparent px-2.5 font-mono text-chrome font-medium text-console-muted transition duration-100";
-const NAV_TAB_IDLE = "hover:border-console-border-strong hover:bg-console-surface-muted hover:text-console-text";
-const NAV_TAB_ACTIVE =
-  "text-console-text after:absolute after:bottom-0.75 after:left-2.5 after:right-2.5 after:h-px after:bg-console-accent";
+  "flex h-6.5 shrink-0 cursor-pointer items-center gap-1.5 rounded-xs border px-2.5 font-mono text-chrome font-medium transition duration-100";
+const NAV_TAB_IDLE =
+  "border-transparent text-console-muted hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text";
 
 // A section is current on its own paths and on every path below them ("/" only on
 // itself).
@@ -41,7 +44,7 @@ export function NavTab(props: { item: NavItem }) {
   const location = useLocation();
   const active = () => isCurrentSection(location.pathname, props.item);
   return (
-    <A href={props.item.href} class={cx(NAV_TAB, "gap-1.5", active() ? NAV_TAB_ACTIVE : NAV_TAB_IDLE)} aria-current={active() ? "page" : undefined} aria-label={navLabel(props.item)}>
+    <A href={props.item.href} class={cx(NAV_TAB, active() ? ui.barItemCurrent : NAV_TAB_IDLE)} aria-current={active() ? "page" : undefined} aria-label={navLabel(props.item)}>
       {props.item.label}
       <NavCount count={props.item.count?.()} />
     </A>
@@ -62,16 +65,15 @@ function MenuIcon(props: { open: boolean }) {
 // leads (scope selector or brand), the section tabs, and the trailing controls.
 // A protected Environment draws a 2px line in its color along the top edge of the
 // bar, inside its 40px height. Below 720px the section tabs move into a menu
-// drawer with 44px targets; `drawerStart` and `drawerEnd` add content above and
-// below the sections and receive a function that closes the drawer.
+// drawer with 44px targets; the bar keeps its leading and trailing controls.
+// `drawerEnd` adds content below the sections and receives a function that
+// closes the drawer.
 export function AppBar(props: {
   leading: JSX.Element;
   nav?: readonly NavItem[];
   navLabel?: string;
   trailing?: JSX.Element;
   protectedColor?: string | undefined;
-  drawerTitle?: string;
-  drawerStart?: (close: () => void) => JSX.Element;
   drawerEnd?: (close: () => void) => JSX.Element;
 }) {
   const location = useLocation();
@@ -124,18 +126,16 @@ export function AppBar(props: {
         role="dialog"
         label="Menu"
         ref={(element) => { drawer = element; }}
-        title={props.drawerTitle ?? "Helmr"}
         width={320}
         maxHeight={2000}
         fullWidthOnPhones
       >
-        {props.drawerStart?.(close)}
         <nav class="flex flex-col gap-0.5 border-b border-console-border p-2 last:border-b-0" aria-label={label()}>
           <For each={props.nav}>
             {(item) => {
               const active = () => isCurrentSection(location.pathname, item);
               return (
-                <A href={item.href} class={cx(ui.drawerItem, active() ? ui.drawerItemActive : ui.drawerItemIdle)} aria-current={active() ? "page" : undefined} aria-label={navLabel(item)} onClick={close}>
+                <A href={item.href} class={cx(ui.drawerItem, active() ? ui.activeBar : ui.drawerItemIdle)} aria-current={active() ? "page" : undefined} aria-label={navLabel(item)} onClick={close}>
                   {item.label}
                   <NavCount count={item.count?.()} />
                 </A>

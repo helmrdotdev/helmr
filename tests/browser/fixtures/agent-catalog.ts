@@ -20,7 +20,7 @@ export async function createAgentCatalog(page: Page) {
   await page.goto("/settings/environments");
   const environmentRow = page.getByRole("row").filter({ hasText: slug });
   await environmentRow.getByRole("button", { name: /^Actions for / }).click();
-  await page.getByRole("button", { name: "Use", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Use", exact: true }).click();
   await expect(environmentRow.getByText("Working", { exact: true })).toBeVisible();
   return { deploymentID, environmentID: environment.environment, environmentInternalID, scope: `project=${projectID}&environment=${environment.environment}`, base: `/api/projects/${projectID}/environments/${environment.environment}` };
 }

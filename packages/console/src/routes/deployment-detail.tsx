@@ -5,9 +5,10 @@ import { errorMessage } from "../lib/error";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
-import { listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
-import { DataTable, LoadMore, type Noun } from "../ui/DataTable";
+import { agentHref, listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
+import { DataTable, LoadMore, PrimaryLink, type Noun } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { formatID } from "../ui/id";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, QueryState } from "../ui/QueryState";
@@ -17,6 +18,13 @@ import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 
 type Tab = "agents" | "templates" | "events";
 
+// A version names its Deployment by date and ID ("20260101.<uuid>"); the short
+// form keeps the date and the ID's short form (`formatID`).
+function shortVersion(version: string): string {
+  const separator = version.indexOf(".");
+  return separator > 0 ? `${version.slice(0, separator)}.${formatID(version.slice(separator + 1))}` : formatID(version);
+}
+
 const TABS: TabItem<Tab>[] = [
   { value: "agents", label: "Agents" },
   { value: "templates", label: "Templates" },
@@ -24,8 +32,8 @@ const TABS: TabItem<Tab>[] = [
 ];
 
 const DEPLOYMENT_ERROR_MESSAGES = {
-  forbidden: "You do not have permission to view this Deployment.",
-  deployment_not_materialized: "Definitions for this Deployment are not materialized yet.",
+  forbidden: "You do not have permission to view this deployment.",
+  deployment_not_materialized: "Definitions for this deployment are not materialized yet.",
 };
 const deploymentError = (error: unknown, fallback: string) => errorMessage(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
 
@@ -50,7 +58,7 @@ function DefinitionTable<T>(props: { noun: Noun; columns: string[]; query: Defin
       query={props.query}
       pending={`Loading ${props.noun.other}...`}
       error={(error) => deploymentError(error, `Could not load ${props.noun.other}.`)}
-      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This Deployment declares no ${props.noun.other}.` }}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This deployment declares no ${props.noun.other}.` }}
     >
       {() => (
         <DataTable
@@ -131,13 +139,14 @@ export function DeploymentDetail() {
       <PageHeader
         title={deployment.data?.version ?? "Deployment"}
         breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
+        current={deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
         actions={<CopyLinkButton />}
         badge={<Show when={current.isSuccess}><StatusBadge resource="deployment" status={isCurrent() ? "current" : "not_current"} /></Show>}
-        subtitle={<Show when={deployment.data}>{(record) => <IDText value={record().id} mode="full" />}</Show>}
         meta={
           <Show when={deployment.data}>
             {(record) => (
               <>
+                <span>ID <IDText value={record().id} mode="copy" /></span>
                 <span>Bundle <IDText value={record().bundle_digest} /></span>
                 <span>Created <RelativeTime value={record().created_at} /></span>
               </>
@@ -147,19 +156,19 @@ export function DeploymentDetail() {
       />
 
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <QueryState query={deployment} pending="Loading Deployment..." error={(error) => deploymentError(error, "Could not load this Deployment.")}>
+      <QueryState query={deployment} pending="Loading deployment..." error={(error) => deploymentError(error, "Could not load this deployment.")}>
         {() => (
           <>
             <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
 
             <TabPanel tabs="deployment-sections" value="agents" selected={tab()}>
-              <DefinitionTable noun={{ one: "Agent", other: "Agents" }} columns={["Agent", "Template"]} query={agents} row={item => <>
-                <td><code>{item.agent}</code></td>
+              <DefinitionTable noun={{ one: "agent", other: "agents" }} columns={["Agent", "Template"]} query={agents} row={item => <>
+                <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
                 <td><code>{item.template}</code></td>
               </>} />
             </TabPanel>
             <TabPanel tabs="deployment-sections" value="templates" selected={tab()}>
-              <DefinitionTable noun={{ one: "Template", other: "Templates" }} columns={["Template", "Resources"]} query={templates} row={item => <>
+              <DefinitionTable noun={{ one: "template", other: "templates" }} columns={["Template", "Resources"]} query={templates} row={item => <>
                 <td><code>{item.template}</code></td>
                 <td>{templateResources(item)}</td>
               </>} />
@@ -168,8 +177,8 @@ export function DeploymentDetail() {
               <QueryState
                 query={events}
                 pending="Loading events..."
-                error={(error) => deploymentError(error, "Could not load Deployment events.")}
-                empty={{ when: (data) => data.pages.every(page => page.events.length === 0), title: "No events recorded for this Deployment." }}
+                error={(error) => deploymentError(error, "Could not load deployment events.")}
+                empty={{ when: (data) => data.pages.every(page => page.events.length === 0), title: "No events recorded for this deployment." }}
               >
                 {() => (
                   <DataTable

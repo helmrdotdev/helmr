@@ -21,7 +21,7 @@ export function AppIconPicker(props: { seed: string; agentName: string }) {
     <div class="flex flex-wrap gap-2">
       <For each={icons}>{(name) => <label class="cursor-pointer">
         <input class="peer sr-only" type="radio" name="slack-app-icon" value={name} checked={icon() === name} onChange={() => setIcon(name)} aria-label={`${name[0]!.toUpperCase()}${name.slice(1)} icon`} />
-        <img class="size-10 rounded-md border border-console-border peer-checked:outline-2 peer-checked:outline-offset-2 peer-checked:outline-console-text peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-console-accent" src={`/slack-app-icons/${name}.png`} alt="" width="40" height="40" />
+        <img class="size-10 rounded-md border border-console-border peer-checked:border-2 peer-checked:border-console-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-solid" src={`/slack-app-icons/${name}.png`} alt="" width="40" height="40" />
       </label>}</For>
     </div>
     <div><a class={ui.secondaryButton} href={`/slack-app-icons/${icon()}.png`} download={`${props.agentName}-slack-icon.png`}>Download icon</a></div>

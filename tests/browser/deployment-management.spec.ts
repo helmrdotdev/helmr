@@ -40,9 +40,9 @@ for (const view of ["list"] as const) {
     });
     await page.goto("/deployments");
     await page.getByRole("button", { name: "Actions for test-version" }).click();
-    await page.getByRole("button", { name: "Promote", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Promote Deployment" });
-    await expect(dialog).toContainText("Existing Sessions keep their pinned Deployment");
+    await page.getByRole("menuitem", { name: "Promote", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Promote deployment" });
+    await expect(dialog).toContainText("Existing sessions keep their pinned deployment");
     expect(requests).toEqual([]);
     await dialog.getByRole("button", { name: "Promote", exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -80,17 +80,63 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
     }
   });
   await page.goto(`/computers/${computer}`);
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
-  await expect(page.getByText("Unreconciled", { exact: true })).toBeVisible();
-  await expect(page.getByText("Running", { exact: true })).toBeVisible();
-  await expect(page.getByText("Cold", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();
+  // The Computer's tables are tabs, not titled panels over column headers.
+  const sections = page.getByRole("tablist", { name: "Computer sections" });
+  const tabs = sections.getByRole("tab");
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.nth(0)).toHaveAccessibleName("Sessions");
+  await expect(tabs.nth(1)).toHaveAccessibleName("Commands");
+  await expect(tabs.nth(2)).toHaveAccessibleName("Secret placements, 0");
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toHaveCount(0);
+  await expect(sections.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Sessions" }).getByText("Unreconciled", { exact: true })).toBeVisible();
+  // The header badge and the rail's Status show the residency, not the lifecycle.
+  await expect(page.locator("h1").locator("..").getByText("Cold", { exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Computer details" }).getByText("Cold", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^(Active|Available)$/)).toHaveCount(0);
   await expect(page.getByText("browser", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "browser" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Load more Sessions", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Load more Sessions", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more sessions", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Load more sessions", exact: true })).toHaveCount(0);
   expect(requestPaths.some(path => path.endsWith("/sessions?cursor=sessions-page-2"))).toBe(true);
+  // Commands load when their tab opens, and paging Sessions never pages them.
+  expect(requestPaths.some(path => path.includes("/commands"))).toBe(false);
+  await sections.getByRole("tab", { name: "Commands", exact: true }).click();
+  await expect(page.getByRole("tabpanel", { name: "Commands" }).getByText("Running", { exact: true })).toBeVisible();
   expect(requestPaths.some(path => path.includes("/commands?cursor="))).toBe(false);
+  await sections.getByRole("tab", { name: /^Secret placements/ }).click();
+  await expect(page.getByRole("tabpanel", { name: /^Secret placements/ })).toContainText("No secrets are attached.");
   expect(requestPaths.some(path => path.includes("/members"))).toBe(false);
+});
+
+test("a Computer's status is its residency, its lifecycle only while deleting, in the header and the Computers list", async ({ page }) => {
+  await catalog(page, ["computers.read", "sessions.read", "deployments.read"]);
+  const computer = (id: string, fields: Record<string, unknown>) => ({ id, template: "browser", deployment_id: deploymentID, status: "available", residency: "running", secrets: [], created_at: now, updated_at: now, last_activity_at: now, ...fields });
+  const running = computer("00000000-0000-7000-8000-000000000711", {});
+  const unavailable = computer("00000000-0000-7000-8000-000000000712", { residency: "unavailable", error: { code: "computer_preparation_failed", message: "The image could not be prepared." } });
+  const deleting = computer("00000000-0000-7000-8000-000000000713", { status: "deleting", residency: "cold" });
+  await page.route(`**${base}/computers**`, async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `${base}/computers`) await route.fulfill({ json: { computers: [running, unavailable, deleting] } });
+    else if (url.pathname.endsWith("/sessions")) await route.fulfill({ json: { sessions: [] } });
+    else if (url.pathname.endsWith("/commands")) await route.fulfill({ json: { commands: [] } });
+    else await route.fulfill({ json: [running, unavailable, deleting].find(item => url.pathname.endsWith(item.id)) });
+  });
+  await page.goto("/computers");
+  await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Last activity", "Created"]);
+  await expect(page.getByRole("columnheader", { name: "Residency" })).toHaveCount(0);
+  const row = (id: string) => page.getByRole("row").filter({ hasText: id.slice(-12) });
+  await expect(row(running.id).getByRole("cell").nth(1)).toHaveText("Running");
+  await expect(row(unavailable.id).getByRole("cell").nth(1)).toHaveText("Unavailable");
+  await expect(row(unavailable.id).getByTitle("The image could not be prepared.")).toBeVisible();
+  await expect(row(deleting.id).getByRole("cell").nth(1)).toHaveText("Deleting");
+  await expect(page.getByText(/^(Active|Available)$/)).toHaveCount(0);
+
+  await page.goto(`/computers/${unavailable.id}`);
+  const title = page.locator("h1").locator("..");
+  await expect(title.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Computer details" })).toContainText("The image could not be prepared.");
+  await page.goto(`/computers/${deleting.id}`);
+  await expect(title.getByText("Deleting", { exact: true })).toBeVisible();
+  await expect(title.getByText("Cold", { exact: true })).toHaveCount(0);
 });

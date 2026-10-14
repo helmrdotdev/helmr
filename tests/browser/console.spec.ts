@@ -37,13 +37,13 @@ test("an environment before its first Deployment shows the CLI steps for this sc
 
   const setup = page.getByRole("region", { name: "Set up Production" });
   await expect(setup.getByRole("heading", { name: "Set up Production" })).toBeVisible();
-  const steps = setup.getByRole("list", { name: "First Deployment" });
+  const steps = setup.getByRole("list", { name: "First deployment" });
   await expect(steps.getByRole("listitem")).toHaveCount(3);
   const origin = new URL(page.url()).origin;
   await expect(setup.getByLabel("Install and sign in")).toContainText(`helmr login ${origin}`);
   await expect(setup.getByLabel("Create and deploy")).toHaveText("helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . --project console-demo --env production");
-  await expect(setup.getByLabel("Start a Session")).toHaveText("helmr session create hello --project console-demo --env production");
-  await expect(page.getByText("No current Deployment")).toBeVisible();
+  await expect(setup.getByLabel("Start a session")).toHaveText("helmr session create hello --project console-demo --env production");
+  await expect(page.getByText("No current deployment")).toBeVisible();
   await expect(page.getByRole("region", { name: "Waiting on you" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Overview", exact: true })).toBeVisible();
 });
@@ -74,7 +74,7 @@ test("every navigation item resolves to its page", async ({ page }) => {
   await navigation.getByRole("link", { name: "Computers", exact: true }).click();
   await expect(page).toHaveURL("/computers");
   await expect(page.getByRole("heading", { name: "Computers" })).toBeVisible();
-  await expect(page.getByText("No Computers yet.")).toBeVisible();
+  await expect(page.getByText("No computers yet.")).toBeVisible();
 
   await navigation.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page).toHaveURL("/");
@@ -89,7 +89,7 @@ test("the Agents section switches between Agents, Sessions and Triggers by click
   await tabs.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(page).toHaveURL("/sessions");
   await expect(tabs.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tabpanel", { name: "Sessions" })).toContainText("No Sessions yet.");
+  await expect(page.getByRole("tabpanel", { name: "Sessions" })).toContainText("No sessions yet.");
 
   await tabs.getByRole("tab", { name: "Sessions", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -98,7 +98,7 @@ test("the Agents section switches between Agents, Sessions and Triggers by click
   await expect(triggers).toBeFocused();
   await expect(triggers).toHaveAttribute("aria-selected", "true");
   await expect(triggers).toHaveAttribute("tabindex", "0");
-  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No Trigger activations in this environment.");
+  await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("No trigger activations in this environment.");
 
   await page.keyboard.press("Home");
   await expect(page).toHaveURL("/agents");
@@ -115,10 +115,10 @@ test("the Computers section switches between Computers and Templates", async ({ 
   await page.goto("/computers");
   const tabs = page.getByRole("tablist", { name: "Computers" });
   await expect(tabs.getByRole("tab")).toHaveText(["Computers", "Templates"]);
-  await expect(page.getByRole("tabpanel", { name: "Computers" })).toContainText("No Computers yet.");
+  await expect(page.getByRole("tabpanel", { name: "Computers" })).toContainText("No computers yet.");
   await tabs.getByRole("tab", { name: "Templates", exact: true }).click();
   await expect(page).toHaveURL("/templates");
-  await expect(page.getByRole("tabpanel", { name: "Templates" })).toContainText("No current Deployment.");
+  await expect(page.getByRole("tabpanel", { name: "Templates" })).toContainText("No current deployment.");
   await page.keyboard.press("ArrowLeft");
   await expect(page).toHaveURL("/computers");
   await expect(tabs.getByRole("tab", { name: "Computers", exact: true })).toBeFocused();
@@ -145,17 +145,19 @@ test("on a phone the menu button opens a drawer that reaches every section, Sett
 
   await page.getByRole("button", { name: "Open menu" }).click();
   const drawer = page.getByRole("dialog", { name: "Menu" });
-  await expect(drawer).toContainText("Project");
-  await expect(drawer).toContainText("Environment");
+  // The bar keeps both scope pickers at phone width, so the drawer has no scope
+  // block and no title repeating the product name.
+  await expect(drawer.getByRole("heading")).toHaveCount(0);
+  await expect(drawer.getByRole("button", { name: /^Change / })).toHaveCount(0);
   await expect(drawer.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
   await expect(drawer.getByRole("link", { name: "Account settings", exact: true })).toHaveAttribute("href", "/settings/account");
   await drawer.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL("/settings/project");
 
-  for (const [button, picker, search] of [["Change project", "Choose project", "Find a project"], ["Change environment", "Choose environment", "Find an environment"]] as const) {
-    await page.getByRole("button", { name: "Open menu" }).click();
-    await page.getByRole("dialog", { name: "Menu" }).getByRole("button", { name: button, exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Menu" })).toHaveCount(0);
+  for (const [segment, picker, search] of [[/^Project:/, "Choose project", "Find a project"], [/^Environment:/, "Choose environment", "Find an environment"]] as const) {
+    const trigger = page.locator("header").getByRole("button", { name: segment });
+    await expect(trigger).toBeVisible();
+    await trigger.click();
     const dialog = page.getByRole("dialog", { name: picker });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("combobox", { name: search })).toBeFocused();
@@ -166,10 +168,8 @@ test("on a phone the menu button opens a drawer that reaches every section, Sett
 
   await page.getByRole("button", { name: "Open menu" }).click();
   const menu = page.getByRole("dialog", { name: "Menu" });
-  await expect(menu.getByRole("button", { name: "Change project", exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(menu.getByRole("button", { name: "Change environment", exact: true })).toBeFocused();
-  for (const name of NAVIGATION) {
+  await expect(menu.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: NAVIGATION[0], exact: true })).toBeFocused();
+  for (const name of NAVIGATION.slice(1)) {
     await page.keyboard.press("Tab");
     await expect(menu.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true })).toBeFocused();
   }
@@ -195,7 +195,7 @@ test("the Sessions page filters by status and shows the empty state", async ({ p
   await login(page);
   await page.goto("/sessions");
   await expect(page.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("No Sessions yet.")).toBeVisible();
+  await expect(page.getByText("No sessions yet.")).toBeVisible();
 
   const statusSelect = page.getByRole("combobox", { name: "Filter sessions" });
   const cancelledRequest = page.waitForRequest((request) =>
@@ -204,7 +204,7 @@ test("the Sessions page filters by status and shows the empty state", async ({ p
   await statusSelect.click();
   await page.getByRole("option", { name: "Cancelled" }).click();
   await cancelledRequest;
-  await expect(page.getByText("No Sessions match this filter.")).toBeVisible();
+  await expect(page.getByText("No sessions match this filter.")).toBeVisible();
 });
 
 test("an environment can be renamed and recolored from Settings and the header dot follows", async ({ page }) => {
@@ -215,7 +215,7 @@ test("an environment can be renamed and recolored from Settings and the header d
   const stagingRow = page.getByRole("row", { name: /Staging/ });
   await expect(stagingRow).toBeVisible();
   await stagingRow.getByRole("button", { name: "Actions for Staging" }).click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
 
   const dialog = page.getByRole("dialog", { name: "Edit Staging" });
   await expect(dialog).toBeVisible();
@@ -231,7 +231,7 @@ test("an environment can be renamed and recolored from Settings and the header d
   await expect(renamedRow.locator("span[style]").first()).toHaveCSS("background-color", "rgb(34, 197, 94)");
 
   await renamedRow.getByRole("button", { name: "Actions for Staging Renamed" }).click();
-  await page.getByRole("button", { name: "Use", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Use", exact: true }).click();
   const header = page.locator("header");
   await expect(header).toContainText("Staging Renamed");
   await expect(header.locator("span[style*='background-color']").first()).toHaveCSS("background-color", "rgb(34, 197, 94)");

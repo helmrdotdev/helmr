@@ -11,7 +11,7 @@ import { scopeSwitchPath } from "../lib/scope-navigation";
 import { listSessions, sessionConsolePath } from "../lib/sessions";
 import { CommandList, type CommandItem } from "../ui/CommandList";
 import { Dialog } from "../ui/Dialog";
-import { EnvDot } from "../ui/EnvChip";
+import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
 import { formatID } from "../ui/id";
 import { cx } from "../ui/styles";
 
@@ -94,7 +94,7 @@ function Palette(props: { onClose: () => void }) {
       label: environment.name,
       keywords: `${environment.environment} ${current!.name} environment`,
       leading: <EnvDot colorHex={environmentChip(environment)?.colorHex} />,
-      trailing: isProtectedEnvironment(environment) ? <span class="font-mono text-micro text-console-accent">protected</span> : undefined,
+      trailing: isProtectedEnvironment(environment) ? <ProtectedBadge /> : undefined,
       current: environment.environment === scope.selectedEnvironmentID(),
       onSelect: () => switchTo(current!.project, environment.environment),
     }));
@@ -158,7 +158,7 @@ function Palette(props: { onClose: () => void }) {
       <CommandList
         label="Results"
         searchLabel="Search"
-        placeholder="Switch environment, go to a page, find an Agent or Session…"
+        placeholder="Switch environment, go to a page, find an agent or session…"
         empty="Nothing matches."
         items={items()}
         inputRef={(element) => { input = element; }}
@@ -190,7 +190,7 @@ export function CommandPalette() {
       <button
         type="button"
         class={cx(
-          "flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-xs border border-console-border bg-console-surface px-2 font-mono text-chrome text-console-muted transition hover:border-console-border-strong hover:text-console-text",
+          "flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-xs border border-console-border bg-console-surface px-2 font-mono text-chrome text-console-muted transition hover:border-console-border-strong hover:text-console-text",
           "max-[720px]:size-7 max-[720px]:justify-center max-[720px]:px-0",
         )}
         aria-label="Search"
@@ -200,7 +200,7 @@ export function CommandPalette() {
       >
         <SearchIcon />
         <span class="max-[720px]:hidden">Search</span>
-        <kbd class="rounded-xs border border-console-border px-1 font-mono text-micro leading-normal text-console-subtle max-[720px]:hidden">{shortcut}</kbd>
+        <kbd class="rounded-xs border border-console-border px-1 py-px font-mono text-micro leading-none text-console-subtle max-[720px]:hidden">{shortcut}</kbd>
       </button>
       <Show when={open()}>
         <Palette onClose={() => setOpen(false)} />

@@ -1,12 +1,12 @@
 import { A, Navigate, Route, Router, useLocation } from "@solidjs/router";
 import type { JSX } from "solid-js";
-import { createSignal, Show } from "solid-js";
+import { Show } from "solid-js";
 import { AppBar, type NavItem } from "./components/AppBar";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
-import { ScopeSelector, type ScopePickerOpeners } from "./components/ScopeSelector";
+import { ScopeSelector } from "./components/ScopeSelector";
 import { CommandPalette } from "./components/CommandPalette";
 import { attentionTotal, useAttention } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
@@ -16,8 +16,6 @@ import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
 import { logout } from "./lib/auth";
 import { formatRole } from "./components/ProfileMenu";
-import { environmentChip } from "./features/projects/display";
-import { EnvChip } from "./ui/EnvChip";
 import { Notice } from "./ui/Notice";
 import { AuthWorking } from "./ui/AuthWindow";
 import { Page } from "./ui/Page";
@@ -60,6 +58,7 @@ function SettingsLink() {
       href="/settings/project"
       class={ui.iconButton}
       data-open={active() ? "true" : "false"}
+      aria-current={active() ? "page" : undefined}
       aria-label="Settings"
       title="Settings"
     >
@@ -71,40 +70,11 @@ function SettingsLink() {
   );
 }
 
-// The phone menu's scope: the tab's Project and Environment, each changed
-// through its picker in the bar.
-function DrawerScope(props: { close: () => void; openers: ScopePickerOpeners | undefined }) {
-  const scope = useScope();
-  const environment = () => environmentChip(scope.selectedEnvironment());
-  const open = (picker: keyof ScopePickerOpeners) => {
-    props.close();
-    props.openers?.[picker]();
-  };
-  return (
-    <div class="flex flex-col gap-1 border-b border-console-border p-2">
-      <dl class="m-0 grid gap-1.5 px-2.5 py-1.5">
-        <div class="grid gap-0.5">
-          <dt class={ui.microLabel}>Project</dt>
-          <dd class="m-0 truncate font-mono text-control font-medium text-console-text">{scope.selectedProject()?.name ?? "—"}</dd>
-        </div>
-        <div class="grid gap-0.5">
-          <dt class={ui.microLabel}>Environment</dt>
-          <dd class="m-0">
-            <Show when={environment()} fallback="—">{(chip) => <EnvChip name={chip().name} colorHex={chip().colorHex} protected={chip().protected} />}</Show>
-          </dd>
-        </div>
-      </dl>
-      <button type="button" class={cx(ui.drawerItem, ui.drawerItemIdle)} onClick={() => open("project")}>Change project</button>
-      <button type="button" class={cx(ui.drawerItem, ui.drawerItemIdle)} disabled={!scope.selectedProject()} onClick={() => open("environment")}>Change environment</button>
-    </div>
-  );
-}
-
 // The phone menu's Settings and account entries.
 function DrawerAccount(props: { close: () => void }) {
   const me = useMe();
   const location = useLocation();
-  const item = (active: boolean) => cx(ui.drawerItem, active ? ui.drawerItemActive : ui.drawerItemIdle);
+  const item = (active: boolean) => cx(ui.drawerItem, active ? ui.activeBar : ui.drawerItemIdle);
   return (
     <div class="flex flex-col gap-0.5 p-2">
       <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && location.pathname !== "/settings/account")} onClick={props.close}>Settings</A>
@@ -114,7 +84,7 @@ function DrawerAccount(props: { close: () => void }) {
       </Show>
       <button
         type="button"
-        class={cx(ui.drawerItem, "bg-transparent text-console-danger hover:bg-console-danger-bg")}
+        class={cx(ui.drawerItem, ui.drawerItemIdle)}
         onClick={() => {
           props.close();
           void logout();
@@ -132,7 +102,6 @@ function DrawerAccount(props: { close: () => void }) {
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
   const attention = useAttention();
-  const [openers, setOpeners] = createSignal<ScopePickerOpeners>();
   const nav: NavItem[] = [
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
     { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
@@ -146,12 +115,10 @@ function AppShell(props: { children?: JSX.Element }) {
   return (
     <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
-        leading={<ScopeSelector openers={setOpeners} />}
+        leading={<ScopeSelector />}
         nav={nav}
         trailing={<><CommandPalette /><div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div></>}
         protectedColor={protectedColor()}
-        drawerTitle="Helmr Console"
-        drawerStart={(close) => <DrawerScope close={close} openers={openers()} />}
         drawerEnd={(close) => <DrawerAccount close={close} />}
       />
       <Show when={scope.error()}>
@@ -163,7 +130,7 @@ function AppShell(props: { children?: JSX.Element }) {
             <Notice tone="info" variant="bar" role="none" onDismiss={() => scope.dismissNotice()}>
               {notice().kind === "switched"
                 ? `Switched to ${notice().projectName} / ${notice().environmentName} from the link.`
-                : `The link's Project or Environment is not available; showing ${notice().projectName} / ${notice().environmentName}.`}
+                : `The link's project or environment is not available; showing ${notice().projectName} / ${notice().environmentName}.`}
             </Notice>
           )}
         </Show>

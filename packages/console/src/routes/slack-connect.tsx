@@ -10,7 +10,7 @@ import { KeyValue, KeyValueList } from "../ui/Panel";
 import { ui } from "../ui/styles";
 
 const MESSAGES = {
-  forbidden: "This Helmr account cannot access the organization connected to this Agent. Ask an administrator for an invitation, or sign in with the account that already has access.",
+  forbidden: "This Helmr account cannot access the organization connected to this agent. Ask an administrator for an invitation, or sign in with the account that already has access.",
   bad_request: "This linking request has expired or is unavailable. Try your action in Slack again.",
   conflict: "This Slack account or your Helmr account is already linked differently in this workspace. Unlink the other account in My account, then try your action in Slack again.",
   service_unavailable: "Slack is not configured on this server. Ask an administrator to configure the Slack integration.",

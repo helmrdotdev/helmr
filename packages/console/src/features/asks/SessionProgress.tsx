@@ -39,10 +39,15 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
   }));
   const notices = createMemo(() => events.data?.pages.flatMap(page => page.notices) ?? []);
   const output = createMemo(() => events.data?.pages.flatMap(page => page.output) ?? []);
-  return <Panel title="Progress">
-    <QueryState query={events} pending="Loading progress..." error={() => "Progress could not be loaded."}>
+  const expired = () => (events.data?.pages[0]?.retained_after ?? 0) > 0;
+  // The Panel shows only when there is something in it: progress output, a
+  // delivery notice, expired history or a failure to load. A Session without
+  // any has no Progress panel.
+  const shown = () => events.isError || expired() || notices().length > 0 || output().length > 0 || events.hasNextPage;
+  return <Show when={shown()}><Panel title="Progress">
+    <QueryState query={events} error={() => "Progress could not be loaded."}>
       {() => <>
-        <Show when={(events.data?.pages[0]?.retained_after ?? 0) > 0}><Notice tone="info">Earlier events have expired.</Notice></Show>
+        <Show when={expired()}><Notice tone="info">Earlier events have expired.</Notice></Show>
         <For each={notices()}>{event => <Notice tone="warning"><p class="m-0">{event.text}</p><TurnRef id={event.turn_id} /></Notice>}</For>
         <Show when={output().length > 0 || events.hasNextPage}>
           <List
@@ -58,5 +63,5 @@ export function SessionProgress(props: { address: SessionAddress; polling: boole
         </Show>
       </>}
     </QueryState>
-  </Panel>;
+  </Panel></Show>;
 }

@@ -54,7 +54,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
           label="Linked Slack identities"
           footer={<LoadMore count={allLinks().length} noun={{ one: "linked identity", other: "linked identities" }} hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} />}
         >
-          <For each={allLinks()}>{(link) => <ListItem class="flex flex-wrap items-center justify-between gap-3">
+          <For each={allLinks()}>{(link) => <ListItem line class="flex-wrap justify-between">
             <span class="inline-flex flex-wrap items-baseline gap-1.5">
               <IDText value={link.slack_user_id} />
               <span class={ui.muted}>in {workspaceName(link.team_id) || <IDText value={link.team_id} />}</span>
@@ -66,7 +66,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
     </QueryState>
     <Show when={workspaces.isError}><SlackFailureNotice failure={slackFailure(workspaces.error, "Slack workspaces could not be loaded.")} /></Show>
     <Show when={workspaces.data?.pages[0]?.configured}>
-      <Show when={allWorkspaces().length > 0} fallback={<p class={ui.muted}>An organization admin must connect an Agent to Slack before you can link your account here.</p>}>
+      <Show when={allWorkspaces().length > 0} fallback={<p class={ui.muted}>An organization admin must connect an agent to Slack before you can link your account here.</p>}>
         <div class="flex flex-wrap items-end gap-3">
           <Field label="Workspace for your identity" flush class="min-w-52">
             <Select value={workspace()} disabled={busy()} placeholder="Select workspace" options={allWorkspaces().map((w) => ({ value: w.installation_id, label: w.workspace_name || w.team_id }))} onChange={setWorkspace} minWidth="100%" />

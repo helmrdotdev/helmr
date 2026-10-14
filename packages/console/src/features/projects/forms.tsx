@@ -43,8 +43,8 @@ export function createProjectDraft() {
           <SlugInput slug={slug} placeholder="my-app" />
         </Field>
         <Show when={!regions.isPending && regionOptions().length === 0}>
-          <Notice tone="warning" class="mb-3" action={<Show when={me.data?.admin}><A class={ui.monoLink} href="/admin/regions">Create a Region</A></Show>}>
-            A platform Region is required before a project can be created.
+          <Notice tone="warning" class="mb-3" action={<Show when={me.data?.admin}><A class={ui.monoLink} href="/admin/regions">Create a region</A></Show>}>
+            A platform region is required before a project can be created.
           </Notice>
         </Show>
         <Field label="Region">

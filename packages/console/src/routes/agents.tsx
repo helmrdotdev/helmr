@@ -24,11 +24,11 @@ import { SessionList } from "./sessions";
 import { TriggerList } from "./triggers";
 
 const SHOW_OPTIONS = [
-  { value: "current", label: "Current Deployment" },
-  { value: "all", label: "All Agents" },
+  { value: "current", label: "Current deployment" },
+  { value: "all", label: "All agents" },
 ] as const;
 
-const failure = (error: unknown) => errorMessage(error, "Could not load Agents.");
+const failure = (error: unknown) => errorMessage(error, "Could not load agents.");
 
 type Section = "agents" | "sessions" | "triggers";
 const SECTION_TABS: LinkTabItem<Section>[] = [
@@ -69,19 +69,19 @@ export function AgentList() {
   const table = () => (
     <QueryState
       query={agents}
-      pending="Loading Agents..."
+      pending="Loading agents..."
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.agents.length === 0),
-        title: all() ? "No Agents registered in this environment." : "No Agents in the current Deployment.",
-        hint: all() ? "Define Agents in code and deploy them." : "Choose All Agents to manage retained connections and history.",
+        title: all() ? "No agents registered in this environment." : "No agents in the current deployment.",
+        hint: all() ? "Define agents in code and deploy them." : "Show all agents to manage retained connections and history.",
       }}
     >
       {() => (
-        <Show when={shown().length > 0} fallback={<EmptyState title="No loaded Agents match this filter." hint={agents.hasNextPage ? "Load more Agents to search further." : undefined} />}>
+        <Show when={shown().length > 0} fallback={<EmptyState title="No loaded agents match this filter." hint={agents.hasNextPage ? "Load more agents to search further." : undefined} />}>
           <DataTable
             columns={all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"]}
-            footer={<LoadMore count={items().length} noun={{ one: "Agent", other: "Agents" }} hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "agent", other: "agents" }} hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
           >
             <For each={shown()}>{item => <tr>
               <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
@@ -97,17 +97,17 @@ export function AgentList() {
   );
   return <>
     <Toolbar start={<>
-      <Segmented label="Show Agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />
+      <Segmented label="Show agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />
       <div class="w-56 max-sm:w-full">
-        <SearchInput aria-label="Filter Agents" placeholder="Filter loaded Agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
+        <SearchInput aria-label="Filter agents" placeholder="Filter loaded agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
       </div>
     </>} />
     <Show when={all()} fallback={
       <QueryState
         query={current}
-        pending="Loading current Agents..."
+        pending="Loading current agents..."
         error={failure}
-        empty={{ when: (deployment) => !deployment, title: "No current Deployment.", hint: "Choose All Agents to manage retained connections and history." }}
+        empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Show all agents to manage retained connections and history." }}
       >
         {table}
       </QueryState>
@@ -161,7 +161,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
       meta={<>
         <Show when={agent.data}>{record => (
           <Show when={record().current_deployment_id}>
-            {deployment => <span>{record().defined_in_current ? "Defined in Deployment" : "Current Deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
+            {deployment => <span>{record().defined_in_current ? "Defined in deployment" : "Current deployment"} <IDText value={deployment()} mode="link" href={deploymentHref(deployment())} /></span>}
           </Show>
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
@@ -169,11 +169,11 @@ export function AgentDetail(props: { children?: JSX.Element }) {
       actions={<CopyLinkButton />}
     />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <Show when={!missing()} fallback={<EmptyState title="This environment has no Agent with this name." hint="Agents appear once a Deployment in this environment defines them." />}>
-        <QueryState query={agent} pending="Loading Agent..." error={failure}>
+      <Show when={!missing()} fallback={<EmptyState title="This environment has no agent with this name." hint="Agents appear once a deployment in this environment defines them." />}>
+        <QueryState query={agent} pending="Loading agent..." error={failure}>
           {record => <>
             <Show when={!record().defined_in_current}>
-              <Notice tone="info" class="mb-4">{record().current_deployment_id ? "This Agent is not in the current Deployment." : "This environment has no current Deployment."} New independent Sessions cannot start. Existing Sessions, trigger history and connections remain available for inspection and management.</Notice>
+              <Notice tone="info" class="mb-4">{record().current_deployment_id ? "This agent is not in the current deployment." : "This environment has no current deployment."} New independent sessions cannot start. Existing sessions, trigger history and connections remain available for inspection and management.</Notice>
             </Show>
             <LinkTabs id="agent-tabs" label="Agent" items={tabs()} selected={selected()} />
             <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>

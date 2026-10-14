@@ -7,7 +7,7 @@ import { isProtectedEnvironment, type Project } from "../lib/projects";
 import { rememberProjectScope, useScope } from "../lib/scope";
 import { scopeSwitchPath } from "../lib/scope-navigation";
 import { CommandList, type CommandItem } from "../ui/CommandList";
-import { EnvDot } from "../ui/EnvChip";
+import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
 import { Popover } from "../ui/Popover";
 import { cx, toneClass } from "../ui/styles";
 
@@ -22,9 +22,7 @@ const FOOTER_ACTION =
   "flex h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-xs border-0 bg-transparent px-2 font-mono text-badge font-medium text-console-muted transition-colors hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
 const FOOTER_ICON =
   "grid size-4 shrink-0 place-items-center border border-console-border bg-console-surface text-control font-medium leading-none text-console-muted";
-const MANAGE = "shrink-0 px-2 font-mono text-micro font-medium text-console-accent hover:text-console-accent-hover";
-
-export type ScopePickerOpeners = { project: () => void; environment: () => void };
+const MANAGE = "flex h-7 shrink-0 items-center rounded-xs px-2 font-mono text-micro font-medium text-console-accent hover:text-console-accent-hover";
 
 function Chevron(props: { open: boolean }) {
   return (
@@ -32,10 +30,6 @@ function Chevron(props: { open: boolean }) {
       <span class="block size-1.5 -translate-y-px rotate-45 border-b border-r border-console-muted" />
     </span>
   );
-}
-
-function ProtectedTag() {
-  return <span class="rounded-xs border border-console-accent/35 px-1 font-mono text-micro leading-normal text-console-accent">protected</span>;
 }
 
 // One segment of the scope selector: a trigger and its searchable picker.
@@ -53,7 +47,7 @@ function Picker(props: {
 }) {
   const [anchor, setAnchor] = createSignal<HTMLButtonElement>();
   let search: HTMLInputElement | undefined;
-  // Opening, from the trigger or the phone menu, puts focus in the search box.
+  // Opening puts focus in the search box.
   createEffect(on(() => props.open, (open) => {
     if (open) requestAnimationFrame(() => search?.focus());
   }));
@@ -101,9 +95,8 @@ function Picker(props: {
 }
 
 // The tab's scope in the header: `<Project> / <Environment>`, each opening its
-// own searchable picker with create and manage actions. `openers` receives
-// functions that open each picker, for the phone menu.
-export function ScopeSelector(props: { openers?: (openers: ScopePickerOpeners) => void }) {
+// own searchable picker with create and manage actions.
+export function ScopeSelector() {
   const scope = useScope();
   const navigate = useNavigate();
   const location = useLocation();
@@ -138,7 +131,7 @@ export function ScopeSelector(props: { openers?: (openers: ScopePickerOpeners) =
     label: environment.name,
     keywords: environment.environment,
     leading: <EnvDot colorHex={environmentChip(environment)?.colorHex} />,
-    trailing: isProtectedEnvironment(environment) ? <ProtectedTag /> : undefined,
+    trailing: isProtectedEnvironment(environment) ? <ProtectedBadge /> : undefined,
     current: environment.environment === scope.selectedEnvironmentID(),
     onSelect: () => {
       setOpenEnvironment(false);
@@ -162,11 +155,6 @@ export function ScopeSelector(props: { openers?: (openers: ScopePickerOpeners) =
     setOpenEnvironment(false);
     setCreating(mode);
   };
-
-  props.openers?.({
-    project: () => { if (!scope.isLoading()) setOpenProject(true); },
-    environment: () => { if (!scope.isLoading() && scope.selectedProject()) setOpenEnvironment(true); },
-  });
 
   const environment = () => environmentChip(scope.selectedEnvironment());
   const noProjects = () => !scope.isLoading() && projects().length === 0;
@@ -222,7 +210,7 @@ export function ScopeSelector(props: { openers?: (openers: ScopePickerOpeners) =
             <>
               <EnvDot colorHex={environment()?.colorHex} />
               <span class="max-w-40 truncate max-sm:max-w-22">{environment()?.name ?? "—"}</span>
-              <Show when={environment()?.protected}><span class="max-sm:hidden"><ProtectedTag /></span></Show>
+              <Show when={environment()?.protected}><span class="max-sm:hidden"><ProtectedBadge /></span></Show>
             </>
           }
           items={environmentItems()}

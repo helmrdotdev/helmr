@@ -1,6 +1,7 @@
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { SectionLayout } from "../components/SectionLayout";
+import { ComputerStatus } from "../features/computers/ComputerStatus";
 import { computerHref } from "../features/computers/navigation";
 import { deploymentHref } from "../features/deployments/navigation";
 import { listTemplateDefinitions, templateResources } from "../lib/definitions";
@@ -13,24 +14,22 @@ import { IDText } from "../ui/IDText";
 import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
-import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
 const computersErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load Computers.", { forbidden: "You do not have permission to view Computers." });
+  errorMessage(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
 
 function ComputerRow(props: { computer: ComputerListItem }) {
   return (
     <tr>
       <td><IDText value={props.computer.id} mode="link" href={computerHref(props.computer.id)} /></td>
+      <td><ComputerStatus computer={props.computer} /></td>
       <td>
         <Show when={props.computer.key} fallback={<EmptyCell />}>
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
       <td><code>{props.computer.template}</code></td>
-      <td><StatusBadge resource="computer" status={props.computer.status} /></td>
-      <td><StatusBadge resource="computer_residency" status={props.computer.residency} /></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
     </tr>
@@ -72,19 +71,19 @@ export function ComputerList() {
   return (
     <QueryState
       query={computers}
-      pending="Loading Computers..."
+      pending="Loading computers..."
       error={computersErrorMessage}
       empty={{
         when: (data) => data.pages.every((page) => page.computers.length === 0),
-        title: "No Computers yet.",
-        hint: "Start an Agent through the CLI or Slack, or create a Computer with helmr computer create.",
+        title: "No computers yet.",
+        hint: "Start an agent through the CLI or Slack, or create a computer with helmr computer create.",
       }}
     >
       {() => (
         <DataTable
-          columns={["Computer", "Key", "Template", "Status", "Residency", "Last activity", "Created"]}
-          minWidth="min-w-220"
-          footer={<LoadMore count={items().length} noun={{ one: "Computer", other: "Computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
+          columns={["Computer", "Status", "Key", "Template", "Last activity", "Created"]}
+          minWidth="min-w-190"
+          footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
           <For each={items()}>{(computer) => <ComputerRow computer={computer} />}</For>
         </DataTable>
@@ -93,7 +92,7 @@ export function ComputerList() {
   );
 }
 
-const templatesFailure = (error: unknown) => errorMessage(error, "Could not load Templates.");
+const templatesFailure = (error: unknown) => errorMessage(error, "Could not load templates.");
 
 // The Templates of the current Deployment, for creating Computers.
 export function TemplateList() {
@@ -114,26 +113,26 @@ export function TemplateList() {
   return (
     <QueryState
       query={current}
-      pending="Loading current Deployment..."
+      pending="Loading current deployment..."
       error={templatesFailure}
-      empty={{ when: (deployment) => !deployment, title: "No current Deployment.", hint: "Deploy your code to make its Templates available here." }}
+      empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Deploy your code to make its templates available here." }}
     >
       {deployment => <>
-        <p class={cx(ui.muted, "mb-3")}>Templates in the current Deployment <IDText value={deployment()!.id} mode="link" href={deploymentHref(deployment()!.id)} />, for creating Computers.</p>
+        <p class={cx(ui.muted, "mb-3")}>Templates in the current deployment <IDText value={deployment()!.id} mode="link" href={deploymentHref(deployment()!.id)} />, for creating computers.</p>
         <QueryState
           query={definitions}
-          pending="Loading Templates..."
+          pending="Loading templates..."
           error={templatesFailure}
           empty={{
             when: (data) => data.pages.every(page => page.items.length === 0),
-            title: "No Templates in the current Deployment.",
-            hint: "Add Templates in your code and deploy them.",
+            title: "No templates in the current deployment.",
+            hint: "Add templates in your code and deploy them.",
           }}
         >
           {() => (
             <DataTable
               columns={["Template", "Resources"]}
-              footer={<LoadMore count={items().length} noun={{ one: "Template", other: "Templates" }} hasMore={definitions.hasNextPage} loading={definitions.isFetchingNextPage} failed={definitions.isFetchNextPageError} onLoadMore={() => void definitions.fetchNextPage()} />}
+              footer={<LoadMore count={items().length} noun={{ one: "template", other: "templates" }} hasMore={definitions.hasNextPage} loading={definitions.isFetchingNextPage} failed={definitions.isFetchNextPageError} onLoadMore={() => void definitions.fetchNextPage()} />}
             >
               <For each={items()}>{item => <tr>
                 <td><code>{item.template}</code></td>

@@ -98,7 +98,7 @@ export function Login() {
         }
       >
         <AuthTitle>Sign in</AuthTitle>
-        <AuthCopy>Choose a sign-in method to access your Sessions, Computers, and credentials.</AuthCopy>
+        <AuthCopy>Choose a sign-in method to access your sessions, computers, and credentials.</AuthCopy>
         <button
           class={ui.button}
           type="button"

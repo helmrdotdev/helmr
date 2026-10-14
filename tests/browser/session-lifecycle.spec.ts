@@ -137,7 +137,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
   await expect(page.getByText("Operator pause (local)")).toBeVisible();
   await expect(page.getByText("Secret revoked (subtree)")).toBeVisible();
   await page
-    .getByRole("button", { name: "Cancel Session", exact: true })
+    .getByRole("button", { name: "Cancel session", exact: true })
     .click();
   await expect(
     page.getByText("Other Sessions sharing the Computer are not cancelled.", {
@@ -146,7 +146,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
   ).toBeVisible();
   await page
     .getByRole("dialog")
-    .getByRole("button", { name: "Cancel Session", exact: true })
+    .getByRole("button", { name: "Cancel session", exact: true })
     .click();
   await expect(
     page.getByText('"status": "accepted"', { exact: false }),
@@ -155,7 +155,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
     page.getByText("original input", { exact: false }),
   ).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
   expect(mutations).toHaveLength(1);
   expect(mutations[0]).toEqual({ idempotency_key: expect.any(String) });
 });
@@ -246,8 +246,8 @@ test("Session closure refreshes final progress and questions before another poll
   });
   await page.goto(url);
   await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Pending");
-  await page.getByRole("button", { name: "Cancel Session", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Cancel Session", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(page.getByText("Last published output", { exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Cancelled");
 });
@@ -276,7 +276,7 @@ test("expired Turn content remains distinct from empty input and a null result",
 for (const action of ["interrupt", "cancel"] as const) {
   test(`${action} retries preserve identity`, async ({ page }) => {
     await scope(page, [`sessions.${action}`]);
-    const label = { interrupt: "Interrupt Session", cancel: "Cancel Session" }[action];
+    const label = { interrupt: "Interrupt session", cancel: "Cancel session" }[action];
     const attempts: unknown[] = [];
     let accepted = false;
     await page.route(`**${path}**`, async route => {
@@ -326,4 +326,81 @@ test("inherited hold links its owner and cannot be released on a child", async (
   await expect(page.getByText("Parent paused (subtree)")).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}`);
+});
+
+for (const status of ["open", "closing", "closed", "cancelled"] as const) {
+  const active = status === "open" || status === "closing";
+  test(`Interrupt session and the Cancel session danger zone are ${active ? "offered" : "not offered"} for a ${status} Session`, async ({ page }) => {
+    await scope(page, ["sessions.interrupt"]);
+    await page.route(`**${path}**`, async route => {
+      const endpoint = new URL(route.request().url()).pathname;
+      // Settled Turns only: whether work is running does not decide the action.
+      if (endpoint === path) await route.fulfill({ json: { ...initialSession, status } });
+      else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, status: "completed", terminal_at: now }] } });
+      else await route.fallback();
+    });
+    await page.goto(url);
+    await expect(page.getByText("original input", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Interrupt session", exact: true })).toHaveCount(active ? 1 : 0);
+    await expect(page.getByRole("region", { name: "Cancel session" }).getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
+  });
+}
+
+test("Cancel session sits in a danger zone after the Turns and confirms before cancelling", async ({ page }) => {
+  await scope(page);
+  const mutations: string[] = [];
+  let cancelled = false;
+  await page.route(`**${path}**`, async route => {
+    const request = route.request();
+    const endpoint = new URL(request.url()).pathname;
+    if (request.method() === "POST") {
+      mutations.push(endpoint);
+      cancelled = true;
+      await route.fulfill({ json: { id: turnID, session_id: id, status: "accepted" } });
+    } else if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: cancelled ? "cancelled" : "open" } });
+    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, ...(cancelled ? { status: "cancelled", terminal_at: now } : {}) }] } });
+    else await route.fallback();
+  });
+  await page.goto(url);
+  const zone = page.getByRole("region", { name: "Cancel session" });
+  await expect(zone).toBeVisible();
+  // The page header keeps Copy link only; the destructive action is not there.
+  await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(1);
+  const turns = page.getByRole("region", { name: "Turns" });
+  const turnsBox = (await turns.boundingBox())!;
+  const zoneBox = (await zone.boundingBox())!;
+  expect(zoneBox.y).toBeGreaterThan(turnsBox.y + turnsBox.height);
+  await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Cancel session" });
+  await expect(dialog).toBeVisible();
+  expect(mutations).toHaveLength(0);
+  await dialog.getByRole("button", { name: "Keep", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(mutations).toHaveLength(0);
+  await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(mutations).toEqual([`${path}/cancel`]);
+  await expect(page.getByRole("region", { name: "Cancel session" })).toHaveCount(0);
+});
+
+test("a Session without progress output or notices has no Progress panel", async ({ page }) => {
+  await scope(page);
+  let output = false;
+  await page.route(`**${path}**`, async route => {
+    const endpoint = new URL(route.request().url()).pathname;
+    if (endpoint === path) await route.fulfill({ json: initialSession });
+    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [initialTurn] } });
+    else if (endpoint === `${path}/events`) await route.fulfill({ json: { records: output ? [{ session_id: id, turn_id: turnID, sequence: 1, kind: "turn.output", data: [{ type: "text", text: "Working on it" }], created_at: now }] : [], next_after: output ? 1 : 0, has_more: false, retained_after: 0 } });
+    else await route.fallback();
+  });
+  await page.goto(url);
+  await expect(page.getByRole("region", { name: "Turns" })).toBeVisible();
+  await expect(page.getByText("original input", { exact: false })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Progress" })).toHaveCount(0);
+  output = true;
+  await page.reload();
+  const progress = page.getByRole("region", { name: "Progress" });
+  await expect(progress).toBeVisible();
+  await expect(progress.getByText("Working on it", { exact: true })).toBeVisible();
 });

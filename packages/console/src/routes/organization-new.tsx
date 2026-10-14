@@ -54,7 +54,7 @@ export function OrganizationNew() {
       <AuthTitle>Create your organization</AuthTitle>
       <div class={ui.blockStack}>
         <Steps label="Setup steps" steps={onboardingSteps("organization")} />
-        <AuthCopy>Organizations own members, projects, environments, credentials, and Sessions.</AuthCopy>
+        <AuthCopy>Organizations own members, projects, environments, credentials, and sessions.</AuthCopy>
       </div>
       <form onSubmit={submit}>
         <Field label="Name">

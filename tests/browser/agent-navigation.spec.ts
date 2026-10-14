@@ -24,7 +24,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     else if (path === "/api/projects") json = { projects: [proj] };
     else if (path === `/api/projects/${project}`) json = proj;
     else if (path === base) json = env;
-    else if (path === `${base}/deployments/current` && !current) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "No current Deployment" } } }); return; }
+    else if (path === `${base}/deployments/current` && !current) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "No current deployment" } } }); return; }
     else if (path.startsWith(`${base}/deployments/`)) json = { id: path.endsWith("current") ? deployment : path.split("/").at(-1), version: "version", bundle_digest: `sha256:${"a".repeat(64)}`, created_at: now };
     else if (path === `${base}/agents`) json = url.searchParams.get("view") === "all" ? { agents: [record] } : { deployment_id: url.searchParams.get("deployment_id") ?? deployment, agents: defined ? [{ agent: "support", template: "browser" }] : [] };
     else if (path === `${base}/agents/support/status`) json = record;
@@ -42,9 +42,9 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
 test("current Agent navigation opens the Agent with its Template and its Sessions, triggers and Slack tabs", async ({ page }) => {
   const paths = await catalog(page);
   await page.goto(`/agents?${scope}`);
-  await expect(page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "Current Deployment" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Show agents" }).getByRole("button", { name: "Current deployment" })).toHaveAttribute("aria-pressed", "true");
   const row = page.getByRole("row").filter({ hasText: "support" });
-  await expect(row.getByText("In current Deployment", { exact: true })).toBeVisible();
+  await expect(row.getByText("In current deployment", { exact: true })).toBeVisible();
   await expect(row.getByText("browser", { exact: true })).toBeVisible();
   await expect(row.getByRole("link", { name: "browser" })).toHaveCount(0);
   await page.getByRole("link", { name: "support", exact: true }).click();
@@ -52,18 +52,19 @@ test("current Agent navigation opens the Agent with its Template and its Session
 
   const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
   await expect(breadcrumb.getByRole("link")).toHaveText(["Agents"]);
-  await expect(breadcrumb.getByRole("listitem").last()).toHaveText("/support");
+  // Each separator ends the crumb before it, so no wrapped line starts with "/".
+  await expect(breadcrumb.getByRole("listitem")).toHaveText(["Agents/", "support"]);
   await expect(breadcrumb.locator("[aria-current=page]")).toHaveText("support");
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
-  await expect(page.getByText("In current Deployment", { exact: true })).toBeVisible();
-  await expect(page.getByText("Defined in Deployment", { exact: false })).toBeVisible();
+  await expect(page.getByText("In current deployment", { exact: true })).toBeVisible();
+  await expect(page.getByText("Defined in deployment", { exact: false })).toBeVisible();
   await expect(page.getByText("Template browser", { exact: true })).toBeVisible();
   expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${deployment}`))).toBe(true);
   await expect(page.getByRole("button", { name: "Copy link" })).toBeVisible();
   const tabs = page.getByRole("tablist", { name: "Agent" });
   await expect(tabs.getByRole("tab")).toHaveText(["Sessions", "Triggers", "Slack"]);
   await expect(tabs.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tabpanel", { name: "Sessions" })).toContainText("This Agent has no Sessions yet.");
+  await expect(page.getByRole("tabpanel", { name: "Sessions" })).toContainText("This agent has no sessions yet.");
   await expect.poll(() => paths.some(path => path.includes("/sessions?agent=support"))).toBe(true);
   expect(paths.some(path => path.includes("agent_id="))).toBe(false);
 
@@ -72,9 +73,9 @@ test("current Agent navigation opens the Agent with its Template and its Session
   await expect(page).toHaveURL("/agents/support/triggers");
   await expect(tabs.getByRole("tab", { name: "Triggers", exact: true })).toBeFocused();
   await expect(page.getByText("daily", { exact: true })).toBeVisible();
-  await expect(page.getByText("Showing 1 Trigger", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Load more Triggers" }).click();
-  await expect(page.getByRole("button", { name: "Load more Triggers" })).toHaveCount(0);
+  await expect(page.getByText("Showing 1 trigger", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Load more triggers" }).click();
+  await expect(page.getByRole("button", { name: "Load more triggers" })).toHaveCount(0);
   expect(paths.some(path => path.endsWith("/triggers?agent=support"))).toBe(true);
   expect(paths.some(path => path.endsWith("/triggers?cursor=older&agent=support"))).toBe(true);
 
@@ -90,11 +91,11 @@ test("current Agent navigation opens the Agent with its Template and its Session
 test("the Agents list filters loaded Agents by name", async ({ page }) => {
   await catalog(page);
   await page.goto(`/agents?${scope}`);
-  const filter = page.getByRole("searchbox", { name: "Filter Agents" });
+  const filter = page.getByRole("searchbox", { name: "Filter agents" });
   await filter.fill("supp");
   await expect(page.getByRole("link", { name: "support", exact: true })).toBeVisible();
   await filter.fill("billing");
-  await expect(page.getByText("No loaded Agents match this filter.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No loaded agents match this filter.", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "support", exact: true })).toHaveCount(0);
   await filter.fill("");
   await expect(page.getByRole("link", { name: "support", exact: true })).toBeVisible();
@@ -114,9 +115,9 @@ for (const current of [true, false]) {
   test(`retained Agent remains manageable with ${current ? "no current definition" : "no current Deployment"}`, async ({ page }, testInfo) => {
     await catalog(page, { current, defined: false });
     await page.goto(`/agents?${scope}`);
-    await expect(page.getByText(current ? "No Agents in the current Deployment." : "No current Deployment.", { exact: true })).toBeVisible();
-    await page.getByRole("group", { name: "Show Agents" }).getByRole("button", { name: "All Agents" }).click();
-    await expect(page.getByRole("row").filter({ hasText: "support" }).getByText("Not in current Deployment", { exact: true })).toBeVisible();
+    await expect(page.getByText(current ? "No agents in the current deployment." : "No current deployment.", { exact: true })).toBeVisible();
+    await page.getByRole("group", { name: "Show agents" }).getByRole("button", { name: "All agents" }).click();
+    await expect(page.getByRole("row").filter({ hasText: "support" }).getByText("Not in current deployment", { exact: true })).toBeVisible();
     await page.getByRole("link", { name: "support", exact: true }).click();
     await expect(page.getByText("New independent Sessions cannot start.", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Template /)).toHaveCount(0);
@@ -141,8 +142,10 @@ test("Deployment details are read-only and show every definition field as column
   const agents = page.getByRole("tabpanel", { name: "Agents" });
   await expect(agents.getByRole("columnheader")).toHaveText(["Agent", "Template"]);
   await expect(agents.getByRole("row").filter({ hasText: "support" })).toContainText("browser");
-  await expect(agents.getByRole("link")).toHaveCount(0);
-  await expect(agents.getByText("Showing 1 Agent", { exact: true })).toBeVisible();
+  // The Agent name is the row's primary link, to the Agent's page; nothing else links.
+  await expect(agents.getByRole("link")).toHaveCount(1);
+  await expect(agents.getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support");
+  await expect(agents.getByText("Showing 1 agent", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const templates = page.getByRole("tabpanel", { name: "Templates" });
   await expect(templates.getByRole("columnheader")).toHaveText(["Template", "Resources"]);

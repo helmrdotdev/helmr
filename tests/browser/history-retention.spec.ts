@@ -73,7 +73,7 @@ test("Environment metadata editing has no retention policy", async ({ page }) =>
   await page.goto("/settings/environments");
   await expect(page.getByRole("columnheader", { name: "History retention" })).toHaveCount(0);
   await page.getByRole("button", { name: "Actions for Production", exact: true }).click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
   await expect(mode(page)).toHaveCount(0);
   await page.getByLabel("Name", { exact: true }).fill("Renamed");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -85,7 +85,7 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
   const { writes } = await scope(page);
   await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("30");
-  await expect(page.getByText("Open Sessions keep their history.")).toBeVisible();
+  await expect(page.getByText("Open sessions keep their history.")).toBeVisible();
   await expect(save(page)).toBeDisabled();
   await period(page).fill("7");
   await save(page).click();

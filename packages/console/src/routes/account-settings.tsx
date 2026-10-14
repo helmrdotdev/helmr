@@ -4,7 +4,7 @@ import { statusLabel } from "../ui/label";
 import { PageHeader } from "../ui/PageHeader";
 import { KeyValue, Panel } from "../ui/Panel";
 import { QueryState } from "../ui/QueryState";
-import { cx, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
 export function AccountSettings() {
   const me = useMe();
@@ -12,7 +12,7 @@ export function AccountSettings() {
     <PageHeader title="My account" />
     <QueryState query={me} pending="Loading your account..." error={() => "Your account could not be loaded."}>
       {(account) => (
-        <div class={cx(ui.sectionStack, "max-w-220")}>
+        <div class={ui.sectionStack}>
           <Panel title="Profile">
             <dl class="m-0 grid grid-cols-3 gap-4 max-sm:grid-cols-1">
               <KeyValue label="Name">{account().display_name?.trim() || undefined}</KeyValue>

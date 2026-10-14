@@ -68,14 +68,13 @@ export function RowError(props: { columns: number; message: string | null | unde
   );
 }
 
-// What a footer counts: its singular and plural noun ("Session", "Sessions").
-// Product terms keep their capital ("Turn", "Trigger"); other nouns are lower
-// case ("event", "invitation").
+// What a footer counts: its singular and plural noun, lower case like every
+// noun mid-sentence ("session", "sessions").
 export type Noun = { one: string; other: string };
 
-// The footer of a table or list: how many rows are shown ("Showing 1 Turn",
-// "Showing 3 Turns") and, while more exist, "Load more", named for what it loads
-// ("Load more Sessions") so several lists on one page stay distinguishable. When
+// The footer of a table or list: how many rows are shown ("Showing 1 turn",
+// "Showing 3 turns") and, while more exist, "Load more", named for what it loads
+// ("Load more sessions") so several lists on one page stay distinguishable. When
 // loading the next page failed, the footer says so and the button retries just
 // that page.
 export function LoadMore(props: {
@@ -85,7 +84,13 @@ export function LoadMore(props: {
   failed?: boolean | undefined;
   onLoadMore: () => void;
   noun: Noun;
+  // A second kind of row that the table also shows and that "Load more" loads
+  // (the Members table: members, then invitations). It joins the count only
+  // when there are some: "Showing 3 members, 1 invitation".
+  extra?: { count: number; noun: Noun };
 }) {
+  const more = () => props.extra?.noun.other ?? props.noun.other;
+  const counted = (count: number, noun: Noun) => `${count} ${count === 1 ? noun.one : noun.other}`;
   return (
     <div class={ui.tableFooter}>
       <Show when={props.hasMore}>
@@ -93,15 +98,18 @@ export function LoadMore(props: {
           type="button"
           class={ui.compactButton}
           disabled={props.loading}
-          aria-label={props.failed ? `Retry loading more ${props.noun.other}` : `Load more ${props.noun.other}`}
+          aria-label={props.failed ? `Retry loading more ${more()}` : `Load more ${more()}`}
           onClick={() => props.onLoadMore()}
         >
           {props.loading ? "Loading…" : props.failed ? "Retry" : "Load more"}
         </button>
       </Show>
-      <span>Showing {props.count} {props.count === 1 ? props.noun.one : props.noun.other}</span>
+      <span>
+        Showing {counted(props.count, props.noun)}
+        <Show when={props.extra && props.extra.count > 0}>, {counted(props.extra!.count, props.extra!.noun)}</Show>
+      </span>
       <Show when={props.failed && !props.loading}>
-        <span class="text-console-danger" role="alert">Could not load more {props.noun.other}.</span>
+        <span class="text-console-danger" role="alert">Could not load more {more()}.</span>
       </Show>
     </div>
   );

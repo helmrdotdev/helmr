@@ -120,7 +120,7 @@ test("a link to an unavailable Project returns the tab to its own scope and says
   await openLink(page, `project=${project}&environment=staging`, "Staging");
   await openLink(page, "project=missing&environment=production", "Staging");
   await expect(projectTrigger(page)).toContainText("Scope Tabs");
-  await expect(notice(page)).toHaveText("The link's Project or Environment is not available; showing Scope Tabs / Staging.");
+  await expect(notice(page)).toHaveText("The link's project or environment is not available; showing Scope Tabs / Staging.");
   // The organization default Project is never shown on the way back.
   expect(scoped.filter(path => path.startsWith("other/"))).toEqual([]);
 });
@@ -129,7 +129,7 @@ test("a link to an unavailable Environment returns the tab to its own scope and 
   const scoped = await mockConsole(page.context());
   await openLink(page, "project=other&environment=production", "Other Production");
   await openLink(page, `project=${project}&environment=missing`, "Other Production");
-  await expect(notice(page)).toHaveText("The link's Project or Environment is not available; showing Other / Other Production.");
+  await expect(notice(page)).toHaveText("The link's project or environment is not available; showing Other / Other Production.");
   // Only the linked Environment itself was tried; the linked Project's default never loads.
   expect(scoped.filter(path => path.startsWith(`${project}/`) && !path.startsWith(`${project}/missing`))).toEqual([]);
 });
@@ -137,14 +137,14 @@ test("a link to an unavailable Environment returns the tab to its own scope and 
 test("a first link to an unavailable Environment shows the Project's default Environment and says so", async ({ page }) => {
   await mockConsole(page.context());
   await openLink(page, `project=${project}&environment=missing`, "Production");
-  await expect(notice(page)).toHaveText("The link's Project or Environment is not available; showing Scope Tabs / Production.");
+  await expect(notice(page)).toHaveText("The link's project or environment is not available; showing Scope Tabs / Production.");
 });
 
 test("a partial link keeps the tab's scope and says so", async ({ page }) => {
   await mockConsole(page.context());
   await openLink(page, `project=${project}&environment=staging`, "Staging");
   await openLink(page, "project=other", "Staging");
-  await expect(notice(page)).toHaveText("The link's Project or Environment is not available; showing Scope Tabs / Staging.");
+  await expect(notice(page)).toHaveText("The link's project or environment is not available; showing Scope Tabs / Staging.");
 });
 
 test("Copy link shares the page in this tab's scope and an Agent page survives an Environment switch", async ({ page, context }) => {
@@ -161,7 +161,7 @@ test("Copy link shares the page in this tab's scope and an Agent page survives a
 
   await chooseEnvironment(page, "Staging");
   await expect(page).toHaveURL("/agents/support/triggers");
-  await expect(page.getByText("This environment has no Agent with this name.")).toBeVisible();
+  await expect(page.getByText("This environment has no agent with this name.")).toBeVisible();
   await chooseEnvironment(page, "Production");
   await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
 });

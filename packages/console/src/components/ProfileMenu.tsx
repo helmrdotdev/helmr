@@ -55,9 +55,9 @@ export function ProfileMenu() {
       </button>
 
       <Popover open={open()} anchor={trigger()} onDismiss={() => setOpen(false)} role="menu" label="Profile" align="end" width={224}>
-        <div class="border-b border-console-border bg-console-bg-panel px-3 py-2.5">
-          <div class="truncate text-body font-medium leading-tight text-console-text">{displayName()}</div>
-          <div class={cx("mt-0.75", ui.microLabel)}>{formatRole(me.data?.role)}</div>
+        <div class={ui.containerHeader}>
+          <span class={cx(ui.containerTitle, "text-console-text")}>{displayName()}</span>
+          <span class={cx(ui.microLabel, "shrink-0")}>{formatRole(me.data?.role)}</span>
         </div>
         <div class="p-1">
           <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
@@ -70,7 +70,7 @@ export function ProfileMenu() {
           </Show>
           <button
             type="button"
-            class={cx(ui.scopeAction, "text-console-danger hover:text-console-danger")}
+            class={ui.scopeAction}
             role="menuitem"
             onClick={() => {
               setOpen(false);

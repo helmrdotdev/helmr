@@ -135,6 +135,30 @@
   background-image: var(--console-gradient-pressed);
 }
 
+/* A horizontally scrolling table fades out at its right edge while more columns
+   sit past it. The fade follows the scroll position (a scroll-driven animation),
+   so it disappears at the end and never shows when nothing overflows. */
+@property --console-scroll-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes console-scroll-fade {
+  from {
+    --console-scroll-fade: 24px;
+  }
+  to {
+    --console-scroll-fade: 0px;
+  }
+}
+
+@utility scroll-fade-x {
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--console-scroll-fade));
+  animation: console-scroll-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
 @utility progress-stripes {
   background-image: var(--console-progress-stripes);
 }
@@ -163,7 +187,16 @@
   }
 
   /* One visible keyboard focus ring for every interactive element. Text controls
-     draw their own accent border and ring on focus instead. */
+     draw their own accent border and ring on focus instead. Every element carries
+     the ring's colour unfocused too, so a `transition` utility (which animates
+     outline-color) never fades the ring in from the text colour. Components never
+     set an outline colour of their own. */
+  *,
+  ::before,
+  ::after {
+    outline-color: var(--console-focus);
+  }
+
   :focus-visible {
     outline: 2px solid var(--console-focus);
     outline-offset: 1px;

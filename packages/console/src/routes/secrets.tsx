@@ -113,7 +113,7 @@ function SecretRow(props: {
 export function Secrets() {
   const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
-  const clipboard = useClipboard({ copied: "Secret ID copied", failed: "Could not copy the Secret ID" });
+  const clipboard = useClipboard({ copied: "Secret ID copied", failed: "Could not copy the secret ID" });
   const [editing, setEditing] = createSignal<{ secret: Secret | null; target: EditTarget }>();
   const [revoking, setRevoking] = createSignal<{ secret: Secret; target: EditTarget }>();
   const edit = (secret: Secret | null) => {
@@ -202,7 +202,7 @@ export function Secrets() {
               await invalidateSecrets();
             }}
           >
-            Affected running Turns may be interrupted and fail to complete. Pending inputs are retained but cannot run on affected Computers.
+            Affected running turns may be interrupted and fail to complete. Pending inputs are retained but cannot run on affected computers.
           </ConfirmDialog>
         )}
       </Show>

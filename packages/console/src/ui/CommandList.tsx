@@ -124,7 +124,7 @@ export function CommandList(props: {
                     >
                       <span class="grid place-items-center">{entry.leading}</span>
                       <span class="truncate">{entry.label}</span>
-                      <span class="flex items-center gap-1.5">{entry.trailing}</span>
+                      <span class="flex items-center justify-end gap-1.5">{entry.trailing}</span>
                       <span class="text-control leading-none text-console-accent" aria-hidden="true">{entry.current ? "✓" : ""}</span>
                     </div>
                   )}

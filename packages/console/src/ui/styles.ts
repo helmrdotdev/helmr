@@ -26,7 +26,7 @@ const closeButtonBase =
 
 // The header of a container: 32px like a table's column header row. The
 // base sets no colour; add the default or danger variant.
-const containerHeaderBase = "flex h-8 min-h-8 shrink-0 items-center justify-between gap-2 border-b px-3";
+const containerHeaderBase = "flex h-8 min-h-8 shrink-0 items-center justify-between gap-2 border-b px-3 last:border-b-0";
 
 // Border, focus ring and invalid state shared by every form control; each control
 // adds its own size and font.
@@ -60,22 +60,31 @@ export const ui = {
   // page flow). A table or list (`data-list-frame`) that is a direct child loses
   // its own frame: it runs to the container's edges, with a divider above and
   // below only where other blocks sit. Nested deeper, it keeps its frame.
+  // An empty state that is a direct child drops its dashed border and tint: the
+  // container already frames it.
   containerBody:
-    "flex flex-col gap-3 p-3 [&>*]:my-0 [&>[data-list-frame]]:-mx-3 [&>[data-list-frame]]:border-x-0 [&>[data-list-frame]]:border-console-border [&>[data-list-frame]:first-child]:-mt-3 [&>[data-list-frame]:first-child]:border-t-0 [&>[data-list-frame]:last-child]:-mb-3 [&>[data-list-frame]:last-child]:border-b-0",
+    "flex flex-col gap-3 p-3 [&>*]:my-0 [&>[data-list-frame]]:-mx-3 [&>[data-list-frame]]:border-x-0 [&>[data-list-frame]]:border-console-border [&>[data-list-frame]:first-child]:-mt-3 [&>[data-list-frame]:first-child]:border-t-0 [&>[data-list-frame]:last-child]:-mb-3 [&>[data-list-frame]:last-child]:border-b-0 [&>[data-empty-state]]:border-0 [&>[data-empty-state]]:bg-transparent [&>[data-empty-state]]:py-4",
 
   // Navigation
   settingsNavLink:
     "relative flex h-7.5 cursor-pointer items-center rounded-xs px-2.25 font-mono text-chrome font-medium text-console-muted transition-colors",
   settingsNavLinkHover: "hover:bg-console-surface-muted hover:text-console-text",
-  settingsNavLinkActive:
-    "bg-console-accent-soft text-console-text before:absolute before:-left-2.5 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-console-accent max-[960px]:before:hidden",
+  // The current item in the app bar: a section tab, or the Settings button while
+  // Settings is open (`iconButton`'s open state uses exactly these tokens). The
+  // same box as a bar control's hover.
+  barItemCurrent: "border-console-border-strong bg-console-bg-panel text-console-text",
+  // The current item of a vertical list (settings navigation, the phone drawer):
+  // the accent tint and a 2px accent bar on its inner left edge. Page tabs mark
+  // the current tab with a 1px underline on the bottom edge instead. The item
+  // must be `relative`.
+  activeBar:
+    "bg-console-accent-soft text-console-text before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-console-accent before:content-['']",
 
   // Phone menu drawer: 44px targets. The base sets no colour; add the idle or
   // active variant.
   drawerItem:
-    "flex h-11 min-h-11 w-full cursor-pointer items-center gap-2 rounded-xs border-0 px-2.5 text-left font-mono text-control font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+    "relative flex h-11 min-h-11 w-full cursor-pointer items-center gap-2 rounded-xs border-0 px-2.5 text-left font-mono text-control font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
   drawerItemIdle: "bg-transparent text-console-muted hover:bg-console-bg-panel hover:text-console-text",
-  drawerItemActive: "bg-console-accent-soft text-console-text shadow-[inset_2px_0_0_var(--console-accent)]",
 
   // Environment rows in the Settings Environment rail
   scopeItem:
@@ -143,9 +152,10 @@ export const ui = {
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-console-surface has-checked:border-console-accent has-checked:bg-console-accent-soft [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-control [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-chrome [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
 
   // Page structure
-  page: "mx-auto w-full max-w-310 px-5 pb-12 pt-10",
-  pageHeader: "mb-4 flex items-start justify-between gap-4 max-sm:flex-col max-sm:items-stretch",
-  pageTitle: "flex items-center gap-2.5",
+  page: "mx-auto w-full max-w-310 px-5 pb-12 pt-4",
+  // Breadcrumb slot, then the title row with the actions on the right (PageHeader).
+  pageHeader: "mb-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 max-sm:grid-cols-1",
+  pageTitle: "flex min-h-7 items-center gap-2.5",
   pageSubtitle: "mt-1.5 max-w-180 text-body leading-normal text-console-muted",
   toolbar: "mb-3 flex flex-wrap items-center justify-between gap-2",
   toolbarSide: "flex flex-wrap items-center gap-2",
@@ -153,10 +163,13 @@ export const ui = {
   modalIntro: "mb-3 text-body leading-normal text-console-muted",
 
   // Tables
+  // Column headers: mono, uppercase, semibold muted on a hairline-strong rule;
+  // code in cells is body text colour. Horizontal overflow fades at the right
+  // edge (`scroll-fade-x`).
   tableWrap:
-    "overflow-x-auto [scrollbar-color:var(--console-scrollbar)_var(--console-surface)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-console-surface [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-console-surface [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-micro [&_thead_th]:font-medium [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-subtle [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-body [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-chrome [&_tbody_td_code]:text-console-muted",
+    "scroll-fade-x overflow-x-auto [scrollbar-color:var(--console-scrollbar)_var(--console-surface)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-console-surface [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-console-surface [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border-strong [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-micro [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-muted [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-body [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-chrome [&_tbody_td_code]:text-console-text",
   tableFooter:
-    "flex h-9 items-center gap-3 border-t border-console-border bg-console-bg-panel px-3 font-mono text-chrome text-console-muted",
+    "flex h-9 items-center gap-3 border-t border-console-border bg-console-surface px-3 font-mono text-chrome text-console-muted",
   actionsCell: "w-px whitespace-nowrap",
   emptyCell: "text-console-faint",
 

@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, createUniqueId, For, on, Show, 
 import { environmentChip } from "../features/projects/display";
 import type { Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
-import { EnvChip } from "../ui/EnvChip";
+import { EnvChip, ProtectedBadge } from "../ui/EnvChip";
 import { Panel } from "../ui/Panel";
 import { Select } from "../ui/Select";
 import { cx, ui } from "../ui/styles";
@@ -45,6 +45,11 @@ export function useEditedEnvironment(): EditedEnvironment {
   };
 }
 
+// Marks the Environment the tab is working in.
+function WorkingTag() {
+  return <span class="font-mono text-micro text-console-subtle">working</span>;
+}
+
 // An Environment-specific settings page: its content, and a rail listing the
 // Project's Environments to choose the one being edited. On narrow screens the
 // rail becomes a Select above the content.
@@ -54,16 +59,16 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
   const options = createMemo(() =>
     props.edited.environments().map((environment) => ({
       value: environment.environment,
-      label: [
-        environment.name,
-        environmentChip(environment)?.protected && "protected",
-        environment.environment === scope.selectedEnvironmentID() && "working",
-      ].filter(Boolean).join(" · "),
+      label: environment.name,
+      trailing: () => <>
+        <Show when={environmentChip(environment)?.protected}><ProtectedBadge /></Show>
+        <Show when={environment.environment === scope.selectedEnvironmentID()}><WorkingTag /></Show>
+      </>,
     })),
   );
 
   return (
-    <div class="grid grid-cols-[minmax(0,1fr)_280px] items-start gap-3.5 max-[960px]:grid-cols-1">
+    <div class="grid grid-cols-[minmax(0,1fr)_280px] items-start gap-6 max-[960px]:grid-cols-1">
       <div class="min-w-0">
         <div class="mb-3 hidden max-[960px]:block">
           <Select
@@ -96,14 +101,14 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
                   />
                   <EnvChip name={chip().name} colorHex={chip().colorHex} protected={chip().protected} />
                   <Show when={environment.environment === scope.selectedEnvironmentID()} fallback={<span />}>
-                    <span class="font-mono text-micro text-console-subtle">working</span>
+                    <WorkingTag />
                   </Show>
                 </label>
               );
             }}
           </For>
         </fieldset>
-        <p class="m-0 text-badge leading-normal text-console-muted">Opens on the Environment you are working in. Switching here does not change it.</p>
+        <p class="m-0 text-badge leading-normal text-console-muted">Opens on the environment you are working in. Switching here does not change it.</p>
       </Panel>
     </div>
   );

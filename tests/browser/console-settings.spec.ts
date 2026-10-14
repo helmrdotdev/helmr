@@ -74,6 +74,7 @@ test("settings navigation groups pages by Account, Project and Organization", as
   const settings = page.locator("header").getByRole("link", { name: "Settings" });
   await expect(settings).toHaveAttribute("href", "/settings/project");
   await expect(settings).toHaveAttribute("data-open", "true");
+  await expect(settings).toHaveAttribute("aria-current", "page");
 
   await page.getByRole("button", { name: "Open profile menu" }).click();
   await expect(page.getByRole("menuitem", { name: "Slack account" })).toHaveCount(0);
@@ -119,7 +120,7 @@ test("the Secrets Environment selector edits another Environment without changin
   const state = await fixture(page);
   await page.goto(`/settings/secrets?${scope}`);
   await expect(scopeTrigger(page)).toContainText("Production");
-  await expect(rail(page)).toContainText("Opens on the Environment you are working in. Switching here does not change it.");
+  await expect(rail(page)).toContainText("Opens on the environment you are working in. Switching here does not change it.");
   const production = radio(page, "Production");
   const staging = radio(page, "Staging");
   await expect(production).toHaveAccessibleName(/^Production\s*protected\s*working$/);
@@ -148,7 +149,7 @@ test("the Secrets Environment selector edits another Environment without changin
   await expect(dialog).toHaveCount(0);
 
   await page.getByRole("button", { name: "Actions for STAGING_TOKEN" }).click();
-  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Update", exact: true }).click();
   const update = page.getByRole("dialog", { name: "Update secret" });
   await expect(update.getByLabel("Secret target environment")).toContainText("Staging");
   await update.getByLabel("Value", { exact: true }).fill("synthetic-rotated");
@@ -156,7 +157,7 @@ test("the Secrets Environment selector edits another Environment without changin
   await expect(update).toHaveCount(0);
 
   await page.getByRole("button", { name: "Actions for STAGING_TOKEN" }).click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   const revoke = page.getByRole("dialog", { name: "Revoke secret" });
   await expect(revoke.getByText("Staging", { exact: true })).toBeVisible();
   await revoke.getByRole("button", { name: "Revoke", exact: true }).click();
@@ -186,10 +187,16 @@ test("on narrow screens the Environment selector is a Select above the table", a
   await page.goto(`/settings/secrets?${scope}`);
   await expect(rail(page)).toBeHidden();
   const select = page.getByRole("combobox", { name: "Environment", exact: true });
-  await expect(select).toHaveText("Production · protected · working");
+  // The protected tag is the shared badge, after the name, with the working tag.
+  await expect(select).toContainText("Production");
+  await expect(select.getByText("protected", { exact: true })).toBeVisible();
+  await expect(select.getByText("working", { exact: true })).toBeVisible();
   await select.click();
-  await page.getByRole("option", { name: "Staging · protected", exact: true }).click();
-  await expect(select).toHaveText("Staging · protected");
+  await expect(page.getByRole("option", { name: /^Production\b/ }).getByText("protected", { exact: true })).toBeVisible();
+  await page.getByRole("option", { name: /^Staging\b/ }).click();
+  await expect(select).toContainText("Staging");
+  await expect(select.getByText("protected", { exact: true })).toBeVisible();
+  await expect(select.getByText("working", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Set secret in Staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
@@ -213,7 +220,7 @@ test("API keys list, generate and revoke in the selected Environment, not the ta
   await expect(reveal).toHaveCount(0);
 
   await page.getByRole("button", { name: "Actions for Key staging", exact: true }).click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   const revoke = page.getByRole("dialog", { name: "Revoke API key" });
   await expect(revoke.getByText("Staging", { exact: true })).toBeVisible();
   await revoke.getByRole("button", { name: "Revoke", exact: true }).click();

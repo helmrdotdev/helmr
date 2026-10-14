@@ -16,10 +16,10 @@ const MESSAGES = {
 
 // What to do next, by what went wrong.
 const NEXT_STEPS: Record<string, string> = {
-  forbidden: "Ask an organization owner or admin to check the Agent’s Slack connection.",
+  forbidden: "Ask an organization owner or admin to check the agent’s Slack connection.",
   service_unavailable: "Ask an administrator to configure the Slack integration, then start authorization again.",
 };
-const DEFAULT_NEXT_STEP = "Sign in with the account and organization that started this connection, then start authorization again from the Agent’s Slack connection.";
+const DEFAULT_NEXT_STEP = "Sign in with the account and organization that started this connection, then start authorization again from the agent’s Slack connection.";
 
 export function AuthSlackCallback() {
   const [params] = useSearchParams();
@@ -53,7 +53,7 @@ export function AuthSlackCallback() {
             details={current().details}
             action={<>
               <AuthCopy>{current().nextStep}</AuthCopy>
-              <A class={ui.secondaryButton} href="/agents">Return to Agents</A>
+              <A class={ui.secondaryButton} href="/agents">Return to agents</A>
             </>}
           />
         </AuthWindow>
