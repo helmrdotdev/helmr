@@ -3,7 +3,7 @@ import { createSignal, For, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
 import { errorMessage } from "../lib/error";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
-import { useScope } from "../lib/scope";
+import { EditedEnvironmentChip, EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { EnvironmentTarget } from "../ui/EnvChip";
@@ -111,15 +111,23 @@ function SecretRow(props: {
 }
 
 export function Secrets() {
-  const scope = useScope();
+  const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
   const clipboard = useClipboard({ copied: "Secret ID copied", failed: "Could not copy the Secret ID" });
-  const [modalSecret, setModalSecret] = createSignal<Secret | null | undefined>(undefined);
-  const [revoking, setRevoking] = createSignal<Secret | null>(null);
+  const [editing, setEditing] = createSignal<{ secret: Secret | null; target: EditTarget }>();
+  const [revoking, setRevoking] = createSignal<{ secret: Secret; target: EditTarget }>();
+  const edit = (secret: Secret | null) => {
+    const target = edited.target();
+    if (target) setEditing({ secret, target });
+  };
+  const revoke = (secret: Secret) => {
+    const target = edited.target();
+    if (target) setRevoking({ secret, target });
+  };
   const secrets = createQuery(() => ({
-    queryKey: ["secrets", scope.selectedProjectID(), scope.selectedEnvironmentID()],
-    queryFn: () => listSecrets(scope.selectedProjectID(), scope.selectedEnvironmentID()),
-    enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
+    queryKey: ["secrets", edited.projectID(), edited.environmentID()],
+    queryFn: () => listSecrets(edited.projectID(), edited.environmentID()),
+    enabled: !!edited.projectID() && !!edited.environmentID(),
     retry: false,
   }));
 
@@ -129,59 +137,68 @@ export function Secrets() {
     <>
       <PageHeader
         title="Secrets"
-        subtitle="Environment-scoped Secrets for Agents and Computers. Values are never displayed after saving."
-        actions={<button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecret(null)}>Set secret</button>}
+        subtitle={<>Secrets for Agents and Computers in <EditedEnvironmentChip edited={edited} />. Values are never displayed after saving.</>}
+        actions={
+          <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
+            {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
+          </button>
+        }
       />
 
-      <QueryState
-        query={secrets}
-        pending="Loading secrets..."
-        error={(error) => errorMessage(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
-        empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
-      >
-        {(data) => (
-          <DataTable columns={["Secret ID", "Status", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
-            <For each={data().secrets}>
-              {(secret) => (
-                <SecretRow
-                  secret={secret}
-                  onUpdate={setModalSecret}
-                  onRevoke={setRevoking}
-                  onCopy={(current) => void clipboard.copy(current.secret)}
-                />
-              )}
-            </For>
-          </DataTable>
-        )}
-      </QueryState>
+      <EnvironmentSelectorLayout edited={edited}>
+        <QueryState
+          query={secrets}
+          pending="Loading secrets..."
+          error={(error) => errorMessage(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
+          empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
+        >
+          {(data) => (
+            <DataTable columns={["Secret ID", "Status", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-160">
+              <For each={data().secrets}>
+                {(secret) => (
+                  <SecretRow
+                    secret={secret}
+                    onUpdate={edit}
+                    onRevoke={revoke}
+                    onCopy={(current) => void clipboard.copy(current.secret)}
+                  />
+                )}
+              </For>
+            </DataTable>
+          )}
+        </QueryState>
+      </EnvironmentSelectorLayout>
       <clipboard.LiveRegion />
 
-      <Show when={modalSecret() !== undefined}>
-        <SecretDialog
-          secret={modalSecret() ?? null}
-          projectID={scope.selectedProjectID()}
-          environmentID={scope.selectedEnvironmentID()}
-          projectName={scope.selectedProject()?.name ?? "Project"}
-          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
-          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
-          onClose={() => setModalSecret(undefined)}
-          onSaved={invalidateSecrets}
-        />
+      <Show when={editing()}>
+        {(current) => (
+          <SecretDialog
+            secret={current().secret}
+            projectID={current().target.projectID}
+            environmentID={current().target.environment.environment}
+            projectName={current().target.projectName}
+            environmentName={current().target.environment.name}
+            environmentColorHex={environmentChip(current().target.environment)?.colorHex ?? ""}
+            onClose={() => setEditing(undefined)}
+            onSaved={invalidateSecrets}
+          />
+        )}
       </Show>
 
       <Show when={revoking()}>
-        {(secret) => (
+        {(current) => (
           <ConfirmDialog
             title="Revoke secret"
             confirmLabel="Revoke"
             busyLabel="Revoking..."
             tone="danger"
-            target={secret().secret}
-            environment={environmentChip(scope.selectedEnvironment())}
+            target={current().secret.secret}
+            environment={environmentChip(current().target.environment)}
             errorMessage={secretErrorMessage}
-            onClose={() => setRevoking(null)}
+            onClose={() => setRevoking(undefined)}
             onConfirm={async () => {
-              await revokeSecret(secret().secret, scope.selectedProjectID(), scope.selectedEnvironmentID());
+              const { secret, target } = current();
+              await revokeSecret(secret.secret, target.projectID, target.environment.environment);
               await invalidateSecrets();
             }}
           >

@@ -8,19 +8,21 @@ import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScopeSwitcher } from "./components/ScopeSwitcher";
 import { SettingsLayout } from "./components/SettingsLayout";
+import { onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
+import { useMe } from "./lib/me";
 import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
-import { BrandMark } from "./ui/BrandMark";
 import { Notice } from "./ui/Notice";
+import { AuthWorking } from "./ui/AuthWindow";
 import { Page } from "./ui/Page";
-import { cx, ui } from "./ui/styles";
+import { ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
 import { AuthSlackLink } from "./routes/auth-slack-link";
 import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
-import { SlackSettings } from "./routes/slack-settings";
+import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
 import { Templates, AgentDefinitionDetail, TemplateDetail } from "./routes/definitions";
 import { Agents, AgentDetail } from "./routes/agents";
@@ -31,7 +33,7 @@ import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
 import { Members } from "./routes/members";
-import { Projects } from "./routes/projects";
+import { ProjectSettings } from "./routes/project-settings";
 import { Environments } from "./routes/environments";
 import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
@@ -40,6 +42,7 @@ import { Device } from "./routes/device";
 import { ComputerDetail } from "./routes/computer-detail";
 import { QuestionDetail } from "./routes/question-detail";
 import { SessionDetail } from "./routes/session-detail";
+import { NotFound, NotFoundWindow } from "./routes/not-found";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
 
@@ -57,7 +60,7 @@ function SettingsLink() {
   const active = () => location.pathname.startsWith("/settings");
   return (
     <A
-      href="/settings/projects"
+      href="/settings/project"
       class={ui.iconButton}
       data-open={active() ? "true" : "false"}
       aria-label="Settings"
@@ -114,8 +117,8 @@ const wrap = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
-const wrapSettings = (Inner: () => JSX.Element) => () => (
-  <RequireAuth>
+const wrapSettings = (Inner: () => JSX.Element, requirement: AuthRequirement = "project") => () => (
+  <RequireAuth requirement={requirement}>
     <ScopeProvider>
       <AppShell>
         <SettingsLayout>
@@ -126,19 +129,25 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
-const wrapAccount = (Inner: () => JSX.Element) => () => (
-  <RequireAuth requirement="organization">
-    <div class="min-h-dvh text-sm text-console-text">
-      <AppBar leading={<BrandMark href="/" />} trailing={<ProfileMenu />} />
-      <main>
-        <Page>
-          <p class={cx(ui.h3, "mb-3")}>Your account</p>
-          <Inner />
-        </Page>
-      </main>
-    </div>
-  </RequireAuth>
-);
+// Signed-in accounts see a missing page inside the console; anyone else sees it
+// in a window, without being sent to sign in first.
+function Missing() {
+  const me = useMe();
+  const inConsole = () => !!me.data && !onboardingRedirectPath(me.data, "organization");
+  return (
+    <Show when={!me.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
+      <Show when={inConsole()} fallback={<NotFoundWindow />}>
+        <ScopeProvider>
+          <AppShell>
+            <Page>
+              <NotFound />
+            </Page>
+          </AppShell>
+        </ScopeProvider>
+      </Show>
+    </Show>
+  );
+}
 
 const wrapAdmin = (Inner: () => JSX.Element) => () => (
   <RequireAdmin>
@@ -182,13 +191,14 @@ export function App() {
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
       <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 
-      <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
-      <Route path="/settings/projects" component={wrapSettings(Projects)} />
+      <Route path="/settings" component={() => <Navigate href="/settings/project" />} />
+      <Route path="/settings/account" component={wrapSettings(AccountSettings, "organization")} />
+      <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
-      <Route path="/settings/members" component={wrapSettings(Members)} />
-      <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
-      <Route path="/account/slack" component={wrapAccount(SlackSettings)} />
+      <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
+      <Route path="/settings/members" component={wrapSettings(Members)} />
+      <Route path="*" component={Missing} />
     </Router>
   );
 }

@@ -18,7 +18,7 @@ const TONES = {
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   trigger: { active: "active", errored: "revoked", archived: "expired" },
   deployment: { current: "active", not_current: "expired" },
-  environment: { current: "active", protected: "expired" },
+  environment: { current: "active", default: "expired" },
   api_key: { active: "succeeded", expired: "expired", revoked: "revoked" },
   secret: { active: "succeeded", revoked: "revoked" },
   member: { active: "succeeded", disabled: "revoked" },

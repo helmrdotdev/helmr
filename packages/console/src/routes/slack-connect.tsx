@@ -12,7 +12,7 @@ import { ui } from "../ui/styles";
 const MESSAGES = {
   forbidden: "This Helmr account cannot access the organization connected to this Agent. Ask an administrator for an invitation, or sign in with the account that already has access.",
   bad_request: "This linking request has expired or is unavailable. Try your action in Slack again.",
-  conflict: "This Slack account or your Helmr account is already linked differently in this workspace. Unlink the other account in Your Slack account, then try your action in Slack again.",
+  conflict: "This Slack account or your Helmr account is already linked differently in this workspace. Unlink the other account in My account, then try your action in Slack again.",
   service_unavailable: "Slack is not configured on this server. Ask an administrator to configure the Slack integration.",
 };
 
@@ -96,7 +96,7 @@ export function SlackConnect() {
               <AuthCopy>Next, verify the Slack account that requested work. You will confirm both accounts before they are linked.</AuthCopy>
             </>}
           </Show>
-          <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<A class={ui.secondaryButton} href="/account/slack">Your Slack account</A>} />}</Show>
+          <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<A class={ui.secondaryButton} href="/settings/account">My account</A>} />}</Show>
           <div class={ui.modalActions}>
             {switchButton()}
             <Show when={context()}>

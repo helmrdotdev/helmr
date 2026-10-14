@@ -36,12 +36,24 @@ silently change nested controls.
 ## Shell
 
 - **AppBar** (`components/AppBar.tsx`). The one header bar for the console,
-  settings, account and admin areas: `leading` (scope selector or `BrandMark`),
+  settings and admin areas: `leading` (scope selector or `BrandMark`),
   `nav` items, `trailing` controls. A protected Environment draws a 2px line in its
   color along the top edge of the bar, inside its 40px height (`protectedColor`).
 - **NavTab.** One bar tab; it is current on its path and every path below it.
 - **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
 - **ScopeSwitcher** and **ProfileMenu** (`components/`). Both open in a `Popover`.
+- **SettingsLayout** (`components/`). Settings pages have flat topic paths
+  (`/settings/<topic>`); the navigation groups them by the level they apply to:
+  Account, Project (with the tab's Project name) and Organization (with its name).
+- **EnvironmentSelectorLayout** and `useEditedEnvironment` (`components/`). An
+  Environment-specific settings page (Secrets, API keys) edits one Environment of
+  the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
+  tab's Environment, is page state only (never the URL or the tab's scope), and
+  starts over when the tab's scope changes. The rail tags the tab's Environment
+  "working" (the narrow Select adds "protected" and "working" to option text). The
+  page description shows the edited
+  Environment with `EditedEnvironmentChip`, the primary action names it, and its
+  dialogs carry it.
 
 ## Page structure
 

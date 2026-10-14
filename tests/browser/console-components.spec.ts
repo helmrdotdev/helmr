@@ -164,7 +164,7 @@ test("a long Select filters its options and picks with the keyboard", async ({ p
 
 test("a short Select moves with arrow keys, Home, End and typeahead", async ({ page }) => {
   await fixture(page);
-  await page.goto(`/settings/projects?${scope}`);
+  await page.goto(`/settings/project?${scope}`);
   const unit = page.getByRole("combobox", { name: "Unit", exact: true });
   await expect(unit).toHaveText("Days");
   await unit.focus();
@@ -304,7 +304,7 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const state = await fixture(page);
   await page.goto(`/settings/api-keys?${scope}`);
-  await page.getByRole("button", { name: "Generate new API key", exact: true }).click();
+  await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
   const form = page.getByRole("dialog", { name: "Generate API key" });
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
   const readSessions = form.getByRole("checkbox", { name: "Read sessions", exact: true });
@@ -371,7 +371,7 @@ test("a multi-line secret value is masked and sent with its line breaks intact",
   const state = await fixture(page);
   const value = "-----BEGIN PRIVATE KEY-----\nline-one\nline-two\n-----END PRIVATE KEY-----\n";
   await page.goto(`/settings/secrets?${scope}`);
-  await page.getByRole("button", { name: "Set secret", exact: true }).click();
+  await page.getByRole("button", { name: "Set secret in Production", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Set secret" });
   await dialog.getByLabel("Secret ID", { exact: true }).fill("TLS_KEY");
   const field = dialog.getByLabel("Value", { exact: true });

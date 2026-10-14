@@ -138,7 +138,7 @@ test("Members manage only their Slack identity and explicitly unlink it", async 
     else await route.fulfill({ json: { links: linked ? [{ team_id: "T1", slack_user_id: "U1", linked_at: now }] : [] } });
   });
   await page.route("**/api/slack/link-workspaces**", route => route.fulfill({ json: { configured: true, workspaces: [{ installation_id: "I1", team_id: "T1", workspace_name: "Research workspace" }] } }));
-  await page.goto("/dev/login"); await page.goto("/account/slack");
+  await page.goto("/dev/login"); await page.goto("/settings/account");
   await expect(page.getByRole("heading", { name: "Your Slack identity" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect workspace", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Unlink U1", exact: true }).click();
@@ -167,7 +167,7 @@ test("Slack identity proof needs explicit account confirmation and clears callba
   expect(confirms).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("slack-identity-confirmation.png"), fullPage: true });
   await page.getByRole("button", { name: "Confirm these accounts are mine" }).click();
-  await expect(page).toHaveURL("/account/slack");
+  await expect(page).toHaveURL("/settings/account");
   expect(confirms).toEqual([{ confirmation: "proof-state", confirmed: true }]);
 });
 
@@ -178,7 +178,7 @@ test("Slack identity verification cannot redirect an expired account or silently
   await page.goto("/auth/slack/link#state=expired&code=temporary");
   await expect(page).toHaveURL("/auth/slack/link");
   await expect(page.getByRole("alert")).toHaveText("Your Helmr sign-in expired before linking finished.");
-  await expect(page.getByRole("link", { name: "Sign in again", exact: true })).toHaveAttribute("href", `/login?next=${encodeURIComponent("/account/slack")}`);
+  await expect(page.getByRole("link", { name: "Sign in again", exact: true })).toHaveAttribute("href", `/login?next=${encodeURIComponent("/settings/account")}`);
   const details = page.locator("details").filter({ hasText: "Technical details" });
   await expect(details).not.toHaveAttribute("open", "");
   await details.getByText("Technical details", { exact: true }).click();

@@ -60,8 +60,8 @@ export function ProfileMenu() {
           <div class={cx("mt-0.75", ui.microLabel)}>{formatRole(me.data?.role)}</div>
         </div>
         <div class="p-1">
-          <A href="/account/slack" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
-            Slack account
+          <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
+            Account settings
           </A>
           <Show when={me.data?.admin}>
             <A href="/admin" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>

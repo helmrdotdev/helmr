@@ -12,7 +12,7 @@ import {
   type ListFilter,
 } from "../lib/api-keys";
 import { environmentChip } from "../features/projects/display";
-import { useScope } from "../lib/scope";
+import { EditedEnvironmentChip, EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { CheckboxGroup, Field, TextInput } from "../ui/Field";
@@ -187,81 +187,92 @@ function IssueApiKeyDialog(props: {
 }
 
 export function ApiKeys() {
-  const scope = useScope();
+  const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
   const [filter, setFilter] = createSignal<ListFilter>("active");
-  const [issuing, setIssuing] = createSignal(false);
+  const [issuing, setIssuing] = createSignal<EditTarget>();
   const [issued, setIssued] = createSignal<ApiKeyIssued | null>(null);
-  const [revoking, setRevoking] = createSignal<ApiKeySummary | null>(null);
+  const [revoking, setRevoking] = createSignal<{ keyItem: ApiKeySummary; target: EditTarget }>();
+  const revoke = (keyItem: ApiKeySummary) => {
+    const target = edited.target();
+    if (target) setRevoking({ keyItem, target });
+  };
 
   const keys = createInfiniteQuery(() => ({
-    queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
+    queryKey: ["api-keys", edited.projectID(), edited.environmentID(), filter()],
     queryFn: ({ pageParam }) => listApiKeys(
-      scope.selectedProjectID(),
-      scope.selectedEnvironmentID(),
+      edited.projectID(),
+      edited.environmentID(),
       filter(),
       pageParam || undefined,
     ),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
+    enabled: !!edited.projectID() && !!edited.environmentID(),
     retry: false,
   }));
   const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
 
-  const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
+  const invalidateApiKeys = (projectID: string, environmentID: string) =>
+    queryClient.invalidateQueries({ queryKey: ["api-keys", projectID, environmentID] });
 
   return (
     <>
       <PageHeader
         title="API keys"
-        subtitle="Machine credentials for automation, limited by the permissions selected when each key is generated."
+        subtitle={<>Machine credentials for automation in <EditedEnvironmentChip edited={edited} />, limited by the permissions selected when each key is generated.</>}
         actions={
           <button
             class={ui.button}
             type="button"
-            disabled={!scope.selectedProjectID() || !scope.selectedEnvironmentID()}
-            onClick={() => setIssuing(true)}
+            disabled={!edited.projectID() || !edited.environment()}
+            onClick={() => setIssuing(edited.target())}
           >
-            Generate new API key
+            {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
           </button>
         }
       />
 
-      <Toolbar
-        start={<Select<ListFilter> value={filter()} options={FILTER_OPTIONS} onChange={setFilter} ariaLabel="Filter API keys" minWidth="140px" />}
-      />
+      <EnvironmentSelectorLayout edited={edited}>
+        <Toolbar
+          start={<Select<ListFilter> value={filter()} options={FILTER_OPTIONS} onChange={setFilter} ariaLabel="Filter API keys" minWidth="140px" />}
+        />
 
-      <QueryState
-        query={keys}
-        pending="Loading API keys..."
-        error={apiKeyErrorMessage}
-        empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
-      >
-        {() => (
-          <DataTable
-            columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
-            minWidth="min-w-270"
-            footer={<LoadMore count={keyItems().length} noun="API keys" hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
-          >
-            <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} onRevoke={setRevoking} />}</For>
-          </DataTable>
-        )}
-      </QueryState>
+        <QueryState
+          query={keys}
+          pending="Loading API keys..."
+          error={apiKeyErrorMessage}
+          empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
+        >
+          {() => (
+            <DataTable
+              columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
+              minWidth="min-w-270"
+              footer={<LoadMore count={keyItems().length} noun="API keys" hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
+            >
+              <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} onRevoke={revoke} />}</For>
+            </DataTable>
+          )}
+        </QueryState>
+      </EnvironmentSelectorLayout>
 
       <Show when={issuing()}>
-        <IssueApiKeyDialog
-          projectID={scope.selectedProjectID()}
-          environmentID={scope.selectedEnvironmentID()}
-          projectName={scope.selectedProject()?.name ?? "Project"}
-          environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
-          environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
-          onClose={() => setIssuing(false)}
-          onIssued={async (result) => {
-            setIssuing(false);
-            setIssued(result);
-            await invalidateApiKeys();
-          }}
-        />
+        {(target) => (
+          <IssueApiKeyDialog
+            projectID={target().projectID}
+            environmentID={target().environment.environment}
+            projectName={target().projectName}
+            environmentName={target().environment.name}
+            environmentColorHex={environmentChip(target().environment)?.colorHex ?? ""}
+            onClose={() => setIssuing(undefined)}
+            onIssued={async (result) => {
+              const { projectID, environment } = target();
+              setIssuing(undefined);
+              setIssued(result);
+              await invalidateApiKeys(projectID, environment.environment);
+            }}
+          />
+        )}
       </Show>
 
       <Show when={issued()}>
@@ -276,19 +287,22 @@ export function ApiKeys() {
       </Show>
 
       <Show when={revoking()}>
-        {(keyItem) => (
+        {(current) => (
           <ConfirmDialog
             title="Revoke API key"
             confirmLabel="Revoke"
             busyLabel="Revoking..."
             tone="danger"
-            target={keyItem().name}
-            environment={environmentChip(scope.selectedEnvironment())}
+            target={current().keyItem.name}
+            environment={environmentChip(current().target.environment)}
             errorMessage={apiKeyErrorMessage}
-            onClose={() => setRevoking(null)}
+            onClose={() => setRevoking(undefined)}
             onConfirm={async () => {
-              await revokeApiKey(scope.selectedProjectID(), scope.selectedEnvironmentID(), keyItem().id);
-              await invalidateApiKeys();
+              const { keyItem, target } = current();
+              const projectID = target.projectID;
+              const environmentID = target.environment.environment;
+              await revokeApiKey(projectID, environmentID, keyItem.id);
+              await invalidateApiKeys(projectID, environmentID);
             }}
           >
             Automation using this key stops working immediately.
