@@ -27,13 +27,13 @@ function title(post: SlackDeliveryPost): string {
   return post.status === "uncertain" ? "Delivery unconfirmed" : post.status === "suppressed" ? "Delivery suppressed" : "Delivery failed";
 }
 
-export function SessionDelivery(props: { address: SessionAddress; canManage: boolean }) {
+export function SessionDelivery(props: { address: SessionAddress; live: boolean; canManage: boolean }) {
   const posts = createInfiniteQuery(() => ({
     queryKey: ["slack-delivery", props.address.projectID, props.address.environmentID, props.address.sessionID],
     queryFn: ({ pageParam }) => listSlackDelivery(props.address, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor,
-    refetchInterval: 5_000,
+    refetchInterval: props.live ? 5_000 : false,
     retry: false,
   }));
   const rows = createMemo(() => posts.data?.pages.flatMap((page) => page.posts) ?? []);

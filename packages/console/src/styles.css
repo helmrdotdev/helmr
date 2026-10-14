@@ -64,6 +64,7 @@
   --console-syntax-string: #1f7a4d;
   --console-syntax-number: #a4520a;
   --console-syntax-literal: #2a52b3;
+  --console-gap-stripes: repeating-linear-gradient(-45deg, #fafafa 0 6px, #f3f4f6 6px 12px);
   --console-scrollbar: rgba(15, 23, 42, 0.28);
 
   --console-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;

@@ -29,7 +29,7 @@ export type Session = {
     created_at: string;
   }[];
 };
-type SessionTurn = {
+export type SessionTurn = {
   stop?: ProcessStop;
   id: string;
   session_id: string;
@@ -52,7 +52,7 @@ type SessionTurn = {
   completion_save_id?: string;
 };
 type SessionTurnPage = { turns: SessionTurn[]; next_cursor?: string };
-type SessionEvent = {
+export type SessionEvent = {
   session_id: string;
   turn_id: string | null;
   sequence: number;

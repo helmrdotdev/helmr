@@ -241,6 +241,12 @@ Panel.
   **EnvironmentTarget** names the Environment a dialog writes to.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
 - **CodeBlock.** Code and commands, with `copy` for things meant to be pasted.
+- **Session log** (`features/sessions`). The Session page's one history view:
+  a Turn timeline, Turn groups (36px headers on `ui.logTurnHeader`) and 28px event
+  lines (`ui.logLine`: time, sequence, kind chip, summary, size) whose toggle spans
+  the leading columns as a subgrid so the whole row is one control. Below 720px a
+  line wraps to two rows. Filter chips use `ui.logChip`. Properties above it sit in
+  `ui.propertyBar` cells.
 - **JsonView** and **TextView** (`PayloadView`). Every payload a Session or
   question carries: Turn input, output, result and response, question
   definitions and answers. A 24px header names the kind and size and holds Copy.

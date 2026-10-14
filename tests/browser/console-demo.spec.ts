@@ -72,9 +72,9 @@ test("an Agent's Slack tab explains that this installation has no Slack integrat
 test("console demo retains failed Turn input and terminal Session history", async ({ page }) => {
   await login(page);
   await page.goto(`/sessions/${DEMO_SESSION_ID}?project=${PROJECT_ID}&environment=${DEMO_ENVIRONMENT_ID}`);
-  await expect(page.getByText("Demo input", { exact: true })).toBeVisible();
+  await expect(page.getByText("Demo input", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Failed", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "Log" }).getByText("failed", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
 });
