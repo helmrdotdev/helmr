@@ -7,12 +7,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { CodexHarness } from "../agents/issue-fixer/codex-harness"
 import { conversation } from "../agents/issue-fixer/conversation"
-import { localNativeRuntime } from "./native-runtime"
 
 test("Codex setup passes the managed MCP endpoint and header to the native client", { timeout: 25_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-mcp-config-"))
   const stop = new AbortController()
-  const runtime = localNativeRuntime(stop.signal)
   const methods: string[] = []
   let connected!: () => void
   const listed = new Promise<void>(resolve => { connected = resolve })
@@ -41,9 +39,9 @@ test("Codex setup passes the managed MCP endpoint and header to the native clien
     const saved = await conversation(directory, "mcp-session", "codex")
     await writeFile(join(saved.directory, "config.toml"), 'model_provider = "fixture"\nmodel = "gpt-5.1-codex"\n[model_providers.fixture]\nname = "local fixture"\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n')
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { stop.abort(); reject(new Error("Native MCP configuration timed out")) }, 15_000) })
-    harness = await Promise.race([runtime.registry.setup(() => CodexHarness.open(directory, "mcp-session", { PATH: process.env.PATH, HOME: directory }, {
+    harness = await Promise.race([CodexHarness.open(directory, "mcp-session", { PATH: process.env.PATH, HOME: directory }, {
       url: `http://127.0.0.1:${address.port}/mcp`, headers: { Authorization: "Bearer synthetic-local-fixture" },
-    })), timeout])
+    }), timeout])
     await Promise.race([listed, timeout])
     assert.ok(methods.includes("initialize"))
     assert.ok(methods.includes("tools/list"))
@@ -51,7 +49,6 @@ test("Codex setup passes the managed MCP endpoint and header to the native clien
     clearTimeout(timer)
     stop.abort()
     await harness?.close()
-    runtime.uninstall()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
     await rm(directory, { recursive: true, force: true })

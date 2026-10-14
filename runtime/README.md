@@ -6,6 +6,17 @@ Session protocol. Computer preparation runs through a separate private entry. `g
 the verified platform-owned Node 24.21 runtime, fixed entry and module preload.
 It does not use the Computer image's Node for Program control code.
 
+The Session owns ordinary descendant processes for its entire lifetime, including
+launchers and lazy helpers. The guest retains the private PID namespace, cgroup,
+identity and mounts until whole-tree termination is confirmed. Turn completion
+joins the handler, public cancellation hooks and tracked operations. Process counts
+are not an application completion or native health signal.
+
+Idle capture qualifies only actual child watchers and their exact stdio handles
+using the pinned Node runtime's diagnostic channel and handle identities. Unknown
+handles, callback-created work and in-flight HTTP remain tracked. This qualification
+must be rechecked when changing Node. It does not assert provider protocol health.
+
 The runtime imports generated JavaScript modules from the admitted Program's
 `modulePath`/export locators. Native Node owns resolution and module formats. The
 preload checks module provenance and rejects TypeScript execution; it does not

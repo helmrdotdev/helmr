@@ -1,8 +1,6 @@
 import type { AskResponse } from "../../../sdk/typescript/src/question"
 // Uses the real pinned native app-server and SessionRuntime with a local model.
 // Guest containment, durable control-plane state and VM restore are separate gates.
-import { NativeContinuationLost } from "../../../runtime/typescript/src/agent-native"
-import { localNativeRuntime } from "./native-runtime"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
@@ -13,7 +11,7 @@ import { CodexHarness } from "../agents/issue-fixer/codex-harness"
 import { conversation } from "../agents/issue-fixer/conversation"
 import { codexModel } from "./native-model"
 
-for (const scenario of ["answer", "malformed", "handler-failure", "stopped-process", "background-exec", "interrupt"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
+for (const scenario of ["answer", "malformed", "handler-failure", "background-exec", "interrupt"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-session-"))
   const requests: any[] = []
   const responses: { turnId: string; value: unknown }[] = []
@@ -21,7 +19,6 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
     ? { type:"function_call",id:"fc_exec",call_id:"call_exec",name:"exec_command",arguments:JSON.stringify({cmd:"sh -c 'echo $$ > owned-command.pid; exec sleep 60'",yield_time_ms:100}) }
     : index === 2 ? { type:"function_call",id:"fc_question",call_id:"call_question",name:"request_user_input",arguments:JSON.stringify({questions:[{id:"choice",header:"Choice",question:"Continue?",options:[{label:"A",description:"First"},{label:"B",description:"Second"}]}]}) } : undefined : undefined)
   const cancel = new AbortController()
-  let native: ReturnType<typeof localNativeRuntime> | undefined
   let questionReached!: () => void
   const questionReady = new Promise<void>(resolve => { questionReached = resolve })
   let harness: CodexHarness | undefined
@@ -32,7 +29,6 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
     const port = (http.address() as { port: number }).port
     const saved = await conversation(directory, "same-session", "codex")
     await writeFile(join(saved.directory, "config.toml"), `model_provider = "fixture"\nmodel = "gpt-5.1-codex"\n[model_providers.fixture]\nname = "local fixture"\nbase_url = "http://127.0.0.1:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`)
-    native = localNativeRuntime(cancel.signal)
     const driver: SessionDriver = {
       registerMessages: async () => {}, closeProcessing: async () => {},
       ask: async (turnId) => {
@@ -41,8 +37,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
           questionReached()
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        if ((scenario === "stopped-process" || scenario === "background-exec" || scenario === "interrupt") && turnId === "first") {
-          if (scenario === "stopped-process") process.kill(harness!.processId!, "SIGSTOP")
+        if ((scenario === "background-exec" || scenario === "interrupt") && turnId === "first") {
           void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
@@ -51,11 +46,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
       },
       output: async () => ({ sequence: ++outputs }),
       respond: async (turnId, _id, value) => { responses.push({ turnId, value }) },
-      convergeNative: async (turnId, disposition, signal) => {
-        await native!.registry.join(turnId, disposition, signal.reason)
-        const evidence = await native!.registry.evidence()
-        if (!evidence.reusable) throw new NativeContinuationLost()
-      },
+      confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
       fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }),
       hold: async () => { holds++ },
@@ -72,15 +63,8 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
         }
         return running
       },
-    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
+    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
     const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api" } })
-    if (scenario === "stopped-process") {
-      assert.equal((await firstPending).status, "interrupted")
-      assert.equal(holds, 1)
-      assert.equal(runtime.idle, false)
-      assert.throws(() => process.kill(harness!.processId!, 0))
-      return
-    }
     const first = await firstPending
     if (scenario === "background-exec") {
       const commandPid = Number((await readFile(join(directory,"owned-command.pid"),"utf8")).trim())
@@ -106,7 +90,6 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
   } finally {
     cancel.abort()
     await harness?.close()
-    native?.uninstall()
     http.closeAllConnections()
     await new Promise<void>(resolve => http.close(() => resolve()))
     // Native plugin-cache helpers can finish filesystem cleanup after app-server exit.

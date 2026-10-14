@@ -64,7 +64,7 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
       catch(error) { if(error.code!=='ENOENT') throw error; assert(Date.now()<deadline,'fixture native cleanup marker exceeded 8s'); await delay(50) } }
     assert.equal(actual.turnId,${JSON.stringify(interrupted.id)});
     const previous=${JSON.stringify(previous)};
-    for (const key of ['pid','nativePid','nonce','setupCount','nativeScopeId']) assert.equal(actual[key],previous[key],key);
+    for (const key of ['pid','nativePid','nonce','setupCount']) assert.equal(actual[key],previous[key],key);
     if (${JSON.stringify(provider)}==='codex') {
       assert.equal(actual.commandLock,${JSON.stringify(ownedCommand + ".lock")});
       assert.equal(spawnSync('/usr/bin/flock',['--nonblock','--exclusive',actual.commandLock,'/bin/true'],{timeout:1000}).status,0,'owned native command retained its lifetime lock');

@@ -3,6 +3,7 @@
 package guestd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,7 +28,6 @@ type agentProcess struct {
 	identity    *agentv1.SessionIdentity
 	cmd         *exec.Cmd
 	group       *linuxProcessCgroup
-	launcher    *nativeLauncher
 	rootFD      int
 	cancel      context.CancelFunc
 	stdin       *os.File
@@ -42,11 +43,10 @@ type agentProcess struct {
 	closed      bool
 	waitDone    chan struct{}
 	waitErr     error
-	brokerDone  chan error
 }
 
 func newAgentProcess(ctx context.Context, entry *computerMountEntry, options agentProcessOptions) (_ *agentProcess, err error) {
-	// Both executable owners consume and clear the delivered secret values.
+	// The Session consumes and clears the delivered secret values.
 	secrets := options.Secrets
 	defer clearProgramSecretValues(secrets)
 	if entry == nil || entry.runtimeUser == nil || options.Identity == nil || options.Program == (programMounts{}) {
@@ -70,11 +70,6 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 		cancel()
 		closeAgentFiles(process.inherited...)
 		closeAgentFiles(process.stdin, process.events, process.stdout, process.stderr, process.proof)
-		if process.launcher != nil {
-			stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			err = errors.Join(err, process.launcher.close(stopCtx))
-			stop()
-		}
 		err = errors.Join(err, group.close())
 		process.cleanup()
 	}()
@@ -99,19 +94,15 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 		return nil, err
 	}
 	process.cleanup = func() { cleanupRuntime(); cleanupSecrets() }
-	process.launcher, err = newNativeLauncher(group, entry.imageRoot, entry.runtimeUser, secretRoot, options.Program)
-	if err != nil {
-		return nil, err
-	}
 	process.cmd, err = imageCommand(lifetime, managedProgramNode, append(flags, managedProgramEntry), defaultRuntimeWorkdir, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{
-		Program: options.Program, SecretRoot: secretRoot, NativeRoot: process.launcher.directory,
+		Program: options.Program, SecretRoot: secretRoot,
 		CgroupNamespace: true, CgroupLeaf: filepath.Base(group.path), StartProof: true,
 	})
 	if err != nil {
 		return nil, err
 	}
 	process.cmd.SysProcAttr.PidFD = &process.rootFD
-	process.cmd.Cancel = func() error { return killNativeProcess(group.kill, process.rootFD) }
+	process.cmd.Cancel = func() error { return killSessionProcess(group.kill, process.rootFD) }
 	if err = group.attach(process.cmd); err != nil {
 		return nil, err
 	}
@@ -140,8 +131,8 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 	return process, nil
 }
 
-// start precedes any authored command. Only setup can create retained native
-// scopes; accepting SessionReady seals admission for the rest of this epoch.
+// All descendants inherit the Session cgroup and private PID namespace,
+// including processes created after initialization.
 func (process *agentProcess) start(ctx context.Context) error {
 	process.lifecycleMu.Lock()
 	defer process.lifecycleMu.Unlock()
@@ -151,19 +142,13 @@ func (process *agentProcess) start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := process.launcher.setAdmission(true); err != nil {
-		return err
-	}
 	if err := process.cmd.Start(); err != nil {
-		_ = process.launcher.setAdmission(false)
 		return err
 	}
 	process.started = true
 	process.cmd.Env = nil
 	closeAgentFiles(process.inherited...)
 	process.inherited = nil
-	process.brokerDone = make(chan error, 1)
-	go func() { process.brokerDone <- process.launcher.run(context.Background()) }()
 	go func() { process.waitErr = process.cmd.Wait(); close(process.waitDone) }()
 	deadline := time.Now().Add(10 * time.Second)
 	if value, ok := ctx.Deadline(); ok && value.Before(deadline) {
@@ -209,21 +194,42 @@ func (process *agentProcess) read() (*agentv1.ProgramEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	if event.GetReady() != nil {
-		if err := process.launcher.setAdmission(false); err != nil {
-			return nil, err
-		}
-	}
 	return event, nil
 }
 
-func (process *agentProcess) converge(scopes []nativeScopeEvidence) error {
+func (process *agentProcess) verifyRunning() error {
 	process.lifecycleMu.Lock()
 	defer process.lifecycleMu.Unlock()
 	if !process.started || process.closed {
 		return errors.New("session process is not running")
 	}
-	return process.launcher.verifySessionConverged(process.cmd.Process.Pid, process.rootFD, scopes)
+	if err := liveSessionPID(process.rootFD); err != nil {
+		return err
+	}
+	// The cgroup is not writable or delegated to workload code. The runtime root
+	// must still be in its assigned group; descendants are retained with it.
+	fd, err := unix.Openat(int(process.group.file.Fd()), "cgroup.procs", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(fd), "Session processes")
+	body, readErr := io.ReadAll(io.LimitReader(file, 64*1024+1))
+	if err := errors.Join(readErr, file.Close()); err != nil {
+		return err
+	}
+	if len(body) > 64*1024 {
+		return errors.New("session process list exceeds its bound")
+	}
+	for _, field := range bytes.Fields(body) {
+		pid, err := strconv.Atoi(string(field))
+		if err != nil {
+			return err
+		}
+		if pid == process.cmd.Process.Pid {
+			return nil
+		}
+	}
+	return errors.New("session root no longer belongs to its scope")
 }
 
 // close may be retried after a failed physical join. Mounts and retained identity
@@ -236,20 +242,16 @@ func (process *agentProcess) close(ctx context.Context) error {
 	}
 	process.cancel()
 	_ = process.stdin.Close()
-	killErr := killNativeProcess(process.group.kill, process.rootFD)
-	nativeErr := process.launcher.close(ctx)
+	killErr := killSessionProcess(process.group.kill, process.rootFD)
 	if process.started {
 		select {
 		case <-process.waitDone:
 		case <-ctx.Done():
-			return errors.Join(killErr, nativeErr, ctx.Err())
+			return errors.Join(killErr, ctx.Err())
 		}
 	}
 	if err := process.group.waitEmpty(); err != nil {
-		return errors.Join(killErr, nativeErr, err)
-	}
-	if nativeErr != nil {
-		return nativeErr
+		return errors.Join(killErr, err)
 	}
 	if process.program != nil {
 		if err := process.program.close(); err != nil {
@@ -258,17 +260,6 @@ func (process *agentProcess) close(ctx context.Context) error {
 	}
 	if err := process.group.close(); err != nil {
 		return err
-	}
-	if process.brokerDone != nil {
-		select {
-		case err := <-process.brokerDone:
-			if err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		process.brokerDone = nil
 	}
 	closeAgentFiles(process.inherited...)
 	// The relay owns log readers through EOF after physical join.
@@ -333,4 +324,48 @@ func (process *agentProcess) wait(ctx context.Context) error {
 	case <-process.waitDone:
 		return process.waitErr
 	}
+}
+
+func liveSessionPID(fd int) error {
+	if fd < 0 {
+		return errors.New("session process identity is missing")
+	}
+	descriptors := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	for {
+		_, err := unix.Poll(descriptors, 0)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
+	}
+	if descriptors[0].Revents != 0 {
+		return errors.New("session process has exited")
+	}
+	return nil
+}
+
+// The root is PID 1 inside its private PID namespace. Killing this exact pidfd
+// also makes the kernel terminate its descendants if the cgroup control fails.
+func killSessionProcess(killGroup func() error, rootFD int) error {
+	if err := killGroup(); err != nil {
+		if rootFD < 0 {
+			return err
+		}
+		return errors.Join(err, signalSessionProcess(rootFD))
+	}
+	return nil
+}
+
+func signalSessionProcess(fd int) error {
+	if fd < 0 {
+		return nil
+	}
+	err := unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
+	if errors.Is(err, unix.ESRCH) {
+		return nil
+	}
+	return err
 }

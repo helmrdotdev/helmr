@@ -95,7 +95,7 @@ func (p *fakeAgentProcess) read() (*agentv1.ProgramEvent, error) {
 func (*fakeAgentProcess) logs() (io.Reader, io.Reader) {
 	return strings.NewReader(""), strings.NewReader("")
 }
-func (p *fakeAgentProcess) converge([]nativeScopeEvidence) error { p.proofs++; return p.convergenceErr }
+func (p *fakeAgentProcess) verifyRunning() error { p.proofs++; return p.convergenceErr }
 func (p *fakeAgentProcess) freeze(context.Context) error {
 	if p.freezeError != nil {
 		return p.freezeError
@@ -186,11 +186,9 @@ func requireGuestRejected(t *testing.T, envelope *agentv1.GuestSessionMessage, r
 func TestAgentSessionFinalizationRequiresIndependentPhysicalAndMutationProof(t *testing.T) {
 	session, process := agentSessionFixture(t)
 	guestDispatch(t, session, "turn", 1)
-	// Failure convergence can arrive before processing closure is acknowledged.
-	envelope, reply := guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"failed","scopes":[]}`)
-	if envelope != nil || reply.GetOperationResult().GetError() != nil {
-		t.Fatal("early physical convergence was rejected")
-	}
+	// A drain claim cannot precede processing closure acknowledgment.
+	envelope, reply := guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
+	requireGuestRejected(t, envelope, reply)
 	envelope, reply = guestOperation(t, session, "early-final", agentv1.Operation_METHOD_FINALIZE, `{"result":1}`)
 	requireGuestRejected(t, envelope, reply)
 	envelope, reply = guestOperation(t, session, "close", agentv1.Operation_METHOD_CLOSE_PROCESSING, `null`)
@@ -201,7 +199,7 @@ func TestAgentSessionFinalizationRequiresIndependentPhysicalAndMutationProof(t *
 	requireGuestRejected(t, envelope, reply)
 	guestReceipt(t, session, "close", `null`)
 	guestOperation(t, session, "output", agentv1.Operation_METHOD_OUTPUT, `{"value":1}`)
-	guestOperation(t, session, "converge-output", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"returned","scopes":[]}`)
+	guestOperation(t, session, "converge-output", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
 	envelope, reply = guestOperation(t, session, "before-output-ack", agentv1.Operation_METHOD_FINALIZE, `{"result":1}`)
 	requireGuestRejected(t, envelope, reply)
 	guestReceipt(t, session, "output", `{"sequence":1}`)
@@ -213,7 +211,7 @@ func TestAgentSessionFinalizationRequiresIndependentPhysicalAndMutationProof(t *
 	if repeated.GetDrainEvidence() != envelope.GetDrainEvidence() {
 		t.Fatal("replay changed its original evidence")
 	}
-	if process.proofs != 3 {
+	if process.proofs != 2 {
 		t.Fatalf("physical checks = %d", process.proofs)
 	}
 	guestReceipt(t, session, "final", `{"status":"completed","result":1,"response":[{"type":"text","text":"done"}]}`)
@@ -234,7 +232,7 @@ func TestAgentSessionResponseMustBeAdmittedBeforeCloseAndJoined(t *testing.T) {
 	guestReceipt(t, session, "close", `null`)
 	envelope, reply = guestOperation(t, session, "late-response", agentv1.Operation_METHOD_RESPOND, `{"responseId":"late","value":[]}`)
 	requireGuestRejected(t, envelope, reply)
-	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"returned","scopes":[]}`)
+	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
 	envelope, reply = guestOperation(t, session, "before-response-ack", agentv1.Operation_METHOD_FINALIZE, `{"result":null}`)
 	requireGuestRejected(t, envelope, reply)
 	guestReceipt(t, session, "response", `null`)
@@ -252,7 +250,7 @@ func TestAgentSessionRejectsUnprovedTerminalReceiptAndLostPhysicalProof(t *testi
 	}
 	guestOperation(t, session, "close", agentv1.Operation_METHOD_CLOSE_PROCESSING, `null`)
 	guestReceipt(t, session, "close", `null`)
-	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"returned","scopes":[]}`)
+	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
 	process.convergenceErr = errors.New("unjoined child")
 	envelope, reply := guestOperation(t, session, "final", agentv1.Operation_METHOD_FINALIZE, `{"result":1}`)
 	requireGuestRejected(t, envelope, reply)
@@ -357,7 +355,7 @@ func TestAgentSessionResumeReceiptCannotClearLaterHold(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "runtime_hold":
-				if _, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "runtime-hold", Method: agentv1.Operation_METHOD_HOLD, PayloadJson: []byte(`{"reason":"native_convergence_failed"}`)}}}); err != nil {
+				if _, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "runtime-hold", Method: agentv1.Operation_METHOD_HOLD, PayloadJson: []byte(`{"reason":"turn_drain_failed"}`)}}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -390,7 +388,7 @@ func TestAgentSessionReconciliationRetiresInputsAndAllowsNextTurn(t *testing.T) 
 	guestDispatch(t, session, "turn", 1)
 	guestOperation(t, session, "close", agentv1.Operation_METHOD_CLOSE_PROCESSING, `null`)
 	guestReceipt(t, session, "close", `null`)
-	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"returned","scopes":[]}`)
+	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
 	guestOperation(t, session, "final", agentv1.Operation_METHOD_FINALIZE, `{"result":1}`)
 	failure := &agentv1.OperationError{Code: "temporary", Message: "retry"}
 	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, Command: &agentv1.GuestCommand_OperationResult{OperationResult: &agentv1.OperationResult{RequestId: "final", Outcome: &agentv1.OperationResult_Error{Error: failure}}}}); err != nil {
@@ -482,7 +480,7 @@ func TestAgentSessionRenewalReattestsRetainedConvergence(t *testing.T) {
 	guestDispatch(t, session, "turn", 1)
 	guestOperation(t, session, "close", agentv1.Operation_METHOD_CLOSE_PROCESSING, `null`)
 	guestReceipt(t, session, "close", `null`)
-	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONVERGE_NATIVE, `{"disposition":"returned","scopes":[]}`)
+	guestOperation(t, session, "converge", agentv1.Operation_METHOD_CONFIRM_DRAIN, `null`)
 	previous := session.turns["turn"].evidence
 	grant := proto.Clone(session.grant).(*agentv1.SessionGrant)
 	grant.AuthorityGeneration++

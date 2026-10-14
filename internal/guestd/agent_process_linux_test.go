@@ -26,7 +26,7 @@ import (
 )
 
 func TestSessionCgroupDuplicateStartupPreservesRunningEpoch(t *testing.T) {
-	nativeAuthFixture(t) // Establish the privileged cgroup environment.
+	requireSessionCgroupTest(t) // Establish the privileged cgroup environment.
 	group, err := createSessionProcessCgroup(t.Name(), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestSessionCgroupDuplicateStartupPreservesRunningEpoch(t *testing.T) {
 	if _, err := createSessionProcessCgroup(t.Name(), 1); err == nil {
 		t.Fatal("duplicate epoch replaced its scope")
 	}
-	if err := liveNativePID(fd); err != nil {
+	if err := liveSessionPID(fd); err != nil {
 		t.Fatalf("duplicate startup killed the existing epoch: %v", err)
 	}
 	other, err := createSessionProcessCgroup(t.Name(), 2)
@@ -124,7 +124,7 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	if assets == "" {
 		t.Skip("requires built Agent runtime assets in disposable Linux guest")
 	}
-	nativeAuthFixture(t)
+	requireSessionCgroupTest(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0755); err != nil {
 		t.Fatal(err)
@@ -209,11 +209,13 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	}
 	write(managedRuntimeMetadata, metadata)
 	write(filepath.Join(programRoot, "package.json"), []byte(`{"type":"module"}`))
-	write(filepath.Join(programRoot, "helmr/definition-index.json"), []byte(`{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"agent","templateDefinitionId":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent"}],"computers":[{"id":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent","throughAgent":true}]}`))
+	write(filepath.Join(programRoot, "helmr/definition-index.json"), []byte(`{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"agent","templateDefinitionId":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent"}],"templates":[{"id":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent","throughAgent":true}]}`))
 	if checkpoint {
-		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},init(){return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
+		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`import {spawn} from "node:child_process"; import {once} from "node:events";
+async function child(){const child=spawn(process.execPath,["-e","const {spawn}=require('node:child_process');spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});setInterval(()=>{},1000)"],{stdio:"pipe"});await once(child,"spawn");return child}
+export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"computer"},async init(){return {count:0,initial:await child()}},async turn(turn,ctx){ctx.initResult.lazy??=await child();return {count:++ctx.initResult.count,pid:process.pid}}}`))
 	} else {
-		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},init(){setInterval(()=>{},1000);console.log("setup-log:"+"x".repeat(70*1024));return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
+		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"computer"},init(){setInterval(()=>{},1000);console.log("setup-log:"+"x".repeat(70*1024));return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
 	}
 
 	fixture, _ := agentSessionFixture(t)
@@ -258,7 +260,7 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	if _, _, err := session.receive(event); err != nil {
 		t.Fatal(err)
 	}
-	if err := process.converge(nil); err != nil {
+	if err := process.verifyRunning(); err != nil {
 		t.Fatal(err)
 	}
 	rootPID := process.cmd.Process.Pid
@@ -628,5 +630,41 @@ func actualAgentComputerContinuation(t *testing.T, session *agentSession, proces
 	}
 	if err := peerProcess.verifyFrozen(); err == nil {
 		t.Fatal("peer remained frozen")
+	}
+}
+
+func TestSessionKillFallsBackToRetainedPID(t *testing.T) {
+	child := exec.Command("/bin/sleep", "30")
+	fd := -1
+	child.SysProcAttr = &syscall.SysProcAttr{PidFD: &fd}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(fd)
+	defer child.Process.Kill()
+	injected := errors.New("cgroup kill unavailable")
+	if err := killSessionProcess(func() error { return injected }, fd); !errors.Is(err, injected) {
+		t.Fatal(err)
+	}
+	if err := child.Wait(); err == nil {
+		t.Fatal("process survived fallback")
+	}
+	if err := liveSessionPID(fd); err == nil {
+		t.Fatal("pidfd remains live")
+	}
+}
+
+func requireSessionCgroupTest(t *testing.T) {
+	t.Helper()
+	if os.Getenv("HELMR_PRIVILEGED_PROGRAM_TEST") != "1" {
+		t.Skip("requires a disposable privileged Linux guest")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("Session containment test requires root")
+	}
+	if _, err := os.Stat(processCgroupRoot); errors.Is(err, os.ErrNotExist) {
+		prepareProgramTestCgroup(t)
+	} else if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -39,9 +39,6 @@ export { MessageRejected } from "./message-error"
 
 export { normalizeContent, normalizeInput } from "./content"
 export { normalizeQuestion } from "./question"
-export {
-  registerNativeResource, registerNativeOperation, spawnNative,
-  type NativeResource, type NativeInvocation, type NativeProcess,
-} from "./internal/native-runtime"
+
 
 export { durationMilliseconds } from "./duration"

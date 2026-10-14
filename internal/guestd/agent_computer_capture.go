@@ -214,11 +214,7 @@ func (r *computerOperationRegistry) verifyAgentComputerCaptureLocked(capture *ag
 		if err := session.process.verifyFrozen(); err != nil {
 			return err
 		}
-		var scopes []nativeScopeEvidence
-		if err := decodeAgentJSON(session.checkpointReady.GetScopesJson(), &scopes); err != nil {
-			return err
-		}
-		if err := session.process.converge(scopes); err != nil {
+		if err := session.process.verifyRunning(); err != nil {
 			return err
 		}
 	}

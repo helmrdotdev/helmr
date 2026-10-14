@@ -1,10 +1,8 @@
 import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
-import { registerNativeOperation, type NativeResource, type NativeInvocation } from "@helmr/sdk/internal"
-import { openNativeHarness } from "./native-lifecycle"
 import { MessageRejected } from "@helmr/sdk"
 import { z } from "zod"
 import type { Json, Turn } from "@helmr/sdk"
-import { CodexStdio, CodexRequestRejected, spawnManagedCodex, type NativeMessage } from "./codex-stdio"
+import { CodexStdio, CodexRequestRejected, spawnCodex, type NativeMessage } from "./codex-stdio"
 import { nativeText, steeringText } from "./native-content"
 import type { HumanContent } from "@helmr/sdk"
 import { conversation } from "./conversation"
@@ -30,7 +28,7 @@ interface Operation {
   nativeId?: string
   accepting: boolean
   failure?: unknown
-  invocation?: NativeInvocation
+  stop?: () => void
   hasCommentary?: boolean
   finalText?: string
   readonly publishedItems: Set<string>
@@ -53,22 +51,22 @@ export class CodexHarness {
   private threadId = ""
   private closed = false
   private closing: Promise<void> | undefined
-  private broken = false
-  private readonly resource: NativeResource
-  private readonly started: Promise<unknown>
+  private broken: Error | undefined
+  private readonly started: Promise<void>
   private pid: number | undefined
-  private constructor(home: string, resource: NativeResource, environment?: NodeJS.ProcessEnv) {
-    this.resource = resource
-    const native = spawnManagedCodex(resource, home, environment)
-    this.started = native.ready.then(identity => { this.pid = identity.processId })
-    this.server = new CodexStdio(message => this.observe(message), native.child)
+  private constructor(home: string, environment?: NodeJS.ProcessEnv) {
+    const child = spawnCodex(home, environment)
+    this.started = new Promise((resolve, reject) => {
+      child.once("spawn", () => { this.pid = child.pid; resolve() })
+      child.once("error", reject)
+    })
+    this.server = new CodexStdio(message => this.observe(message), child)
     this.reader = this.read()
-    void this.reader.catch(error => { this.broken = true; this.active?.done.reject(error); this.active?.boundary.reject(error) })
+    void this.reader.catch(error => { this.broken ??= error instanceof Error ? error : new Error(String(error)); this.active?.done.reject(error); this.active?.boundary.reject(error) })
   }
-  static open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexHarness> {
-    return openNativeHarness(async resource => {
+  static async open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexHarness> {
     const saved = await conversation(cwd, sessionId, "codex")
-    const harness = new CodexHarness(saved.directory, resource, environment)
+    const harness = new CodexHarness(saved.directory, environment)
     try {
       await harness.started
       await harness.server.request("initialize", { clientInfo: { name: "helmr-issue-fixer", version: "1.0.0" }, capabilities: { experimentalApi: true } })
@@ -84,36 +82,38 @@ export class CodexHarness {
       await saved.remember(harness.threadId)
       return harness
     } catch (error) { await harness.close(); throw error }
-    })
   }
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }
   get reusable(): boolean { return !this.closed && !this.broken }
   run(turn: Turn, prompt: HumanContent): Promise<Json> {
-    const running = this.runTurn(turn, prompt)
+    let running: Promise<Json>
+    turn.onCancel(async () => {
+      if (this.active?.turn === turn) this.active.stop?.()
+      await running.catch(() => {})
+      this.assertUsable()
+    })
+    running = this.runTurn(turn, prompt)
     void running.catch(() => {})
     return running
   }
+  private assertUsable(): void {
+    if (this.broken) throw this.broken
+    if (this.closed) throw new Error("Native conversation is closed")
+  }
   private async runTurn(turn: Turn, prompt: HumanContent): Promise<Json> {
-    if (!this.reusable || this.active) throw new Error("Native conversation is not ready")
+    this.assertUsable()
+    if (this.active) throw new Error("Native conversation is not ready")
     turn.signal.throwIfAborted()
     const operation: Operation = { turn, done: deferred<string>(), publishedItems: new Set(), abort: new AbortController(), jobs: new Set(), requests: new Map(), resolved: new Set(), starting: deferred<{ id: string; status: string }>(), accepting: true, terminal: false, commands: new Set(), commandsDrained: deferred<void>(), boundary: deferred<void>() }
-    let stopTimer: ReturnType<typeof setTimeout> | undefined
     let interruptSent = false
     let startIssued = false
     const stop = () => {
       operation.accepting = false; operation.abort.abort(turn.signal.reason)
       if (operation.terminal) return
-      stopTimer ??= setTimeout(() => { void this.close().catch(error => operation.done.reject(error)) }, this.resource.cooperativeStopMs)
       if (operation.nativeId && !interruptSent && !operation.terminal) { interruptSent = true; this.track(operation, this.interrupt(operation)) }
     }
-    const joined = deferred<void>()
-    let finished = false
-    operation.invocation = registerNativeOperation(turn, this.resource, {
-      done: joined.promise,
-      stop: async () => { stop(); await joined.promise.catch(() => {}) },
-      state: () => ({ idle: finished, reusable: this.reusable }),
-    })
+    operation.stop = stop
     this.active = operation
     turn.signal.addEventListener("abort", stop, { once: true })
     try {
@@ -175,12 +175,10 @@ export class CodexHarness {
         // This setup-owned thread has exactly one active invocation. Prior work
         // cannot return while commands remain. Clean only this thread, then join
         // the exact command item receipts observed for this invocation.
-        const timer = setTimeout(() => { void this.close().finally(() => operation.commandsDrained.reject(new Error("Native command stop did not converge"))) }, this.resource.cooperativeStopMs)
         try {
           await this.server.request("thread/backgroundTerminals/clean", { threadId: this.threadId })
           if (operation.commands.size) await operation.commandsDrained.promise
         } catch { await this.close() }
-        finally { clearTimeout(timer) }
       }
       if (!operation.terminal || this.broken || operation.commands.size) await this.close()
       await Promise.allSettled([...operation.jobs])
@@ -189,11 +187,8 @@ export class CodexHarness {
       this.pendingStart = false
       operation.accepting = false
       operation.abort.abort()
-      clearTimeout(stopTimer)
       turn.signal.removeEventListener("abort", stop)
       if (this.active === operation) this.active = undefined
-      finished = true
-      joined.resolve()
     }
   }
   close(): Promise<void> {
@@ -225,7 +220,7 @@ export class CodexHarness {
       if (message.id !== undefined) void this.server.send({ id: message.id, error: { code: -32600, message: "No active Turn" } }).catch(() => {})
       return
     }
-    if (message.id !== undefined) { this.track(operation, operation.invocation!.run(() => this.respond(operation, message))); return }
+    if (message.id !== undefined) { this.track(operation, this.respond(operation, message)); return }
     if (message.method === "item/started" || message.method === "item/completed") {
       const params = target.parse(message.params)
       if (params.threadId === this.threadId && params.turnId === operation.nativeId) {
@@ -255,7 +250,7 @@ export class CodexHarness {
       else if (item.data.phase === "commentary") {
         const text = (operation.hasCommentary ? "\n\n" : "") + item.data.text
         operation.hasCommentary = true
-        this.track(operation, operation.invocation!.run(() => operation.turn.output.write(text).then(() => {})))
+        this.track(operation, operation.turn.output.write(text).then(() => {}))
       }
       // Unknown-phase text is excluded; deltas never duplicate completed snapshots.
     }

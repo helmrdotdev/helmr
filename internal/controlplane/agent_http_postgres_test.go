@@ -202,7 +202,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	// both transports. Acceptance must not claim that execution has resumed.
 	systemHold, userHold, laterHold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','native_continuation_lost');
+ INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','session_continuation_lost');
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,$4,$3,'subtree','operator hold','user',$5);
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, systemHold, first.SessionID, userHold, f.User)
 	resumePath := base + "/sessions/" + first.SessionID + "/resume"

@@ -25,7 +25,7 @@ type linuxProcessCgroup struct {
 }
 
 func enterProcessCgroupNamespace(leaf string) error {
-	if err := validateAssignedProcessCgroup(leaf); err != nil {
+	if err := validateProcessCgroupLeaf(leaf); err != nil {
 		return err
 	}
 	raw, err := os.ReadFile("/proc/self/cgroup")

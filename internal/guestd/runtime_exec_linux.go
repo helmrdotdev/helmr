@@ -58,7 +58,6 @@ func init() {
 
 type imageCommandOptions struct {
 	SecretRoot      string
-	NativeRoot      string
 	Program         programMounts
 	CgroupNamespace bool
 	CgroupLeaf      string
@@ -74,7 +73,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		return nil, err
 	}
 	if opts.CgroupNamespace {
-		if err := validateAssignedProcessCgroup(opts.CgroupLeaf); err != nil {
+		if err := validateProcessCgroupLeaf(opts.CgroupLeaf); err != nil {
 			return nil, err
 		}
 	} else if opts.CgroupLeaf != "" {
@@ -92,7 +91,6 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		opts.CgroupLeaf,
 		strconv.FormatBool(opts.StartProof),
 		opts.SecretRoot,
-		opts.NativeRoot,
 		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
@@ -107,7 +105,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 }
 
 func runImageRuntimeInit(args []string, env []string) error {
-	if len(args) < 12 {
+	if len(args) < 11 {
 		return errors.New("missing image runtime init arguments")
 	}
 	imageRoot := args[0]
@@ -135,7 +133,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 	}
 	cgroupLeaf := args[7]
 	if cgroupNamespace {
-		if err := validateAssignedProcessCgroup(cgroupLeaf); err != nil {
+		if err := validateProcessCgroupLeaf(cgroupLeaf); err != nil {
 			return err
 		}
 	} else if cgroupLeaf != "" {
@@ -149,9 +147,8 @@ func runImageRuntimeInit(args []string, env []string) error {
 		return fmt.Errorf("invalid start proof flag %q", args[8])
 	}
 	secretRoot := args[9]
-	nativeRoot := args[10]
-	runtimePath := args[11]
-	runtimeArgs := args[12:]
+	runtimePath := args[10]
+	runtimeArgs := args[11:]
 	if cgroupNamespace {
 		if err := enterProcessCgroupNamespace(cgroupLeaf); err != nil {
 			return err
@@ -159,11 +156,6 @@ func runImageRuntimeInit(args []string, env []string) error {
 	}
 	if err := setupImageRuntimeNamespace(imageRoot, program, secretRoot); err != nil {
 		return err
-	}
-	if nativeRoot != "" {
-		if err := mountNativeLauncher(imageRoot, nativeRoot); err != nil {
-			return err
-		}
 	}
 	if err := pivotIntoImageRoot(imageRoot); err != nil {
 		return err

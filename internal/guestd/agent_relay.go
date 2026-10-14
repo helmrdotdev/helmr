@@ -649,18 +649,14 @@ func (relay *agentRelay) freezeForCapture(ctx context.Context) error {
 	relay.session.mu.Lock()
 	defer relay.session.mu.Unlock()
 	session := relay.session
-	if session.checkpointID == "" || session.checkpointReady == nil || session.checkpointReady.GetError() != nil || session.terminal || session.activeTurn != "" || len(session.pending) != 0 || relay.mcpRequests != 0 || relay.shuttingDown || relay.writeBytes.Load() != 0 {
+	if session.checkpointID == "" || session.checkpointReady == nil || !session.checkpointReady.GetReady() || session.terminal || session.activeTurn != "" || len(session.pending) != 0 || relay.mcpRequests != 0 || relay.shuttingDown || relay.writeBytes.Load() != 0 {
 		return errors.New("session has no idle checkpoint proof")
 	}
 	if err := session.authorizeLocked(); err != nil {
 		return err
 	}
 	relay.captureVerified = false
-	var scopes []nativeScopeEvidence
-	if err := decodeAgentJSON(session.checkpointReady.GetScopesJson(), &scopes); err != nil {
-		return err
-	}
-	if err := session.process.converge(scopes); err != nil {
+	if err := session.process.verifyRunning(); err != nil {
 		return err
 	}
 	if err := session.process.freeze(ctx); err != nil {
@@ -673,7 +669,7 @@ func (relay *agentRelay) freezeForCapture(ctx context.Context) error {
 	}
 	relay.notifyLocked()
 	// Recheck membership after the parent scope is physically stopped.
-	if err := session.process.converge(scopes); err != nil {
+	if err := session.process.verifyRunning(); err != nil {
 		return err
 	}
 	relay.captureVerified = true

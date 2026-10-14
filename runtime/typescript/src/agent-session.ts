@@ -7,7 +7,6 @@ import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { AgentDefinition, AgentContext, Json, OutputReceipt, InitContext, InputMessage, InputSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
-import { NativeContinuationLost, type SessionNativeRegistry } from "./agent-native"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 
@@ -41,10 +40,8 @@ export interface SessionDriver {
   ask(turnId: string, creationId: string, question: Question, signal: AbortSignal): Promise<AskRegistration>
   output(turnId: string, outputId: string, value: Content): Promise<OutputReceipt>
   respond(turnId: string, responseId: string, value: Content): Promise<void>
-  // An aborted signal requests stopping; it must not skip join/fencing evidence.
-  // Idempotent; failure calls first stop native work and then verify again after
-  // authored work has joined. Calls may overlap when interruption supersedes success.
-  convergeNative(turnId: string, outcome: "returned" | "failed", signal: AbortSignal): Promise<void>
+  // Attest joined authored work under the current guest authority.
+  confirmDrain(turnId: string): Promise<void>
   finalize(turnId: string, result: Json): Promise<TurnOutcome>
   fail(turnId: string, error: { code: string; message: string }): Promise<TurnOutcome>
   hold(reason: string): Promise<void>
@@ -54,6 +51,10 @@ interface AskOperation {
   complete: boolean
   withdrawal?: Promise<void>
 }
+interface CancellationHook {
+  readonly callback: (reason: unknown) => void | Promise<void>
+  pending?: Promise<void>
+}
 interface Execution {
   request: AdmittedTurn
   fingerprint: string
@@ -62,6 +63,10 @@ interface Execution {
   phase: "processing" | "draining" | "finalizing" | "settling_failure" | "terminal"
   promise: Promise<TurnOutcome>
   handler?: Promise<Json>
+  cancellation: CancellationHook[]
+  cancellationFailure?: Error
+  cancellationClosed: boolean
+  cancelListener: () => void
   output: Set<Promise<unknown>>
   pipes: Set<Promise<unknown>>
   registrations: Set<Promise<unknown>>
@@ -115,14 +120,12 @@ export class SessionRuntime {
   private readonly context: InitContext
   private readonly driver: SessionDriver
   private readonly failureConvergenceMs: number
-  private readonly native: SessionNativeRegistry | undefined
   private readonly activity: SessionActivity | undefined
   private readonly onTiming: ((timing: TurnTiming) => void) | undefined
-  constructor(definition: AgentDefinition<InputContent, Json, unknown>, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; native?: SessionNativeRegistry; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
+  constructor(definition: AgentDefinition<InputContent, Json, unknown>, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
     this.definition = definition
     this.context = context
     this.driver = driver
-    this.native = limits.native
     this.activity = limits.activity
     this.onTiming = limits.onTiming
     if (!Number.isFinite(limits.failureConvergenceMs) || limits.failureConvergenceMs <= 0) throw new Error("Failure convergence bound must be positive")
@@ -140,7 +143,7 @@ export class SessionRuntime {
       try {
         const action = () => this.definition.init?.(this.context)
         const setup = () => this.activity ? this.activity.authored(action) : action()
-        return { ...this.context, initResult: await (this.native ? this.native.setup(setup) : setup()) }
+        return { ...this.context, initResult: await setup() }
       }
       catch (error) { this.held = true; this.reconstructRequired = true; return this.recordFailureHold("setup_failed", error) }
     })()
@@ -157,7 +160,9 @@ export class SessionRuntime {
     if (this.held || this.active) return Promise.reject(new Error("Session cannot dispatch another Turn"))
     if (!Number.isSafeInteger(request.sequence) || request.sequence <= Math.max(this.retiredThrough, this.dispatchedThrough)) return Promise.reject(new Error("Turn delivery has already been acknowledged or has an invalid sequence"))
     const abort = new AbortController()
-    const execution: Execution = { request: structuredClone(request), fingerprint: identity, abort, signal: AbortSignal.any([abort.signal, this.context.signal]), phase: "processing", promise: undefined!, output: new Set(), pipes: new Set(), registrations: new Set(), asks: new Set(), messages: new Map() }
+    const execution: Execution = { request: structuredClone(request), fingerprint: identity, abort, signal: AbortSignal.any([abort.signal, this.context.signal]), phase: "processing", promise: undefined!, cancellation: [], cancellationClosed: false, cancelListener: () => {}, output: new Set(), pipes: new Set(), registrations: new Set(), asks: new Set(), messages: new Map() }
+    execution.cancelListener = () => this.startCancellation(execution)
+    execution.signal.addEventListener("abort", execution.cancelListener, { once: true })
     this.dispatchedThrough = request.sequence
     this.turns.set(request.id, execution)
     this.active = execution
@@ -240,7 +245,7 @@ export class SessionRuntime {
     if (!execution || execution.request.sequence !== sequence || execution.phase !== "terminal") throw new Error("Turn is not terminal")
     this.retiredThrough = sequence
     for (const [id, entry] of this.turns) {
-      if (entry.request.sequence <= sequence && entry.phase === "terminal") { this.turns.delete(id); this.native?.acknowledge(id) }
+      if (entry.request.sequence <= sequence && entry.phase === "terminal") { this.turns.delete(id) }
     }
   }
 
@@ -250,6 +255,7 @@ export class SessionRuntime {
     try { context = await this.initialize() }
     catch (error) {
       // Setup failure leaves the admitted input queued for explicit recovery.
+      execution.signal.removeEventListener("abort", execution.cancelListener)
       this.turns.delete(execution.request.id)
       if (this.active === execution) this.active = undefined
       throw error
@@ -276,21 +282,15 @@ export class SessionRuntime {
         await Promise.all([...execution.asks].map(ask => ask.withdrawal))
         if ([...execution.asks].some(ask => !ask.complete)) throw new Error("Turn returned with an unjoined question")
         execution.signal.throwIfAborted()
-        await this.driver.convergeNative(execution.request.id, "returned", execution.signal)
+        await this.driver.confirmDrain(execution.request.id)
       })(), execution.signal)
     } catch (error) {
-      let interrupted = execution.signal.aborted || error instanceof NativeContinuationLost
+      let interrupted = execution.signal.aborted
       execution.phase = "draining"
       this.abort(execution.abort, error)
       let convergenceExpired = false
-      let continuationLost = error instanceof NativeContinuationLost
-      const converge = () => this.driver.convergeNative(execution.request.id, "failed", execution.signal).catch(error => {
-        if (error instanceof NativeContinuationLost) { continuationLost = true; return }
-        throw error
-      })
       try {
-        const native = converge()
-        await bounded(Promise.all([native, (async () => {
+        await bounded((async () => {
           if (!interrupted) await this.driver.closeProcessing(execution.request.id)
           await Promise.allSettled(execution.handler ? [execution.handler] : [])
           await Promise.allSettled([...execution.registrations])
@@ -298,24 +298,23 @@ export class SessionRuntime {
           await Promise.allSettled([...execution.messages.values()].map(message => message.promise))
           await Promise.allSettled([...execution.pipes])
           await Promise.allSettled([...execution.output])
-        })()]).then(async () => {
-          if (convergenceExpired) return
-          await converge()
-        }), this.failureConvergenceMs)
+          await this.joinCancellation(execution)
+          if (!convergenceExpired) await this.driver.confirmDrain(execution.request.id)
+        })(), this.failureConvergenceMs)
       } catch (convergenceError) {
         convergenceExpired = true
         this.held = true
         this.reconstructRequired = true
-        return this.recordFailureHold("native_convergence_failed", convergenceError)
+        return this.recordFailureHold("turn_drain_failed", convergenceError)
       }
-      if (continuationLost) {
+      if (execution.cancellationFailure) {
         interrupted = true
         this.held = true
         this.reconstructRequired = true
-        await this.recordHold("native_continuation_lost", error)
+        await this.recordHold("session_continuation_lost", execution.cancellationFailure)
       }
       execution.phase = "settling_failure"
-      execution.failure = { code: interrupted ? "interrupted" : "handler_failed", message: error instanceof Error ? error.message : String(error) }
+      execution.failure = { code: interrupted ? "interrupted" : "handler_failed", message: execution.cancellationFailure?.message ?? (error instanceof Error ? error.message : String(error)) }
       return this.settle(execution)
     }
     execution.phase = "finalizing"
@@ -331,6 +330,20 @@ export class SessionRuntime {
       const outcome = execution.failure
         ? await this.driver.fail(execution.request.id, { ...execution.failure })
         : await this.driver.finalize(execution.request.id, structuredClone(execution.result!))
+      if (execution.phase === "finalizing" && (execution.signal.aborted || outcome.status === "interrupted" || outcome.status === "cancelled")) {
+        this.abort(execution.abort, new Error("Turn interrupted during finalization"))
+        try { await bounded(this.joinCancellation(execution), this.failureConvergenceMs) }
+        catch (error) {
+          this.held = true
+          this.reconstructRequired = true
+          return this.recordFailureHold("turn_drain_failed", error)
+        }
+        if (execution.cancellationFailure) {
+          this.held = true
+          this.reconstructRequired = true
+          await this.recordHold("session_continuation_lost", execution.cancellationFailure)
+        }
+      }
       const observedAt = performance.now()
       this.terminal(execution, outcome)
       // One process measures the full return/drain/save/retry interval. The end
@@ -349,6 +362,25 @@ export class SessionRuntime {
       }
       return outcome
     }).finally(() => { execution.settlement = undefined })
+  }
+  private startCancellation(execution: Execution): void {
+    for (const hook of execution.cancellation) {
+      hook.pending ??= Promise.resolve().then(() => this.invoke(() => hook.callback(execution.signal.reason))).catch(error => {
+        // A rejected cleanup cannot establish safe reuse. Observe it immediately
+        // while other hooks and the handler continue to drain.
+        execution.cancellationFailure ??= error instanceof Error ? error : new Error(String(error))
+      })
+    }
+  }
+  private async joinCancellation(execution: Execution): Promise<void> {
+    let joined = 0
+    do {
+      this.startCancellation(execution)
+      const pending = execution.cancellation.slice(joined)
+      joined = execution.cancellation.length
+      await Promise.all(pending.map(hook => hook.pending))
+    } while (joined !== execution.cancellation.length)
+    execution.cancellationClosed = true
   }
   private abort(controller: AbortController, reason: unknown): void {
     const action = () => controller.abort(reason)
@@ -375,6 +407,8 @@ export class SessionRuntime {
     return operation.withdrawal = operation.registration.then(registration => registration.withdraw(), () => {})
   }
   private terminal(execution: Execution, outcome: TurnOutcome): void {
+    execution.signal.removeEventListener("abort", execution.cancelListener)
+    execution.cancellation.length = 0
     execution.phase = "terminal"
     execution.outcome = outcome
     if (this.active === execution) this.active = undefined
@@ -403,6 +437,12 @@ export class SessionRuntime {
     const turn: Turn = {
       ...execution.request,
       signal: execution.signal,
+      onCancel: callback => {
+        if (execution.cancellationClosed || (execution.phase !== "processing" && !(execution.phase === "draining" && execution.signal.aborted))) throw new Error("Turn cancellation registration is closed")
+        if (typeof callback !== "function") throw new TypeError("Cancellation handler must be a function")
+        execution.cancellation.push({ callback })
+        if (execution.signal.aborted) this.startCancellation(execution)
+      },
       output: { write: output, pipe: (values, options) => {
         open()
         const scope: OutputScope = { execution, live: true }
@@ -444,16 +484,6 @@ export class SessionRuntime {
         return answer
       },
     }
-    this.native?.bind(turn, {
-      id: execution.request.id,
-      assertOpen: open,
-      producer: done => {
-        const scope: OutputScope = { execution, live: true }
-        execution.pipes.add(done)
-        void done.finally(() => { scope.live = false }).catch(() => {})
-        return { run: callback => this.invoke(() => this.outputScope.run(scope, callback)) }
-      },
-    })
     return turn
   }
 }

@@ -652,7 +652,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 				t.Fatalf("native loss identity: %+v", loss)
 			}
 			providers[loss.Provider] = true
-			if loss.HoldReason != "native_continuation_lost" && loss.HoldReason != "native_convergence_failed" {
+			if loss.HoldReason != "session_continuation_lost" && loss.HoldReason != "turn_drain_failed" {
 				t.Fatalf("unexpected native loss hold: %q", loss.HoldReason)
 			}
 			var valid bool

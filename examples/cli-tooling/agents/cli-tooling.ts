@@ -1,4 +1,4 @@
-import { agent, template, image, source } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -12,12 +12,7 @@ const installTools = [
 const base = image("cli-tooling")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
-  .run(["npm", "install", "-g", "bun@1.3.13"])
   .run(["sh", "-ceu", installTools])
-  .copy(source.file("package.json"), "/opt/helmr-agent/package.json")
-  .workdir("/opt/helmr-agent")
-  .run(["bun", "install"])
-  .workdir("/sandbox")
 
 export const cliToolingComputer = template({
   id: "cli-tooling",

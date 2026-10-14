@@ -91,7 +91,7 @@ test("framed Session program retains setup and completes operation responses whi
   assert.deepEqual(value(await f.dispatch(1)), { status: "completed", result: 1 })
   assert.deepEqual(value(await f.dispatch(2)), { status: "completed", result: 2 })
   assert.equal(setups, 1)
-  assert.deepEqual(f.operations.map(operation => operation.method), [agentProto.Operation_Method.CLOSE_PROCESSING, agentProto.Operation_Method.CONVERGE_NATIVE, agentProto.Operation_Method.FINALIZE, agentProto.Operation_Method.CLOSE_PROCESSING, agentProto.Operation_Method.CONVERGE_NATIVE, agentProto.Operation_Method.FINALIZE])
+  assert.deepEqual(f.operations.map(operation => operation.method), [agentProto.Operation_Method.CLOSE_PROCESSING, agentProto.Operation_Method.CONFIRM_DRAIN, agentProto.Operation_Method.FINALIZE, agentProto.Operation_Method.CLOSE_PROCESSING, agentProto.Operation_Method.CONFIRM_DRAIN, agentProto.Operation_Method.FINALIZE])
   await f.shutdown()
 })
 
@@ -202,10 +202,10 @@ test("checkpoint observes idle continuation without releasing a hold or repeatin
   let setups = 0
   const f = fixture({ init: () => { setups++; return { count: 0 } }, turn: (_turn, ctx) => ++(ctx.initResult as { count: number }).count })
   await f.ready
-  assert.equal((await f.checkpoint("initial")).outcome.case, "scopesJson")
+  assert.equal((await f.checkpoint("initial")).outcome.case, "ready")
   assert.equal(value(await f.dispatch(1)).result, 1)
   await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) })
-  assert.equal((await f.checkpoint("held")).outcome.case, "scopesJson")
+  assert.equal((await f.checkpoint("held")).outcome.case, "ready")
   assert.equal((await f.dispatch(2)).outcome.case, "error")
   await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) })
   assert.equal(value(await f.dispatch(2)).result, 2)
@@ -222,7 +222,7 @@ test("checkpoint rejects an active Turn without interrupting its work", async ()
   assert.equal((await f.checkpoint("busy")).outcome.case, "error")
   release.resolve()
   assert.equal(value(await turn).result, 7)
-  assert.equal((await f.checkpoint("idle")).outcome.case, "scopesJson")
+  assert.equal((await f.checkpoint("idle")).outcome.case, "ready")
   await f.shutdown()
 })
 
@@ -237,7 +237,7 @@ test("an authored background timer pins compute even without an active Turn", as
     clearInterval(timer)
     // async_hooks destruction follows the event-loop turn that closes a handle.
     await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal((await f.checkpoint("drained")).outcome.case, "scopesJson")
+    assert.equal((await f.checkpoint("drained")).outcome.case, "ready")
   } finally { clearInterval(timer); await f.shutdown() }
 })
 
@@ -260,7 +260,7 @@ test("interrupted Turn cleanup callbacks pin a held Session until their work end
     assert.equal(checkpoint.outcome.case, "error")
     if (checkpoint.outcome.case === "error") assert.match(checkpoint.outcome.value.message, /Timeout/)
     clearInterval(timer)
-    assert.equal((await f.checkpoint("drained")).outcome.case, "scopesJson")
+    assert.equal((await f.checkpoint("drained")).outcome.case, "ready")
   } finally { clearInterval(timer); await f.shutdown() }
 })
 
