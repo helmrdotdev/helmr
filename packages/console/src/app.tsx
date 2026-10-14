@@ -78,7 +78,7 @@ function AppShell(props: { children?: JSX.Element }) {
     return environment && isProtectedEnvironment(environment) ? environment.color_hex : undefined;
   };
   return (
-    <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text antialiased"}>
+    <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
         leading={<ScopeSwitcher />}
         nav={CONSOLE_NAV}

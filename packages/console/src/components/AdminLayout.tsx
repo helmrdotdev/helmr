@@ -11,7 +11,7 @@ const ADMIN_NAV = [
 
 export function AdminLayout(props: { children?: JSX.Element }) {
   return (
-    <div class="min-h-dvh bg-transparent font-sans text-sm text-console-text antialiased">
+    <div class="min-h-dvh bg-transparent font-sans text-sm text-console-text">
       <AppBar
         leading={<BrandMark area="Admin" href="/" />}
         nav={ADMIN_NAV}

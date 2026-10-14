@@ -161,8 +161,6 @@
     background-size: auto, 12px 12px, auto;
     color: var(--console-text);
     font-family: var(--console-sans);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
 
   code,
