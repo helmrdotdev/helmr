@@ -3,7 +3,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { errorMessage } from "../lib/error";
 import { hasPermission } from "../lib/auth";
-import { getProjectSettings, updateProjectSettings, updateProject } from "../lib/projects";
+import { getProjectSettings, listRegions, updateProjectSettings, updateProject } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { ConfirmDialog } from "../ui/Dialog";
 import { Field, FormActions, TextInput } from "../ui/Field";
@@ -15,7 +15,7 @@ import { Panel } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
 import { cx, ui } from "../ui/styles";
 
-export function Projects() {
+export function ProjectSettings() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
@@ -23,6 +23,11 @@ export function Projects() {
   const [saveError, setSaveError] = createSignal<string | null>(null);
 
   const project = createMemo(() => scope.selectedProject());
+  const regions = createQuery(() => ({ queryKey: ["regions"], queryFn: listRegions, retry: false }));
+  const regionName = (id: string) => {
+    const region = regions.data?.regions.find((candidate) => candidate.id === id);
+    return region?.display_name || id || "—";
+  };
   const dirty = createMemo(() => {
     const current = project();
     if (!current) return false;
@@ -61,7 +66,16 @@ export function Projects() {
       <PageHeader
         title="Project"
         subtitle="Profile and settings shared by every Environment in the selected Project."
-        meta={<Show when={project()}>{(current) => <span class="inline-flex items-baseline gap-1.5">Project ID <IDText value={current().project} mode="full" /></span>}</Show>}
+        meta={
+          <Show when={project()}>
+            {(current) => (
+              <>
+                <span class="inline-flex items-baseline gap-1.5">Project ID <IDText value={current().project} mode="full" /></span>
+                <span class="inline-flex items-baseline gap-1.5">Region <span class="text-console-text">{regionName(current().default_region_id)}</span></span>
+              </>
+            )}
+          </Show>
+        }
       />
 
       <Show when={project()} fallback={<EmptyState title="No project selected." />}>

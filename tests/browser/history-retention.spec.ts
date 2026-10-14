@@ -83,7 +83,7 @@ test("Environment metadata editing has no retention policy", async ({ page }) =>
 
 test("Project settings shorten with confirmation, persist, and disable expiry", async ({ page }) => {
   const { writes } = await scope(page);
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("30");
   await expect(page.getByText("Applies to all remaining Session history in every Environment of this Project.")).toBeVisible();
   await expect(save(page)).toBeDisabled();
@@ -113,7 +113,7 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
 
 test("custom seconds round-trip exactly and hours normalize", async ({ page }) => {
   const { writes } = await scope(page, { policy: "3601s" });
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("3601");
   await expect(unit(page)).toHaveText("Seconds");
   await expect(save(page)).toBeDisabled();
@@ -126,7 +126,7 @@ test("custom seconds round-trip exactly and hours normalize", async ({ page }) =
 
 test("invalid durations are rejected before a request", async ({ page }) => {
   const { writes } = await scope(page);
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await period(page).fill("0");
   await save(page).click();
   expect(writes).toHaveLength(0);
@@ -137,7 +137,7 @@ test("invalid durations are rejected before a request", async ({ page }) => {
 
 test("viewers can read but cannot edit Project retention", async ({ page }) => {
   await scope(page, { manage: false });
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("30");
   await expect(modeOption(page, "Never expire")).toBeDisabled();
   await expect(modeOption(page, "Keep for a duration")).toBeDisabled();
@@ -147,14 +147,14 @@ test("viewers can read but cannot edit Project retention", async ({ page }) => {
 
 test("failed settings read does not present an editable default", async ({ page }) => {
   await scope(page, { failRead: true });
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await expect(page.getByRole("alert")).toContainText("Could not load history retention.");
   await expect(mode(page)).toHaveCount(0);
 });
 
 test("failed save preserves the draft and shows the error", async ({ page }) => {
   await scope(page, { failWrite: true });
-  await page.goto("/settings/projects");
+  await page.goto("/settings/project");
   await modeOption(page, "Never expire").check();
   await save(page).click();
   await expect(page.getByRole("alert")).toHaveText("Could not save policy.");
@@ -174,13 +174,13 @@ test("real Project defaults to 30d and settings persist across all Environments"
   const created = await response.json();
   expect(created.environments).toHaveLength(2);
   for (const environment of created.environments) expect(environment).not.toHaveProperty("history_retention_mode");
-  await page.goto(`/settings/projects?project=${project}&environment=production`);
+  await page.goto(`/settings/project?project=${project}&environment=production`);
   await expect(period(page)).toHaveValue("30");
   await period(page).fill("7");
   await save(page).click();
   await confirmShorten(page).getByRole("button", { name: "Shorten retention", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "History retention" })).toHaveText("History retention saved.");
-  await page.goto(`/settings/projects?project=${project}&environment=staging`);
+  await page.goto(`/settings/project?project=${project}&environment=staging`);
   await expect(period(page)).toHaveValue("7");
   const saved = await page.request.get(`/api/projects/${project}/settings`);
   expect(saved.ok()).toBeTruthy();

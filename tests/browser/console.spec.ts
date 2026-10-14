@@ -18,7 +18,7 @@ test("local developer can enter the console and sees the four sections", async (
   await expect(navigation.getByRole("link", { name: "Tasks", exact: true })).toHaveCount(0);
   await expect(navigation.getByRole("link", { name: "Triggers", exact: true })).toHaveCount(0);
   await expect(navigation.getByRole("link", { name: "Dashboard", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings/projects");
+  await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings/project");
 });
 
 test("an environment without a deployment shows the CLI onboarding on the Overview", async ({ page }) => {

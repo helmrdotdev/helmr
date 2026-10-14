@@ -20,20 +20,20 @@ const MESSAGES = {
 // What to do next, by what went wrong.
 function NextStep(props: { failure: Failure & { code: string } }) {
   return <Switch fallback={<>
-    <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from your Slack account settings.</AuthCopy>
-    <A class={ui.secondaryButton} href="/account/slack">Your Slack account</A>
+    <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from My account.</AuthCopy>
+    <A class={ui.secondaryButton} href="/settings/account">My account</A>
   </>}>
     <Match when={props.failure.code === "unauthorized"}>
       <AuthCopy>Sign in again, then try your action in Slack again.</AuthCopy>
-      <A class={ui.secondaryButton} href={withNext("/login", "/account/slack")}>Sign in again</A>
+      <A class={ui.secondaryButton} href={withNext("/login", "/settings/account")}>Sign in again</A>
     </Match>
     <Match when={props.failure.code === "conflict"}>
-      <AuthCopy>Unlink the other account from your Slack account settings, then link again.</AuthCopy>
-      <A class={ui.secondaryButton} href="/account/slack">Your Slack account</A>
+      <AuthCopy>Unlink the other account from My account, then link again.</AuthCopy>
+      <A class={ui.secondaryButton} href="/settings/account">My account</A>
     </Match>
     <Match when={props.failure.code === "forbidden" || props.failure.code === "service_unavailable"}>
       <AuthCopy>Ask an organization owner or admin for help.</AuthCopy>
-      <A class={ui.secondaryButton} href="/account/slack">Your Slack account</A>
+      <A class={ui.secondaryButton} href="/settings/account">My account</A>
     </Match>
   </Switch>;
 }
@@ -60,7 +60,7 @@ export function AuthSlackLink() {
   const confirm = async () => {
     const current = proof(); if (!current) return;
     setBusy(true); setConfirmError(null);
-    try { await confirmSlackUserLink(current.confirmation); if (mounted) { if (current.return_url) setComplete(true); else navigate("/account/slack", { replace: true }); } }
+    try { await confirmSlackUserLink(current.confirmation); if (mounted) { if (current.return_url) setComplete(true); else navigate("/settings/account", { replace: true }); } }
     catch (e) { if (mounted) setConfirmError(linkFailure(e, "Your accounts could not be linked.")); }
     finally { if (mounted) setBusy(false); }
   };
@@ -92,7 +92,7 @@ export function AuthSlackLink() {
             <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
             <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} />} />}</Show>
             <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking..." : "Confirm these accounts are mine"}</button>
-            <A href="/account/slack">Your Slack account</A>
+            <A href="/settings/account">My account</A>
           </div>
         </AuthWindow>
       )}

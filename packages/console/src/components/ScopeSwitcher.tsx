@@ -222,7 +222,7 @@ export function ScopeSwitcher() {
         </div>
         <div class={"flex items-center justify-end border-t border-console-border bg-console-bg-panel px-2 py-1"}>
           <A
-            href="/settings/projects"
+            href="/settings/project"
             class={"font-mono text-micro font-medium text-console-accent hover:text-console-accent-hover"}
             onClick={() => setOpen(false)}
           >

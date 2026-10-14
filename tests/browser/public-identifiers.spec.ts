@@ -12,7 +12,7 @@ test("Console IDs remain usable through API operations and display-name edits", 
   expect(body).not.toHaveProperty("slug");
   const base = `/api/projects/${project}`;
   const scope = `project=${project}&environment=production`;
-  await page.goto(`/settings/projects?${scope}`);
+  await page.goto(`/settings/project?${scope}`);
   await page.getByRole("button", { name: `Copy ${project}`, exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project);
   await page.getByLabel("Name", { exact: true }).fill("Renamed project");
@@ -34,7 +34,7 @@ test("Console IDs remain usable through API operations and display-name edits", 
   await expect(dialog).toHaveCount(0);
   expect((await page.request.patch(`${base}/environments/production`, { data: { name: "Live", environment: "replacement" } })).status()).toBe(400);
   await page.goto(`/settings/secrets?${scope}`);
-  await page.getByRole("button", { name: "Set secret", exact: true }).click();
+  await page.getByRole("button", { name: "Set secret in Live workspace", exact: true }).click();
   await page.getByLabel("Secret ID", { exact: true }).fill("GITHUB_TOKEN");
   await page.getByLabel("Value", { exact: true }).fill("synthetic-browser-value");
   await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
