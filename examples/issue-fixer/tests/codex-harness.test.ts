@@ -65,7 +65,7 @@ test("native steering rejection can precede the queued completion notification",
   try {
     const pending = harness.run(turn, "original")
     await ready
-    await expect(handler([{ type:"text", text:"too late" }])).rejects.toBeInstanceOf(MessageRejected)
+    await expect(handler({ id: "message", content: [{ type:"text", text:"too late" }], source: { kind: "user" } })).rejects.toBeInstanceOf(MessageRejected)
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await expect(pending).resolves.toEqual({ nativeThreadId: "native", nativeTurnId: "native-turn" })
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
@@ -177,10 +177,10 @@ test("completed snapshots publish commentary once and commit only an exact succe
     messages.push(item("second", "commentary")); messages.push(item("unknown")); messages.push(item("answer", "final_answer"))
     messages.push({ method: "turn/completed", params: { threadId: "elsewhere", turn: { id: "native-turn", status: "completed" } } })
     await new Promise<void>(resolve => setImmediate(resolve))
-    expect(output.join("")).toBe("progress\n\nsecond"); expect(responses).toEqual([])
+    expect(output.join("")).toBe("progress\n\nsecond\n\nunknown"); expect(responses).toEqual([])
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
-    await pending
-    expect(responses).toEqual(["answer"])
+    expect((await pending).response).toBe("answer")
+    expect(responses).toEqual([])
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
@@ -234,3 +234,34 @@ test("a retained protocol failure rejects the next prompt and its cancellation h
     expect(sent.length).toBe(before)
   } finally { finishExit(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+for (const scenario of ["phase-less", "continued", "unknown", "unknown-with-final", "async-question", "native-failure"] as const) {
+  test(`native text classification: ${scenario}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "helmr-native-phases-"))
+    const harness = await CodexHarness.open(directory, "session", {})
+    const output: string[] = []
+    const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
+      output: { write: async (text: string) => { output.push(text); return { sequence: output.length } } },
+      respond: async () => { throw new Error("Bridge must not own final response") },
+    } as unknown as Turn
+    const item = (id: string, extra = {}) => ({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "agentMessage", id, text: id, ...extra } } })
+    try {
+      const pending = harness.run(turn, "inspect")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      messages.push(item("candidate"))
+      if (scenario === "continued") {
+        messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "webSearch", id: "tool" } } })
+        messages.push(item("final"))
+      }
+      if (scenario.startsWith("unknown")) messages.push(item("excluded", { phase: "unsupported_phase" }))
+      if (scenario === "unknown-with-final") messages.push(item("final", { phase: "final_answer" }))
+      if (scenario === "async-question") messages.push(item("detached", { phase: "final_answer", delivery: "async", questions: [{ question: "Unowned?" }] }))
+      messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: scenario === "native-failure" ? "failed" : "completed" } } })
+      if (scenario === "unknown") await expect(pending).rejects.toThrow("unsupported message phase")
+      else if (scenario === "async-question") await expect(pending).rejects.toThrow("asynchronous questions")
+      else if (scenario === "native-failure") await expect(pending).rejects.toThrow("Native Turn ended")
+      else expect((await pending).response).toBe(scenario === "phase-less" ? "candidate" : "final")
+      expect(output.join("")).toBe(["continued", "unknown-with-final", "native-failure"].includes(scenario) ? "candidate" : "")
+    } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  })
+}

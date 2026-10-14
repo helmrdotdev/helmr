@@ -72,7 +72,9 @@ func TestSlackDeliveryAbandonmentClosesPublicationWithoutReplacingRootOrReplayin
 			}
 			response := f.post(t, seq, "response", "response", &turn)
 			f.due(t)
-			f.noPostClaim(t, response)
+			if unbound {
+				f.noPostClaim(t, response)
+			}
 			input := f.recoveryInput(t, org, first)
 			for range 2 {
 				if err := RecoverDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, first, input, "abandon"); err != nil {
@@ -426,11 +428,11 @@ func TestSlackDeliveryAbandonmentLeavesUnprojectedQuestionsAndResponseIndependen
 				}
 			} else {
 				ask := uuid.NewV7()
-				if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
+				if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"type":"text"}`)); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "answered" {
-					if _, err := session.RespondAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
+					if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
 						t.Fatal(err)
 					}
 				}

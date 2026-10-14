@@ -1,4 +1,4 @@
-import type { AskResponse } from "../../../sdk/typescript/src/question"
+import type { AskAnswer } from "../../../sdk/typescript/src/question"
 // Real pinned native SDK/process, local model and in-memory control-plane driver.
 // This exercises warm process identity, not VM or process-containment guarantees.
 import assert from "node:assert/strict"
@@ -56,24 +56,24 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     const driver: SessionDriver = {
       registerMessages: async () => {}, closeProcessing: async () => {},
       ask: async (_turn, _id, question) => {
-        const kind = question.answer.type === "choice" && question.answer.options[0]?.id === "allow" ? "approval" : "answer"
+        const kind = question.type === "choice" && question.options[0]?.id === "allow" ? "approval" : "answer"
         if (kind === "answer") questions++; else approvals++
         if (scenario === "handler-failure" && _turn === "first") {
           questionReached()
-          return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
+          return { answer: new Promise<AskAnswer>(() => {}), withdraw: async () => {} }
         }
         if (scenario === "interrupt" && _turn === "first") {
           void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
-          return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
+          return { answer: new Promise<AskAnswer>(() => {}), withdraw: async () => {} }
         }
         await assert.rejects(runtime.deliverMessage(_turn, `bad-steer-${questions}-${approvals}`, { text: "" } as never, { kind: "user" }), /Content must be an array/)
-        return { answer: Promise.resolve<AskResponse>({ answer: kind === "answer" ? (scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }) : { selected: [{ id: "deny", value: false }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
+        return { answer: Promise.resolve<AskAnswer>({ answer: kind === "answer" ? (scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }) : { selected: [{ id: "deny", value: false }] }, answeredBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
       },
       output: async () => ({ sequence: ++outputs }),
       respond: async (turnId, _id, value) => { responses.push({ turnId, value }) },
       confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
-      fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }), hold: async () => { holds++ },
+      fail: async (_id, error) => (error.code === "interrupted" ? { status: "interrupted" } : { status: "failed", error }), hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "native-probe", template: undefined!,
@@ -82,23 +82,25 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
         harness = await ClaudeHarness.open(directory, "same-session", environment)
         return harness
       },
-      turn: async (turn, context) => {
+      turn: async (turn: import("../../../sdk/typescript/src/agent").Turn, context) => {
         const running = (context.initResult as ClaudeHarness).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady
           throw new Error("Ordinary application failure")
         }
-        return running
+        const { response, ...result } = await running
+        if (response !== undefined) await turn.respond(response)
+        return result
       },
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
-    const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api" } })
+    const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api_key" } })
     const first = await firstPending
     const processId = harness!.processId
     assert.equal(first.status, scenario === "interrupt" ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
-    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api" } })
+    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api_key" } })
     assert.equal(second.status, "completed")
     assert.deepEqual(responses.find(value => value.turnId === "second")?.value, [{ type: "text", text: "native fixture response" }])
     if (["handler-failure", "malformed"].includes(scenario)) assert.equal(responses.some(value => value.turnId === "first"), false)

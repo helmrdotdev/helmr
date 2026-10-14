@@ -14,38 +14,29 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrAskAlreadyResponded = errors.New("ask already responded")
+var ErrAskAlreadyAnswered = errors.New("ask already answered")
 var ErrAskCancelled = errors.New("ask cancelled")
 
 type AskView struct {
-	ID, SessionID, TurnID                      uuid.UUID
-	Status                                     string
-	Prompt, AnswerControl, Question, Answer    json.RawMessage
-	CreatedAt                                  time.Time
-	RespondedAt, CancelledAt, PayloadExpiredAt *time.Time
-	RespondedByUserID, RespondedByAPIKeyID     *uuid.UUID
-	Sequence                                   int64
+	ID, SessionID, TurnID                     uuid.UUID
+	Status                                    string
+	Question, Answer                          json.RawMessage
+	CreatedAt                                 time.Time
+	AnsweredAt, CancelledAt, PayloadExpiredAt *time.Time
+	AnsweredByUserID, AnsweredByAPIKeyID      *uuid.UUID
+	Sequence                                  int64
 }
 
-const askColumns = `id,session_id,turn_id,status,question,answer,created_at,responded_at,cancelled_at,payload_expired_at,responded_by_user_id,responded_by_api_key_id,created_event_seq`
+const askColumns = `id,session_id,turn_id,status,question,answer,created_at,answered_at,cancelled_at,payload_expired_at,answered_by_user_id,answered_by_api_key_id,created_event_seq`
 
 func scanAsk(row pgx.Row) (AskView, error) {
 	var v AskView
-	err := row.Scan(&v.ID, &v.SessionID, &v.TurnID, &v.Status, &v.Question, &v.Answer, &v.CreatedAt, &v.RespondedAt, &v.CancelledAt, &v.PayloadExpiredAt, &v.RespondedByUserID, &v.RespondedByAPIKeyID, &v.Sequence)
-	if err == nil && v.Question != nil {
-		var question struct {
-			Prompt json.RawMessage `json:"prompt"`
-			Answer json.RawMessage `json:"answer"`
-		}
-		if err = json.Unmarshal(v.Question, &question); err == nil {
-			v.Prompt, v.AnswerControl = question.Prompt, question.Answer
-		}
-	}
+	err := row.Scan(&v.ID, &v.SessionID, &v.TurnID, &v.Status, &v.Question, &v.Answer, &v.CreatedAt, &v.AnsweredAt, &v.CancelledAt, &v.PayloadExpiredAt, &v.AnsweredByUserID, &v.AnsweredByAPIKeyID, &v.Sequence)
+
 	return v, err
 }
 
@@ -191,7 +182,7 @@ func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.
 	case "user":
 		err = tx.QueryRow(ctx, `SELECT m.user_id FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer','viewer') FOR SHARE OF m`, env, caller.ID).Scan(&id)
 	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT k.id FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin') AND 'asks.respond'=ANY(k.permissions) FOR SHARE OF k`, env, caller.ID).Scan(&id)
+		err = tx.QueryRow(ctx, `SELECT k.id FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin') AND 'asks.answer'=ANY(k.permissions) FOR SHARE OF k`, env, caller.ID).Scan(&id)
 	default:
 		return ErrDenied
 	}
@@ -203,16 +194,16 @@ func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.
 
 type AskAnswerRequest struct {
 	EnvironmentID, SessionID, TurnID, AskID uuid.UUID
-	ResponseID                              string
+	AnswerID                                string
 	Answer                                  json.RawMessage
 }
 
-func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAnswerRequest) (AskView, error) {
+func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAnswerRequest) (AskView, error) {
 	var view AskView
-	if strings.TrimSpace(req.ResponseID) == "" || len(req.ResponseID) > 512 || !utf8.ValidString(req.ResponseID) || strings.ContainsRune(req.ResponseID, 0) {
+	if strings.TrimSpace(req.AnswerID) == "" || len(req.AnswerID) > 512 || !utf8.ValidString(req.AnswerID) || strings.ContainsRune(req.AnswerID, 0) {
 		return view, ErrInvalidInput
 	}
-	value, err := jsoncanon.Transform(req.Answer)
+	value, err := content.Submission(req.Answer)
 	if err != nil {
 		return view, content.ErrAnswerInvalid
 	}
@@ -233,7 +224,7 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 		}
 		var priorID *string
 		var priorDigest []byte
-		if err := tx.QueryRow(ctx, `SELECT response_id,answer_digest FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 FOR UPDATE`, req.EnvironmentID, req.SessionID, req.TurnID, req.AskID).Scan(&priorID, &priorDigest); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT answer_id,answer_digest FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 FOR UPDATE`, req.EnvironmentID, req.SessionID, req.TurnID, req.AskID).Scan(&priorID, &priorDigest); err != nil {
 			return err
 		}
 		var err error
@@ -245,10 +236,10 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 			return err
 		}
 		if priorID != nil {
-			if *priorID != req.ResponseID {
-				return ErrAskAlreadyResponded
+			if *priorID != req.AnswerID {
+				return ErrAskAlreadyAnswered
 			}
-			sameResponder := caller.Kind == "user" && view.RespondedByUserID != nil && *view.RespondedByUserID == caller.ID || caller.Kind == "api_key" && view.RespondedByAPIKeyID != nil && *view.RespondedByAPIKeyID == caller.ID
+			sameResponder := caller.Kind == "user" && view.AnsweredByUserID != nil && *view.AnsweredByUserID == caller.ID || caller.Kind == "api_key" && view.AnsweredByAPIKeyID != nil && *view.AnsweredByAPIKeyID == caller.ID
 			if !sameResponder || !bytes.Equal(priorDigest, digest[:]) {
 				return ErrConflict
 			}
@@ -260,7 +251,8 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 		if !running {
 			return ErrNotReady
 		}
-		if _, err := content.Answer(view.Question, value); err != nil {
+		resolved, err := content.Answer(view.Question, value)
+		if err != nil {
 			return err
 		}
 		var user, key *uuid.UUID
@@ -269,18 +261,18 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 		} else {
 			key = &caller.ID
 		}
-		view, err = scanAsk(tx.QueryRow(ctx, `UPDATE turn_asks SET status='responded',response_id=$5,answer_digest=$6,answer=$7,responded_at=clock_timestamp(),responded_by_user_id=$8,responded_by_api_key_id=$9 WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 RETURNING `+askColumns, req.EnvironmentID, req.SessionID, req.TurnID, req.AskID, req.ResponseID, digest[:], []byte(value), user, key))
+		view, err = scanAsk(tx.QueryRow(ctx, `UPDATE turn_asks SET status='answered',answer_id=$5,answer_digest=$6,answer=$7,answered_at=clock_timestamp(),answered_by_user_id=$8,answered_by_api_key_id=$9 WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 RETURNING `+askColumns, req.EnvironmentID, req.SessionID, req.TurnID, req.AskID, req.AnswerID, digest[:], []byte(resolved), user, key))
 		if err != nil {
 			return err
 		}
-		data := map[string]any{"ask_id": req.AskID, "answer": value}
+		data := map[string]any{"ask_id": req.AskID, "answer": json.RawMessage(resolved)}
 		if user != nil {
-			data["responded_by_user_id"] = user
+			data["answered_by_user_id"] = user
 		} else {
-			data["responded_by_api_key_id"] = key
+			data["answered_by_api_key_id"] = key
 		}
 		raw, _ := json.Marshal(data)
-		return eventData(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, "ask.responded", raw)
+		return eventData(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, "ask.answered", raw)
 	})
 	return view, hideMissing(err)
 }

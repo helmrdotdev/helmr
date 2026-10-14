@@ -21,7 +21,7 @@ func askFixture(t *testing.T) (fixture, session.Admission, uuid.UUID, json.RawMe
 		t.Fatal(err)
 	}
 	id := uuid.NewV7()
-	q := json.RawMessage(`{"prompt":[{"type":"text","text":"choose\u0000雪"}],"answer":{"type":"text"}}`)
+	q := json.RawMessage(`{"prompt":[{"type":"text","text":"choose\u0000雪"}],"type":"text"}`)
 	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); !errors.Is(err, session.ErrConflict) {
+	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, json.RawMessage(`{"prompt":[],"type":"text"}`)); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed question: %v", err)
 	}
 	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
@@ -51,16 +51,16 @@ func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
-	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "reply", Answer: json.RawMessage(`""`)}
-	view, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req)
-	if err != nil || view.Status != "responded" || string(view.Answer) != `""` || view.RespondedByUserID == nil || *view.RespondedByUserID != f.user {
+	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "reply", Answer: json.RawMessage(`""`)}
+	view, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req)
+	if err != nil || view.Status != "answered" || string(view.Answer) != `""` || view.AnsweredByUserID == nil || *view.AnsweredByUserID != f.user {
 		t.Fatalf("viewer reply after close: %+v %v", view, err)
 	}
 	if err := session.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id); err != nil {
 		t.Fatal(err)
 	}
 	observed, err := session.RuntimeObserveAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id)
-	if err != nil || observed.Status != "responded" {
+	if err != nil || observed.Status != "answered" {
 		t.Fatalf("withdraw erased answer: %+v %v", observed, err)
 	}
 	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "joined"); err != nil {
@@ -70,20 +70,20 @@ func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turn_asks SET question=NULL,answer=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatalf("expired reply retry: %v", err)
 	}
 	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatalf("expired question retry: %v", err)
 	}
 	req.Answer = json.RawMessage(`"changed"`)
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed reply: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			_, err := session.RespondAsk(t.Context(), f.pool, f.caller(), session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)})
+			_, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)})
 			errs <- err
 		})
 	}
@@ -103,7 +103,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 	for err := range errs {
 		if err == nil {
 			won++
-		} else if !errors.Is(err, session.ErrAskAlreadyResponded) {
+		} else if !errors.Is(err, session.ErrAskAlreadyAnswered) {
 			t.Fatal(err)
 		}
 	}
@@ -111,11 +111,11 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 		t.Fatalf("winners %d", won)
 	}
 	pending := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending, json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending, json.RawMessage(`{"prompt":[],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
-	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: pending, ResponseID: "invalid", Answer: json.RawMessage(`null`)}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, content.ErrAnswerInvalid) {
+	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: pending, AnswerID: "invalid", Answer: json.RawMessage(`null`)}
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, content.ErrAnswerInvalid) {
 		t.Fatal(err)
 	}
 	if err := session.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
@@ -125,7 +125,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Answer = json.RawMessage(`"yes"`)
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrAskCancelled) {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrAskCancelled) {
 		t.Fatal(err)
 	}
 	var count int
@@ -147,8 +147,8 @@ func TestAskTerminalCancellationAndBudget(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "late", Answer: json.RawMessage(`""`)}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
+	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "late", Answer: json.RawMessage(`""`)}
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("deadline answer %v", err)
 	}
 	if err := session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
@@ -179,9 +179,9 @@ func askKey(t *testing.T, f fixture, role string, permissions []string) session.
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	f, a, id, _ := askFixture(t)
 	reader := askKey(t, f, "admin", []string{"sessions.read"})
-	answerer := askKey(t, f, "admin", []string{"asks.respond"})
-	developer := askKey(t, f, "developer", []string{"asks.respond"})
-	cross := askKey(t, f, "admin", []string{"asks.respond"})
+	answerer := askKey(t, f, "admin", []string{"asks.answer"})
+	developer := askKey(t, f, "developer", []string{"asks.answer"})
+	cross := askKey(t, f, "admin", []string{"asks.answer"})
 	otherEnv := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
 		t.Fatal(err)
@@ -190,9 +190,9 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "response", Answer: json.RawMessage(`""`)}
+	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "response", Answer: json.RawMessage(`""`)}
 	for _, caller := range []session.Caller{reader, developer, cross, {Kind: "session", ID: f.session}} {
-		if _, err := session.RespondAsk(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
+		if _, err := session.AnswerAsk(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("ungranted answer %+v: %v", caller, err)
 		}
 	}
@@ -202,23 +202,23 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	if _, err := session.GetAsk(t.Context(), f.pool, reader, f.env, f.session, a.TurnID, id); err != nil {
 		t.Fatal(err)
 	}
-	view, err := session.RespondAsk(t.Context(), f.pool, answerer, req)
-	if err != nil || view.RespondedByAPIKeyID == nil || *view.RespondedByAPIKeyID != answerer.ID || view.RespondedByUserID != nil {
+	view, err := session.AnswerAsk(t.Context(), f.pool, answerer, req)
+	if err != nil || view.AnsweredByAPIKeyID == nil || *view.AnsweredByAPIKeyID != answerer.ID || view.AnsweredByUserID != nil {
 		t.Fatalf("key attribution %+v %v", view, err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("responder identity omitted from retry: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, answerer.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.pool, answerer, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.AnswerAsk(t.Context(), f.pool, answerer, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked key retry: %v", err)
 	}
 }
 func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	key := askKey(t, f, "admin", []string{"asks.respond"})
+	key := askKey(t, f, "admin", []string{"asks.answer"})
 	var expires time.Time
 	if err := f.pool.QueryRow(t.Context(), `UPDATE api_keys SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING expires_at`, key.ID).Scan(&expires); err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.RespondAsk(t.Context(), f.pool, key, session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "delayed", Answer: json.RawMessage(`""`)})
+		_, err := session.AnswerAsk(t.Context(), f.pool, key, session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "delayed", Answer: json.RawMessage(`""`)})
 		done <- err
 	}()
 	// Confirm the operation passed its first authorization and is waiting on the
@@ -271,7 +271,7 @@ func TestChildCannotAskHuman(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), child.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
-	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Approve?"}],"answer":{"type":"text"}}`)
+	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Approve?"}],"type":"text"}`)
 	if err := session.RuntimeAsk(t.Context(), child.pool, *child.host(), child.execution(), turn.TurnID, uuid.NewV7(), question); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatalf("child human question: %v", err)
 	}

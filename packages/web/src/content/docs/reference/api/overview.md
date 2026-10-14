@@ -57,7 +57,7 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `POST` | `/v1/sessions/{sessionID}/enqueue` |
 | `POST` | `/v1/sessions/{sessionID}/interrupt` |
 | `POST` | `/v1/sessions/{sessionID}/resume` |
-| `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond` |
+| `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer` |
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/interrupt` |
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/messages` |
 

@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/content"
@@ -11,18 +12,18 @@ import (
 var errCLIAnswer = errors.New("question requires CLI answer")
 
 type formQuestion struct {
-	Prompt json.RawMessage `json:"prompt"`
-	Answer struct {
-		Type      string `json:"type"`
-		Multiple  bool   `json:"multiple"`
-		AllowText bool   `json:"allowText"`
-		Options   []struct {
-			ID          string          `json:"id"`
-			Label       string          `json:"label"`
-			Description string          `json:"description"`
-			Value       json.RawMessage `json:"value"`
-		} `json:"options"`
-	} `json:"answer"`
+	Prompt      json.RawMessage `json:"prompt"`
+	Title       string          `json:"title"`
+	Type        string          `json:"type"`
+	Multiple    bool            `json:"multiple"`
+	AllowCustom bool            `json:"allowCustom"`
+	AllowNotes  bool            `json:"allowNotes"`
+	Options     []struct {
+		ID          string          `json:"id"`
+		Label       string          `json:"label"`
+		Description string          `json:"description"`
+		Value       json.RawMessage `json:"value"`
+	} `json:"options"`
 }
 
 func parseFormQuestion(raw json.RawMessage) (formQuestion, error) {
@@ -61,26 +62,63 @@ func answerModal(raw json.RawMessage, signedForm string) (json.RawMessage, error
 		element["action_id"] = id
 		blocks = append(blocks, map[string]any{"type": "input", "block_id": id, "label": plainText(label), "optional": optional, "element": element})
 	}
-	if q.Answer.Type == "choice" {
+	if q.Type == "choice" {
 		options := []any{}
-		for _, option := range q.Answer.Options {
-			if option.Label == "" || utf8.RuneCountInString(option.Label) > 75 || utf8.RuneCountInString(option.Description) > 75 {
+		longDescriptions := false
+		for _, option := range q.Options {
+			if utf8.RuneCountInString(option.Description) > 75 {
+				longDescriptions = true
+			}
+		}
+		var details strings.Builder
+		for _, option := range q.Options {
+			if strings.TrimSpace(option.Label) == "" || utf8.RuneCountInString(option.Label) > 75 {
 				return nil, errCLIAnswer
 			}
 			item := map[string]any{"text": plainText(option.Label), "value": option.ID}
-			if option.Description != "" {
+			if longDescriptions {
+				details.WriteString(option.Label + "\n" + option.Description + "\n\n")
+			} else if option.Description != "" {
 				item["description"] = plainText(option.Description)
 			}
 			options = append(options, item)
 		}
+		if longDescriptions {
+			// Native option descriptions are bounded; put full details in the
+			// modal body rather than truncating them or removing the answer path.
+			raw, _ := json.Marshal([]map[string]string{{"type": "text", "text": details.String()}})
+			posts, err := RenderContent([]ContentSource{{Sequence: 1, Content: raw}}, false)
+			if err != nil {
+				return nil, err
+			}
+			for _, post := range posts {
+				for _, block := range post.Body.Blocks {
+					blocks = append(blocks, block)
+				}
+			}
+		}
 		kind := "static_select"
-		if q.Answer.Multiple {
+		if q.Multiple {
 			kind = "multi_static_select"
 		}
-		input("choice", "Selection", q.Answer.AllowText, map[string]any{"type": kind, "options": options})
+		element := map[string]any{"type": kind, "options": options}
+		if len(q.Options) <= 10 && !q.AllowCustom {
+			if q.Multiple {
+				element["type"] = "checkboxes"
+			} else {
+				element["type"] = "radio_buttons"
+			}
+		}
+		input("choice", "Selection", q.AllowCustom, element)
 	}
-	if q.Answer.Type == "text" || q.Answer.AllowText {
+	if q.Type == "text" {
 		input("text", "Answer", true, map[string]any{"type": "plain_text_input", "multiline": true, "max_length": 3000})
+	}
+	if q.AllowCustom {
+		input("custom", "Custom answer", true, map[string]any{"type": "plain_text_input", "multiline": true, "max_length": 3000})
+	}
+	if q.AllowNotes {
+		input("notes", "Notes", true, map[string]any{"type": "plain_text_input", "multiline": true, "max_length": 3000})
 	}
 	if len(blocks) > 100 {
 		return nil, errCLIAnswer
@@ -102,11 +140,17 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		return nil, err
 	}
 	expected := map[string]bool{}
-	if q.Answer.Type == "choice" {
+	if q.Type == "choice" {
 		expected["choice"] = true
 	}
-	if q.Answer.Type == "text" || q.Answer.AllowText {
+	if q.Type == "text" {
 		expected["text"] = true
+	}
+	if q.AllowCustom {
+		expected["custom"] = true
+	}
+	if q.AllowNotes {
+		expected["notes"] = true
 	}
 	if len(state) != len(expected) {
 		return nil, content.ErrAnswerInvalid
@@ -120,22 +164,29 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		var fields map[string]json.RawMessage
 		return json.Unmarshal(state[block][block], &fields) == nil && fields[member] != nil
 	}
-	text := ""
-	if expected["text"] {
+	texts := map[string]string{}
+	for _, key := range []string{"text", "custom", "notes"} {
+		if !expected[key] {
+			continue
+		}
 		var field struct {
 			Type  string  `json:"type"`
 			Value *string `json:"value"`
 		}
-		if !requiredField("text", "value") || json.Unmarshal(state["text"]["text"], &field) != nil || field.Type != "plain_text_input" {
+		if !requiredField(key, "value") || json.Unmarshal(state[key][key], &field) != nil || field.Type != "plain_text_input" {
 			return nil, content.ErrAnswerInvalid
 		}
 		if field.Value != nil {
-			text = *field.Value
+			texts[key] = *field.Value
 		}
 	}
-	if q.Answer.Type == "text" {
-		raw, _ := json.Marshal(text)
-		return content.Answer(question, raw)
+
+	if q.Type == "text" {
+		raw, _ := json.Marshal(texts["text"])
+		if _, err := content.Answer(question, raw); err != nil {
+			return nil, err
+		}
+		return content.Submission(raw)
 	}
 	var field struct {
 		Type     string `json:"type"`
@@ -150,8 +201,8 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		return nil, content.ErrAnswerInvalid
 	}
 	ids := map[string]bool{}
-	if q.Answer.Multiple {
-		if !requiredField("choice", "selected_options") || field.Type != "multi_static_select" || field.Selected != nil {
+	if q.Multiple {
+		if !requiredField("choice", "selected_options") || (field.Type != "multi_static_select" && field.Type != "checkboxes") || field.Selected != nil {
 			return nil, content.ErrAnswerInvalid
 		}
 		for _, item := range field.Selections {
@@ -161,27 +212,51 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 			ids[item.Value] = true
 		}
 	} else {
-		if !requiredField("choice", "selected_option") || field.Type != "static_select" || len(field.Selections) != 0 {
+		if !requiredField("choice", "selected_option") || (field.Type != "static_select" && field.Type != "radio_buttons") || len(field.Selections) != 0 {
 			return nil, content.ErrAnswerInvalid
 		}
 		if field.Selected != nil {
 			ids[field.Selected.Value] = true
 		}
 	}
-	selected := []any{}
-	for _, option := range q.Answer.Options {
+	selected := []string{}
+	for _, option := range q.Options {
 		if ids[option.ID] {
-			selected = append(selected, map[string]any{"id": option.ID, "value": option.Value})
+			selected = append(selected, option.ID)
 			delete(ids, option.ID)
 		}
 	}
 	if len(ids) != 0 {
 		return nil, content.ErrAnswerInvalid
 	}
-	answer := map[string]any{"selected": selected}
-	if text != "" {
-		answer["text"] = text
+	answer := map[string]any{"selectedIds": selected}
+	for _, key := range []string{"custom", "notes"} {
+		if texts[key] != "" {
+			answer[key] = texts[key]
+		}
 	}
 	raw, _ := json.Marshal(answer)
-	return content.Answer(question, raw)
+	if _, err := content.Answer(question, raw); err != nil {
+		return nil, err
+	}
+	return content.Submission(raw)
+}
+
+// Inline submission includes only the choice. Optional private text is entered
+// in the scoped modal, never copied from unrelated message state.
+func parseInlineAnswer(question json.RawMessage, state formState) (json.RawMessage, error) {
+	q, err := parseFormQuestion(question)
+	if err != nil {
+		return nil, err
+	}
+	if !inlineChoice(q) {
+		return nil, content.ErrAnswerInvalid
+	}
+	form := formState{"choice": state["choice"]}
+	for key, enabled := range map[string]bool{"custom": q.AllowCustom, "notes": q.AllowNotes} {
+		if enabled {
+			form[key] = map[string]json.RawMessage{key: json.RawMessage(`{"type":"plain_text_input","value":null}`)}
+		}
+	}
+	return parseFormAnswer(question, form)
 }

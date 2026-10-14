@@ -36,7 +36,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 			return err
 		}
 		var eligible bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2) AND NOT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2 AND d.input_kind='text') AND NOT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
 		if err != nil {
 			return err
 		}

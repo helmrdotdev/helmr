@@ -74,7 +74,7 @@ func TestSlackRejectedFeedbackCutoffsAndExactControlDestination(t *testing.T) {
 			f := newStatusFixture(t)
 			id := f.reply(t, "rejected", false)
 			if scenario == "control" {
-				id = f.controlReceipt(t, f.control("stop"), nil)
+				id = f.nativeStop(t, "native-stop")
 			}
 			if scenario == "expired_ingress" {
 				raw, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Text: "private input"})

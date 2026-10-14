@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"uuid"
 
@@ -14,7 +15,9 @@ import (
 )
 
 type RuntimeAgentDefinition struct {
-	ID string `json:"agent"`
+	InputKind   string          `json:"inputKind"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	ID          string          `json:"agent"`
 }
 
 type RuntimeAgentPage struct {
@@ -62,14 +65,14 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 		if expected != uuid.Nil() && expected != *selected {
 			return ErrInvalidInput
 		}
-		rows, err := tx.Query(ctx, `SELECT a.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after)
+		rows, err := tx.Query(ctx, `SELECT a.key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var item RuntimeAgentDefinition
-			if err := rows.Scan(&item.ID); err != nil {
+			if err := rows.Scan(&item.ID, &item.InputKind, &item.InputSchema); err != nil {
 				return err
 			}
 			result.Agents = append(result.Agents, item)

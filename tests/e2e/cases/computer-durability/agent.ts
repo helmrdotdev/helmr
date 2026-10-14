@@ -29,7 +29,7 @@ export const durabilityAgent = agent({
     if (count === 2) {
       let finish!: () => void
       const observed = new Promise<void>(resolve => { finish = resolve })
-      await turn.onMessage(message => { if (fixtureValue(message) === "finish") finish() })
+      await turn.onMessage(message => { if (fixtureValue(message.content) === "finish") finish() })
       await turn.output.write([{ type: "json", value: { ...result, phase: "durability-restored" } }])
       await observed
     }

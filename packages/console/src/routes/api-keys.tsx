@@ -51,7 +51,7 @@ const API_KEY_SCOPE_OPTIONS: {
   label: string;
   description: string;
 }[] = [
-  { value: "asks:respond", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
+  { value: "asks:answer", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
   {
     value: "sessions:read",
     label: "Read sessions",

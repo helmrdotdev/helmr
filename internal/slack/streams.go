@@ -59,11 +59,11 @@ func prepareStreamMutation(ctx context.Context, tx pgx.Tx, post, thread, environ
 		}
 		// This app-owned marker is a correlation hint, never authority. Positive
 		// reconciliation also requires exact authored bytes, app/bot and destination.
-		header, err := streamHeader(post, body)
+		header, err := streamContext(post, body)
 		if err != nil {
 			return result, err
 		}
-		payload["chunks"] = []any{map[string]any{"type": "blocks", "blocks": header}, map[string]any{"type": "markdown_text", "text": desired}}
+		payload["chunks"] = []any{map[string]any{"type": "markdown_text", "text": desired}, map[string]any{"type": "blocks", "blocks": header}}
 	} else if s.closed && (s.suppressed || desired == s.confirmed) {
 		result.method = "chat.stopStream"
 		result.text = s.confirmed
@@ -120,8 +120,7 @@ func claimStreamLane(ctx context.Context, tx pgx.Tx, claim *PostClaim, environme
  claim_epoch=claim_epoch+1,claimed_until=$7 WHERE id=$1 RETURNING claim_epoch`, claim.ThreadID, status, claim.Method, claim.Payload, digest[:], claim.AttemptID, claim.ExpiresAt).Scan(&claim.StatusEpoch)
 }
 
-func streamHeader(post uuid.UUID, body []byte) ([]any, error) {
-	header := []any{map[string]any{"type": "context", "block_id": "helmr_stream_" + post.String(), "elements": []any{plainText("Helmr Agent")}}}
+func streamContext(post uuid.UUID, body []byte) ([]any, error) {
 	var source struct {
 		Blocks json.RawMessage `json:"blocks"`
 	}
@@ -129,5 +128,16 @@ func streamHeader(post uuid.UUID, body []byte) ([]any, error) {
 		return nil, err
 	}
 	presentation, err := frozenPresentationBlocks(source.Blocks)
-	return append(header, presentation...), err
+	if err != nil {
+		return nil, err
+	}
+	if len(presentation) == 0 {
+		return nil, errors.New("stream response has no presentation context")
+	}
+	marker, ok := presentation[0].(map[string]json.RawMessage)
+	if !ok {
+		return nil, errors.New("invalid stream presentation context")
+	}
+	marker["block_id"], _ = json.Marshal("helmr_stream_" + post.String())
+	return presentation, nil
 }

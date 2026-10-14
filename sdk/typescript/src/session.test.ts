@@ -80,7 +80,6 @@ describe("Session lifecycle client", () => {
     const receipt = await empty.session.turns.ref(turnId).send([{type:"text",text:"reply"}],{idempotencyKey:"exact"})
     expect(receipt).toEqual({id:messageId,status:"accepted"})
     expect(requests[1]?.url).toEndWith(`/turns/${turnId}/messages`)
-    await expect(client.sessions.create({agent:"operator",input:[]})).rejects.toThrow("empty")
   })
   test("events have one ordered cursor and explicit retention gaps", async () => {
     const event = {
@@ -89,7 +88,7 @@ describe("Session lifecycle client", () => {
       sequence: 8,
       created_at: createdAt,
       kind: "turn.output",
-      data: null,
+      data: [],
     }
     const { client, requests } = transport([
       { records: [event], next_after: 8, has_more: true, retained_after: 3 },
@@ -113,7 +112,7 @@ describe("Session lifecycle client", () => {
           sequence: 8,
           createdAt,
           kind: "turn.output",
-          data: null,
+          data: [],
             },
       ],
       nextAfter: 8,
@@ -140,7 +139,7 @@ describe("Session lifecycle client", () => {
       sequence: index + 8,
       created_at: createdAt,
       kind,
-      data: kind.startsWith("message.") ? { message_id: messageId, status: kind.slice(8) } : { reason: "delivery_unavailable" },
+      data: kind.startsWith("message.") ? { message_id: messageId, status: kind.slice(8), delivery: kind === "message.rejected" ? "uncertain" : kind.slice(8) } : kind === "turn.output" ? [{ type: "text", text: "output" }] : { reason: "route_unavailable", source_seq: 11 },
     }))
     const { client } = transport([{ records, next_after: 13, has_more: false, retained_after: 0 }])
     const page = await client.sessions.ref(sessionId).events.list({ after: 7 })
@@ -149,8 +148,9 @@ describe("Session lifecycle client", () => {
     expect(page.records.map(event => event.turnId)).toEqual(records.map(event => event.turn_id))
     expect(page.nextAfter).toBe(13)
   })
-  test("Turn retrieval retains absent and explicit null results", async () => {
-    const { client } = transport([turnState, { ...turnState, result: null }])
+  test("Turn retrieval distinguishes expired payload from an explicit null result", async () => {
+    const { input: _, ...expired } = turnState
+    const { client } = transport([{ ...expired, payload_expired_at: createdAt }, { ...turnState, result: null }])
     const ref = client.sessions.ref(sessionId).turns.ref(turnId)
     expect(Object.hasOwn(await ref.get(), "result")).toBe(false)
     expect(await ref.get()).toMatchObject({
@@ -158,6 +158,7 @@ describe("Session lifecycle client", () => {
       terminalAt: createdAt,
       completionSaveId: holdId,
     })
+    expect(() => parseTurnState(turnState)).toThrow("result is required")
     expect(() => parseTurnState({ ...turnState, result: undefined })).toThrow()
   })
   test("Turn retrieval exposes immutable application failure", async () => {
@@ -235,9 +236,8 @@ describe("Session lifecycle client", () => {
 })
 
 test("MessageRejected is recognizable across SDK copies", () => {
-  const rejection = new MessageRejected("not applicable", { reason: "stale" })
+  const rejection = new MessageRejected("not applicable")
   expect(rejection).toBeInstanceOf(MessageRejected)
-  expect(rejection.details).toEqual({ reason: "stale" })
   expect({ [Symbol.for("helmr.sdk.MessageRejected")]: true }).toBeInstanceOf(
     MessageRejected,
   )

@@ -68,3 +68,10 @@ func ChannelOf(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (*uuid.UU
 	}
 	return &route, nil
 }
+
+// AdvanceControlProjection records observed acknowledgements and physical fences,
+// which need no new authored event to refresh Slack's retained presentation.
+func AdvanceControlProjection(ctx context.Context, tx pgx.Tx, member, environment, session uuid.UUID) (bool, error) {
+	tag, err := tx.Exec(ctx, `UPDATE slack_thread_sources src SET projected_control_at=observed.at FROM (SELECT max(GREATEST(control_acknowledged_at,fenced_at,failure_recorded_at)) AS at FROM session_processes WHERE environment_id=$2 AND session_id=$3) observed WHERE src.id=$1 AND observed.at>COALESCE(src.projected_control_at,'-infinity'::timestamptz)`, member, environment, session)
+	return tag.RowsAffected() > 0, err
+}

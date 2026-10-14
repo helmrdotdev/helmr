@@ -57,8 +57,8 @@ WITH allocated AS (UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE env
 INSERT INTO session_events(environment_id,session_id,turn_id,seq,kind,data)
 SELECT :'environment_id',:'session_id',:'turn_id',seq,'turn.output',convert_to('[{"type":"text","text":"First visible progress"},{"type":"json","value":{"context":null}}]','UTF8') FROM allocated;
 CREATE TEMP TABLE question ON COMMIT DROP AS SELECT convert_to(CASE WHEN :'mode'='choice' THEN
- '{"prompt":[{"type":"text","text":"Choose an answer"}],"answer":{"type":"choice","multiple":true,"allowText":true,"options":[{"id":"a","label":"First","value":{"v":1}},{"id":"b","label":"Second","value":null}]}}'
- ELSE '{"prompt":[{"type":"text","text":"Answer this question"}],"answer":{"type":"text"}}' END,'UTF8') AS value;
+ '{"prompt":[{"type":"text","text":"Choose an answer"}],"type":"choice","multiple":true,"allowCustom":true,"allowNotes":true,"options":[{"id":"a","label":"First","value":{"v":1}},{"id":"b","label":"Second","value":null}]}'
+ ELSE '{"prompt":[{"type":"text","text":"Answer this question"}],"type":"text"}' END,'UTF8') AS value;
 WITH allocated AS (UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE environment_id=:'environment_id' AND id=:'session_id' RETURNING next_event_seq-1 AS seq),
 created AS (INSERT INTO session_events(environment_id,session_id,turn_id,seq,kind,data)
  SELECT :'environment_id',:'session_id',:'turn_id',seq,'ask.created',convert_to(jsonb_build_object('ask_id',:'reference_id','question',convert_from(value,'UTF8')::jsonb)::text,'UTF8') FROM allocated CROSS JOIN question RETURNING seq)

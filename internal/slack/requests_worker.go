@@ -59,10 +59,15 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 		return err
 	}
 	var payload struct {
-		Control   json.RawMessage `json:"control"`
-		Timestamp string          `json:"message_ts"`
+		NativeStop bool            `json:"native_stop"`
+		Control    json.RawMessage `json:"control"`
+		Timestamp  string          `json:"message_ts"`
 	}
-	if json.Unmarshal(raw, &payload) != nil || (nonnullJSON(payload.Control) == (payload.Timestamp != "")) {
+	if json.Unmarshal(raw, &payload) != nil {
+		err = errGestureInvalid
+	} else if payload.NativeStop && !nonnullJSON(payload.Control) && payload.Timestamp == "" {
+		err = admitNativeStop(ctx, pool, id)
+	} else if nonnullJSON(payload.Control) == (payload.Timestamp != "") {
 		err = errGestureInvalid
 	} else if nonnullJSON(payload.Control) {
 		err = admitControl(ctx, pool, id)

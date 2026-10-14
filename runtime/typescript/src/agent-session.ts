@@ -1,12 +1,14 @@
+import type { LoadedAgentDefinition } from "../../../sdk/typescript/src/internal/program"
+import { validate, validatedResult, ValidationFailure } from "./agent-schema"
 import type { InputContent } from "../../../sdk/typescript/src/content"
-import { normalizeQuestion, type Question, type AnswerControl, type AnswerFor, type AskResponse } from "../../../sdk/typescript/src/question"
+import { normalizeQuestion, type Question, type NormalizedQuestion, type AnswerFor, type AskAnswer } from "../../../sdk/typescript/src/question"
 import { AgentOutputWriter } from "./agent-output"
 import { OperationError } from "./agent-channel"
-import { ContentError, normalizeContent, normalizeInput, type Content, type HumanContent } from "../../../sdk/typescript/src/content"
+import { ContentError, normalizeContent, normalizeInput, normalizeInvocation, type Content, type HumanContent } from "../../../sdk/typescript/src/content"
 import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { AgentDefinition, AgentContext, Json, OutputReceipt, InitContext, InputMessage, InputSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentContext, Json, OutputReceipt, InitContext, Message, MessageSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 
@@ -14,11 +16,11 @@ export interface AdmittedTurn {
   readonly id: string
   readonly sequence: number
   readonly createdAt: string
-  readonly input: InputContent
+  readonly input: Json
   readonly source: Turn["source"]
 }
 interface AskRegistration {
-  readonly answer: Promise<AskResponse>
+  readonly answer: Promise<AskAnswer>
   // Idempotent, including when an answer wins concurrently with withdrawal.
   withdraw(): Promise<void>
 }
@@ -37,7 +39,7 @@ export interface SessionDriver {
   registerMessages(turnId: string): Promise<void>
   // Idempotent; drainage can retry after an uncertain boundary response.
   closeProcessing(turnId: string): Promise<void>
-  ask(turnId: string, creationId: string, question: Question, signal: AbortSignal): Promise<AskRegistration>
+  ask(turnId: string, creationId: string, question: NormalizedQuestion, signal: AbortSignal): Promise<AskRegistration>
   output(turnId: string, outputId: string, value: Content): Promise<OutputReceipt>
   respond(turnId: string, responseId: string, value: Content): Promise<void>
   // Attest joined authored work under the current guest authority.
@@ -71,7 +73,7 @@ interface Execution {
   pipes: Set<Promise<unknown>>
   registrations: Set<Promise<unknown>>
   asks: Set<AskOperation>
-  messageHandler?: (input: InputContent, message: InputMessage) => unknown
+  messageHandler?: (message: Message) => unknown
   callback?: Promise<void> | undefined
   messages: Map<string, { fingerprint: string; promise: Promise<void> }>
   result?: Json
@@ -116,13 +118,14 @@ export class SessionRuntime {
   private held = false
   private reconstructRequired = false
   private readonly outputScope = new AsyncLocalStorage<OutputScope>()
-  private readonly definition: AgentDefinition<InputContent, Json, unknown>
+  // Loaded definitions erase application-specific parsed inputs and process-local init resources.
+  private readonly definition: LoadedAgentDefinition
   private readonly context: InitContext
   private readonly driver: SessionDriver
   private readonly failureConvergenceMs: number
   private readonly activity: SessionActivity | undefined
   private readonly onTiming: ((timing: TurnTiming) => void) | undefined
-  constructor(definition: AgentDefinition<InputContent, Json, unknown>, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
+  constructor(definition: LoadedAgentDefinition, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
     this.definition = definition
     this.context = context
     this.driver = driver
@@ -150,7 +153,7 @@ export class SessionRuntime {
   }
 
   dispatch(request: AdmittedTurn): Promise<TurnOutcome> {
-    try { normalizeInput(request.input) } catch (error) { return Promise.reject(error) }
+    try { normalizeInvocation(request.input) } catch (error) { return Promise.reject(error) }
     const identity = fingerprint(request)
     const old = this.turns.get(request.id)
     if (old) {
@@ -172,7 +175,7 @@ export class SessionRuntime {
 
   // Receipts retain exact identity. A callback rejection is not an enqueue or a
   // reason to run the callback again after transport reconnection.
-  deliverMessage(turnId: string, messageId: string, message: InputContent, source: InputSource): Promise<void> {
+  deliverMessage(turnId: string, messageId: string, message: InputContent, source: MessageSource): Promise<void> {
     const execution = this.turns.get(turnId)
     if (!execution) return Promise.reject(new Error("Turn is unknown"))
     try { normalizeInput(message) } catch (error) { return Promise.reject(error) }
@@ -185,7 +188,7 @@ export class SessionRuntime {
     const scope: OutputScope = { execution, live: true }
     const admitted = structuredClone(message)
     const admittedSource = structuredClone(source)
-    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.outputScope.run(scope, () => execution.messageHandler!(admitted, { id: messageId, source: admittedSource }))) }).then(() => {}).finally(() => { scope.live = false })
+    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.outputScope.run(scope, () => execution.messageHandler!({ id: messageId, content: admitted, source: admittedSource }))) }).then(() => {}).finally(() => { scope.live = false })
     execution.messages.set(messageId, { fingerprint: identity, promise: callback })
     execution.callback = callback
     void callback.finally(() => { if (execution.callback === callback) execution.callback = undefined }).catch(() => {})
@@ -262,11 +265,20 @@ export class SessionRuntime {
     }
     try {
       execution.signal.throwIfAborted()
-      execution.handler = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.definition.turn(this.turn(execution), context)) })
+      execution.handler = Promise.resolve().then(async () => {
+        execution.signal.throwIfAborted()
+        const input = await this.invoke(() => validate(this.definition.inputSchema, execution.request.input, "input_invalid", execution.signal))
+        if (!this.definition.inputSchema) {
+          try { normalizeInput(input) }
+          catch { throw new ValidationFailure("input_invalid", [{ message: "Conversation input requires text parts" }]) }
+        }
+        execution.signal.throwIfAborted()
+        const returned = await this.invoke(() => this.definition.turn(this.turn(execution, input), context))
+        execution.handlerReturnedAt = performance.now()
+        const parsed = await this.invoke(() => validate(this.definition.resultSchema, returned, "result_invalid", execution.signal))
+        return validatedResult(parsed)
+      })
       result = await aborted(execution.handler, execution.signal)
-      execution.handlerReturnedAt = performance.now()
-      requireJson(result)
-      result = structuredClone(result)
       execution.phase = "draining"
       await aborted((async () => {
         await Promise.allSettled([...execution.registrations])
@@ -314,7 +326,7 @@ export class SessionRuntime {
         await this.recordHold("session_continuation_lost", execution.cancellationFailure)
       }
       execution.phase = "settling_failure"
-      execution.failure = { code: interrupted ? "interrupted" : "handler_failed", message: execution.cancellationFailure?.message ?? (error instanceof Error ? error.message : String(error)) }
+      execution.failure = { code: interrupted ? "interrupted" : error instanceof ValidationFailure ? error.code : "handler_failed", message: execution.cancellationFailure?.message ?? (error instanceof Error ? error.message : String(error)) }
       return this.settle(execution)
     }
     execution.phase = "finalizing"
@@ -414,7 +426,7 @@ export class SessionRuntime {
     if (this.active === execution) this.active = undefined
   }
 
-  private turn(execution: Execution): Turn {
+  private turn(execution: Execution, input: unknown): Turn<unknown> {
     const open = () => { if (execution.phase !== "processing") throw new Error("Turn processing admission is closed"); execution.signal.throwIfAborted() }
     const outputOpen = () => {
       const scope = this.outputScope.getStore()
@@ -434,8 +446,9 @@ export class SessionRuntime {
     })
     const output = (value: HumanContent): Promise<OutputReceipt> => { outputOpen(); return retainOutput(writer.write(value)) }
     const track = <T>(pending: Promise<T>): Promise<T> => { execution.registrations.add(pending); void pending.catch(() => {}); return pending }
-    const turn: Turn = {
+    const turn: Turn<unknown> = {
       ...execution.request,
+      input,
       signal: execution.signal,
       onCancel: callback => {
         if (execution.cancellationClosed || (execution.phase !== "processing" && !(execution.phase === "draining" && execution.signal.aborted))) throw new Error("Turn cancellation registration is closed")
@@ -460,7 +473,7 @@ export class SessionRuntime {
       } },
       respond: value => { open(); const content = normalizeContent(value); const id = randomUUID(); return track(writer.ordered(() => this.driver.respond(execution.request.id, id, content))) },
       onMessage: handler => { open(); if (execution.messageHandler) throw new Error("Message handler already registered"); execution.messageHandler = handler; return track(this.driver.registerMessages(execution.request.id)) },
-      ask: <C extends AnswerControl>(question: Question<C>, options?: { signal?: AbortSignal }) => {
+      ask: <const Q extends Question>(question: Q, options?: { signal?: AbortSignal }) => {
         open(); const frozenQuestion = normalizeQuestion(question)
         const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal
         signal.throwIfAborted()
@@ -474,7 +487,7 @@ export class SessionRuntime {
             if (signal.aborted) abort()
             const value = await aborted(registration.answer, signal)
             signal.throwIfAborted(); requireJson(value)
-            return value as AskResponse<AnswerFor<C>>
+            return value as AskAnswer<AnswerFor<Q>>
           } catch (error) {
             if (signal.aborted) await this.withdraw(operation)
             throw error

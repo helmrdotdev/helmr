@@ -1,4 +1,4 @@
-import type { AskResponse } from "../../../sdk/typescript/src/question"
+import type { AskAnswer } from "../../../sdk/typescript/src/question"
 // Uses the real pinned native app-server and SessionRuntime with a local model.
 // Guest containment, durable control-plane state and VM restore are separate gates.
 import assert from "node:assert/strict"
@@ -35,36 +35,38 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
         questions++
         if (scenario === "handler-failure" && turnId === "first") {
           questionReached()
-          return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
+          return { answer: new Promise<AskAnswer>(() => {}), withdraw: async () => {} }
         }
         if ((scenario === "background-exec" || scenario === "interrupt") && turnId === "first") {
           void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
-          return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
+          return { answer: new Promise<AskAnswer>(() => {}), withdraw: async () => {} }
         }
         await assert.rejects(runtime.deliverMessage(turnId, "bad-steer", { text: "" } as never, { kind: "user" }), /Content must be an array/)
-        return { answer: Promise.resolve<AskResponse>({ answer: scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
+        return { answer: Promise.resolve<AskAnswer>({ answer: scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }, answeredBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
       },
       output: async () => ({ sequence: ++outputs }),
       respond: async (turnId, _id, value) => { responses.push({ turnId, value }) },
       confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
-      fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }),
+      fail: async (_id, error) => (error.code === "interrupted" ? { status: "interrupted" } : { status: "failed", error }),
       hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "native-probe", template: undefined!,
       init: async () => { setups++; harness = await CodexHarness.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return harness },
-      turn: async (turn, context) => {
+      turn: async (turn: import("../../../sdk/typescript/src/agent").Turn, context) => {
         const running = (context.initResult as CodexHarness).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady
           throw new Error("Ordinary application failure")
         }
-        return running
+        const { response, ...result } = await running
+        if (response !== undefined) await turn.respond(response)
+        return result
       },
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
-    const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api" } })
+    const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api_key" } })
     const first = await firstPending
     if (scenario === "background-exec") {
       const commandPid = Number((await readFile(join(directory,"owned-command.pid"),"utf8")).trim())
@@ -75,7 +77,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     assert.equal(first.status, (scenario === "interrupt" || scenario === "background-exec") ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
-    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api" } })
+    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api_key" } })
     assert.equal(second.status, "completed")
     assert.deepEqual(responses.find(value => value.turnId === "second")?.value, [{ type: "text", text: "fixture response" }])
     if (["handler-failure", "malformed"].includes(scenario)) assert.equal(responses.some(value => value.turnId === "first"), false)

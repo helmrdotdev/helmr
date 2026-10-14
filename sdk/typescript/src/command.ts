@@ -19,17 +19,18 @@ export type CommandOutcome = Readonly<{
   exitCode?: number
 }> & (
   | Readonly<{ kind: "exited"; exitCode: number }>
-  | Readonly<{ kind: "cancelled" | "timed_out" }>
+  | Readonly<{ kind: "cancelled" }>
+  | Readonly<{ kind: "timed_out" }>
   | Readonly<{ kind: "system_failed"; failure: Readonly<{ reason: "guest_failure" | "dispatch_failed" | "scope_termination_failed" }> }>
 )
 
-export interface CommandInfo {
-  readonly id: string
-  readonly computerId: string
-  readonly status: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "cancelled" | "timed_out" | "lost"
-  readonly processReconciled: boolean
-  readonly outcome?: CommandOutcome
-}
+export type CommandInfo = Readonly<{ id: string; computerId: string; processReconciled: boolean }> & (
+  | Readonly<{ status: "pending" | "starting" | "running" | "stopping"; outcome?: never }>
+  | Readonly<{ status: "exited"; outcome: Extract<CommandOutcome, { kind: "exited" }> }>
+  | Readonly<{ status: "cancelled"; outcome: Extract<CommandOutcome, { kind: "cancelled" }> }>
+  | Readonly<{ status: "timed_out"; outcome: Extract<CommandOutcome, { kind: "timed_out" }> }>
+  | Readonly<{ status: "failed" | "lost"; outcome: Extract<CommandOutcome, { kind: "system_failed" }> }>
+)
 
 export interface CancelReceipt {
   readonly id: string
@@ -95,7 +96,7 @@ export function parseCommandInfo(value: unknown, expectedId?: string): CommandIn
       outcome = Object.freeze({ ...base, kind: "system_failed", failure: Object.freeze({ reason }) })
     }
   }
-  return Object.freeze({ id, computerId, status: status as CommandInfo["status"], processReconciled: raw["process_reconciled"], ...(outcome === undefined ? {} : { outcome }) })
+  return Object.freeze({ id, computerId, status: status as CommandInfo["status"], processReconciled: raw["process_reconciled"], ...(outcome === undefined ? {} : { outcome }) } as CommandInfo)
 }
 
 

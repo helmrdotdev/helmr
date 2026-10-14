@@ -147,10 +147,10 @@ the current Deployment; a list cursor keeps its original Deployment. `limit` is
 ## Client: Computers
 
 ```ts
-client.computers.create(request: ComputerCreateRequest, options?): Promise<ClientComputerRef>
+client.computers.create(request: ComputerCreateRequest, options?): Promise<ComputerRef>
 client.computers.get(id: string, options?): Promise<Computer>
 client.computers.list(query?: ComputerListQuery, options?): Promise<CursorPage<ComputerListItem>>
-client.computers.ref(id: string): ClientComputerRef
+client.computers.ref(id: string): ComputerRef
 
 interface ComputerCreateRequest {
   readonly template: string
@@ -168,7 +168,7 @@ get-or-create. `deleteAfterUnused` overrides the definition.
 `{ key }`, which does not accept `cursor` or `limit`. `ComputerListItem` is a
 `Computer` without `secrets`.
 
-### `ClientComputerRef`
+### `ComputerRef`
 
 | Method | Returns | Description |
 | --- | --- | --- |

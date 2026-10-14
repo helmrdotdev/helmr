@@ -64,6 +64,13 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 	if p.Target.EnvironmentID != env || p.Target.AgentID != agent || p.DeploymentID != deployment || !definition.ValidSlackChannelID(p.Target.ChannelID) {
 		return slackroute.ErrConversationChanged
 	}
+	var inputKind string
+	if err := tx.QueryRow(ctx, `SELECT input_kind FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, env, agent, deployment).Scan(&inputKind); err != nil {
+		return err
+	}
+	if inputKind != "text" {
+		return session.ErrInvalidInput
+	}
 	c, err := slackroute.ReadConnection(ctx, tx, env, agent, p.Target.ChannelID)
 	if err != nil {
 		return slackroute.ErrConversationChanged
@@ -248,6 +255,13 @@ func admitRoutedRoot(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer,
 // a trigger started for a Slack destination. The caller holds the channel's
 // route locks and admitted the Session in the same transaction.
 func CreateScheduledRoot(ctx context.Context, tx pgx.Tx, env, sessionID, turn, binding, agentID, deployment uuid.UUID, at time.Time) error {
+	var inputKind string
+	if err := tx.QueryRow(ctx, `SELECT input_kind FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, env, agentID, deployment).Scan(&inputKind); err != nil {
+		return err
+	}
+	if inputKind != "text" {
+		return session.ErrInvalidInput
+	}
 	var channel string
 	var connectionID uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT connection_id,slack_channel_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=$2`, env, binding).Scan(&connectionID, &channel); err != nil {

@@ -98,3 +98,33 @@ func TestTerminalAgentHostDrainsOutcomeBeforePhysicalStop(t *testing.T) {
 		t.Fatal("retained terminal sequence was not drained")
 	}
 }
+
+type retiredRelayClient struct{ terminalRelayClient }
+
+func (c *retiredRelayClient) AppendSessionLog(_ context.Context, r workerapi.SessionLogRequest) (workerapi.DiagnosticLogReceipt, error) {
+	if r.Kind != "end" || !r.Complete || len(r.Data) != 0 {
+		return workerapi.DiagnosticLogReceipt{}, errors.New("absent process produced nonempty diagnostics")
+	}
+	now := time.Now()
+	return workerapi.DiagnosticLogReceipt{ThroughSequence: r.ThroughSequence, AcceptedAt: now, ExpiresAt: now.Add(90 * 24 * time.Hour)}, nil
+}
+func TestRetiredAbsentHostDrainsStopAndEmptyDiagnostics(t *testing.T) {
+	session, _ := agentSessionFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	relay := newRetiredAgentRelay(ctx, session.entry, session.grant)
+	go relay.sendLoop()
+	connection, attached, err := computerhost.OpenAgentSession(ctx, terminalRelayMachine{relay: relay}, &agentv1.SessionAttach{Grant: session.grant, AttachmentSequence: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &retiredRelayClient{terminalRelayClient: terminalRelayClient{observed: true}}
+	err = computerhost.ServeExecutingAgentSession(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return errors.New("unexpected event") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !client.stopped {
+		t.Fatal("absent epoch was not observed stopped")
+	}
+	waitAgentRelay(t, relay, func() bool { return relay.acknowledged == 1 })
+}

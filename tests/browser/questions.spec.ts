@@ -54,11 +54,11 @@ async function scope(page: Page) {
   });
 }
 
-function question(control: unknown) {
+function question(control: Record<string, unknown>) {
   return { id: askID, session_id: sessionID, turn_id: turnID, status: "pending", created_at: now,
-    prompt: [{ type: "text", text: "<script>do not execute</script>Choose an answer" }, { type: "json", value: { context: null } }], answer_control: control };
+    question: { prompt: [{ type: "text", text: "<script>do not execute</script>Choose an answer" }, { type: "json", value: { context: null } }], ...control } };
 }
-async function fixture(page: Page, control: unknown) {
+async function fixture(page: Page, control: Record<string, unknown>) {
   await scope(page);
   let state: Record<string, unknown> = question(control);
   const writes: string[] = [];
@@ -72,18 +72,20 @@ async function fixture(page: Page, control: unknown) {
 }
 
 test("pending questions expose complete content and exact CLI commands as read-only guidance", async ({ page }) => {
-  const control = { type: "choice", multiple: true, allowText: true, options: [
+  const control = { type: "choice", multiple: true, allowCustom: true, options: [
     { id: "a", label: "First", description: "Full description", value: { v: 1 } }, { id: "b", label: "Second", value: null },
   ] };
   const { writes } = await fixture(page, control);
-  expect(JSON.parse(await page.getByLabel("Answer control").innerText())).toEqual(control);
+  await page.getByText("Inspect question", { exact: true }).click();
+  expect(JSON.parse(await page.getByLabel("Question definition").innerText())).toEqual(question(control).question);
   const origin = new URL(page.url()).origin;
-  const guide = page.getByRole("region", { name: "Answer through CLI" });
+  const guide = page.getByLabel("Answer through CLI");
+  await page.getByText("Answer with the CLI", { exact: true }).click();
   await expect(guide).toContainText(`helmr login '${origin}'`);
   await expect(guide).toContainText(`helmr --api-url '${origin}' session turn ask get '${askID}' --session '${sessionID}' --turn '${turnID}' --project '${projectID}' --env '${environmentID}' --json`);
-  await expect(guide).toContainText(`respond '${askID}' --session '${sessionID}' --turn '${turnID}'`);
-  await expect(guide).toContainText("--answer-file answer.json --response-id RESPONSE_ID");
-  await expect(guide).toContainText("Reuse the same ID and unchanged answer");
+  await expect(guide).toContainText(`answer '${askID}' --session '${sessionID}' --turn '${turnID}'`);
+  await expect(guide).toContainText("--answer-file answer.json --answer-id ANSWER_ID");
+  await expect(guide).toContainText("Reuse it with the same answer");
   await expect(page.locator("form")).toHaveCount(0);
   expect(writes).toEqual([]);
 });
@@ -92,17 +94,17 @@ test("question observation replaces CLI guidance with the recorded answer and at
   await page.clock.install();
   const { writes, setState } = await fixture(page, { type: "text" });
   await expect(page.getByLabel("Answer through CLI")).toBeVisible();
-  setState({ ...question({ type: "text" }), status: "responded", answer: "", responded_at: now, responded_by_user_id: userID });
+  setState({ ...question({ type: "text" }), status: "answered", answer: "", answered_at: now, answered_by_user_id: userID });
   await page.clock.fastForward(5_000);
   await expect(page.getByLabel("Recorded answer")).toHaveText('""');
   await expect(page.getByText(`Answered by user: ${userID}`)).toBeVisible();
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   expect(writes).toEqual([]);
-  setState({ id: askID, session_id: sessionID, turn_id: turnID, status: "responded", created_at: now, responded_at: now, responded_by_user_id: userID, payload_expired: true });
+  setState({ id: askID, session_id: sessionID, turn_id: turnID, status: "answered", created_at: now, answered_at: now, answered_by_user_id: userID, payload_expired: true });
   await page.reload();
   await expect(page.getByText("The question and answer payloads have expired.")).toBeVisible();
   await expect(page.getByLabel("Recorded answer")).toHaveCount(0);
-  await expect(page.getByLabel("Answer control")).toHaveCount(0);
+  await expect(page.getByLabel("Question definition")).toHaveCount(0);
   await expect(page.getByText(`Answered by user: ${userID}`)).toBeVisible();
 });
 

@@ -382,7 +382,7 @@ func (p *nativeContinuationPeer) serve(host net.Conn, sequence uint64) error {
 			case agentv1.Operation_METHOD_ASK:
 				value = json.RawMessage(`{"id":"fixture-approval"}`)
 			case agentv1.Operation_METHOD_WAIT_ASK:
-				value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"respondedBy":{"kind":"api_key","id":"fixture-operator"}}`)
+				value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"answeredBy":{"kind":"api_key","id":"fixture-operator"}}`)
 			case agentv1.Operation_METHOD_RUNTIME_MCP:
 				if operation.TurnId != nil {
 					return fmt.Errorf("MCP inferred current Turn")

@@ -22,7 +22,7 @@ export {
   type JsonValue,
 } from "./internal/jsoncanon"
 export {
-  type DefinitionIndex,
+  type DefinitionIndex, type LoadedAgentDefinition,
   type RuntimeArchitecture,
 } from "./internal/program"
 export { resourceID } from "./internal/id"
@@ -42,3 +42,5 @@ export { normalizeQuestion } from "./question"
 
 
 export { durationMilliseconds } from "./duration"
+
+export { normalizeInvocation } from "./content"

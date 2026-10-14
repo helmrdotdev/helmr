@@ -36,6 +36,7 @@ injection into an ordinary behavior case. External agent examples live in
 
 | Cases | Fixture directories passed to preparation | Claim |
 | --- | --- | --- |
+| `setup-failure` (human-operated) | `cases/setup-failure cases/slack-conversation` | Initialization failure retains failure and physical Stop, then frees a one-slot host for a healthy new Computer |
 | `agent` | `cases/agent` | Initial Turn marker and guest filesystem |
 | `persistence` (including `shared.run.ts`) | `cases/persistence` | Single-member and shared-Computer checkpoint and same-host restore |
 | `sessions` | `cases/sessions` | Two Turns retain Session setup memory across same-host restore |

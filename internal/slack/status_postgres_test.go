@@ -51,7 +51,7 @@ func (f statusFixture) claim(t *testing.T, want string) StatusClaim {
 	return *claim
 }
 
-func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) {
+func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) {
 	f := newStatusFixture(t)
 	active := f.claim(t, "active")
 	if err := FinishStatus(t.Context(), f.Pool, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -75,15 +75,15 @@ func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) 
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2);
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($5,$6,$2,'local','needs attention')`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment, hold)
 	f.due(t)
-	suspended := f.claim(t, "suspended")
+	suspended := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp() WHERE id=$1`, queued.TurnID)
 	f.due(t)
 	still := f.claim(t, "suspended")
-	if still.Revision != suspended.Revision {
-		t.Fatal("unchanged attention invented a state revision")
+	if still.Revision <= suspended.Revision {
+		t.Fatal("ending active work did not reveal held attention")
 	}
 	if err := FinishStatus(t.Context(), f.Pool, still, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1;
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($2,$3,$4,'local','attention')`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Environment, uuid.NewV7(), f.Session)
 	f.due(t)
-	current := f.claim(t, "suspended")
+	current := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
@@ -125,13 +125,13 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 		t.Fatalf("ambiguity retained lane: %v %v", exact, err)
 	}
 	f.due(t)
-	repair := f.claim(t, "suspended")
+	repair := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	// No new core event is necessary to repair a delayed older remote effect.
 	f.due(t)
-	refresh := f.claim(t, "suspended")
+	refresh := f.claim(t, "processing")
 	if refresh.Revision != repair.Revision {
 		t.Fatal("refresh depended on a new event")
 	}
@@ -174,7 +174,7 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
 		t.Fatal(err)
 	}
-	suspended := f.claim(t, "suspended")
+	suspended := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}

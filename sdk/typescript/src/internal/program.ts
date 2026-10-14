@@ -14,3 +14,10 @@ export interface DefinitionIndex {
     readonly throughAgent: boolean
   }[]
 }
+
+/** Validated module boundary; authoring uses the stricter AgentDefinition. */
+export type LoadedAgentDefinition = Omit<import("../agent").AgentDefinition<any, any, any>, "init" | "inputSchema" | "resultSchema"> & {
+  readonly init?: (context: import("../agent").InitContext) => unknown
+  readonly inputSchema?: import("../agent").StandardSchemaV1
+  readonly resultSchema?: import("../agent").StandardSchemaV1
+}

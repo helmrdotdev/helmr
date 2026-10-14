@@ -14,37 +14,36 @@ answered.
 import type { Turn } from "@helmr/sdk"
 
 export async function requestApproval(turn: Turn) {
-  const { answer, respondedBy } = await turn.ask({
+  const { answer, answeredBy } = await turn.ask({
     prompt: [{ type: "text", text: "Publish revision 42?" }],
-    answer: {
-      type: "choice",
-      options: [
-        { id: "approve", label: "Approve", value: true },
-        { id: "decline", label: "Decline", value: false },
-      ],
-    },
+    type: "choice",
+    options: [
+      { id: "approve", label: "Approve", value: true },
+      { id: "decline", label: "Decline", value: false },
+    ],
   })
-  return { approved: answer.selected[0]?.value === true, by: respondedBy }
+  return { approved: answer.selected[0]?.value === true, by: answeredBy }
 }
 ```
 
-`turn.ask` resolves with `{ answer, respondedBy }`. `respondedBy` is
+`turn.ask` resolves with `{ answer, answeredBy }`. `answeredBy` is
 `{ kind: "user" | "api_key", id }`. Validate the answer before acting on it;
 answering a question does not finish the Turn.
 
-## Answer controls
+## Question types
 
-The prompt is Content: an array of `text` and `json` parts. The `answer`
-control declares what a valid answer looks like.
+The prompt accepts a string or Content with `text` and `json` parts. The question's
+`type` declares what a valid answer looks like.
 
 | Control | Answer |
 | --- | --- |
 | `{ type: "text" }` | A string. |
-| `{ type: "choice", options, multiple?, allowText? }` | `{ selected: [{ id, value }], text? }` |
+| `{ type: "choice", options, multiple?, allowCustom?, allowNotes? }` | `{ selected: [{ id, value } ], custom?, notes? }` |
 
-`multiple: true` allows more than one selection, and `allowText: true` allows
-free-form text alongside or instead of a selection. Answers that do not match
-the control are rejected. Option fields, validation rules and size limits are
+`multiple: true` allows more than one selection, and `allowCustom: true` allows
+a custom alternative to a single selection, or custom text alongside multiple
+selections. `allowNotes` permits supplementary notes; notes alone are not an
+answer. Answers that do not match the question are rejected. Option fields, validation rules and size limits are
 in the [Questions reference](/docs/reference/sdk/questions).
 
 ## Who can answer
@@ -52,14 +51,15 @@ in the [Questions reference](/docs/reference/sdk/questions).
 A person answers from the CLI or from Slack; code answers through the
 client or API.
 
-- **CLI.** `helmr session turn ask list`, `ask get` and `ask respond` find a
-  question by its Session and Turn, show its prompt and control, and submit an
+- **CLI.** `helmr session turn ask list`, `ask get` and `ask answer` find a
+  question by its Session and Turn, show its complete question, and submit an
   answer. See [Answer questions](/docs/guides/answer-questions).
 - **Slack.** For a Session routed to [Slack](/docs/concepts/slack), the question
-  appears in the thread with an Answer button that opens a form. The person
+  appears in the thread with direct buttons for short choices or an Answer button
+  that opens a form. The person
   answering must have linked their Slack identity to Helmr. Each Slack question
-  also shows the matching CLI commands, for answers that do not fit the form.
-- **Client or API.** `turn.asks.respond` on a Turn reference from `HelmrClient`.
+  links to authenticated Console inspection and CLI instructions.
+- **Client or API.** `turn.asks.answer` on a Turn reference from `HelmrClient`.
 
 Any active member of the Organization can answer. An API key can answer only
 if it was issued with permission to respond to questions. Seeing a question,
@@ -74,7 +74,7 @@ another Session's child. See [Delegation](/docs/concepts/delegation).
 | Status | Meaning |
 | --- | --- |
 | `pending` | Asked and waiting for an answer. |
-| `responded` | Answered; the answer and responder are recorded. |
+| `answered` | Answered; the answer and responder are recorded. |
 | `cancelled` | Withdrawn. It can no longer be answered. |
 
 A question is answered at most once. It is withdrawn when:
@@ -88,10 +88,10 @@ question is rejected; it never carries over to a later Turn.
 
 ## Retries
 
-Every answer carries a **response ID** chosen by the answerer. If a response
-might not have arrived, retry with the same response ID and the same answer;
+Every answer carries a **answer ID** chosen by the answerer. If a response
+might not have arrived, retry with the same answer ID and the same answer;
 Helmr returns the original result instead of recording a second answer. A
-different response ID, or the same ID with a different answer, is rejected once
+different answer ID, or the same ID with a different answer, is rejected once
 the question has been answered.
 
 ## Rules for Agent code

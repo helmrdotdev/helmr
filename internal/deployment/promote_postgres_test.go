@@ -290,3 +290,35 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 		t.Fatal("promotion fact differs", count, err)
 	}
 }
+
+func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	first, err := register(t.Context(), f.pool, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), first.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	user, registration, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Schema'); INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) SELECT $4,$5,id,$2,$1 FROM agents WHERE environment_id=$5 AND key=$6`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, connection, first.EnvironmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
+	f.request.idempotencyKey = "structured"
+	f.request.bundle.root.Digest = artifacttest.Digest("structured-bundle")
+	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.InputKind = "json"
+	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.InputSchema = &definition.InputSchemaDiscovery{Status: "unavailable", Reason: "missing_converter"}
+	next, err := register(t.Context(), f.pool, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), next.ID, nil); err == nil {
+		t.Fatal("connected front changed its input contract")
+	}
+	var current uuid.UUID
+	if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id FROM environments WHERE id=$1`, first.EnvironmentID).Scan(&current); err != nil || current != first.ID {
+		t.Fatalf("failed promotion changed deployment: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, connection)
+	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), next.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+}

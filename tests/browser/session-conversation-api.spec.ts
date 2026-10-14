@@ -37,9 +37,9 @@ test("real API shows ordered progress while saving keeps response and result pri
   await expect(page.getByLabel("Recorded answer")).toHaveText('""');
   const recorded = await (await page.request.get(f.askBase)).json();
   const me = await (await page.request.get("/api/me")).json();
-  expect(recorded.status).toBe("responded");
+  expect(recorded.status).toBe("answered");
   expect(recorded.answer).toBe("");
-  expect(recorded.responded_by_user_id).toBe(me.user_id);
+  expect(recorded.answered_by_user_id).toBe(me.user_id);
   f.seed("output");
   f.seed("finalizing");
   await page.goto(f.sessionURL);
@@ -62,7 +62,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   await expect(page.getByText("kept while saving", { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Second visible progress", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Question — responded" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Question — answered" })).toBeVisible();
   const after = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json();
   expect(after.turns.map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["finalizing", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "kept while saving" }]],
@@ -84,7 +84,7 @@ test("Console records one externally retried choice with its exact values", asyn
   await expect(page.getByLabel("Recorded answer")).toHaveText(JSON.stringify(answer, null, 2));
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   const events = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/events?after=0&limit=100`)).json();
-  expect(events.records.filter((event: { kind: string }) => event.kind === "ask.responded")).toHaveLength(1);
+  expect(events.records.filter((event: { kind: string }) => event.kind === "ask.answered")).toHaveLength(1);
 });
 
 test("real API rejects a loaded question after organization scope loss and accepts after restoration", async ({ page }) => {

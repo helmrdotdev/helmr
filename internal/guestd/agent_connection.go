@@ -65,6 +65,9 @@ func clearAgentSecrets(secrets []*agentv1.SessionSecret) {
 }
 
 func (r *computerOperationRegistry) openAgentSession(ctx context.Context, request *agentv1.SessionAttach, input agentProgramInput) (_ *agentRelay, resultErr error) {
+	if request.GetRetireAbsent() && (request.GetStart() != nil || len(request.GetSecrets()) != 0 || len(request.GetProtectedEnv()) != 0 || len(request.GetProxyCa()) != 0) {
+		return nil, errors.New("absent Session retirement cannot carry startup material")
+	}
 	grant := request.GetGrant()
 	id := grant.GetIdentity().GetSessionId()
 	if id == "" || request.GetAttachmentSequence() == 0 {
@@ -106,14 +109,20 @@ func (r *computerOperationRegistry) openAgentSession(ctx context.Context, reques
 	entry.processesMu.Lock()
 	unavailable := entry.recoveryRequired || entry.stopping
 	entry.processesMu.Unlock()
+	var retired *agentRelay
 	err := validateSessionGrant(entry, grant, entry.authorityNow())
-	if err == nil && (entry.retired || r.entries[entry.computerInstanceID] != entry || r.captureSealedLocked() || r.agentStarting[id] || r.agentSessions[id] != existing || unavailable) {
+	if err == nil && (entry.retired || r.entries[entry.computerInstanceID] != entry || r.captureSealedLocked() || (r.agentStarting[id] && !request.GetRetireAbsent()) || r.agentSessions[id] != existing || unavailable) {
 		err = errors.New("computer has sealed or superseded Session admission")
 	}
 	if err == nil && request.GetStart() == nil {
-		err = errAgentSessionAbsent
+		if request.GetRetireAbsent() {
+			retired = newRetiredAgentRelay(ctx, entry, grant)
+			r.agentSessions[id] = retired
+		} else {
+			err = errAgentSessionAbsent
+		}
 	}
-	if err == nil {
+	if err == nil && retired == nil {
 		r.agentStarting[id] = true
 	}
 	r.mu.Unlock()
@@ -121,6 +130,10 @@ func (r *computerOperationRegistry) openAgentSession(ctx context.Context, reques
 	entry.lifecycleMu.Unlock()
 	if err != nil {
 		return nil, err
+	}
+	if retired != nil {
+		go retired.sendLoop()
+		return retired, nil
 	}
 	defer func() { r.mu.Lock(); delete(r.agentStarting, id); r.mu.Unlock() }()
 	admissionCtx, cancelAdmission := context.WithTimeout(ctx, 10*time.Minute)

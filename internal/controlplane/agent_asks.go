@@ -22,7 +22,7 @@ func (s *Server) askHTTPAuthority(r *http.Request, respond bool) (session.Caller
 	}
 	permission := auth.PermissionSessionsRead
 	if respond {
-		permission = auth.PermissionAsksRespond
+		permission = auth.PermissionAsksAnswer
 	}
 	// The ask owner verifies current human membership, including Viewer. A service
 	// key must carry its own explicit scope and never borrows that human rule.
@@ -51,23 +51,22 @@ func askHTTPView(v session.AskView) map[string]any {
 	if v.PayloadExpiredAt != nil {
 		value["payload_expired"] = true
 	} else {
-		value["prompt"] = v.Prompt
-		value["answer_control"] = v.AnswerControl
-		if v.Status == "responded" {
+		value["question"] = v.Question
+		if v.Status == "answered" {
 			value["answer"] = v.Answer
 		}
 	}
-	if v.RespondedAt != nil {
-		value["responded_at"] = v.RespondedAt.UTC()
+	if v.AnsweredAt != nil {
+		value["answered_at"] = v.AnsweredAt.UTC()
 	}
 	if v.CancelledAt != nil {
 		value["cancelled_at"] = v.CancelledAt.UTC()
 	}
-	if v.RespondedByUserID != nil {
-		value["responded_by_user_id"] = v.RespondedByUserID.String()
+	if v.AnsweredByUserID != nil {
+		value["answered_by_user_id"] = v.AnsweredByUserID.String()
 	}
-	if v.RespondedByAPIKeyID != nil {
-		value["responded_by_api_key_id"] = v.RespondedByAPIKeyID.String()
+	if v.AnsweredByAPIKeyID != nil {
+		value["answered_by_api_key_id"] = v.AnsweredByAPIKeyID.String()
 	}
 	return value
 }
@@ -146,7 +145,7 @@ func (s *Server) getAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, askHTTPView(view))
 }
-func (s *Server) respondAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) answerAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.askHTTPAuthority(r, true)
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -162,13 +161,12 @@ func (s *Server) respondAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	view, err := session.RespondAsk(r.Context(), s.tx, caller, session.AskAnswerRequest{EnvironmentID: env, SessionID: sessionID, TurnID: turn, AskID: id, ResponseID: request.ResponseID, Answer: request.Answer})
+	view, err := session.AnswerAsk(r.Context(), s.tx, caller, session.AskAnswerRequest{EnvironmentID: env, SessionID: sessionID, TurnID: turn, AskID: id, AnswerID: request.AnswerID, Answer: request.Answer})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
 	receipt := askHTTPView(view)
-	delete(receipt, "prompt")
-	delete(receipt, "answer_control")
+	delete(receipt, "question")
 	writeJSON(w, http.StatusOK, receipt)
 }

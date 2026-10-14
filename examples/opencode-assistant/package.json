@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests/questions.test.ts",
+    "test": "bun test tests/questions.test.ts tests/text.test.ts",
     "test:native": "bun build tests/native.test.ts --target=node --outdir dist/tests && node --test dist/tests/native.test.js"
   },
   "dependencies": {

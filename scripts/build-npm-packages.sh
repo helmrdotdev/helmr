@@ -188,7 +188,8 @@ cat > "$sdk_pkg/package.json" <<EOF
   ],
   "dependencies": {
     "@bufbuild/protobuf": "^2.11.0",
-    "@helmr/proto": "$version"
+    "@helmr/proto": "$version",
+    "@standard-schema/spec": "1.1.0"
   }
 }
 EOF

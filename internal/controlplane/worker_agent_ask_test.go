@@ -56,7 +56,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		}
 		return result
 	}
-	q := json.RawMessage(`{"prompt":[{"type":"text","text":"keep\u0000雪"}],"answer":{"type":"text"}}`)
+	q := json.RawMessage(`{"prompt":[{"type":"text","text":"keep\u0000雪"}],"type":"text"}`)
 	ids := []uuid.UUID{uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()}
 	for _, id := range ids {
 		result := operation(workerapi.AgentMethodAsk, map[string]any{"creationId": id, "question": q})
@@ -92,8 +92,8 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		return key.Raw, id
 	}
 	reader, _ := issue("reader", auth.PermissionSessionsRead)
-	responder, responderID := issue("responder", auth.PermissionAsksRespond)
-	both, _ := issue("sdk", auth.PermissionSessionsRead, auth.PermissionAsksRespond)
+	responder, responderID := issue("responder", auth.PermissionAsksAnswer)
+	both, _ := issue("sdk", auth.PermissionSessionsRead, auth.PermissionAsksAnswer)
 	base := fmt.Sprintf("/v1/sessions/%s/turns/%s/asks", f.Session, admission.TurnID)
 	call := func(method, path, token, body string, want int) map[string]json.RawMessage {
 		t.Helper()
@@ -109,45 +109,45 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	}
 	exact := base + "/" + ids[0].String()
 	call(http.MethodGet, exact, responder, "", http.StatusForbidden)
-	call(http.MethodPost, exact+"/respond", reader, `{"answer":null,"response_id":"answer"}`, http.StatusForbidden)
-	for _, body := range []string{`{"response_id":"answer"}`, `{"answer":null}`, `{"answer":null,"response_id":"answer","responded_by_user_id":"fake"}`, `{"answer":null,"answer":false,"response_id":"answer"}`} {
-		call(http.MethodPost, exact+"/respond", responder, body, http.StatusBadRequest)
+	call(http.MethodPost, exact+"/answer", reader, `{"answer":null,"answer_id":"answer"}`, http.StatusForbidden)
+	for _, body := range []string{`{"answer_id":"answer"}`, `{"answer":null}`, `{"answer":null,"answer_id":"answer","answered_by_user_id":"fake"}`, `{"answer":null,"answer":false,"answer_id":"answer"}`} {
+		call(http.MethodPost, exact+"/answer", responder, body, http.StatusBadRequest)
 	}
-	for _, body := range []string{`{"answer":"\ud800","response_id":"invalid"}`} {
-		failure := call(http.MethodPost, exact+"/respond", responder, body, http.StatusUnprocessableEntity)
+	for _, body := range []string{`{"answer":"\ud800","answer_id":"invalid"}`} {
+		failure := call(http.MethodPost, exact+"/answer", responder, body, http.StatusUnprocessableEntity)
 		if !bytes.Contains(failure["error"], []byte(`"answer_invalid"`)) {
 			t.Fatalf("answer classification: %s", failure["error"])
 		}
 	}
 	choiceID := uuid.NewV7()
-	choiceQuestion := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a value"}],"answer":{"type":"choice","options":[{"id":"one","label":"One","value":{"same":2}}]}}`)
+	choiceQuestion := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a value"}],"type":"choice","options":[{"id":"one","label":"One","value":{"same":2}}]}`)
 	if result := operation(workerapi.AgentMethodAsk, map[string]any{"creationId": choiceID, "question": choiceQuestion}); result.Error != nil {
 		t.Fatal(result.Error)
 	}
 	choicePath := base + "/" + choiceID.String()
-	duplicate := call(http.MethodPost, choicePath+"/respond", responder, `{"answer":{"selected":[{"id":"one","value":{"same":1,"same":2}}]},"response_id":"choice"}`, http.StatusUnprocessableEntity)
+	duplicate := call(http.MethodPost, choicePath+"/answer", responder, `{"answer":{"selected":[{"id":"one","value":{"same":1,"same":2}}]},"answer_id":"choice"}`, http.StatusUnprocessableEntity)
 	if !bytes.Contains(duplicate["error"], []byte(`"answer_invalid"`)) {
 		t.Fatalf("duplicate option value classification: %s", duplicate["error"])
 	}
-	call(http.MethodPost, choicePath+"/respond", responder, `{"answer":{"selected":[{"id":"one","value":{"same":2}}]},"response_id":"choice"}`, http.StatusOK)
+	call(http.MethodPost, choicePath+"/answer", responder, `{"answer":{"selectedIds":["one"]},"answer_id":"choice"}`, http.StatusOK)
 	pending := call(http.MethodGet, exact, reader, "", http.StatusOK)
 	if string(pending["status"]) != `"pending"` {
 		t.Fatal("invalid answer settled ask")
 	}
-	for _, body := range []string{`{"answer":null,"response_id":"\ud800"}`, `{"answer":null,"response_id":"one","response_id":"two"}`, `{"answer":null,"response_id":"one","\ud800":0}`, `{"ANSWER":null,"response_id":"one"}`, `{"answer":null,"ANSWER":false,"response_id":"one"}`} {
-		call(http.MethodPost, exact+"/respond", responder, body, http.StatusBadRequest)
+	for _, body := range []string{`{"answer":null,"answer_id":"\ud800"}`, `{"answer":null,"answer_id":"one","answer_id":"two"}`, `{"answer":null,"answer_id":"one","\ud800":0}`, `{"ANSWER":null,"answer_id":"one"}`, `{"answer":null,"ANSWER":false,"answer_id":"one"}`} {
+		call(http.MethodPost, exact+"/answer", responder, body, http.StatusBadRequest)
 	}
-	body := `{"answer":"","response_id":"answer"}`
-	receipt := call(http.MethodPost, exact+"/respond", responder, body, http.StatusOK)
-	if receipt["prompt"] != nil || receipt["answer_control"] != nil || string(receipt["answer"]) != `""` || string(receipt["responded_by_api_key_id"]) != `"`+responderID.String()+`"` {
+	body := `{"answer":"","answer_id":"answer"}`
+	receipt := call(http.MethodPost, exact+"/answer", responder, body, http.StatusOK)
+	if receipt["question"] != nil || string(receipt["answer"]) != `""` || string(receipt["answered_by_api_key_id"]) != `"`+responderID.String()+`"` {
 		t.Fatalf("answer receipt %v", receipt)
 	}
 	observed := operation(workerapi.AgentMethodWaitAsk, map[string]any{"askId": ids[0]})
 	var resolved struct {
-		Answer      json.RawMessage           `json:"answer"`
-		RespondedBy struct{ Kind, ID string } `json:"respondedBy"`
+		Answer     json.RawMessage           `json:"answer"`
+		AnsweredBy struct{ Kind, ID string } `json:"answeredBy"`
 	}
-	if err := json.Unmarshal(observed.Value, &resolved); err != nil || observed.Error != nil || string(resolved.Answer) != `""` || resolved.RespondedBy.Kind != "api_key" || resolved.RespondedBy.ID != responderID.String() {
+	if err := json.Unmarshal(observed.Value, &resolved); err != nil || observed.Error != nil || string(resolved.Answer) != `""` || resolved.AnsweredBy.Kind != "api_key" || resolved.AnsweredBy.ID != responderID.String() {
 		t.Fatalf("runtime answer %+v %v", observed, err)
 	}
 	if result := operation(workerapi.AgentMethodWithdrawAsk, map[string]any{"askId": ids[0]}); result.Error != nil {
@@ -160,8 +160,8 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	login := hf.session(t, f.User, org)
 	humanPath := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/turns/%s/asks/%s", f.Session, admission.TurnID, ids[1])
 	call(http.MethodGet, humanPath, login, "", http.StatusOK)
-	human := call(http.MethodPost, humanPath+"/respond", login, `{"answer":"Allow","response_id":"human"}`, http.StatusOK)
-	if string(human["responded_by_user_id"]) != `"`+f.User.String()+`"` {
+	human := call(http.MethodPost, humanPath+"/answer", login, `{"answer":"Allow","answer_id":"human"}`, http.StatusOK)
+	if string(human["answered_by_user_id"]) != `"`+f.User.String()+`"` {
 		t.Fatal("missing human attribution")
 	}
 	// The actual SDK traverses the mounted API, then submits the third answer.
@@ -182,7 +182,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		t.Fatal(err)
 	}
 	expired := call(http.MethodGet, exact, reader, "", http.StatusOK)
-	if string(expired["payload_expired"]) != "true" || expired["answer"] != nil || expired["prompt"] != nil || expired["answer_control"] != nil || expired["responded_by_api_key_id"] == nil {
+	if string(expired["payload_expired"]) != "true" || expired["answer"] != nil || expired["question"] != nil || expired["answered_by_api_key_id"] == nil {
 		t.Fatalf("expired payload %v", expired)
 	}
 }
@@ -213,7 +213,7 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 		ids[i] = uuid.NewV7()
 		req.RequestID = fmt.Sprintf("create-%d", i)
 		req.Method = workerapi.AgentMethodAsk
-		req.Payload, _ = json.Marshal(map[string]any{"creationId": ids[i], "question": json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`)})
+		req.Payload, _ = json.Marshal(map[string]any{"creationId": ids[i], "question": json.RawMessage(`{"prompt":[],"type":"text"}`)})
 		result, err := client.AgentOperation(ctx, req)
 		if err != nil || result.Error != nil {
 			t.Fatalf("create %+v %v", result, err)

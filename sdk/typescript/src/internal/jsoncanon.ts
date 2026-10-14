@@ -18,6 +18,10 @@ export function canonicalizeJsonValue(value: JsonValue): Uint8Array {
   return textEncoder.encode(serialize(value, new Set<object>()))
 }
 
+export function normalizeJsonValue(value: unknown): JsonValue {
+  return JSON.parse(new TextDecoder().decode(canonicalizeJsonValue(value as JsonValue))) as JsonValue
+}
+
 function serialize(value: JsonValue, ancestors: Set<object>): string {
   if (value === null || typeof value === "boolean") {
     return String(value)

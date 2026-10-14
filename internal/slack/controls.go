@@ -34,6 +34,7 @@ type controlEnvelope struct {
 	Nonce           uuid.UUID     `json:"nonce"`
 	Action          string        `json:"action"`
 	Target          controlTarget `json:"target"`
+	OptionID        string        `json:"option_id,omitempty"`
 	Actor           string        `json:"actor,omitempty"`
 	ExpiresAt       int64         `json:"expires_at"`
 	SourceTimestamp string        `json:"source_ts,omitempty"`
@@ -45,13 +46,13 @@ func validControl(c controlEnvelope) bool {
 		return false
 	}
 	switch c.Action {
-	case "stop":
-		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.Actor == "" && c.SourceTimestamp == ""
-	case "open_answer":
-		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == ""
+	case "open_answer", "submit_choices":
+		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == "" && c.OptionID == ""
+	case "choose":
+		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == "" && c.OptionID != "" && len(c.OptionID) <= 128
 	case "answer":
 		source, err := slackMessageTime(c.SourceTimestamp)
-		return err == nil && source.Before(time.Unix(c.ExpiresAt, 0)) && t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor != "" && len(c.Actor) <= 128
+		return err == nil && source.Before(time.Unix(c.ExpiresAt, 0)) && t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor != "" && len(c.Actor) <= 128 && c.OptionID == ""
 	default:
 		return false
 	}
@@ -129,7 +130,7 @@ func controlRequestKey(claims controlEnvelope, actor, actionTimestamp string) (s
 		}
 		return "form:" + claims.Nonce.String(), nil
 	}
-	if (claims.Action != "stop" && claims.Action != "open_answer") || !timestampPattern.MatchString(actionTimestamp) {
+	if (claims.Action != "open_answer" && claims.Action != "choose" && claims.Action != "submit_choices") || !timestampPattern.MatchString(actionTimestamp) {
 		return "", errControlInvalid
 	}
 	data, _ := json.Marshal([]string{claims.Nonce.String(), actor, actionTimestamp})

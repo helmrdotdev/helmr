@@ -269,7 +269,7 @@ func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request wo
 	case workerapi.AgentMethodAsk:
 		value = json.RawMessage(`{"id":"fixture-approval"}`)
 	case workerapi.AgentMethodWaitAsk:
-		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"respondedBy":{"kind":"api_key","id":"fixture-operator"}}`)
+		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"answeredBy":{"kind":"api_key","id":"fixture-operator"}}`)
 	case workerapi.AgentMethodOutput:
 		value = json.RawMessage(`{"sequence":1}`)
 	case workerapi.AgentMethodFail:

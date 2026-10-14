@@ -68,7 +68,7 @@ for (const provider of ["codex", "claude"] as const) {
       const driver: SessionDriver = {
         registerMessages: async () => {}, closeProcessing: async () => {},
         output: async () => ({ sequence: 1 }), respond: async () => {},
-        ask: async () => ({ answer: Promise.resolve({ answer: { selected: [{ id: "allow", value: true }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }),
+        ask: async () => ({ answer: Promise.resolve({ answer: { selected: [{ id: "allow", value: true }] }, answeredBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }),
         confirmDrain: async () => {},
         finalize: async (_id, result) => ({ status: "completed", result }),
         fail: async (_id, error) => ({ status: "failed", error }),
@@ -88,7 +88,7 @@ for (const provider of ["codex", "claude"] as const) {
         session: { id: "skills-session" }, computer: { id: "computer" }, deployment: { id: "deployment" },
         recovery: { kind: "initial" }, signal: stopped.signal, mcp: { getConnectionOptions: async () => connection },
       }, driver, { failureConvergenceMs: 5000 })
-      const outcome = await runtime.dispatch({ id: "skill-turn", sequence: 1, createdAt: new Date().toISOString(), input: [{ type: "text", text: "Read the Helmr runtime skill." }], source: { kind: "api" } })
+      const outcome = await runtime.dispatch({ id: "skill-turn", sequence: 1, createdAt: new Date().toISOString(), input: [{ type: "text", text: "Read the Helmr runtime skill." }], source: { kind: "api_key" } })
       assert.equal(outcome.status, "completed", JSON.stringify(outcome))
       assert.equal(requests.length, 3, "expected list, read and completion model steps")
       assert(containsDocument(requests[2], expected), "the model did not receive the complete embedded skill")

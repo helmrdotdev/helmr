@@ -82,16 +82,20 @@ func RenderContent(sources []ContentSource, emptyCompletion bool) ([]ContentPost
 
 // Authored content is validated before presentation-only decoration reaches here.
 func renderCanonicalContent(canonical []ContentSource, emptyLabel string) ([]ContentPost, error) {
+	return renderCanonicalContentLimit(canonical, emptyLabel, 0)
+}
+
+func renderCanonicalContentLimit(canonical []ContentSource, emptyLabel string, byteLimit int) ([]ContentPost, error) {
 	var posts []ContentPost
 	current := ContentPost{Body: MessageBody{Parse: "none", Blocks: []richBlock{{Type: "rich_text"}}}}
-	characters := 0
+	characters, narrativeBytes := 0, 0
 	flush := func() {
 		if len(current.Body.Blocks[0].Elements) == 0 {
 			return
 		}
 		posts = append(posts, current)
 		current = ContentPost{Body: MessageBody{Parse: "none", Blocks: []richBlock{{Type: "rich_text"}}}}
-		characters = 0
+		characters, narrativeBytes = 0, 0
 	}
 	for _, source := range canonical {
 		var parts []struct {
@@ -122,6 +126,13 @@ func renderCanonicalContent(canonical []ContentSource, emptyLabel string) ([]Con
 					continue
 				}
 				end, cost := literalPrefix(text, contentCharacters-characters-len(separator))
+				if byteLimit > 0 && end > byteLimit-narrativeBytes {
+					end = byteLimit - narrativeBytes
+					for end > 0 && !utf8.RuneStart(text[end]) {
+						end--
+					}
+					_, cost = literalPrefix(text[:end], contentCharacters)
+				}
 				if end == 0 {
 					flush()
 					partStarted = false
@@ -140,6 +151,7 @@ func renderCanonicalContent(canonical []ContentSource, emptyLabel string) ([]Con
 				current.Body.Blocks[0].Elements = elements
 				current.Body.Text += separator + quoteLiteral(piece)
 				characters += len(separator) + cost
+				narrativeBytes += end
 				offset += int64(end)
 				current.EndSequence = source.Sequence
 				current.EndOffset = offset

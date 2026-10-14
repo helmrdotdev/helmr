@@ -47,7 +47,7 @@ type APIKeyPermissionGrant struct {
 type APIKeyScope string
 
 const (
-	APIKeyScopeAsksRespond           APIKeyScope = "asks:respond"
+	APIKeyScopeAsksAnswer            APIKeyScope = "asks:answer"
 	APIKeyScopeSessionsRead          APIKeyScope = "sessions:read"
 	APIKeyScopeSessionsCreate        APIKeyScope = "sessions:create"
 	APIKeyScopeSessionsSend          APIKeyScope = "sessions:send"

@@ -39,7 +39,7 @@ func observedStreamPost(raw []byte) uuid.UUID {
 // Markdown into other block shapes; unrecognized shapes remain uncertain rather
 // than using fallback text or a matching prefix as proof of complete publication.
 func sameStreamContent(post uuid.UUID, body []byte, frozen string, actual []byte) bool {
-	header, err := streamHeader(post, body)
+	header, err := streamContext(post, body)
 	if err != nil {
 		return false
 	}
@@ -51,11 +51,24 @@ func sameStreamContent(post uuid.UUID, body []byte, frozen string, actual []byte
 	if err != nil {
 		return false
 	}
-	gotHeader, err := json.Marshal(blocks[:len(header)])
-	if err != nil || !sameMessageBlocks(wantHeader, gotHeader) {
+	// Context is emitted after the initial response. An older in-flight
+	// message or a later append can place it elsewhere; require exactly one
+	// complete matching group and compare every remaining content block.
+	contextAt := -1
+	for i := 0; i+len(header) <= len(blocks); i++ {
+		observed, err := json.Marshal(blocks[i : i+len(header)])
+		if err != nil || !sameMessageBlocks(wantHeader, observed) {
+			continue
+		}
+		if contextAt != -1 {
+			return false
+		}
+		contextAt = i
+	}
+	if contextAt == -1 {
 		return false
 	}
-	content := blocks[len(header):]
+	content := append(append([]json.RawMessage{}, blocks[:contextAt]...), blocks[contextAt+len(header):]...)
 	var markdown strings.Builder
 	allMarkdown := true
 	for _, raw := range content {

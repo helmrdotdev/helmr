@@ -35,7 +35,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			return nil
 		}
 		var gesture controlGesture
-		if json.Unmarshal(raw, &gesture) != nil || !validControl(gesture.Control) || gesture.Control.Target.Installation != installation || (gesture.Control.Action != "stop" && gesture.Control.Action != "answer") {
+		if json.Unmarshal(raw, &gesture) != nil || !validControl(gesture.Control) || gesture.Control.Target.Installation != installation || (gesture.Control.Action != "answer" && gesture.Control.Action != "choose" && gesture.Control.Action != "submit_choices") {
 			return errControlInvalid
 		}
 		target := gesture.Control.Target
@@ -82,14 +82,14 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		if !unexpired {
 			return reject("gesture_expired")
 		}
-		answering := gesture.Control.Action == "answer"
-		if answering {
+		answering := gesture.Control.Action == "answer" || gesture.Control.Action == "choose" || gesture.Control.Action == "submit_choices"
+		if gesture.Control.Action == "answer" {
 			opened, err := slackMessageTime(gesture.Control.SourceTimestamp)
 			if err != nil || !opened.Equal(source) {
 				return reject("control_source_mismatch")
 			}
 		}
-		if answering && gesture.Control.Actor != actor {
+		if gesture.Control.Action == "answer" && gesture.Control.Actor != actor {
 			return reject("control_actor_mismatch")
 		}
 		user, code, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, answering)
@@ -99,7 +99,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		if code != "" {
 			return reject(code)
 		}
-		var askID, controlID *uuid.UUID
+		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
 			caller := session.Caller{Kind: "user", ID: user}
 			if answering {
@@ -113,23 +113,26 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				if question == nil {
 					return session.ErrNotReady
 				}
-				value, err := parseFormAnswer(question, gesture.Form)
-				if err != nil {
-					return err
+				var value json.RawMessage
+				if gesture.Control.Action == "choose" {
+					value, _ = json.Marshal(map[string]any{"selectedIds": []string{gesture.Control.OptionID}})
+				} else {
+					var err error
+					if gesture.Control.Action == "submit_choices" {
+						value, err = parseInlineAnswer(question, gesture.Form)
+					} else {
+						value, err = parseFormAnswer(question, gesture.Form)
+					}
+					if err != nil {
+						return err
+					}
 				}
-				answer, err := session.RespondAsk(ctx, coreTx, caller, session.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, ResponseID: "slack:" + id.String(), Answer: value})
+				answer, err := session.AnswerAsk(ctx, coreTx, caller, session.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, AnswerID: "slack:" + id.String(), Answer: value})
 				if err != nil {
 					return err
 				}
 				askID = &answer.ID
 				gesture.Receipt, _ = json.Marshal(map[string]any{"ask_id": answer.ID, "status": answer.Status})
-			} else {
-				receipt, err := session.ControlSession(ctx, coreTx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "interrupt", IdempotencyKey: "slack:" + id.String()})
-				if err != nil {
-					return err
-				}
-				controlID = &receipt.ID
-				gesture.Receipt, _ = json.Marshal(map[string]any{"control_id": receipt.ID, "hold_id": receipt.HoldID})
 			}
 			var deleted bool
 			if err := coreTx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM slack_threads WHERE id=$1 FOR SHARE`, target.Thread).Scan(&deleted); err != nil {
@@ -154,7 +157,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				return reject("permission_denied")
 			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return reject("target_unavailable")
-			case errors.Is(err, session.ErrAskAlreadyResponded):
+			case errors.Is(err, session.ErrAskAlreadyAnswered):
 				return reject("ask_already_answered")
 			case errors.Is(err, session.ErrAskCancelled):
 				return reject("ask_cancelled")
@@ -166,11 +169,15 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				return err
 			}
 		}
+		operation := gesture.Control.Action
+		if answering {
+			operation = "answer"
+		}
 		raw, err = json.Marshal(gesture)
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$7,ask_id=$8,control_id=$9,payload=$10 WHERE id=$1`, id, user, target.Thread, target.Participant, target.Environment, target.Session, gesture.Control.Action, askID, controlID, raw)
+		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$7,ask_id=$8,control_id=$9,payload=$10 WHERE id=$1`, id, user, target.Thread, target.Participant, target.Environment, target.Session, operation, askID, nil, raw)
 		return err
 	})
 }

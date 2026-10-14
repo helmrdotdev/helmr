@@ -1,4 +1,3 @@
-import type { InputContent } from "../../../../sdk/typescript/src/content";
 import { parseAsk, parseAskPage } from "../../../../sdk/typescript/src/internal/asks";
 import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request } from "./api";
@@ -43,7 +42,7 @@ type SessionTurn = {
     | "failed"
     | "interrupted"
     | "cancelled";
-  input?: InputContent;
+  input?: JsonValue;
   payload_expired_at?: string;
   result?: unknown;
   error?: { code: string; message?: string };
@@ -188,7 +187,7 @@ export function questionCLICommands(address: AskAddress, origin: string) {
   return {
     login: `helmr login ${quote(origin)}`,
     get: `${prefix} get ${target} ${scope} --json`,
-    respond: `${prefix} respond ${target} ${scope} --answer-file answer.json --response-id RESPONSE_ID`,
+    answer: `${prefix} answer ${target} ${scope} --answer-file answer.json --answer-id ANSWER_ID`,
   };
 }
 

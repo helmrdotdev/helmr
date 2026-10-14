@@ -91,7 +91,7 @@ func TestCommandSurface(t *testing.T) {
 		{"session", "turn", "wait"},
 		{"session", "turn", "ask", "list"},
 		{"session", "turn", "ask", "get"},
-		{"session", "turn", "ask", "respond"},
+		{"session", "turn", "ask", "answer"},
 		{"session"},
 		{"trigger"},
 		{"deployment"},

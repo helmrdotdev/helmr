@@ -61,7 +61,7 @@ test("registration-time steering stays behind the admitted input", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-registration-"))
   const harness = await ClaudeHarness.open(directory, "session", {})
   const turn = { id: "first", signal: new AbortController().signal,
-    onCancel: () => {}, onMessage: async (handler: (value: any) => Promise<void>) => { await handler([{ type:"text", text:"followup" }]) },
+    onCancel: () => {}, onMessage: async (handler: (value: any) => Promise<void>) => { await handler({ id: "message", content: [{ type:"text", text:"followup" }], source: { kind: "user" } }) },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
@@ -117,7 +117,7 @@ test("a caught native result failure permits an ordinary retry in the same Turn"
   } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
-test("final response failure preserves reusable idle before returning the error", async () => {
+test("the bridge returns final content for application-owned publication", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-output-failure-"))
   const harness = await ClaudeHarness.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal,
@@ -130,7 +130,7 @@ test("final response failure preserves reusable idle before returning the error"
     await flush()
     events.push({ type: "result", session_id: nativeSessionId, subtype: "success", is_error: false, result: "complete" })
     events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
-    await expect(running).rejects.toThrow("response persistence failed")
+    expect((await running).response).toBe("complete")
     expect(harness.reusable).toBe(true)
   } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
@@ -168,8 +168,71 @@ test("terminal idle withdraws owned question callbacks before returning", async 
     events.push({ type: "result", session_id: nativeSessionId, subtype: "success", is_error: false, result: "final" })
     await flush(); expect(responses).toEqual([])
     events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
-    await pending
+    expect((await pending).response).toBe("final")
     expect((await reply).behavior).toBe("deny")
-    expect(withdrawals).toBe(1); expect(output).toEqual([]); expect(responses).toEqual(["final"])
+    expect(withdrawals).toBe(1); expect(output).toEqual([]); expect(responses).toEqual([])
+  } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+const assistant = (uuid: string, content: unknown[], extra = {}) => ({ type: "assistant", session_id: nativeSessionId, parent_tool_use_id: null, uuid, message: { id: "native-message", content }, ...extra })
+
+test("completed blocks preserve order without duplicating deltas, snapshots or final result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-claude-blocks-"))
+  const harness = await ClaudeHarness.open(directory, "session", {})
+  const output: string[] = []
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async (text: string) => { output.push(text); return { sequence: output.length } } } } as unknown as Turn
+  try {
+    const pending = harness.run(turn, "inspect")
+    await prompts.next()
+    events.push({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "duplicate" } } })
+    const first = assistant("one", [{ type: "text", text: "First block" }, { type: "text", text: "Second block" }])
+    events.push(first); events.push(first)
+    events.push(assistant("child", [{ type: "text", text: "private child" }], { parent_tool_use_id: "child-tool" }))
+    events.push(assistant("other", [{ type: "text", text: "other session" }], { session_id: "other" }))
+    events.push(assistant("tool", [{ type: "tool_use", id: "tool", name: "Read", input: { private: "argument" } }]))
+    events.push(assistant("final", [{ type: "text", text: "Held assistant candidate" }]))
+    events.push({ type: "result", session_id: nativeSessionId, subtype: "success", is_error: false, result: "Selected result" })
+    await flush()
+    expect(output.join("")).toBe("First block\n\nSecond block")
+    events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
+    expect((await pending).response).toBe("Selected result")
+    expect(output.join("")).toBe("First block\n\nSecond block")
+  } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("owned follow-up publishes only the preceding selected result as intermediate", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-claude-followup-"))
+  const harness = await ClaudeHarness.open(directory, "session", {})
+  const output: string[] = []
+  let send!: (message: unknown) => Promise<void>
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async (handler: typeof send) => { send = handler }, output: { write: async (text: string) => { output.push(text); return { sequence: output.length } } } } as unknown as Turn
+  try {
+    const pending = harness.run(turn, "first")
+    await prompts.next()
+    await send({ id: "message", content: [{ type: "text", text: "follow-up" }], source: { kind: "user" } })
+    events.push(assistant("candidate", [{ type: "text", text: "Do not duplicate this candidate" }]))
+    events.push({ type: "result", session_id: nativeSessionId, subtype: "success", is_error: false, result: "First result" })
+    events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
+    expect((await prompts.next()).value.message.content).toBe("follow-up")
+    events.push({ type: "result", session_id: nativeSessionId, subtype: "success", is_error: false, result: "Second result" })
+    events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
+    expect((await pending).response).toBe("Second result")
+    expect(output).toEqual(["First result"])
+  } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("an established native failure keeps verified explanation as output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-claude-failure-text-"))
+  const harness = await ClaudeHarness.open(directory, "session", {})
+  const output: string[] = []
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async (text: string) => { output.push(text); return { sequence: output.length } } } } as unknown as Turn
+  try {
+    const pending = harness.run(turn, "inspect")
+    await prompts.next()
+    events.push(assistant("explanation", [{ type: "text", text: "I could not finish the check." }]))
+    events.push({ type: "result", session_id: nativeSessionId, subtype: "error_during_execution", is_error: true })
+    events.push({ type: "system", subtype: "session_state_changed", state: "idle" })
+    await expect(pending).rejects.toThrow("Native Turn failed")
+    expect(output).toEqual(["I could not finish the check."])
   } finally { await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })

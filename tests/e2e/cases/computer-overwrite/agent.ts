@@ -25,7 +25,7 @@ export const edgeSmoke = agent({
       case "concurrent-questions": {
         const responses = await Promise.all(["first", "second"].map(label => turn.ask({
           prompt: [{ type: "text", text: `${label}:${marker}` }],
-          answer: { type: "text" },
+           type: "text",
         })))
         return { mode: input.mode, marker, answers: responses.map(response => response.answer) }
       }

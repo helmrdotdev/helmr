@@ -59,7 +59,7 @@ function native(definition: typeof nativeCodex) {
           release = resolve
           turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true })
         })
-        await turn.onMessage(message => { assert.equal(fixtureValue(message), "lose-native-launcher"); release() })
+        await turn.onMessage(message => { assert.equal(fixtureValue(message.content), "lose-native-launcher"); release() })
         await turn.output.write("native launcher loss ready")
         await requested
         const child = context.initResult.nativeProcess
@@ -160,7 +160,7 @@ export const peer = agent({
       state.discovery = await checkSessionDiscovery(turn, session.id, computer, receipt, mcp, state.discovery)
     }
     let released = false
-    await turn.onMessage(message => { if (fixtureValue(message) === "release") released = true })
+    await turn.onMessage(message => { if (fixtureValue(message.content) === "release") released = true })
     while (!released) {
       turn.signal.throwIfAborted()
       let io: { bytes: number; writeReadMs: number; observedAt: string } | undefined

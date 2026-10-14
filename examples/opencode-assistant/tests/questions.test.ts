@@ -4,15 +4,15 @@ import { answerQuestions } from "../agents/questions"
 
 test("maps choices, multiple selections, custom text and text-only questions", async () => {
   const seen: any[] = []
-  const replies = [{ selected: [{ value: "Blue" }, { value: "Green" }], text: "Purple" }, "Longer answer"]
+  const replies = [{ selected: [{ value: "Blue" }, { value: "Green" }], custom: "Purple" }, "Longer answer"]
   const turn = { ask: async (question: unknown) => { seen.push(question); return { answer: replies.shift() } } } as unknown as Turn
   expect(await answerQuestions(turn, [
     { header: "Color", question: "Colors?", multiple: true, options: [{ label: "Blue", description: "blue" }, { label: "Green", description: "green" }] },
     { header: "Detail", question: "Details?", options: [] },
   ], new AbortController().signal)).toEqual([["Blue", "Green", "Purple"], ["Longer answer"]])
-  expect(seen[0].answer.multiple).toBe(true)
-  expect(seen[0].answer.allowText).toBe(true)
-  expect(seen[1].answer.type).toBe("text")
+  expect(seen[0].multiple).toBe(true)
+  expect(seen[0].allowCustom).toBe(true)
+  expect(seen[1].type).toBe("text")
 })
 
 test("rejects an ambiguous batch before asking any question", async () => {

@@ -132,7 +132,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
   });
   await page.goto(url);
   await expect(
-    page.getByText("original input", { exact: false }),
+    page.getByText("original input", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Operator pause (local)")).toBeVisible();
   await expect(page.getByText("Secret revoked (subtree)")).toBeVisible();
@@ -152,7 +152,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
     page.getByText('"status": "accepted"', { exact: false }),
   ).toBeVisible();
   await expect(
-    page.getByText("original input", { exact: false }),
+    page.getByText("original input", { exact: true }),
   ).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page.getByText("Send work through the CLI", { exact: false })).toBeVisible();
@@ -241,7 +241,7 @@ test("Session closure refreshes final progress and questions before another poll
     else if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: closed ? "cancelled" : "open" } });
     else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, status: closed ? "cancelled" : "running" }] } });
     else if (endpoint === `${path}/events`) await route.fulfill({ json: { records: closed ? [{ session_id: id, turn_id: turnID, sequence: 1, kind: "turn.output", data: [{ type: "text", text: "Last published output" }], created_at: now }] : [], next_after: closed ? 1 : 0, has_more: false, retained_after: 0 } });
-    else if (endpoint === `${path}/turns/${turnID}/asks`) await route.fulfill({ json: { asks: [{ id: askID, session_id: id, turn_id: turnID, status: closed ? "cancelled" : "pending", created_at: now, ...(closed ? { cancelled_at: now } : {}), prompt: [{ type: "text", text: "Question" }], answer_control: { type: "text" } }] } });
+    else if (endpoint === `${path}/turns/${turnID}/asks`) await route.fulfill({ json: { asks: [{ id: askID, session_id: id, turn_id: turnID, status: closed ? "cancelled" : "pending", created_at: now, ...(closed ? { cancelled_at: now } : {}), question: { prompt: [{ type: "text", text: "Question" }], type: "text" } }] } });
     else await route.fallback();
   });
   await page.goto(url);
@@ -326,4 +326,28 @@ test("inherited hold links its owner and cannot be released on a child", async (
   await expect(page.getByText("Parent paused (subtree)")).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}?project=${projectID}&environment=${environmentID}`);
+});
+
+
+test("retained structured inputs render without treating JSON values as text parts", async ({ page }) => {
+  await scope(page);
+  const inputs = [{ topic: "structured object", count: 2 }, "structured string", 7, false, null, [1, { nested: true }], initialTurn.input];
+  await page.route(`**${path}**`, async route => {
+    const endpoint = new URL(route.request().url()).pathname;
+    if (endpoint === path) await route.fulfill({ json: initialSession });
+    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: inputs.map((input, index) => ({ ...initialTurn, id: `${turnID.slice(0, -1)}${index}`, sequence: index + 1, input })) } });
+    else await route.fallback();
+  });
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(url);
+  for (let index = 0; index < inputs.length - 1; index++) {
+    const item = page.locator(`[id="turn-${turnID.slice(0, -1)}${index}"]`);
+    await expect(item.locator("pre").first()).toHaveText(JSON.stringify(inputs[index], null, 2));
+  }
+  const textTurn = page.locator(`[id="turn-${turnID.slice(0, -1)}6"]`);
+  await expect(textTurn.locator("pre").first()).toHaveText("original input");
+  await textTurn.getByText("Inspect input JSON", { exact: true }).click();
+  await expect(textTurn.locator("details pre")).toHaveText(JSON.stringify(initialTurn.input, null, 2));
+  expect(errors).toEqual([]);
 });

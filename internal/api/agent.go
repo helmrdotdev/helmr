@@ -7,14 +7,18 @@ import (
 )
 
 type AgentDefinition struct {
-	TemplateID   string `json:"template"`
-	ID           string `json:"agent"`
-	DeploymentID string `json:"deployment_id"`
+	InputKind    string          `json:"input_kind"`
+	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
+	TemplateID   string          `json:"template"`
+	ID           string          `json:"agent"`
+	DeploymentID string          `json:"deployment_id"`
 }
 
 type AgentDefinitionListItem struct {
-	TemplateID string `json:"template"`
-	ID         string `json:"agent"`
+	InputKind   string          `json:"input_kind"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	TemplateID  string          `json:"template"`
+	ID          string          `json:"agent"`
 }
 
 type ListAgentDefinitionsResponse struct {

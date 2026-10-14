@@ -7,19 +7,18 @@ import (
 
 // AgentAsk retains exact question identity even after its payload expires.
 type AgentAsk struct {
-	ID                  string          `json:"id"`
-	SessionID           string          `json:"session_id"`
-	TurnID              string          `json:"turn_id"`
-	Status              string          `json:"status"`
-	CreatedAt           time.Time       `json:"created_at"`
-	Prompt              json.RawMessage `json:"prompt,omitempty"`
-	AnswerControl       json.RawMessage `json:"answer_control,omitempty"`
-	Answer              json.RawMessage `json:"answer,omitempty"`
-	PayloadExpired      bool            `json:"payload_expired,omitempty"`
-	RespondedAt         *time.Time      `json:"responded_at,omitempty"`
-	CancelledAt         *time.Time      `json:"cancelled_at,omitempty"`
-	RespondedByUserID   *string         `json:"responded_by_user_id,omitempty"`
-	RespondedByAPIKeyID *string         `json:"responded_by_api_key_id,omitempty"`
+	ID                 string          `json:"id"`
+	SessionID          string          `json:"session_id"`
+	TurnID             string          `json:"turn_id"`
+	Status             string          `json:"status"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Question           json.RawMessage `json:"question,omitempty"`
+	Answer             json.RawMessage `json:"answer,omitempty"`
+	PayloadExpired     bool            `json:"payload_expired,omitempty"`
+	AnsweredAt         *time.Time      `json:"answered_at,omitempty"`
+	CancelledAt        *time.Time      `json:"cancelled_at,omitempty"`
+	AnsweredByUserID   *string         `json:"answered_by_user_id,omitempty"`
+	AnsweredByAPIKeyID *string         `json:"answered_by_api_key_id,omitempty"`
 }
 
 type AgentAsksPage struct {
@@ -27,7 +26,7 @@ type AgentAsksPage struct {
 	NextCursor string     `json:"next_cursor,omitempty"`
 }
 
-type RespondAgentAskRequest struct {
-	Answer     json.RawMessage `json:"answer"`
-	ResponseID string          `json:"response_id"`
+type AnswerAgentAskRequest struct {
+	Answer   json.RawMessage `json:"answer"`
+	AnswerID string          `json:"answer_id"`
 }

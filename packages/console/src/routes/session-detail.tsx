@@ -1,3 +1,4 @@
+import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
 import { SessionProgress } from "../features/asks/SessionProgress";
 import { ContentView } from "../features/asks/Question";
@@ -237,9 +238,7 @@ function SessionDetailContent() {
                                 <Show when={turn.stop}>{stop => <p class={ui.muted}>Processing stop: {stop().state}. <Show when={stop().state !== "stopped"}>New processing waits for stop confirmation.</Show></p>}</Show>
                                 <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
                                 <p class={ui.muted}>Input</p>
-                                <pre class="whitespace-pre-wrap break-words">
-                                  {turn.input?.map(part => part.text).join("")}
-                                </pre>
+                                <InvocationInput value={turn.input} />
                                 </Show>
                                 <Show when={turn.status === "finalizing"}>
                                   <p class={ui.muted}>
@@ -380,4 +379,20 @@ function SessionDetailContent() {
       </Show>
     </section>
   );
+}
+
+
+function InvocationInput(props: { value: JsonValue | undefined }) {
+  const text = createMemo(() => {
+    const value = props.value;
+    if (!Array.isArray(value) || !value.every(part => part !== null && typeof part === "object" && !Array.isArray(part) && part.type === "text" && typeof part.text === "string" && Object.keys(part).length === 2)) return undefined;
+    return value.map(part => (part as { text: string }).text).join("");
+  });
+  const json = () => JSON.stringify(props.value, null, 2);
+  return <>
+    <pre class="whitespace-pre-wrap break-words">{text() ?? json()}</pre>
+    <Show when={text() !== undefined}>
+      <details><summary>Inspect input JSON</summary><pre class="whitespace-pre-wrap break-words">{json()}</pre></details>
+    </Show>
+  </>;
 }

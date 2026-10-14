@@ -65,7 +65,7 @@ test("packed SDK exposes coherent Agent handler and preparation types", async ()
    const prepare = async (build: BuildContext): Promise<void> => { await build.exec(['true']); };
    const machine: TemplateDefinition = template({ id: 'computer', image: image('root').from('ubuntu:24.04'), resources: { cpu: 1, memory: '1GiB' }, prepare });
    const handler = async (turn: Turn<InputContent>, ctx: AgentContext<{ value: number }>): Promise<number> => {
-     const { answer } = await turn.ask({ prompt: [{ type: 'text', text: 'continue' }], answer: { type: 'text' } });
+     const { answer } = await turn.ask({ prompt: [{ type: 'text', text: 'continue' }],  type: 'text' });
      await turn.output.write([{ type: 'json', value: answer }]);
      if (ctx.session.parent) ctx.session.parent.id satisfies string;
      return ctx.initResult.value;

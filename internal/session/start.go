@@ -106,12 +106,9 @@ func PlanStart(caller Caller, req StartRequest, method string) (StartPlan, error
 	hasInput := req.Input != nil
 	if hasInput || caller.Kind == "session" || method == "spawn" {
 		var err error
-		req.Input, err = content.Input(req.Input)
+		req.Input, err = content.Invocation(req.Input)
 		if err != nil {
 			return StartPlan{}, err
-		}
-		if bytes.Equal(req.Input, []byte("[]")) {
-			return StartPlan{}, ErrInvalidInput
 		}
 	}
 	raw, err := json.Marshal(struct {
@@ -216,14 +213,26 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 			deployment = *policy.Deployment
 		}
-		var templateKey string
+		var templateKey, inputKind string
 		var duration *int64
 		var never bool
-		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never, &inputKind); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotReady
 			}
 			return err
+		}
+		if req.SlackChannelID != nil && inputKind != "text" {
+			return ErrInvalidInput
+		}
+		if hasInput {
+			req.Input, err = content.InvocationFor(inputKind, req.Input)
+			if err != nil {
+				return err
+			}
+			if inputKind == "text" && bytes.Equal(req.Input, []byte("[]")) {
+				return ErrInvalidInput
+			}
 		}
 		pin.DeploymentID, pin.Fresh = deployment, true
 		computerID := req.ComputerID

@@ -56,8 +56,8 @@ export const datapathNetwork = agent({
       let start!: () => void
       const prepared = new Promise<void>(resolve => { start = resolve })
       await turn.onMessage(message => {
-        if (fixtureValue(message) === "start") start()
-        if (fixtureValue(message) === "finish") finish()
+        if (fixtureValue(message.content) === "start") start()
+        if (fixtureValue(message.content) === "finish") finish()
       })
       await turn.output.write([{ type: "json", value: { phase: "ready", campaignId: input.campaignId } }])
       await prepared

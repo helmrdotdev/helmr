@@ -4,6 +4,8 @@ column agent_definitions.close_after_idle_never boolean not null default false
 column agent_definitions.deployment_id uuid not null
 column agent_definitions.environment_id uuid not null
 column agent_definitions.has_init boolean not null
+column agent_definitions.input_kind text not null default 'text'::text
+column agent_definitions.input_schema jsonb
 column agent_definitions.max_turn_duration_ms bigint
 column agent_definitions.template_id uuid not null
 column agent_triggers.agent_id uuid not null
@@ -770,6 +772,8 @@ column slack_requests.id uuid not null
 column slack_requests.installation_id uuid not null
 column slack_requests.message_id uuid
 column slack_requests.next_attempt_at timestamp with time zone not null default clock_timestamp()
+column slack_requests.observed_authority_generation bigint
+column slack_requests.observed_next_turn_seq bigint
 column slack_requests.operation text
 column slack_requests.payload bytea
 column slack_requests.payload_expired_at timestamp with time zone
@@ -787,6 +791,7 @@ column slack_requests.user_id uuid
 column slack_thread_sources.created_at timestamp with time zone not null default clock_timestamp()
 column slack_thread_sources.environment_id uuid not null
 column slack_thread_sources.id uuid not null
+column slack_thread_sources.projected_control_at timestamp with time zone
 column slack_thread_sources.projected_event_seq bigint not null default 0
 column slack_thread_sources.session_id uuid not null
 column slack_thread_sources.thread_id uuid not null
@@ -823,6 +828,12 @@ column slack_user_links.linked_at timestamp with time zone not null default cloc
 column slack_user_links.slack_user_id text not null
 column slack_user_links.team_id text not null
 column slack_user_links.user_id uuid not null
+column slack_work_items.environment_id uuid not null
+column slack_work_items.omitted boolean not null default false
+column slack_work_items.post_id uuid not null
+column slack_work_items.session_id uuid not null
+column slack_work_items.thread_id uuid not null
+column slack_work_items.turn_id uuid not null
 column template_definitions.cpu_millis bigint not null
 column template_definitions.delete_after_unused_ms bigint
 column template_definitions.delete_after_unused_never boolean not null default false
@@ -858,6 +869,10 @@ column trigger_occurrences.trigger_key text not null
 column trigger_occurrences.turn_id uuid
 column turn_asks.answer bytea
 column turn_asks.answer_digest bytea
+column turn_asks.answer_id text
+column turn_asks.answered_at timestamp with time zone
+column turn_asks.answered_by_api_key_id uuid
+column turn_asks.answered_by_user_id uuid
 column turn_asks.cancelled_at timestamp with time zone
 column turn_asks.created_at timestamp with time zone not null default clock_timestamp()
 column turn_asks.created_event_seq bigint not null
@@ -867,10 +882,6 @@ column turn_asks.payload_expired_at timestamp with time zone
 column turn_asks.process_epoch bigint not null
 column turn_asks.question bytea
 column turn_asks.question_digest bytea not null
-column turn_asks.responded_at timestamp with time zone
-column turn_asks.responded_by_api_key_id uuid
-column turn_asks.responded_by_user_id uuid
-column turn_asks.response_id text
 column turn_asks.session_id uuid not null
 column turn_asks.status text not null default 'pending'::text
 column turn_asks.turn_id uuid not null
@@ -1025,6 +1036,8 @@ column worker_pools.vm_platform_id text
 column worker_pools.worker_group_id uuid not null
 constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
 constraint agent_definitions c CHECK (close_after_idle_ms > 0)
+constraint agent_definitions c CHECK (input_kind = 'text'::text AND input_schema IS NULL OR input_kind = 'json'::text AND input_schema IS NOT NULL AND jsonb_typeof(input_schema) = 'object'::text)
+constraint agent_definitions c CHECK (input_kind = ANY (ARRAY['text'::text, 'json'::text]))
 constraint agent_definitions c CHECK (max_turn_duration_ms > 0)
 constraint agent_definitions f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
@@ -1639,7 +1652,7 @@ constraint slack_posts c CHECK (presentation_path = ANY (ARRAY['post'::text, 'st
 constraint slack_posts c CHECK (reconciliation_pages >= 0)
 constraint slack_posts c CHECK (role <> 'opening'::text OR source_start_seq IS NULL AND continuation_ordinal = 0 AND presentation_path = 'post'::text)
 constraint slack_posts c CHECK (role = 'opening'::text OR source_thread_id IS NULL)
-constraint slack_posts c CHECK (role = ANY (ARRAY['intermediate'::text, 'question'::text, 'response'::text, 'lifecycle'::text, 'request_feedback'::text, 'activity'::text, 'opening'::text]))
+constraint slack_posts c CHECK (role = ANY (ARRAY['intermediate'::text, 'question'::text, 'response'::text, 'lifecycle'::text, 'request_feedback'::text, 'opening'::text]))
 constraint slack_posts c CHECK (seq > 0)
 constraint slack_posts c CHECK (source_end_offset >= 0)
 constraint slack_posts c CHECK (source_end_seq >= source_start_seq)
@@ -1661,15 +1674,17 @@ constraint slack_posts p PRIMARY KEY (id)
 constraint slack_posts u UNIQUE (thread_source_id, post_key, continuation_ordinal)
 constraint slack_posts u UNIQUE (thread_source_id, seq)
 constraint slack_requests c CHECK ((environment_id IS NULL) = (session_id IS NULL))
+constraint slack_requests c CHECK ((observed_authority_generation IS NULL) = (observed_next_turn_seq IS NULL))
 constraint slack_requests c CHECK ((payload IS NULL) = (payload_expired_at IS NOT NULL))
 constraint slack_requests c CHECK ((status = 'received'::text) = (finished_at IS NULL))
+constraint slack_requests c CHECK (observed_authority_generation IS NULL OR environment_id IS NOT NULL AND observed_authority_generation > 0 AND observed_next_turn_seq > 0)
 constraint slack_requests c CHECK (octet_length(request_digest) = 32)
 constraint slack_requests c CHECK (octet_length(request_key) >= 1 AND octet_length(request_key) <= 1024)
-constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'stop'::text]))
+constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text]))
 constraint slack_requests c CHECK (payload_expired_at IS NULL OR status <> 'received'::text)
 constraint slack_requests c CHECK (slack_user_id <> ''::text)
 constraint slack_requests c CHECK (status <> 'accepted'::text OR user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)
-constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
+constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
 constraint slack_requests c CHECK (status = ANY (ARRAY['received'::text, 'accepted'::text, 'rejected'::text]))
 constraint slack_requests f FOREIGN KEY (environment_id, ask_id) REFERENCES turn_asks(environment_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, control_id) REFERENCES session_controls(environment_id, session_id, id)
@@ -1715,6 +1730,10 @@ constraint slack_user_links c CHECK (team_id <> ''::text)
 constraint slack_user_links f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_user_links p PRIMARY KEY (team_id, slack_user_id)
 constraint slack_user_links u UNIQUE (team_id, user_id)
+constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
+constraint slack_work_items f FOREIGN KEY (post_id) REFERENCES slack_posts(id)
+constraint slack_work_items f FOREIGN KEY (thread_id) REFERENCES slack_threads(id)
+constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
 constraint template_definitions c CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL)
 constraint template_definitions c CHECK (cpu_millis > 0)
 constraint template_definitions c CHECK (delete_after_unused_ms > 0)
@@ -1741,18 +1760,18 @@ constraint trigger_occurrences c CHECK (disposition = ANY (ARRAY['admitted'::tex
 constraint trigger_occurrences f FOREIGN KEY (environment_id, activation_id, agent_id, trigger_key) REFERENCES trigger_activations(environment_id, id, agent_id, trigger_key)
 constraint trigger_occurrences f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint trigger_occurrences p PRIMARY KEY (environment_id, agent_id, trigger_key, scheduled_at)
+constraint turn_asks c CHECK ((status = 'answered'::text) = (answered_at IS NOT NULL))
 constraint turn_asks c CHECK ((status = 'cancelled'::text) = (cancelled_at IS NOT NULL))
-constraint turn_asks c CHECK ((status = 'responded'::text) = (responded_at IS NOT NULL))
 constraint turn_asks c CHECK (octet_length(answer_digest) = 32)
+constraint turn_asks c CHECK (octet_length(answer_id) >= 1 AND octet_length(answer_id) <= 512)
 constraint turn_asks c CHECK (octet_length(question_digest) = 32)
-constraint turn_asks c CHECK (octet_length(response_id) >= 1 AND octet_length(response_id) <= 512)
-constraint turn_asks c CHECK (payload_expired_at IS NULL AND question IS NOT NULL AND (status = 'responded'::text) = (answer IS NOT NULL) OR payload_expired_at IS NOT NULL AND status <> 'pending'::text AND question IS NULL AND answer IS NULL)
-constraint turn_asks c CHECK (status = 'responded'::text AND response_id IS NOT NULL AND answer_digest IS NOT NULL AND num_nonnulls(responded_by_user_id, responded_by_api_key_id) = 1 OR status <> 'responded'::text AND response_id IS NULL AND answer_digest IS NULL AND responded_by_user_id IS NULL AND responded_by_api_key_id IS NULL)
-constraint turn_asks c CHECK (status = ANY (ARRAY['pending'::text, 'responded'::text, 'cancelled'::text]))
+constraint turn_asks c CHECK (payload_expired_at IS NULL AND question IS NOT NULL AND (status = 'answered'::text) = (answer IS NOT NULL) OR payload_expired_at IS NOT NULL AND status <> 'pending'::text AND question IS NULL AND answer IS NULL)
+constraint turn_asks c CHECK (status = 'answered'::text AND answer_id IS NOT NULL AND answer_digest IS NOT NULL AND num_nonnulls(answered_by_user_id, answered_by_api_key_id) = 1 OR status <> 'answered'::text AND answer_id IS NULL AND answer_digest IS NULL AND answered_by_user_id IS NULL AND answered_by_api_key_id IS NULL)
+constraint turn_asks c CHECK (status = ANY (ARRAY['pending'::text, 'answered'::text, 'cancelled'::text]))
+constraint turn_asks f FOREIGN KEY (answered_by_api_key_id) REFERENCES api_keys(id)
+constraint turn_asks f FOREIGN KEY (answered_by_user_id) REFERENCES users(id)
 constraint turn_asks f FOREIGN KEY (environment_id, session_id, created_event_seq) REFERENCES session_events(environment_id, session_id, seq)
 constraint turn_asks f FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch)
-constraint turn_asks f FOREIGN KEY (responded_by_api_key_id) REFERENCES api_keys(id)
-constraint turn_asks f FOREIGN KEY (responded_by_user_id) REFERENCES users(id)
 constraint turn_asks p PRIMARY KEY (environment_id, session_id, turn_id, id)
 constraint turn_asks u UNIQUE (environment_id, id)
 constraint turn_asks u UNIQUE (environment_id, session_id, created_event_seq)
@@ -1956,6 +1975,7 @@ index CREATE INDEX slack_requests_gesture ON public.slack_requests USING btree (
 index CREATE INDEX slack_requests_input_source ON public.slack_requests USING btree (environment_id, turn_id, message_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text])))
 index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, slack_channel_binding_id) WHERE (thread_ts IS NOT NULL)
 index CREATE INDEX slack_threads_status_due ON public.slack_threads USING btree (next_attempt_at, refresh_at, id)
+index CREATE INDEX slack_work_items_post ON public.slack_work_items USING btree (post_id)
 index CREATE INDEX template_definitions_deployment ON public.template_definitions USING btree (environment_id, deployment_id, template_id)
 index CREATE INDEX template_definitions_image_spec ON public.template_definitions USING btree (environment_id, image_spec_id)
 index CREATE INDEX trigger_activations_due ON public.trigger_activations USING btree (next_fire_at, environment_id, id) WHERE ((active_until IS NULL) OR (next_fire_at < active_until))

@@ -44,3 +44,12 @@ export function normalizeInput(value: unknown): InputContent {
   if (content.some(part => part.type !== "text")) throw new ContentError("content_kind_unsupported", "Input supports text parts only")
   return content as InputContent
 }
+
+// Invocation payloads may be structured; live conversational messages remain text.
+export function normalizeInvocation(value: unknown): JsonValue {
+  let encoded: Uint8Array
+  try { encoded = canonicalizeJsonValue(value as JsonValue) }
+  catch { throw new ContentError("invalid_arguments", "Input must be unambiguous finite JSON with valid Unicode") }
+  if (encoded.byteLength > CONTENT_BYTES) throw new ContentError("content_limit_exceeded", "Input exceeds 256 KiB")
+  return JSON.parse(new TextDecoder().decode(encoded)) as JsonValue
+}

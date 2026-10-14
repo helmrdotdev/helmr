@@ -18,6 +18,7 @@ type AgentAuthorityResponse struct {
 	ExpiresAt           time.Time `json:"expires_at"`
 }
 type AgentAttachmentResponse struct {
+	RetireAbsent        bool      `json:"retire_absent,omitempty"`
 	Stopped             bool      `json:"stopped,omitempty"`
 	Starting            bool      `json:"starting,omitempty"`
 	AuthorityGeneration int64     `json:"authority_generation"`

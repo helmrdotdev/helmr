@@ -11,8 +11,8 @@ await verify("question-cancel", async ({ marker, objects, computer, startAgent }
   await session.cancel({ idempotencyKey: `cancel:${marker}` })
   await waitTurn(turn, ["cancelled"])
   assertEqual((await turn.asks.get(ask.id)).status, "cancelled", "Session cancellation did not withdraw its question")
-  await assert.rejects(turn.asks.respond(ask.id, {
-    answer: { selected: [{ id: "approve", value: true }] }, responseId: `late:${marker}`,
+  await assert.rejects(turn.asks.answer(ask.id, {
+    answer: { selectedIds: ["approve"] }, answerId: `late:${marker}`,
   }), error => errorCode(error) === "ask_cancelled")
   return { retrieved: true, cancelled: true, lateAnswerRejected: true }
 })

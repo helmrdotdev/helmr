@@ -6,7 +6,7 @@ import type { InputContent } from "./content"
 
 export function inputContentUsage(computer: TemplateDefinition, session: SessionRef, input: InputContent): AgentDefinition<InputContent, Json, undefined> {
   void session.enqueue(input)
-  return agent<InputContent, Json>({
+  return agent({
     id: "conversation",
     template: computer,
     triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "UTC", input })],

@@ -18,10 +18,14 @@ import (
 
 // Both discovery and the locked claim use this dependency test. Discovery only
 // omits known-blocked pending mutations; the claim remains authoritative.
+// Keep continuations and work messages ordered. Initial questions/responses follow
+// unpublished work, except when uncertain detail delivery prevents that ordering.
 const blockingPostPredecessor = `EXISTS(SELECT 1 FROM slack_posts prior
  WHERE prior.thread_source_id=p.thread_source_id AND prior.id<>p.id AND prior.delivery_disposed_at IS NULL AND (prior.status IN ('pending','sending','uncertain') OR (prior.presentation_path='stream' AND prior.stream_state='open')) AND
  ((prior.post_key=p.post_key AND prior.continuation_ordinal<p.continuation_ordinal)
- OR (p.role IN ('intermediate','response') AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq)))`
+ OR (p.role='intermediate' AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq)
+ OR (p.role IN ('question','response') AND p.message_ts IS NULL AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq AND prior.message_ts IS NULL AND prior.status IN ('pending','sending')
+ AND NOT EXISTS(SELECT 1 FROM slack_posts unknown_work WHERE unknown_work.thread_source_id=p.thread_source_id AND unknown_work.turn_id=p.turn_id AND unknown_work.role='intermediate' AND unknown_work.seq<p.seq AND unknown_work.status='uncertain' AND unknown_work.delivery_disposed_at IS NULL))))`
 
 type PostClaim struct {
 	TeamID, ChannelID                           string

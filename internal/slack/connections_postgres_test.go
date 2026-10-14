@@ -162,3 +162,19 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 		t.Fatal("stale registration exchange committed", err)
 	}
 }
+
+func TestStructuredAgentCannotConfigureSlackConnection(t *testing.T) {
+	f, store, org := credentialFixture(t)
+	if err := store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.Environment, f.Agent)
+	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); !errors.Is(err, ErrConnectionUnavailable) {
+		t.Fatalf("structured connection admitted: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET input_kind='text',input_schema=NULL WHERE environment_id=$1 AND agent_id=$2`, f.Environment, f.Agent)
+	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); err != nil {
+		t.Fatalf("conversational agent unavailable: %v", err)
+	}
+}

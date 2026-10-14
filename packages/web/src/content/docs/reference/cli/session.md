@@ -25,8 +25,8 @@ helmr session turn interrupt TURN_ID --session SESSION_ID [--idempotency-key KEY
 helmr session turn send TURN_ID --session SESSION_ID (--text TEXT | --data-json JSON | --data-file FILE) [--idempotency-key KEY] [--json]
 helmr session turn ask list --session SESSION_ID --turn TURN_ID [--limit N] [--cursor CURSOR] [--json]
 helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID [--json]
-helmr session turn ask respond ASK_ID --session SESSION_ID --turn TURN_ID (--answer-json JSON | --answer-file FILE)
-    [--response-id ID] [--json]
+helmr session turn ask answer ASK_ID --session SESSION_ID --turn TURN_ID (--answer-json JSON | --answer-file FILE)
+    [--answer-id ID] [--json]
 ```
 
 Every command also accepts `-p, --project` and `-e, --env`. They are required
@@ -134,11 +134,11 @@ present. Failed, interrupted and cancelled Turns are settled outcomes.
 | --- | --- |
 | `turn ask list` | One page of the Turn's questions. `--limit` 1–100, default 50. |
 | `turn ask get` | The prompt, answer control, status and any retained answer. |
-| `turn ask respond` | Answers exactly this question. Prints `ask_id` and `status`. |
+| `turn ask answer` | Answers exactly this question. Prints `ask_id` and `status`. |
 
 `respond` takes the answer as JSON matching the control: a JSON string for a
 text control (`--answer-json '"Approve"'`), or
-`{"selected":[{"id":"approve","value":true}]}` for a choice. `--response-id`
+`{"selectedIds":["approve"]}` for a choice. `--answer-id`
 is the retry identity for the answer; reuse it with the same answer to retry.
 When omitted, each invocation uses a new identity. A saved login answers with
 current Organization membership; an API key needs explicit answer permission.

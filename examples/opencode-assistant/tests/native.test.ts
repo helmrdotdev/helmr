@@ -1,18 +1,22 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
+import { after, test } from "node:test"
 import { createServer } from "node:http"
 import { execFileSync } from "node:child_process"
 import { mkdtemp, rm, mkdir, writeFile, stat, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
+import { installSessionHttp } from "../../../runtime/typescript/src/agent-http"
 import { OpenCodeHarness } from "../agents/opencode"
+
+// This local fixture uses the same HTTP defaults as the managed Node runtime.
+after(installSessionHttp())
 
 test("native binary matches the application pin", () => {
   assert.equal(execFileSync("opencode", ["--version"], { encoding: "utf8" }).trim(), "1.18.30")
 })
 
-for (const scenario of ["question", "permission", "deny", "large-edit", "project-config", "interrupt", "error"] as const) test(`real OpenCode: ${scenario}`, { timeout: 90_000 }, async () => {
+for (const scenario of ["question", "permission", "delayed-permission", "deny", "large-edit", "project-config", "interrupt", "error"] as const) test(`real OpenCode: ${scenario}`, { timeout: scenario === "delayed-permission" ? 390_000 : 90_000 }, async () => {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "helmr-opencode-")))
   const requests: any[] = []
   const responses: unknown[] = []
@@ -25,7 +29,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
     if (scenario === "error" && requests.length === 1) { tools++; res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture model failure", type: "invalid_request_error" } })); return }
     res.writeHead(200, { "content-type": "text/event-stream" })
     const event = (delta: unknown, finish_reason: string | null = null) => res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta, finish_reason }] })}\n\n`)
-    const toolName = scenario === "large-edit" ? "write" : scenario === "permission" || scenario === "deny" || scenario === "project-config" ? "bash" : "question"
+    const toolName = scenario === "large-edit" ? "write" : scenario === "permission" || scenario === "delayed-permission" || scenario === "deny" || scenario === "project-config" ? "bash" : "question"
     if (tools++ === 0) {
       assert.ok(input.tools.some((tool: any) => tool.function.name === toolName), `missing ${toolName} tool`)
       event({ role: "assistant", tool_calls: [{ index: 0, id: "call_fixture", type: "function", function: { name: toolName, arguments: JSON.stringify(toolName === "question" ? { questions: [{ header: "Color", question: "Which color?", options: [{ label: "Blue", description: "Use blue" }, { label: "Green", description: "Use green" }] }] } : toolName === "write" ? { filePath: join(cwd, "large.txt"), content: "A".repeat(50 * 1024) } : { command: "printf fixture-approved", description: "Print fixture text" }) } }] })
@@ -47,7 +51,6 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
       await writeFile(join(cwd, "opencode.json"), JSON.stringify({ permission: { bash: "allow" } }))
     }
     const driver: SessionDriver = {
-      agents: () => ({ session: () => { throw new Error("unused") }, list: async () => { throw new Error("unused") }, spawn: async () => { throw new Error("unused") }, start: async () => { throw new Error("unused") } }),
       registerMessages: async () => {}, closeProcessing: async () => {},
       ask: async () => {
         questions++
@@ -55,14 +58,18 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
           queueMicrotask(() => runtime.interrupt("first", new Error("fixture interrupt")))
           return { answer: new Promise<any>(() => {}), withdraw: async () => {} }
         }
-        const permission = scenario === "permission" || scenario === "project-config" || scenario === "deny"
-        return { answer: Promise.resolve({ answer: { selected: [{ id: permission ? scenario === "deny" ? "deny" : "allow" : "option-1", value: permission ? scenario !== "deny" : "Blue" }] }, respondedBy: { kind: "user" as const, id: "fixture" } }), withdraw: async () => {} }
+        const permission = scenario === "permission" || scenario === "delayed-permission" || scenario === "project-config" || scenario === "deny"
+        const answer = async () => {
+          if (scenario === "delayed-permission") await new Promise(resolve => setTimeout(resolve, 310_000))
+          return { answer: { selected: [{ id: permission ? scenario === "deny" ? "deny" : "allow" : "option-1", value: permission ? scenario !== "deny" : "Blue" }] }, answeredBy: { kind: "user" as const, id: "fixture" } }
+        }
+        return { answer: answer(), withdraw: async () => {} }
       },
       output: async () => { outputs++; return { sequence: outputs } },
       respond: async (_turnId, _id, value) => { responses.push(value) },
       confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
-      fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }),
+      fail: async (_id, error) => (error.code === "interrupted" ? { status: "interrupted" } : { status: "failed", error }),
       hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
@@ -74,9 +81,13 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
         }, { PATH: process.env.PATH, HOME: cwd })
         return harness
       },
-      turn: (turn, context) => (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join("")),
+      turn: async (turn, context) => {
+        const { response, ...result } = await (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join(""))
+        if (response !== undefined) await turn.respond(response)
+        return result
+      },
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
-    const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api" } })
+    const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api_key" } })
     const pid = harness!.processId, id = harness!.conversationId
     if (scenario === "interrupt" || scenario === "error") {
       assert.equal(first.status, scenario === "interrupt" ? "interrupted" : "failed", JSON.stringify(first))
@@ -85,7 +96,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
       assert.equal(holds, 0)
       if (scenario === "interrupt") runtime.resume()
     } else assert.equal(first.status, "completed", JSON.stringify(first))
-    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-10T00:00:01Z", input: [{ type: "text", text: "second unique input" }], source: { kind: "api" } })
+    const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-10T00:00:01Z", input: [{ type: "text", text: "second unique input" }], source: { kind: "api_key" } })
     assert.equal(second.status, "completed", JSON.stringify(second))
     assert.equal(harness!.processId, pid)
     assert.equal(harness!.conversationId, id)
@@ -94,7 +105,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
     assert.equal(responses.length, scenario === "interrupt" || scenario === "error" ? 1 : 2)
     assert.ok(JSON.stringify(requests.at(-1).messages).includes("first unique input"))
     assert.ok(JSON.stringify(requests.at(-1).messages).includes("second unique input"))
-    if (scenario === "permission" || scenario === "question") assert.ok(JSON.stringify(requests.at(-1).messages).includes(scenario === "permission" ? "fixture-approved" : "Blue"))
+    if (scenario === "permission" || scenario === "delayed-permission" || scenario === "question") assert.ok(JSON.stringify(requests.at(-1).messages).includes(scenario === "question" ? "Blue" : "fixture-approved"))
     if (scenario === "deny") assert.ok(JSON.stringify(requests.at(-1).messages).includes("rejected"))
     if (scenario === "large-edit") {
       assert.ok(JSON.stringify(requests.at(-1).messages).includes("Too large to review"))

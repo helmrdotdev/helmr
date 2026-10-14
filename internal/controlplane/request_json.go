@@ -311,8 +311,8 @@ func decodeAgentPayload(body []byte, target any) error {
 // Decode only the transport envelope here. The answer owner classifies invalid
 // answer Unicode, duplicate keys and control violations as answer_invalid.
 type askAnswerEnvelope struct {
-	Answer     json.RawMessage
-	ResponseID string
+	Answer   json.RawMessage
+	AnswerID string
 }
 
 func decodeAskAnswerRequest(r *http.Request) (askAnswerEnvelope, error) {
@@ -334,7 +334,7 @@ func decodeAskAnswerRequest(r *http.Request) (askAnswerEnvelope, error) {
 			return result, requestBodyError(err)
 		}
 		key, ok := token.(string)
-		if !ok || seen[key] || (key != "answer" && key != "response_id") {
+		if !ok || seen[key] || (key != "answer" && key != "answer_id") {
 			return result, badRequest(errors.New("answer request contains an unknown or duplicate field"))
 		}
 		keyRaw := bytes.TrimSpace(raw[start:decoder.InputOffset()])
@@ -354,8 +354,8 @@ func decodeAskAnswerRequest(r *http.Request) (askAnswerEnvelope, error) {
 		if _, err := canonicalJSON(value); err != nil {
 			return result, badRequest(err)
 		}
-		if err := json.Unmarshal(value, &result.ResponseID); err != nil {
-			return result, badRequest(errors.New("response_id must be a string"))
+		if err := json.Unmarshal(value, &result.AnswerID); err != nil {
+			return result, badRequest(errors.New("answer_id must be a string"))
 		}
 	}
 	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
@@ -364,8 +364,8 @@ func decodeAskAnswerRequest(r *http.Request) (askAnswerEnvelope, error) {
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return result, badRequest(errors.New("answer request contains trailing data"))
 	}
-	if !seen["answer"] || !seen["response_id"] || result.ResponseID == "" {
-		return result, badRequest(errors.New("answer and response_id are required"))
+	if !seen["answer"] || !seen["answer_id"] || result.AnswerID == "" {
+		return result, badRequest(errors.New("answer and answer_id are required"))
 	}
 	return result, nil
 }

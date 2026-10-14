@@ -8,7 +8,7 @@ while IFS= read -r tsconfig; do
   # Standalone integration examples own local SDK preparation and external
   # dependencies in their own projects; they are not root workspace projects.
   case "$tsconfig" in
-    "$ROOT_DIR/examples/issue-fixer/"*|"$ROOT_DIR/examples/opencode-assistant/"*) continue ;;
+    "$ROOT_DIR/examples/issue-fixer/"*|"$ROOT_DIR/examples/opencode-assistant/"*|"$ROOT_DIR/examples/pi-assistant/"*) continue ;;
   esac
   tsconfigs+=("$tsconfig")
 done < <(find "$ROOT_DIR/examples" -mindepth 2 -maxdepth 4 -name tsconfig.json | sort)

@@ -67,14 +67,14 @@ func TestSlackRequestScanReservationCanRecoverAfterCrash(t *testing.T) {
 func TestSlackRequestWorkerRoutesControlAndRejectsInvalidStoredPayload(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	stop := f.controlReceipt(t, f.control("stop"), nil)
+	stop := f.nativeStop(t, "native-stop")
 	invalid := f.reply(t, "invalid", false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET payload=convert_to('{"unexpected":true}','UTF8') WHERE id=$1`, invalid)
 	if count, err := ReconcileRequests(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 2 {
 		t.Fatalf("batch: %d %v", count, err)
 	}
 	var correct bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='accepted' AND operation='stop' FROM slack_requests WHERE id=$1) AND (SELECT status='rejected' AND error='gesture_invalid' FROM slack_requests WHERE id=$2)`, stop, invalid).Scan(&correct); err != nil || !correct {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='accepted' AND operation='native_stop' FROM slack_requests WHERE id=$1) AND (SELECT status='rejected' AND error='gesture_invalid' FROM slack_requests WHERE id=$2)`, stop, invalid).Scan(&correct); err != nil || !correct {
 		t.Fatalf("wrong dispatch: %v %v", correct, err)
 	}
 }

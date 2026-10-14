@@ -97,16 +97,16 @@ func (s *Server) workerAgentWaitAsk(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	value := json.RawMessage(`null`)
-	if view.Status == "responded" {
+	if view.Status == "answered" {
 		if view.PayloadExpiredAt != nil {
 			writeJSON(w, http.StatusOK, agentOperationFailure(req.RequestID, "payload_expired", "Ask payload has expired"))
 			return
 		}
-		kind, responder := "user", view.RespondedByUserID
+		kind, responder := "user", view.AnsweredByUserID
 		if responder == nil {
-			kind, responder = "api_key", view.RespondedByAPIKeyID
+			kind, responder = "api_key", view.AnsweredByAPIKeyID
 		}
-		value, _ = json.Marshal(map[string]any{"answer": view.Answer, "respondedBy": map[string]string{"kind": kind, "id": responder.String()}})
+		value, _ = json.Marshal(map[string]any{"answer": view.Answer, "answeredBy": map[string]string{"kind": kind, "id": responder.String()}})
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: req.RequestID, Value: value})
 }

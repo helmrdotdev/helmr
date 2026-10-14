@@ -1,7 +1,7 @@
 import { validateSecretName } from "./secret"
 import { retentionFromMilliseconds } from "./duration"
 import type { SecretBinding } from "./agent"
-import type { Duration, CursorPage } from "./contract"
+import type { Duration, Retention, CursorPage } from "./contract"
 import type { RequestOptions } from "./request"
 import { canonicalSecretOrigin } from "./internal/origin"
 import { validateDefinitionId } from "./schema/definition"
@@ -16,28 +16,32 @@ export type ComputerStatus =
   | "deleting"
 
 export interface ComputerCreateRequest {
-  readonly deleteAfterUnused?: Duration
+  readonly deleteAfterUnused?: Retention
   readonly template: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
   readonly idempotencyKey?: string
 }
 
-export interface Computer {
-  readonly deleteAfterUnused: Duration
+interface ComputerProperties {
+  readonly deleteAfterUnused: Retention
   readonly unusedSince: string | null
-  readonly error?: Readonly<{ code: string; message: string }>
   readonly id: string
   readonly key?: string
   readonly template: string
   readonly deploymentId: string
   readonly status: ComputerStatus
-  readonly residency: ComputerResidency
   readonly secrets: readonly SecretBinding[]
   readonly lastActivityAt: string
   readonly createdAt: string
   readonly updatedAt: string
 }
+
+type ComputerError = Readonly<{ code: string; message: string }>
+export type Computer = ComputerProperties & (
+  | Readonly<{ residency: "unavailable"; error: ComputerError }>
+  | Readonly<{ residency: Exclude<ComputerResidency, "unavailable">; error?: ComputerError }>
+)
 
 export interface ComputerCommandRequest {
   readonly command: readonly string[]
@@ -57,6 +61,8 @@ export interface ComputerDeleteReceipt {
 }
 
 export interface ComputerRef {
+  update(request: Readonly<{ deleteAfterUnused: Retention }>, options?: RequestOptions): Promise<Computer>
+  exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<import("./command").CommandRef>
   readonly id: string
   get(options?: RequestOptions): Promise<Computer>
   readonly sessions: ComputerUsageCollection
@@ -203,7 +209,7 @@ export function parseComputer(value: unknown): Computer {
     lastActivityAt: computerTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: computerTimestamp(input["created_at"], "created_at"),
     updatedAt: computerTimestamp(input["updated_at"], "updated_at"),
-  })
+  } as Computer)
 }
 
 function parseComputerSecret(value: unknown): SecretBinding {

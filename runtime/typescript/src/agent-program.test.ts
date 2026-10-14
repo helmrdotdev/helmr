@@ -19,7 +19,7 @@ function queue<T>() {
 }
 const identity = create(agentProto.SessionIdentitySchema, { sessionId: "session", processEpoch: 3n })
 const json = (value: unknown) => Buffer.from(JSON.stringify(value))
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "init">, handle?: (operation: agentProto.Operation) => Promise<Json>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
+function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, Json, unknown>, "init">>, handle?: (operation: agentProto.Operation) => Promise<Json>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
   const input = queue<Uint8Array>()
   const ready = deferred<void>(), failed = deferred<agentProto.SessionFailed>()
   const receipts = new Map<string, ReturnType<typeof deferred<agentProto.DeliveryResult>>>()
@@ -36,7 +36,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     if (handle) return handle(operation)
     const value = JSON.parse(Buffer.from(operation.payloadJson).toString())
     if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: value.result }
-    if (operation.method === agentProto.Operation_Method.FAIL) return { status: value.error.code === "interrupted" ? "interrupted" : "failed", error: value.error }
+    if (operation.method === agentProto.Operation_Method.FAIL) return value.error.code === "interrupted" ? { status: "interrupted" } : { status: "failed", error: value.error }
     return null
   }
   const running = runAgentProgram({ kind: "agent", id: "agent", template: undefined!, ...definition }, {
@@ -69,7 +69,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     send(value, id, currentControl)
     return receipt.promise
   }
-  const dispatch = (turn: number) => command({ case: "dispatch", value: create(agentProto.TurnDispatchSchema, { turnId: `turn-${turn}`, sequence: BigInt(turn), createdAt: "2026-10-04T00:00:00Z", inputJson: json([{ type: "text", text: String(turn) }]), sourceJson: json({ kind: "api" }) }) })
+  const dispatch = (turn: number) => command({ case: "dispatch", value: create(agentProto.TurnDispatchSchema, { turnId: `turn-${turn}`, sequence: BigInt(turn), createdAt: "2026-10-04T00:00:00Z", inputJson: json([{ type: "text", text: String(turn) }]), sourceJson: json({ kind: "api_key" as const }) }) })
   const shutdown = async () => { await command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "shutdown" }) }); input.end(); await running }
   const checkpoint = (checkpointId: string) => {
     const result = deferred<agentProto.SessionCheckpointReady>()

@@ -149,7 +149,7 @@ test("ask pending observations poll without occupying withdrawal transport", asy
     }
   }
   const driver = new GuestSessionDriver(new AskChannel(identity, async () => assert.fail("unexpected frame")))
-  const asks = await Promise.all(Array.from({ length: 65 }, (_, index) => driver.ask("turn", `ask-${index}`, { prompt: [], answer: { type: "text" } }, new AbortController().signal)))
+  const asks = await Promise.all(Array.from({ length: 65 }, (_, index) => driver.ask("turn", `ask-${index}`, { prompt: [],  type: "text" }, new AbortController().signal)))
   await tick()
   assert.equal(observations, 65)
   await Promise.all(asks.map(ask => ask.withdraw()))
@@ -167,11 +167,11 @@ test("ask observation resolves exact empty text answer and authenticated identit
     override async operation(method: agentProto.Operation_Method) {
       if (method === agentProto.Operation_Method.ASK) return { id: "ask" }
       assert.equal(method, agentProto.Operation_Method.WAIT_ASK)
-      return ++observations === 1 ? null : { answer: "", respondedBy: { kind: "api_key", id: "key" } }
+      return ++observations === 1 ? null : { answer: "", answeredBy: { kind: "api_key", id: "key" } }
     }
   }
   const driver = new GuestSessionDriver(new AnswerChannel(identity, async () => assert.fail("unexpected frame")))
-  const ask = await driver.ask("turn", "create", { prompt: [], answer: { type: "text" } }, new AbortController().signal)
-  assert.deepEqual(await ask.answer, { answer: "", respondedBy: { kind: "api_key", id: "key" } })
+  const ask = await driver.ask("turn", "create", { prompt: [],  type: "text" }, new AbortController().signal)
+  assert.deepEqual(await ask.answer, { answer: "", answeredBy: { kind: "api_key", id: "key" } })
   assert.equal(observations, 2)
 })

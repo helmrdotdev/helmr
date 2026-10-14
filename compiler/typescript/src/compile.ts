@@ -1,6 +1,8 @@
-import type { InputContent } from "@helmr/sdk"
-import { durationMilliseconds, normalizeInput, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
-import type { AgentDefinition, TemplateDefinition, SecretBinding, Json } from "@helmr/sdk"
+import type { LoadedAgentDefinition } from "@helmr/sdk/internal"
+import { describeInput } from "./input-schema"
+import type { InputSchemaDiscovery } from "../../../sdk/typescript/src/schema/input"
+import { durationMilliseconds, normalizeInput, normalizeInvocation, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import type { TemplateDefinition, SecretBinding, Json } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
@@ -18,6 +20,8 @@ export interface TemplateManifest {
 export interface AgentManifest {
   readonly templateDefinitionId: string
   readonly hasInit: boolean
+  readonly inputKind: "text" | "json"
+  readonly inputSchema?: InputSchemaDiscovery
   readonly closeAfterIdleMs?: number
   readonly closeAfterIdleNever?: boolean
   readonly maxTurnDurationMs?: number
@@ -86,7 +90,7 @@ export interface AnalysisResult {
   readonly definitionIndex: DefinitionIndex
   readonly definitionIndexBytes: Uint8Array
 }
-type Definition = AgentDefinition<InputContent, Json, unknown> | TemplateDefinition
+type Definition = LoadedAgentDefinition | TemplateDefinition
 interface LocatedDefinition { readonly definition: Definition; readonly modulePath: string; readonly exportName: string; readonly throughAgent: boolean }
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
@@ -101,14 +105,16 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         validateID(key)
         if (Object.hasOwn(triggers, key)) throw new Error("Duplicate Agent trigger id")
         if (!trigger || typeof trigger.cron !== "string" || !trigger.cron.trim() || (typeof trigger.timezone !== "string" || !trigger.timezone.trim())) throw new Error("Agent trigger requires cron and timezone")
-        normalizeInput(trigger.input)
+        definition.inputSchema ? normalizeInvocation(trigger.input) : normalizeInput(trigger.input)
         if (trigger.slack !== undefined) {
+          if (definition.inputSchema) throw new Error("Structured-input agents cannot have a Slack cron destination")
           assertMembers(trigger.slack, ["channelId"], "Cron Slack destination")
           if (typeof trigger.slack.channelId !== "string" || !/^[CG][A-Z0-9]{1,99}$/.test(trigger.slack.channelId)) throw new Error("Cron Slack channelId must be a Slack channel ID")
         }
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
       return { kind: "agent", declaredId: definition.id, manifest: {
+        ...describeInput(definition.inputSchema, definition.id),
         templateDefinitionId: definition.template.id, hasInit: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
@@ -127,7 +133,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     } }
   })
   const buildPlan: BuildPlan = { formatVersion: BUILD_PLAN_FORMAT_VERSION, definitions }
-  const agents = located.filter(item => item.definition.kind === "agent").map(item => ({ id: item.definition.id, templateDefinitionId: (item.definition as AgentDefinition).template.id, modulePath: item.modulePath, exportName: item.exportName }))
+  const agents = located.filter(item => item.definition.kind === "agent").map(item => ({ id: item.definition.id, templateDefinitionId: (item.definition as LoadedAgentDefinition).template.id, modulePath: item.modulePath, exportName: item.exportName }))
   const templates = located.filter(item => item.definition.kind === "template").map(item => ({ id: item.definition.id, modulePath: item.modulePath, exportName: item.exportName, throughAgent: item.throughAgent }))
   const definitionIndex: DefinitionIndex = { apiVersion: "helmr.definition-index.v1", agents, templates }
   return { buildPlan, buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue), definitionIndex, definitionIndexBytes: canonicalizeJsonValue(definitionIndex as unknown as JsonValue) }
@@ -147,7 +153,7 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
     const value = item.value as Partial<Definition> | undefined
     if (!value || (value.kind !== "agent" && value.kind !== "template")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "template", "init", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
       if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.template?.kind !== "template") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
       add(value.template, item, true)

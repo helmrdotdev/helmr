@@ -609,6 +609,9 @@ CREATE TABLE agent_definitions (
     deployment_id uuid NOT NULL,
     template_id uuid NOT NULL,
     has_init boolean NOT NULL,
+    input_kind text NOT NULL DEFAULT 'text' CHECK (input_kind IN ('text','json')),
+    input_schema jsonb,
+    CHECK ((input_kind='text' AND input_schema IS NULL) OR (input_kind='json' AND input_schema IS NOT NULL AND jsonb_typeof(input_schema)='object')),
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
@@ -1718,25 +1721,25 @@ CREATE TABLE turn_asks (
     created_event_seq bigint NOT NULL,
     question_digest bytea NOT NULL CHECK (octet_length(question_digest)=32),
     question bytea,
-    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'responded', 'cancelled')),
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'cancelled')),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    responded_at timestamptz,
+    answered_at timestamptz,
     cancelled_at timestamptz,
-    response_id text CHECK (octet_length(response_id) BETWEEN 1 AND 512),
+    answer_id text CHECK (octet_length(answer_id) BETWEEN 1 AND 512),
     answer_digest bytea CHECK (octet_length(answer_digest)=32),
     answer bytea,
-    responded_by_user_id uuid REFERENCES users(id),
-    responded_by_api_key_id uuid REFERENCES api_keys(id),
+    answered_by_user_id uuid REFERENCES users(id),
+    answered_by_api_key_id uuid REFERENCES api_keys(id),
     payload_expired_at timestamptz,
     PRIMARY KEY (environment_id, session_id, turn_id, id),
     UNIQUE (environment_id, session_id, created_event_seq),
     FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch),
     FOREIGN KEY (environment_id, session_id, created_event_seq) REFERENCES session_events(environment_id, session_id, seq),
-    CHECK ((status='responded')=(responded_at IS NOT NULL)),
+    CHECK ((status='answered')=(answered_at IS NOT NULL)),
     CHECK ((status='cancelled')=(cancelled_at IS NOT NULL)),
-    CHECK ((status='responded' AND response_id IS NOT NULL AND answer_digest IS NOT NULL AND num_nonnulls(responded_by_user_id, responded_by_api_key_id)=1)
-        OR (status<>'responded' AND response_id IS NULL AND answer_digest IS NULL AND responded_by_user_id IS NULL AND responded_by_api_key_id IS NULL)),
-    CHECK ((payload_expired_at IS NULL AND question IS NOT NULL AND ((status='responded')=(answer IS NOT NULL)))
+    CHECK ((status='answered' AND answer_id IS NOT NULL AND answer_digest IS NOT NULL AND num_nonnulls(answered_by_user_id, answered_by_api_key_id)=1)
+        OR (status<>'answered' AND answer_id IS NULL AND answer_digest IS NULL AND answered_by_user_id IS NULL AND answered_by_api_key_id IS NULL)),
+    CHECK ((payload_expired_at IS NULL AND question IS NOT NULL AND ((status='answered')=(answer IS NOT NULL)))
         OR (payload_expired_at IS NOT NULL AND status<>'pending' AND question IS NULL AND answer IS NULL)),
     UNIQUE (environment_id, id)
 );
@@ -1904,6 +1907,7 @@ CREATE TABLE slack_thread_sources (
     environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     projected_event_seq bigint NOT NULL DEFAULT 0 CHECK (projected_event_seq>=0),
+    projected_control_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (thread_id, id),
     UNIQUE (thread_id, environment_id, id),
@@ -1926,8 +1930,10 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'stop')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop')),
     message_id uuid,
+    observed_authority_generation bigint,
+    observed_next_turn_seq bigint,
     payload bytea,
     payload_expired_at timestamptz,
     status text NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'accepted', 'rejected')),
@@ -1938,6 +1944,8 @@ CREATE TABLE slack_requests (
     control_id uuid,
     finished_at timestamptz,
     error text,
+    CHECK ((observed_authority_generation IS NULL)=(observed_next_turn_seq IS NULL)),
+    CHECK (observed_authority_generation IS NULL OR (environment_id IS NOT NULL AND observed_authority_generation>0 AND observed_next_turn_seq>0)),
     UNIQUE (installation_id, request_key),
     UNIQUE (environment_id, session_id, id),
     FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id),
@@ -1954,7 +1962,7 @@ CREATE TABLE slack_requests (
     CHECK ((status='accepted' AND ((operation IN ('start', 'enqueue') AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
-        OR (operation='stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
+        OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -1976,7 +1984,7 @@ CREATE TABLE slack_posts (
     seq bigint NOT NULL CHECK (seq>0),
     post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
-    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'activity', 'opening')),
+    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening')),
     turn_id uuid,
     ask_id uuid,
     request_id uuid,
@@ -2055,6 +2063,20 @@ CREATE INDEX slack_posts_turn_delivery ON slack_posts(environment_id, session_id
 CREATE INDEX slack_posts_remote_message ON slack_posts(message_ts, thread_source_id) WHERE message_ts IS NOT NULL;
 
 CREATE UNIQUE INDEX slack_posts_one_opening ON slack_posts(environment_id, turn_id) WHERE role='opening';
+
+-- A child's first work-message owner is immutable. Omitted child rows remain
+-- represented by their group count; later groups do not promote them.
+CREATE TABLE slack_work_items (
+    thread_id uuid NOT NULL REFERENCES slack_threads(id),
+    environment_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    turn_id uuid NOT NULL,
+    post_id uuid NOT NULL REFERENCES slack_posts(id),
+    omitted boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (thread_id,turn_id),
+    FOREIGN KEY (environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id)
+);
+CREATE INDEX slack_work_items_post ON slack_work_items(post_id);
 
 ALTER TABLE sessions ADD FOREIGN KEY (environment_id, id, creation_turn_id) REFERENCES turns(environment_id, session_id, id) DEFERRABLE INITIALLY DEFERRED;
 

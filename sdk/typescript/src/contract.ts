@@ -1,5 +1,5 @@
-import type { Duration } from "./duration"
-import type { AnswerControl } from "./question"
+import type { Duration, Retention } from "./duration"
+import type { NormalizedQuestion, AnswerSubmission } from "./question"
 import type { Content, InputContent } from "./content"
 import type { RequestOptions } from "./request"
 
@@ -16,7 +16,7 @@ export interface CursorPage<T> {
   readonly nextCursor?: string
 }
 
-export type { Duration } from "./duration"
+export type { Duration, Retention } from "./duration"
 
 export interface HelmrError extends Error {
   readonly code: string
@@ -52,7 +52,7 @@ export interface Session {
   readonly agent: string
   readonly template: string
   readonly activity: SessionActivity
-  readonly closeAfterIdle: Duration
+  readonly closeAfterIdle: Retention
   readonly idleSince: string | null
   readonly id: string
   readonly deploymentId: string
@@ -68,21 +68,19 @@ export interface Session {
   readonly holds: readonly SessionHold[]
 }
 export type TurnStatus = "queued" | "running" | "finalizing" | "completed" | "failed" | "interrupted" | "cancelled"
-export interface TurnState {
-  readonly stop?: ProcessStop
-  readonly payloadExpiredAt?: string
-  readonly response?: Content
-  readonly error?: Readonly<{ code: string; message?: string }>
-  readonly id: string
-  readonly sessionId: string
-  readonly sequence: number
-  readonly input?: InputContent
-  readonly status: TurnStatus
-  readonly startedAt?: string
-  readonly terminalAt?: string
-  readonly completionSaveId?: string
-  readonly result?: JsonValue
-}
+type TurnIdentity = Readonly<{
+  id: string; sessionId: string; sequence: number; stop?: ProcessStop; startedAt?: string
+}>
+type RetainedTurn = Readonly<{ input: JsonValue; payloadExpiredAt?: never }>
+type ExpiredTurn = Readonly<{ input?: never; payloadExpiredAt: string; result?: never; response?: never }>
+export type TurnState<O = JsonValue> = TurnIdentity & (
+  | (RetainedTurn & Readonly<{ status: "queued" | "running" | "finalizing"; terminalAt?: never; completionSaveId?: never; result?: never; response?: never; error?: never }>)
+  | (Readonly<{ terminalAt: string }> & (
+    | (Readonly<{ status: "completed"; completionSaveId: string; error?: never }> & ((RetainedTurn & Readonly<{ result: O; response?: Content }>) | ExpiredTurn))
+    | (Readonly<{ status: "failed"; completionSaveId?: never; result?: never; response?: never }> & ((RetainedTurn & Readonly<{ error?: Readonly<{ code: string; message: string }> }>) | (ExpiredTurn & Readonly<{ error?: Readonly<{ code: string; message?: never }> }>)))
+    | (Readonly<{ status: "interrupted" | "cancelled"; completionSaveId?: never; result?: never; response?: never; error?: never }> & (RetainedTurn | ExpiredTurn))
+  ))
+)
 export interface TurnListQuery {
   readonly cursor?: string
   readonly limit?: number
@@ -124,41 +122,47 @@ export interface MessageReceipt {
   readonly status: "accepted"
 }
 
-export type SessionEventKind =
-  | "message.admitted"
-  | "message.started"
-  | "message.delivered"
-  | "message.rejected"
-  | "slack.delivery_unavailable"
-  | "ask.created"
-  | "ask.responded"
-  | "ask.cancelled"
-  | "turn.output"
-  | "turn.queued"
-  | "turn.running"
-  | "turn.finalizing"
-  | "turn.completed"
-  | "turn.failed"
-  | "turn.interrupt"
-  | "turn.interrupted"
-  | "turn.cancelled"
-  | "session.cancelled"
-  | "session.closed"
-  | "session.process_stopped"
-  | "session.process_failed"
-  | "session.deadline"
-  | "session.interrupt"
-  | "session.resume"
-  | "session.close"
-  | "session.cancel"
-export interface SessionEvent {
-  readonly sessionId: string
-  readonly turnId: string | null
-  readonly sequence: number
-  readonly createdAt: string
-  readonly kind: SessionEventKind
-  readonly data: JsonValue
+type EmptyEventData = Readonly<Record<string, never>>
+type ControlEventData = Readonly<{ controlId: string; holdId?: string }>
+type MessageEventData<S extends string, D extends string = S> = Readonly<{ message_id: string; status: S; delivery: D; reason?: string }>
+interface SessionEventData {
+  "message.admitted": MessageEventData<"admitted">
+  "message.started": MessageEventData<"started">
+  "message.delivered": MessageEventData<"delivered">
+  "message.rejected": MessageEventData<"rejected", "not_delivered" | "uncertain">
+  "slack.delivery_unavailable": Readonly<{ reason: "route_unavailable"; source_seq: number }>
+  "ask.created": Readonly<{ ask_id: string; question: NormalizedQuestion }>
+  "ask.answered": Readonly<{ ask_id: string; answer: JsonValue }> & (
+    | Readonly<{ answered_by_user_id: string; answered_by_api_key_id?: never }>
+    | Readonly<{ answered_by_user_id?: never; answered_by_api_key_id: string }>
+  )
+  "ask.cancelled": Readonly<{ ask_id: string }>
+  "turn.output": Content
+  "turn.queued": EmptyEventData
+  "turn.running": EmptyEventData
+  "turn.finalizing": EmptyEventData
+  "turn.completed": EmptyEventData
+  "turn.failed": Readonly<{ code?: string }>
+  "turn.interrupt": ControlEventData
+  "turn.interrupted": EmptyEventData
+  "turn.cancelled": EmptyEventData
+  "session.cancelled": EmptyEventData
+  "session.closed": EmptyEventData
+  "session.process_stopped": EmptyEventData
+  "session.process_failed": Readonly<{ holdId: string; processEpoch: number }>
+  "session.deadline": Readonly<{ holdId: string }>
+  "session.interrupt": ControlEventData
+  "session.resume": ControlEventData
+  "session.close": ControlEventData | Readonly<{ reason: "close_after_idle" }>
+  "session.cancel": ControlEventData
 }
+export type SessionEventKind = keyof SessionEventData
+export type SessionEvent = Readonly<{
+  sessionId: string
+  turnId: string | null
+  sequence: number
+  createdAt: string
+}> & { [K in SessionEventKind]: Readonly<{ kind: K; data: SessionEventData[K] }> }[SessionEventKind]
 export interface SessionEventQuery {
   readonly after?: number
   readonly limit?: number
@@ -170,42 +174,45 @@ export interface SessionEventPage {
   readonly retainedAfter: number
 }
 
-export interface AskState {
-  readonly id: string
-  readonly sessionId: string
-  readonly turnId: string
-  readonly status: "pending" | "responded" | "cancelled"
-  readonly prompt?: Content
-  readonly answerControl?: AnswerControl
-  readonly answer?: JsonValue
-  readonly payloadExpired?: true
-  readonly createdAt: string
-  readonly respondedAt?: string
-  readonly cancelledAt?: string
-  readonly respondedByUserId?: string
-  readonly respondedByApiKeyId?: string
-}
-export type AskResponseReceipt = Omit<AskState, "prompt" | "answerControl">
+type AskIdentity = Readonly<{ id: string; sessionId: string; turnId: string; createdAt: string }>
+type AnsweredAttribution = Readonly<{ answeredAt: string }> & (
+  | Readonly<{ answeredByUserId: string; answeredByApiKeyId?: never }>
+  | Readonly<{ answeredByUserId?: never; answeredByApiKeyId: string }>
+)
+type RetainedQuestion = Readonly<{ question: NormalizedQuestion; payloadExpired?: never }>
+type ExpiredQuestion = Readonly<{ question?: never; answer?: never; payloadExpired: true }>
+export type AskState = AskIdentity & (
+  | (Readonly<{ status: "pending"; answer?: never; answeredAt?: never; cancelledAt?: never; answeredByUserId?: never; answeredByApiKeyId?: never }> & RetainedQuestion)
+  | (Readonly<{ status: "answered"; cancelledAt?: never }> & AnsweredAttribution & ((RetainedQuestion & Readonly<{ answer: JsonValue }>) | ExpiredQuestion))
+  | (Readonly<{ status: "cancelled"; cancelledAt: string; answer?: never; answeredAt?: never; answeredByUserId?: never; answeredByApiKeyId?: never }> & (RetainedQuestion | ExpiredQuestion))
+)
+export type AskAnswerReceipt = AskIdentity & Readonly<{ status: "answered" }> & AnsweredAttribution & (
+  | Readonly<{ answer: JsonValue; payloadExpired?: never }>
+  | Readonly<{ answer?: never; payloadExpired: true }>
+)
 export interface AskQuery { readonly cursor?: string; readonly limit?: number }
 export type AskPage = CursorPage<AskState>
 export interface TurnAsks {
   list(query?: AskQuery, options?: RequestOptions): Promise<AskPage>
   get(askId: string, options?: RequestOptions): Promise<AskState>
-  respond(askId: string, request: { readonly answer: JsonValue; readonly responseId: string }, options?: RequestOptions): Promise<AskResponseReceipt>
+  answer(askId: string, request: { readonly answer: AnswerSubmission; readonly answerId: string }, options?: RequestOptions): Promise<AskAnswerReceipt>
 }
 
-export interface TurnOutcome<O extends JsonValue = JsonValue> {
-  readonly status: "completed" | "failed" | "interrupted" | "cancelled"
-  readonly result?: O
-  readonly response?: Content
-  readonly payloadExpiredAt?: string
-  readonly error?: Readonly<{ code: string; message?: string }>
-}
+export type TurnOutcome<O = JsonValue> =
+  | (Readonly<{ status: "completed"; error?: never }> & (
+    | Readonly<{ result: O; response?: Content; payloadExpiredAt?: never }>
+    | Readonly<{ result?: never; response?: never; payloadExpiredAt: string }>
+  ))
+  | (Readonly<{ status: "failed"; result?: never; response?: never }> & (
+    | Readonly<{ error?: Readonly<{ code: string; message: string }>; payloadExpiredAt?: never }>
+    | Readonly<{ error?: Readonly<{ code: string; message?: never }>; payloadExpiredAt: string }>
+  ))
+  | Readonly<{ status: "interrupted" | "cancelled"; result?: never; response?: never; error?: never; payloadExpiredAt?: string }>
 export interface TurnWaitOptions {
-  readonly timeout?: string | number
+  readonly timeout?: Duration
   readonly signal?: AbortSignal
 }
-export type TimedTurnWaitResult<O extends JsonValue = JsonValue> =
+export type TimedTurnWaitResult<O = JsonValue> =
   | Readonly<{ status: "timeout" }>
   | Readonly<{ status: "settled"; outcome: TurnOutcome<O> }>
 
@@ -215,29 +222,33 @@ export interface TurnInterruptReceipt {
   readonly turnId: string
   readonly status: "accepted"
 }
-export interface TurnRef {
+export interface TurnRef<O = JsonValue> {
   interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<TurnInterruptReceipt>
-  wait(options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
-  wait(options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
-  wait(options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
+  wait(options: TurnWaitOptions & { readonly timeout: import("./duration").Duration }): Promise<TimedTurnWaitResult<O>>
+  wait(options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome<O>>
+  wait(options: TurnWaitOptions): Promise<TurnOutcome<O> | TimedTurnWaitResult<O>>
   readonly asks: TurnAsks
   readonly id: string
   readonly sessionId: string
   send(
-    data: InputContent,
+    content: InputContent,
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<MessageReceipt>
-  get(options?: RequestOptions): Promise<TurnState>
+  get(options?: RequestOptions): Promise<TurnState<O>>
 }
-export interface SessionRef {
+export interface SessionRef<I = JsonValue, O = JsonValue> {
   readonly id: string
   enqueue(
-    input: InputContent,
+    input: I,
     request?: SessionOperationOptions,
     options?: RequestOptions,
-  ): Promise<TurnRef>
-  readonly turns: Readonly<{ ref(id: string): TurnRef }>
+  ): Promise<TurnRef<O>>
+  interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<SessionInterruptReceipt>
+  readonly turns: Readonly<{
+    ref(id: string): TurnRef<O>
+    list(query?: TurnListQuery, options?: RequestOptions): Promise<CursorPage<TurnState<O>>>
+  }>
   readonly events: Readonly<{
     list(
       query?: SessionEventQuery,

@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { readFile, writeFile, rename } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { HelmrClient } from "../../../sdk/typescript/src/client"
-import type { ClientSessionRef } from "../../../sdk/typescript/src/client-session"
+import type { SessionRef } from "../../../sdk/typescript/src/client-session"
 import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/src/contract"
 
 // PostgreSQL observations are written by the surrounding qualification process.
@@ -14,11 +14,11 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
  const signal = AbortSignal.timeout(options.timeoutMs)
  const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
- const sessions: ClientSessionRef[] = []
+ const sessions: SessionRef[] = []
  const turns: TurnState[] = []
  const retainedTurns = new Map<string, TurnRef>()
  const nativeSessions: Record<string, string> = {}
- const native: Record<string, { session: ClientSessionRef; previous: Record<string, unknown> }> = {}
+ const native: Record<string, { session: SessionRef; previous: Record<string, unknown> }> = {}
  const continuations: Record<string, unknown>[] = []
  const nativeStops: Record<string, unknown>[] = []
  const clientTimings = new Map<string, { provider: string; phase: string; sessionId: string; turnId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number; runningObservedMS?: number; firstOutputObservedMS?: number; firstOutputSequence?: number; settlementObservedMS?: number }>()
@@ -27,7 +27,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  function admitted(provider: string, phase: string, turn: TurnRef, started: number, at: string) {
   if (options.performanceKind) clientTimings.set(turn.id, { provider, phase, sessionId: turn.sessionId, turnId: turn.id, requestStartedAt: at, requestStartedMS: started, ackMS: performance.now() - started })
  }
- async function observeEvents(session: ClientSessionRef) {
+ async function observeEvents(session: SessionRef) {
   if (!options.performanceKind) return
   for (;;) {
    const page = await session.events.list({ after: eventCursors.get(session.id) ?? 0, limit: 100 }, { signal })
@@ -157,7 +157,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       assert.equal(value["toolName"], "mcp__helmr__enqueue")
       assert.deepEqual(value["input"], { sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}` })
      }
-     await turn.asks.respond(ask.id, { answer: { selected: [{ id: "allow", value: true }] }, responseId: `healthy-${ask.id}` }, { signal })
+     await turn.asks.answer(ask.id, { answer: { selected: [{ id: "allow", value: true }] }, responseId: `healthy-${ask.id}` }, { signal })
      answered.add(ask.id)
     }
     cursor = page.nextCursor

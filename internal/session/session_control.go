@@ -29,6 +29,16 @@ type SessionControlRequest struct {
 	IdempotencyKey string
 	HoldID         uuid.UUID
 	Reason         string
+	// Observed binds delayed control delivery to the execution generation it saw.
+	Observed *ControlObservation
+	// InterruptQueued discards instructions admitted before this interrupt.
+	// Native Slack Stop uses it; ordinary holds retain their existing queue.
+	InterruptQueued bool
+}
+
+type ControlObservation struct {
+	AuthorityGeneration int64
+	NextTurnSequence    int64
 }
 
 type SessionControlReceipt struct {
@@ -46,13 +56,16 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
 		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
 		(req.Kind == "resume") != (req.HoldID != uuid.Nil()) ||
-		(req.Kind != "interrupt" && req.Reason != "") {
+		(req.Kind != "interrupt" && (req.Reason != "" || req.InterruptQueued || req.Observed != nil)) ||
+		(req.Observed != nil && (req.Observed.AuthorityGeneration < 1 || req.Observed.NextTurnSequence < 1)) {
 		return result, ErrInvalidInput
 	}
 	payload, _ := json.Marshal(struct {
-		HoldID uuid.UUID
-		Reason string
-	}{req.HoldID, req.Reason})
+		HoldID          uuid.UUID
+		Reason          string
+		Observed        *ControlObservation
+		InterruptQueued bool
+	}{req.HoldID, req.Reason, req.Observed, req.InterruptQueued})
 	digest, err := digestJSON(payload)
 	if err != nil {
 		return result, err
@@ -123,6 +136,15 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		}
+		if req.Observed != nil {
+			var matches bool
+			if err = tx.QueryRow(ctx, `SELECT authority_generation=$3 AND next_turn_seq=$4 FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.SessionID, req.Observed.AuthorityGeneration, req.Observed.NextTurnSequence).Scan(&matches); err != nil {
+				return err
+			}
+			if !matches {
+				return ErrNotReady
+			}
+		}
 		result = SessionControlReceipt{ID: uuid.NewV7(), SessionID: req.SessionID, HoldID: req.HoldID}
 		switch req.Kind {
 		case "turn_interrupt":
@@ -152,7 +174,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
  VALUES($1,$2,$3,'subtree',$4,$5,$6)`, req.EnvironmentID, result.HoldID, req.SessionID, req.Reason, caller.Kind, caller.ID); err != nil {
 				return err
 			}
-			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, false); err != nil {
+			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, false, req.InterruptQueued); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE session_processes SET stop_sequence=stop_sequence+1,stop_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond',control_acknowledged_at=NULL WHERE environment_id=$1 AND session_id=ANY($2) AND status='starting' AND fenced_at IS NULL AND stop_deadline_at IS NULL`, req.EnvironmentID, ids, processStopTimeout.Milliseconds()); err != nil {
@@ -184,7 +206,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				}
 			}
 		case "cancel":
-			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, true); err != nil {
+			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, true, false); err != nil {
 				return err
 			}
 			changed, err := tx.Query(ctx, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=ANY($2) AND status NOT IN ('closed','cancelled') RETURNING id`, req.EnvironmentID, ids)
@@ -372,14 +394,14 @@ func advanceControlAuthority(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids 
 
 // Turn-bound saves remain ordered Computer cuts owned by save reconciliation,
 // even after their Turn is interrupted. Never infer capture absence here.
-func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, cancel bool) error {
+func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, cancel, interruptQueued bool) error {
 	status := "interrupted"
 	if cancel {
 		status = "cancelled"
 	}
 	rows, err := tx.Query(ctx, `UPDATE turns SET status=$3,terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
- WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued','finalizing')))
- RETURNING id,session_id,process_epoch`, env, ids, status, cancel)
+ WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued','finalizing')) OR ($5 AND status='queued'))
+ RETURNING id,session_id,process_epoch`, env, ids, status, cancel, interruptQueued)
 	if err != nil {
 		return err
 	}

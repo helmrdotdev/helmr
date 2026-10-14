@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { HelmrClient, type SessionCreateRequest, type ClientComputerRef, type ClientSessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
+import { HelmrClient, type SessionCreateRequest, type ComputerRef, type SessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
 export { deadline }
@@ -20,7 +20,7 @@ export function errorCode(error: unknown): string | undefined {
     ? error.code
     : undefined
 }
-export type ClientTurn = ReturnType<ClientSessionRef["turns"]["ref"]>
+export type ClientTurn = ReturnType<SessionRef["turns"]["ref"]>
 export const terminalTurnStatuses = ["completed", "failed", "interrupted", "cancelled"] as const
 export async function waitTurn(
   turn: ClientTurn,
@@ -65,7 +65,7 @@ export async function completedResult(turn: ClientTurn, timeoutMs = 20 * 60_000)
   return outcome.result!
 }
 export async function waitOutput(
-  session: ClientSessionRef,
+  session: SessionRef,
   turn: ClientTurn,
   match: (value: Json) => boolean,
   timeoutMs = 5 * 60_000,
@@ -91,7 +91,7 @@ export async function waitOutput(
     await delay(500, undefined, { signal })
   }
 }
-export async function deleteComputer(ref: ClientComputerRef, idempotencyKey: string) {
+export async function deleteComputer(ref: ComputerRef, idempotencyKey: string) {
   const signal = deadline(120_000)
   // Terminal outcomes can precede physical process reconciliation.
   // Retry only that conflict, preserving the delete request's identity.
@@ -124,7 +124,7 @@ export async function verify(
       string[]
     >
     cleanup: (action: () => Promise<unknown>) => void
-    computer: (definition: string, suffix?: string) => Promise<ClientComputerRef>
+    computer: (definition: string, suffix?: string) => Promise<ComputerRef>
     startAgent: (definition: string, request: Omit<SessionCreateRequest, "agent" | "input"> & { input: Json }) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
   }) => Promise<unknown>,
 ) {

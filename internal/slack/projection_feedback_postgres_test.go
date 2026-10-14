@@ -26,7 +26,7 @@ func TestSlackAdmissionKeepsReceiptsWithoutPublicAcceptancePosts(t *testing.T) {
 			case "new_root":
 				id = f.newMessage(t, "root", "")
 			case "stop":
-				id = f.controlReceipt(t, f.control("stop"), nil)
+				id = f.nativeStop(t, "native-stop")
 			case "answer":
 				c := f.control("answer")
 				c.Target.Turn, c.Target.Ask = f.pendingQuestion(t)

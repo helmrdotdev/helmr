@@ -31,14 +31,14 @@ type agentsInput struct {
 type createInput struct {
 	CloseAfterIdle json.RawMessage `json:"closeAfterIdleMs,omitempty" jsonschema:"Idle retention in positive integer milliseconds; null disables idle closure. Omit to inherit the Agent definition."`
 	AgentID        string          `json:"agent"`
-	Input          []textPart      `json:"input" jsonschema:"Ordered text parts delivered unchanged to the new Turn."`
+	Input          any             `json:"input" jsonschema:"Finite JSON matching the target agent input contract; use agents discovery for its pinned schema."`
 	ComputerID     string          `json:"computerId,omitempty"`
 	IdempotencyKey string          `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
 }
 type enqueueInput struct {
-	SessionID      string     `json:"sessionId"`
-	Input          []textPart `json:"input" jsonschema:"Ordered text parts delivered unchanged to the new Turn."`
-	IdempotencyKey string     `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
+	SessionID      string `json:"sessionId"`
+	Input          any    `json:"input" jsonschema:"Finite JSON matching this Session agent input contract."`
+	IdempotencyKey string `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
 }
 type messageInput struct {
 	SessionID      string     `json:"sessionId"`
@@ -112,7 +112,7 @@ func add[I any](server *mcp.Server, invoke Invoke, name, description string) {
 	if err != nil {
 		panic(err)
 	}
-	for _, field := range []string{"input", "message"} {
+	for _, field := range []string{"message"} {
 		if property := schema.Properties[field]; property != nil {
 			property.Type, property.Types = "array", nil
 			property.MaxItems = new(content.ContentParts)
@@ -172,7 +172,7 @@ func validate(input any) error {
 		if err != nil {
 			return err
 		}
-		if _, err := content.Input(raw); err != nil {
+		if _, err := content.Invocation(raw); err != nil {
 			return err
 		}
 		if value.AgentID == "" || value.IdempotencyKey == "" {
@@ -183,7 +183,7 @@ func validate(input any) error {
 		if err != nil {
 			return err
 		}
-		if _, err := content.Input(raw); err != nil {
+		if _, err := content.Invocation(raw); err != nil {
 			return err
 		}
 		if value.SessionID == "" || value.IdempotencyKey == "" {

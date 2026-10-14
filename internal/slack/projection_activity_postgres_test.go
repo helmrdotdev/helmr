@@ -1,12 +1,12 @@
 package slack
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -22,9 +22,16 @@ func activityHost(f statusFixture) workergroup.HostPrincipal {
 }
 func activityChild(t *testing.T, f statusFixture, running bool) (statusFixture, session.Admission) {
 	t.Helper()
+	return activityChildOrigin(t, f, running, true)
+}
+func activityChildOrigin(t *testing.T, f statusFixture, running, explicitOrigin bool) (statusFixture, session.Admission) {
+	t.Helper()
 	var parentTurn uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&parentTurn); err != nil {
 		t.Fatal(err)
+	}
+	if !explicitOrigin {
+		parentTurn = uuid.UUID{}
 	}
 	host := activityHost(f)
 	caller := session.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
@@ -78,7 +85,7 @@ func activitySnapshot(t *testing.T, f statusFixture) (uuid.UUID, activityBody, i
 	var id uuid.UUID
 	var raw []byte
 	var revision int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT id,payload,desired_revision FROM slack_posts WHERE thread_id=$1 AND role='activity' AND continuation_ordinal=0`, f.thread).Scan(&id, &raw, &revision); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id,payload,desired_revision FROM slack_posts WHERE thread_id=$1 AND role='intermediate' AND continuation_ordinal=0`, f.thread).Scan(&id, &raw, &revision); err != nil {
 		t.Fatal(err)
 	}
 	var body activityBody
@@ -91,72 +98,27 @@ func activitySnapshot(t *testing.T, f statusFixture) (uuid.UUID, activityBody, i
 func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	f.link(t)
-	f.outputWriter(t)
+	write := f.outputWriter(t)
 	child, turn := activityChild(t, f, true)
 	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.Pool, activityHost(child), activityExecution(child))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.RuntimeAsk(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"answer":{"type":"text"}}`)); !errors.Is(err, session.ErrRootSessionRequired) {
+	if err = session.RuntimeAsk(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"type":"text"}`)); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatal(err)
 	}
-	authored := strings.Repeat("child progress 😀 ", 400)
-	content, _ := json.Marshal([]map[string]any{{"type": "text", "text": authored}, {"type": "json", "value": map[string]string{"public": "explicit output"}}})
-	if _, err = session.RuntimeOutput(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), content); err != nil {
+	write("Original front explanation.")
+	if _, err = session.RuntimeOutput(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD OUTPUT"}]`)); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
 	id, before, revision := activitySnapshot(t, f)
-	if len(before.Blocks) != 3 || before.Blocks[1].TaskID != turn.TurnID.String() || before.Blocks[1].Status != "in_progress" || !strings.Contains(before.Text, "Working") || strings.Contains(before.Text, "PRIVATE") {
-		t.Fatal("wrong activity", before)
+	if len(before.Blocks) != 2 || before.Blocks[1].TaskID != turn.TurnID.String() || before.Blocks[1].Status != "in_progress" || !strings.Contains(before.Text, "Original front explanation.") || strings.Contains(before.Text, "PRIVATE") {
+		t.Fatal("wrong work message", before)
 	}
-	var stop controlEnvelope
-	for _, element := range before.Blocks[2].Elements {
-		if element.Action == "helmr.stop" {
-			stop, err = decodeControl(testProjectionConfig().ControlKey, element.Value, time.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if stop.Target.Session != f.Session || stop.Target.Participant != f.participant {
-		t.Fatal("activity stop targeted child", stop.Target)
-	}
-	rows, err := f.Pool.Query(t.Context(), `SELECT payload,presentation_path FROM slack_posts WHERE session_id=$1 AND role='intermediate' ORDER BY seq`, child.Session)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var text strings.Builder
-	count := 0
-	for rows.Next() {
-		var raw []byte
-		var path string
-		if err = rows.Scan(&raw, &path); err != nil {
-			t.Fatal(err)
-		}
-		var body MessageBody
-		if err = json.Unmarshal(raw, &body); err != nil {
-			t.Fatal(err)
-		}
-		for _, block := range body.Blocks {
-			if block.Type == "rich_text" {
-				for _, section := range block.Elements {
-					for _, part := range section.Elements {
-						if part.Type == "text" {
-							text.WriteString(part.Text)
-						}
-					}
-				}
-			}
-		}
-		if path != "post" || !bytes.Contains(raw, []byte("Delegated work")) || bytes.Contains(raw, []byte("helmr.open_answer")) {
-			t.Fatal("child content impersonated front", path, string(raw))
-		}
-		count++
-	}
-	rows.Close()
-	if count < 2 || !strings.Contains(text.String(), "explicit output") || !strings.Contains(text.String(), authored) {
-		t.Fatal("child content truncated", count)
+	var count int
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE session_id=$1`, child.Session).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("child transcript published: %d %v", count, err)
 	}
 	projectAllActivity(t, f)
 	_, same, sameRevision := activitySnapshot(t, f)
@@ -167,8 +129,8 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	if err = FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 		t.Fatal(err)
 	}
-	request := f.controlReceipt(t, stop, nil)
-	if err = admitControl(t.Context(), f.Pool, request); err != nil {
+	request := f.nativeStop(t, "stop-child")
+	if err = admitNativeStop(t.Context(), f.Pool, request); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
@@ -186,24 +148,83 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	}
 }
 
-func TestOwnedActivityPagesEveryAttemptWithoutPublicInputs(t *testing.T) {
+func TestOwnedActivityBoundsRowsWithoutOpeningPosts(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
-	f.outputWriter(t)
-	ids := map[string]bool{}
-	for range activityCardsPerPost + 1 {
-		_, turn := activityChild(t, f, false)
-		ids[turn.TurnID.String()] = false
+	write := f.outputWriter(t)
+	for range activityCardsPerPost + 2 {
+		activityChild(t, f, false)
 	}
 	projectAllActivity(t, f)
-	rows, err := f.Pool.Query(t.Context(), `SELECT payload FROM slack_posts WHERE thread_id=$1 AND role='activity' ORDER BY continuation_ordinal`, f.thread)
+	var count int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1`, f.thread).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("child alone opened post: %d %v", count, err)
+	}
+	write("Original explanation.")
+	projectAllActivity(t, f)
+	_, body, _ := activitySnapshot(t, f)
+	cards := 0
+	for _, block := range body.Blocks {
+		if block.Type == "task_card" {
+			cards++
+		}
+	}
+	if cards != activityCardsPerPost || !strings.Contains(body.Text, "2 more child tasks in Console") || strings.Contains(body.Text, "PRIVATE") {
+		t.Fatal("unbounded or private child detail", body)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1`, f.thread).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("extra post: %d %v", count, err)
+	}
+}
+
+func TestOwnedActivityKeepsFirstAppearanceAcrossQuestion(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	write := f.outputWriter(t)
+	_, first := activityChild(t, f, false)
+	write("Before the question.")
+	projectAllActivity(t, f)
+	var owner uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT post_id FROM slack_work_items WHERE turn_id=$1`, first.TurnID).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	var turn uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
+		t.Fatal(err)
+	}
+	ask := uuid.NewV7()
+	if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+		t.Fatal(err)
+	}
+	_, second := activityChild(t, f, false)
+	write("After the answer.")
+	projectAllActivity(t, f)
+	var correct bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT a.post_id=$3 AND b.post_id<>a.post_id AND p.closed_at IS NOT NULL FROM slack_work_items a JOIN slack_work_items b ON b.turn_id=$2 JOIN slack_posts p ON p.id=a.post_id WHERE a.turn_id=$1`, first.TurnID, second.TurnID, owner).Scan(&correct); err != nil || !correct {
+		t.Fatalf("child moved across question: %v %v", correct, err)
+	}
+}
+
+func TestOwnedActivityDoesNotCopyCardsIntoNarrativeContinuations(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	write := f.outputWriter(t)
+	_, child := activityChild(t, f, false)
+	write("First explanation.")
+	projectAllActivity(t, f)
+	write(strings.Repeat("x", 5000))
+	projectAllActivity(t, f)
+	rows, err := f.Pool.Query(t.Context(), `SELECT p.id,p.payload,(SELECT post_id FROM slack_work_items WHERE turn_id=$2) FROM slack_posts p WHERE p.thread_id=$1 ORDER BY seq`, f.thread, child.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	pages := 0
+	count := 0
 	for rows.Next() {
+		var id, owner uuid.UUID
 		var raw []byte
-		if err = rows.Scan(&raw); err != nil {
+		if err = rows.Scan(&id, &raw, &owner); err != nil {
 			t.Fatal(err)
 		}
 		var body activityBody
@@ -212,27 +233,267 @@ func TestOwnedActivityPagesEveryAttemptWithoutPublicInputs(t *testing.T) {
 		}
 		for _, block := range body.Blocks {
 			if block.Type == "task_card" {
-				seen, ok := ids[block.TaskID]
-				if !ok || seen {
-					t.Fatal("missing or duplicate task", block.TaskID)
+				count++
+				if id != owner {
+					t.Fatal("card copied to continuation")
 				}
-				ids[block.TaskID] = true
 			}
 		}
-		if strings.Contains(body.Text, "PRIVATE") {
-			t.Fatal("assignment published")
-		}
-		pages++
 	}
-	if err = rows.Err(); err != nil {
+	if err = rows.Err(); err != nil || count != 1 {
+		t.Fatalf("card occurrences=%d: %v", count, err)
+	}
+}
+
+func TestOwnedActivityTurnInterruptAcknowledgementStopsOnlyThatCard(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	write := f.outputWriter(t)
+	child, turn := activityChild(t, f, true)
+	write("Original explanation.")
+	projectAllActivity(t, f)
+	_, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: turn.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-only-turn"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if pages != 2 {
-		t.Fatal(pages)
+	projectAllActivity(t, f)
+	_, pending, _ := activitySnapshot(t, f)
+	if !strings.Contains(pending.Text, "Stopping") {
+		t.Fatal("stop prematurely confirmed", pending)
 	}
-	for id, seen := range ids {
-		if !seen {
-			t.Fatal("attempt omitted", id)
+	execution := activityExecution(child)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, child.Session).Scan(&execution.AuthorityGeneration); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := session.PrepareSessionDelivery(t.Context(), f.Pool, activityHost(child), execution, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AcknowledgeSessionDelivery(t.Context(), f.Pool, activityHost(child), execution, 1, delivery.Sequence, delivery.Generation, delivery.Kind, "", delivery.StopSequence); err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	_, stopped, _ := activitySnapshot(t, f)
+	if stopped.Blocks[1].Status != "error" || !strings.Contains(stopped.Text, "Stopped.") {
+		t.Fatal("turn-only stop never converged", stopped)
+	}
+	next, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "next-child-turn", Input: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatchRuntimeTurn(t.Context(), f.Pool, execution); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: next.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-next-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	_, nextStopping, _ := activitySnapshot(t, f)
+	if len(nextStopping.Blocks) != 3 || nextStopping.Blocks[1].Status != "error" || nextStopping.Blocks[2].Status != "in_progress" {
+		t.Fatal("later turn reopened old stop", nextStopping)
+	}
+	// A new unrelated Session hold must not reopen the old Turn's stop observation.
+	_, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: "interrupt", IdempotencyKey: "later-hold", Reason: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	_, later, _ := activitySnapshot(t, f)
+	if later.Blocks[1].Status != "error" || !strings.Contains(later.Text, "Stopped.") {
+		t.Fatal("later hold reopened old stop", later)
+	}
+}
+
+func TestOwnedActivityEncodedBoundIncludesEscapedNarrative(t *testing.T) {
+	for _, text := range []string{strings.Repeat("<>&", 2000), strings.Repeat("\x00", 6000)} {
+		f := newSlackAdmissionFixture(t)
+		write := f.outputWriter(t)
+		for range activityCardsPerPost {
+			activityChild(t, f, false)
 		}
+		write(text)
+		projectAllActivity(t, f)
+		var maximum int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT max(octet_length(payload)) FROM slack_posts WHERE thread_id=$1`, f.thread).Scan(&maximum); err != nil || maximum > 65536 {
+			t.Fatalf("encoded size=%d: %v", maximum, err)
+		}
+	}
+}
+
+func TestOwnedActivityDoesNotConfirmUnceasedCancellationOrLostInterrupt(t *testing.T) {
+	for _, kind := range []string{"cancel", "turn_interrupt"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			write := f.outputWriter(t)
+			child, turn := activityChild(t, f, true)
+			write("Original explanation.")
+			projectAllActivity(t, f)
+			req := session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: kind, IdempotencyKey: "stop-child"}
+			if kind == "turn_interrupt" {
+				req.TurnID = turn.TurnID
+			}
+			if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, req); err != nil {
+				t.Fatal(err)
+			}
+			projectAllActivity(t, f)
+			_, stopping, _ := activitySnapshot(t, f)
+			if stopping.Blocks[1].Status != "in_progress" || !strings.Contains(stopping.Text, "Stopping") {
+				t.Fatal("premature cessation", stopping)
+			}
+			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return session.LoseProcess(t.Context(), tx, activityExecution(child), false) }); err != nil {
+				t.Fatal(err)
+			}
+			projectAllActivity(t, f)
+			_, lost, _ := activitySnapshot(t, f)
+			if lost.Blocks[1].Status != "in_progress" || !strings.Contains(lost.Text, "Status unavailable") {
+				t.Fatal("lost process shown stopped", lost)
+			}
+		})
+	}
+}
+
+func TestOwnedActivityProcessFailureDoesNotImplyCessation(t *testing.T) {
+	for _, kind := range []string{"loss", "runtime-failure"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			write := f.outputWriter(t)
+			child, _ := activityChild(t, f, true)
+			write("Original explanation.")
+			projectAllActivity(t, f)
+			var err error
+			if kind == "loss" {
+				err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return session.LoseProcess(t.Context(), tx, activityExecution(child), false) })
+			} else {
+				err = session.RuntimeHold(t.Context(), f.Pool, activityHost(child), activityExecution(child), "fixture native failure")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			projectAllActivity(t, f)
+			_, body, _ := activitySnapshot(t, f)
+			want := "Status unavailable"
+			if kind == "runtime-failure" {
+				want = "Stopping"
+			}
+			if body.Blocks[1].Status != "in_progress" || !strings.Contains(body.Text, want) {
+				t.Fatal("failure implied cessation", body)
+			}
+		})
+	}
+}
+
+func TestOwnedActivitySessionCallerUsesAdmissionOrdering(t *testing.T) {
+	for _, order := range []string{"output-child-question", "output-question-child", "question-output-child", "child-output"} {
+		t.Run(order, func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			write := f.outputWriter(t)
+			var child session.Admission
+			question := func() {
+				var turn uuid.UUID
+				if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
+					t.Fatal(err)
+				}
+				ask := uuid.NewV7()
+				if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, step := range strings.Split(order, "-") {
+				switch step {
+				case "output":
+					write("Front explanation.")
+				case "question":
+					question()
+				case "child":
+					_, child = activityChildOrigin(t, f, false, false)
+				}
+			}
+			// Project the child before the front backlog, matching asynchronous delivery.
+			var participant uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_thread_sources WHERE session_id=$1`, child.SessionID).Scan(&participant); err != nil {
+				t.Fatal(err)
+			}
+			for range 8 {
+				if _, err := projectParticipant(t.Context(), f.Pool, participant, testProjectionConfig()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			projectAllActivity(t, f)
+			var count int
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_work_items WHERE turn_id=$1`, child.TurnID).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if order == "output-child-question" || order == "question-output-child" {
+				want = 1
+			}
+			if count != want {
+				t.Fatalf("attachments=%d, want %d", count, want)
+			}
+			var origin *uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT origin_turn_id FROM turns WHERE id=$1`, child.TurnID).Scan(&origin); err != nil || origin != nil {
+				t.Fatalf("invented origin: %v %v", origin, err)
+			}
+		})
+	}
+}
+
+func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	write := f.outputWriter(t)
+	write("First explanation.")
+	child, first := activityChildOrigin(t, f, false, false)
+	projectAllActivity(t, f)
+	var firstPost uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT post_id FROM slack_work_items WHERE turn_id=$1`, first.TurnID).Scan(&firstPost); err != nil {
+		t.Fatal(err)
+	}
+	var turn uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
+		t.Fatal(err)
+	}
+	ask := uuid.NewV7()
+	if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+		t.Fatal(err)
+	}
+	write("Second explanation.")
+	host := activityHost(f)
+	second, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: activityExecution(f), Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "successor", Input: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userTurn, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "user-successor", Input: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	var secondPost uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT post_id FROM slack_work_items WHERE turn_id=$1`, second.TurnID).Scan(&secondPost); err != nil || secondPost == firstPost {
+		t.Fatalf("wrong successor attachment %v %v", secondPost, err)
+	}
+	var count int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_work_items WHERE turn_id=$1`, userTurn.TurnID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("user turn attached: %d %v", count, err)
+	}
+	// A caller with no active front Turn cannot borrow a previous explanation.
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, Kind: "turn_interrupt", IdempotencyKey: "finish-front"}); err != nil {
+		t.Fatal(err)
+	}
+	execution := activityExecution(f)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.Session).Scan(&execution.AuthorityGeneration); err != nil {
+		t.Fatal(err)
+	}
+	later, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: execution, Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "inactive-front", Input: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectAllActivity(t, f)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_work_items WHERE turn_id=$1`, later.TurnID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("inactive front attached: %d %v", count, err)
 	}
 }

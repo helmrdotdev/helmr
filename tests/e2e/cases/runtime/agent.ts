@@ -80,10 +80,10 @@ export const runtimeSmoke = agent({
       checks.push(await collectCheck("human-question", async () => {
         const response = await turn.ask({
           prompt: [{ type: "text", text: `Approve product smoke marker ${marker}` }],
-          answer: { type: "choice", options: [
+           type: "choice", options: [
             { id: "approve", label: "Approve", value: true },
             { id: "decline", label: "Decline", value: false },
-          ], allowText: true },
+          ], allowCustom: true,
         })
         answer = response.answer
         return { name: "human-question", ok: true, detail: answer }

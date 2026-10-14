@@ -286,8 +286,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeErrorStatus(w, http.StatusRequestEntityTooLarge, codedError{code: "content_limit_exceeded", message: err.Error()})
 	case errors.Is(err, content.ErrAnswerInvalid):
 		writeErrorStatus(w, http.StatusUnprocessableEntity, codedError{code: "answer_invalid", message: "Answer does not match its declared control"})
-	case errors.Is(err, session.ErrAskAlreadyResponded):
-		writeError(w, conflict(codedError{code: "ask_already_responded", message: "Ask already has a response"}))
+	case errors.Is(err, session.ErrAskAlreadyAnswered):
+		writeError(w, conflict(codedError{code: "ask_already_answered", message: "Ask already has a response"}))
 	case errors.Is(err, session.ErrAskCancelled):
 		writeError(w, conflict(codedError{code: "ask_cancelled", message: "Ask is cancelled"}))
 	case errors.Is(err, content.ErrInvalid):

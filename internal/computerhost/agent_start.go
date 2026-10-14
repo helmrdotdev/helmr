@@ -50,7 +50,7 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		return nil, nil, errors.New("session attachment sequence is invalid")
 	}
 	grant.AuthorityGeneration, grant.ExpiresAtUnixNano = attachment.AuthorityGeneration, attachment.ExpiresAt.UnixNano()
-	connection, attached, err = OpenAgentSession(lifetime, machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: uint64(attachment.AttachmentSequence)})
+	connection, attached, err = OpenAgentSession(lifetime, machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: uint64(attachment.AttachmentSequence), RetireAbsent: attachment.RetireAbsent})
 	if err == nil {
 		return connection, attached, nil
 	}
@@ -66,7 +66,10 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		if control.Kind != "shutdown" {
 			return nil, nil, err
 		}
-		// Guest absence excludes in-flight setup. Any later initial startup
+		// Shutdown may arrive after attachment acquisition, before the guest
+		// reports absence. Complete that stop without waiting for the next
+		// attachment to request retirement. Guest absence excludes in-flight
+		// setup. Any later initial startup
 		// must obtain release against this attachment and current authority;
 		// shutdown forbids it. The stop observer rechecks physical ownership
 		// and the attachment before recording that this epoch cannot run.

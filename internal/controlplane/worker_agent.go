@@ -64,7 +64,7 @@ func (server *Server) workerAgentAttachment(w http.ResponseWriter, r *http.Reque
 		server.writeAgentWorkerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AgentAttachmentResponse{Stopped: attachment.Stopped, Starting: attachment.Starting, AuthorityGeneration: attachment.Authority.Generation, AttachmentSequence: attachment.Sequence, ExpiresAt: attachment.Authority.ExpiresAt})
+	writeJSON(w, http.StatusOK, workerapi.AgentAttachmentResponse{Stopped: attachment.Stopped, Starting: attachment.Starting, RetireAbsent: attachment.RetireAbsent, AuthorityGeneration: attachment.Authority.Generation, AttachmentSequence: attachment.Sequence, ExpiresAt: attachment.Authority.ExpiresAt})
 }
 
 func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Request) {

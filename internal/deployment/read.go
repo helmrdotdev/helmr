@@ -97,10 +97,12 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 }
 
 type DefinitionRecord struct {
-	ID         string
-	AgentID    *uuid.UUID
-	TemplateID *string
-	Resources  json.RawMessage
+	ID          string
+	AgentID     *uuid.UUID
+	TemplateID  *string
+	Resources   json.RawMessage
+	InputKind   string
+	InputSchema json.RawMessage
 }
 
 type DefinitionPage struct {
@@ -112,8 +114,8 @@ type DefinitionPage struct {
 // Definition reads select one statement per kind so every statement the
 // package sends is a constant.
 const (
-	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
-	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,jsonb_strip_nulls(jsonb_build_object('milliCpu',d.cpu_millis,'memoryMiB',d.memory_bytes/1048576,'diskMiB',d.disk_bytes/1048576)) AS resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb, input_kind, input_schema FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources, ''::text, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,t.key,jsonb_strip_nulls(jsonb_build_object('milliCpu',d.cpu_millis,'memoryMiB',d.memory_bytes/1048576,'diskMiB',d.disk_bytes/1048576)) AS resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
 	definitionListClause         = " WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4"
 	definitionGetClause          = " WHERE environment_id=$1 AND deployment_id=$2 AND key=$3"
 )
@@ -163,7 +165,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	page := DefinitionPage{DeploymentID: r.ID, Items: []DefinitionRecord{}}
 	for rows.Next() {
 		var item DefinitionRecord
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema); err != nil {
 			return DefinitionPage{}, err
 		}
 		page.Items = append(page.Items, item)
@@ -192,7 +194,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	} else {
 		row = q.QueryRow(ctx, templateDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
 	}
-	err = row.Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources)
+	err = row.Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources, &found.InputKind, &found.InputSchema)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r.ID, DefinitionRecord{}, ErrDefinitionNotFound
 	}
