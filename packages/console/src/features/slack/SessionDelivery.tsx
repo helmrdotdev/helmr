@@ -62,7 +62,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
           <For each={rows()}>{(post) => <ListItem class={ui.blockStack}>
             <h3 class="m-0 text-body font-medium">{title(post)}</h3>
             <p class={ui.muted}>{post.role === "intermediate" ? "Progress" : post.role === "request_feedback" ? "Request acknowledgment" : post.role === "question" ? "Question" : post.role === "response" ? "Response" : "Task status"} · Message {post.sequence} · <RelativeTime value={post.created_at} /></p>
-            <Show when={!post.payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the Session’s retention policy.</p>}><CodeBlock code={post.text} label={`Message ${post.sequence}`} /></Show>
+            <Show when={!post.payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the session’s retention policy.</p>}><CodeBlock code={post.text} label={`Message ${post.sequence}`} /></Show>
             <Show when={post.status === "uncertain"}><p>{checkReason(post)}</p></Show>
             <Show when={post.attempt_id && !post.check_paused_at}><p class={ui.muted}>A Slack delivery check is scheduled.</p></Show>
             <Show when={!post.root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
@@ -84,7 +84,7 @@ export function SessionDelivery(props: { address: SessionAddress; canManage: boo
     </QueryState>
     <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" errorMessage={(e) => slackFailure(e, "Delivery could not be stopped.", DELIVERY_MESSAGES).message} title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
       <div class={ui.blockStack}>
-        <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the Agent.</p>
+        <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the agent.</p>
         <CodeBlock code={post.text} label="Message content" />
         <Show when={!post.root_known}><p class="m-0">The original thread must still be confirmed before later messages can be sent. This action will not create a replacement thread.</p></Show>
         <Show when={post.stream_state === "uncertain" || post.stream_state === "open"}><p class="m-0">Evidence remains while Slack stream termination is unconfirmed; this action does not guarantee content expiry.</p></Show>

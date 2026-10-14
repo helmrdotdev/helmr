@@ -52,28 +52,28 @@ const API_KEY_PERMISSION_GROUPS: { label: string; options: { value: ApiKeyScope;
   {
     label: "Sessions",
     options: [
-      { value: "sessions:read", label: "Read sessions", description: "Allow automation to read Session state in the selected project and environment." },
-      { value: "sessions:create", label: "Start agents", description: "Allow automation to start declared Agents." },
-      { value: "sessions:send", label: "Send session work and messages", description: "Allow automation to enqueue Turns and send Session or exact Turn messages." },
-      { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the Session subtree and hold queued work until resumed." },
+      { value: "sessions:read", label: "Read sessions", description: "Allow automation to read session state in the selected project and environment." },
+      { value: "sessions:create", label: "Start agents", description: "Allow automation to start declared agents." },
+      { value: "sessions:send", label: "Send session work and messages", description: "Allow automation to enqueue turns and send session or exact turn messages." },
+      { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the session subtree and hold queued work until resumed." },
       { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
-      { value: "sessions:close", label: "Close sessions", description: "Drain accepted work and close Sessions." },
-      { value: "sessions:cancel", label: "Cancel sessions", description: "Cancel queued Turns, stop active execution, and close Sessions." },
+      { value: "sessions:close", label: "Close sessions", description: "Drain accepted work and close sessions." },
+      { value: "sessions:cancel", label: "Cancel sessions", description: "Cancel queued turns, stop active execution, and close sessions." },
       { value: "asks:respond", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
     ],
   },
   {
     label: "Computers",
     options: [
-      { value: "computers:read", label: "Read computers", description: "Allow automation to read Computer state and configuration." },
-      { value: "computers:create", label: "Create computers", description: "Allow automation to create declared Computers." },
-      { value: "computers:update", label: "Update computer retention", description: "Allow automation to change Computer retention policies." },
-      { value: "computers:delete", label: "Delete computers", description: "Allow automation to delete Computers." },
-      { value: "computer-exec:create", label: "Run computer commands", description: "Allow automation to start Commands on Computers." },
+      { value: "computers:read", label: "Read computers", description: "Allow automation to read computer state and configuration." },
+      { value: "computers:create", label: "Create computers", description: "Allow automation to create declared computers." },
+      { value: "computers:update", label: "Update computer retention", description: "Allow automation to change computer retention policies." },
+      { value: "computers:delete", label: "Delete computers", description: "Allow automation to delete computers." },
+      { value: "computer-exec:create", label: "Run computer commands", description: "Allow automation to start commands on computers." },
     ],
   },
   { label: "Secrets", options: [{ value: "secrets:write", label: "Manage secrets", description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment." }] },
-  { label: "Deployments", options: [{ value: "deployments:write", label: "Deploy bundles", description: "Allow automation to upload, finalize, and promote Deployment Bundles in the selected project and environment." }] },
+  { label: "Deployments", options: [{ value: "deployments:write", label: "Deploy bundles", description: "Allow automation to upload, finalize, and promote deployment bundles in the selected project and environment." }] },
 ];
 
 const PERMISSION_LABELS = new Map<string, string>(API_KEY_PERMISSION_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.label] as const)));
@@ -100,9 +100,9 @@ function ApiKeyRow(props: { keyItem: ApiKeySummary; onRevoke: (keyItem: ApiKeySu
   return (
     <tr>
       <td>{props.keyItem.name}</td>
+      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
       <td><code>{props.keyItem.key_prefix}...</code></td>
       <td>{permissionText(props.keyItem)}</td>
-      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
       <td><RelativeTime value={props.keyItem.last_used_at} fallback="never" /></td>
       <td><RelativeTime value={props.keyItem.created_at} /></td>
       <td><RelativeTime value={props.keyItem.expires_at} fallback="never" /></td>
@@ -246,7 +246,7 @@ export function ApiKeys() {
         >
           {() => (
             <DataTable
-              columns={["Name", "Key prefix", "Permissions", "Status", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
+              columns={["Name", "Status", "Key prefix", "Permissions", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
               minWidth="min-w-270"
               footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >

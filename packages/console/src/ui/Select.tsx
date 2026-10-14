@@ -1,4 +1,4 @@
-import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, For, onCleanup, Show, type JSX } from "solid-js";
 import { useFieldControl } from "./Field";
 import { Popover } from "./Popover";
 import { cx, ui } from "./styles";
@@ -6,7 +6,9 @@ import { cx, ui } from "./styles";
 export type SelectOption<T extends string> = {
   value: T;
   label: string;
-  hint?: string;
+  // Tags after the label in a fixed trailing column (a protected badge), also
+  // shown in the trigger for the chosen option.
+  trailing?: () => JSX.Element;
 };
 
 // Past this many options the list gets a filter box.
@@ -180,8 +182,9 @@ export function Select<T extends string>(props: {
         onClick={() => (open() ? setOpen(false) : openList())}
         onKeyDown={onTriggerKeyDown}
       >
-        <span class="overflow-hidden text-ellipsis whitespace-nowrap">
-          {selected()?.label ?? props.placeholder ?? "Select…"}
+        <span class="flex min-w-0 items-center gap-1.5">
+          <span class="overflow-hidden text-ellipsis whitespace-nowrap">{selected()?.label ?? props.placeholder ?? "Select…"}</span>
+          {selected()?.trailing?.()}
         </span>
         <span class={cx("grid size-4 place-items-center transition-transform", open() && "rotate-180")} aria-hidden="true">
           <span class="block size-1.5 -translate-y-px rotate-45 border-b border-r border-console-muted" />
@@ -241,9 +244,7 @@ export function Select<T extends string>(props: {
                       {option.value === props.value ? "✓" : ""}
                     </span>
                     <span class="overflow-hidden text-ellipsis whitespace-nowrap">{option.label}</span>
-                    <Show when={option.hint}>
-                      <span class="font-mono text-badge text-console-subtle">{option.hint}</span>
-                    </Show>
+                    <span class="flex items-center justify-end gap-1.5">{option.trailing?.()}</span>
                   </button>
                 </li>
               )}

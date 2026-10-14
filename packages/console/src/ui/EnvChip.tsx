@@ -14,6 +14,12 @@ export function EnvDot(props: { colorHex: string | undefined; class?: string | u
   );
 }
 
+// The one "protected" tag, wherever a protected Environment is named: chips,
+// pickers, the command palette and the settings selector.
+export function ProtectedBadge() {
+  return <span class="shrink-0 rounded-xs border border-console-accent/35 px-1 py-px font-mono text-micro leading-none text-console-accent">protected</span>;
+}
+
 // The only way an Environment is shown: its color, its name and whether it is protected.
 export function EnvChip(props: { name: string; colorHex: string | undefined; protected?: boolean | undefined; class?: string | undefined }) {
   return (
@@ -21,7 +27,7 @@ export function EnvChip(props: { name: string; colorHex: string | undefined; pro
       <EnvDot colorHex={props.colorHex} />
       <span class="truncate">{props.name}</span>
       <Show when={props.protected}>
-        <span class="rounded-xs border border-console-accent/35 px-1 font-mono text-micro leading-normal text-console-accent">protected</span>
+        <ProtectedBadge />
       </Show>
     </span>
   );

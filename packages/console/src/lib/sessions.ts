@@ -203,7 +203,7 @@ export function messageDeliveryNotice(event: SessionEvent): string | undefined {
  if (event.kind !== "message.rejected" || event.data === null || typeof event.data !== "object" || Array.isArray(event.data)) return undefined;
  return "delivery" in event.data && event.data["delivery"] === "uncertain"
   ? "Message delivery uncertain. Check the conversation before sending it again."
-  : "Message not delivered. Send a new message when the Agent is available.";
+  : "Message not delivered. Send a new message when the agent is available.";
 }
 
 export function interruptTurn(address: SessionAddress, turnID: string, input: { idempotency_key: string }): Promise<SessionReceipt> {

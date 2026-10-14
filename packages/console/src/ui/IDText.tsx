@@ -6,7 +6,7 @@ import { useClipboard } from "./useClipboard";
 
 const TEXT = "font-mono text-chrome";
 
-type Mode = "short" | "link" | "full";
+type Mode = "short" | "link" | "full" | "copy";
 
 type Props =
   // Short form as plain text, full value in `title`. List rows and inline references.
@@ -14,7 +14,10 @@ type Props =
   // Short form as a link to the resource; falls back to short text without an href.
   | { value: string; mode: "link"; href: string | undefined; fallback?: string }
   // Full value once, and the text itself copies on click. Detail page headers only.
-  | { value: string; mode: "full"; fallback?: string };
+  | { value: string; mode: "full"; fallback?: string }
+  // Short form that copies the full value on click, where the full value is
+  // already on the page in another form (a Deployment's version).
+  | { value: string; mode: "copy"; fallback?: string };
 
 export function IDText(props: Props) {
   const mode = (): Mode => props.mode ?? "short";
@@ -22,7 +25,7 @@ export function IDText(props: Props) {
 
   return (
     <Show when={props.value} fallback={<span class="text-console-faint">{props.fallback ?? "—"}</span>}>
-      <Show when={mode() === "full"} fallback={
+      <Show when={mode() === "full" || mode() === "copy"} fallback={
         <Show
           when={href()}
           fallback={<span class={cx(TEXT, "text-console-muted")} title={props.value}>{formatID(props.value)}</span>}
@@ -34,13 +37,13 @@ export function IDText(props: Props) {
           )}
         </Show>
       }>
-        <CopyText value={props.value} />
+        <CopyText value={props.value} short={mode() === "copy"} />
       </Show>
     </Show>
   );
 }
 
-function CopyText(props: { value: string }) {
+function CopyText(props: { value: string; short: boolean }) {
   const clipboard = useClipboard({ copied: "Copied", failed: "Could not copy" });
   const copied = () => clipboard.state() === "copied";
 
@@ -51,11 +54,11 @@ function CopyText(props: { value: string }) {
         TEXT,
         "inline-flex max-w-full cursor-pointer items-baseline gap-1.5 break-all whitespace-normal border-0 bg-transparent p-0 text-left text-console-muted transition hover:text-console-text",
       )}
-      title="Click to copy"
+      title={props.short ? `${props.value} (click to copy)` : "Click to copy"}
       aria-label={copied() ? `Copied ${props.value}` : `Copy ${props.value}`}
       onClick={() => void clipboard.copy(props.value)}
     >
-      <span>{props.value}</span>
+      <span>{props.short ? formatID(props.value) : props.value}</span>
       <span class="text-micro text-console-accent" aria-hidden="true">
         {copied() ? "Copied" : clipboard.state() === "failed" ? "Could not copy" : ""}
       </span>

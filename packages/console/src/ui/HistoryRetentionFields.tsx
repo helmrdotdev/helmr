@@ -1,7 +1,6 @@
 import { Show } from "solid-js";
 import { ChoiceCards, Field, TextInput } from "./Field";
 import { Select } from "./Select";
-import { ui } from "./styles";
 
 const units = [
   { seconds: 86400, suffix: "d", label: "Days" },
@@ -15,7 +14,7 @@ type Mode = "never" | "duration";
 
 const MODES: { value: Mode; label: string; description: string }[] = [
   { value: "never", label: "Never expire", description: "Expired content cannot be restored." },
-  { value: "duration", label: "Keep for a duration", description: "Open Sessions keep their history." },
+  { value: "duration", label: "Keep for a duration", description: "Open sessions keep their history." },
 ];
 
 export type HistoryRetentionDraft = { mode: Mode; amount: string; unit: number };
@@ -46,10 +45,10 @@ export function historyRetentionPolicy(draft: HistoryRetentionDraft): string {
 
 export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; onChange: (value: HistoryRetentionDraft) => void }) {
   return (
-    <fieldset class="m-0 border-0 p-0">
-      <legend class={ui.fieldLegend}>Session history retention</legend>
+    <div>
       <ChoiceCards
         label="History retention"
+        hideLabel
         name="history-retention"
         value={props.value.mode}
         options={MODES}
@@ -78,6 +77,6 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
           </Field>
         </div>
       </Show>
-    </fieldset>
+    </div>
   );
 }

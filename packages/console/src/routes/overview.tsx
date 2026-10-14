@@ -43,7 +43,7 @@ const ACTIONS: Record<AttentionKind, string> = {
 function summary(item: AttentionItem): string {
   switch (item.kind) {
     case "question":
-      return item.prompt || "The Agent asked a question.";
+      return item.prompt || "The agent asked a question.";
     case "hold":
       return item.reason || "Session held.";
     case "failed_turn":
@@ -67,8 +67,8 @@ function actionHref(item: AttentionItem): string {
   }
 }
 
-// The one-line context under the title: the current Deployment and when it was
-// promoted, from its latest promotion event.
+// The metadata under the title: the current Deployment and when it was
+// promoted, from its latest promotion event, as separate meta items.
 function DeploymentContext() {
   const scope = useScopeIDs();
   const enabled = () => !!scope().projectID && !!scope().environmentID;
@@ -90,15 +90,14 @@ function DeploymentContext() {
   }));
   return (
     <Show when={current.isSuccess}>
-      <Show when={current.data} fallback={<span>No current Deployment</span>}>
+      <Show when={current.data} fallback={<span>No current deployment</span>}>
         {(deployment) => (
-          <span class="inline-flex flex-wrap items-center gap-1.5">
-            Current Deployment
-            <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} />
+          <>
+            <span class="whitespace-nowrap">Current deployment <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} /></span>
             <Show when={promoted.data}>
-              {(at) => <span>· promoted <RelativeTime value={at()} /></span>}
+              {(at) => <span class="whitespace-nowrap">Promoted <RelativeTime value={at()} /></span>}
             </Show>
-          </span>
+          </>
         )}
       </Show>
     </Show>
@@ -112,9 +111,9 @@ function FirstDeployment(props: { projectID: string; environmentID: string; envi
   const scope = () => `--project ${props.projectID} --env ${props.environmentID}`;
   return (
     <Panel title={`Set up ${props.environmentName}`}>
-        <p class={cx(ui.muted, "m-0")}>Deploy an Agent to this environment. This page lists what waits on you afterwards.</p>
+        <p class={cx(ui.muted, "m-0")}>Deploy an agent to this environment. This page lists what waits on you afterwards.</p>
         <Steps
-          label="First Deployment"
+          label="First deployment"
           steps={[
             {
               title: "Install the CLI and sign in",
@@ -125,19 +124,19 @@ function FirstDeployment(props: { projectID: string; environmentID: string; envi
               </>,
             },
             {
-              title: "Create and deploy an Agent",
+              title: "Create and deploy an agent",
               state: "upcoming",
               description: <>
-                <span>The starter project defines the hello Agent.</span>
+                <span>The starter project defines the hello agent.</span>
                 <CodeBlock code={`helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . ${scope()}`} copy label="Create and deploy" />
               </>,
             },
             {
-              title: "Start a Session",
+              title: "Start a session",
               state: "upcoming",
               description: <>
-                <span>From the CLI, or from Slack once the Agent is connected.</span>
-                <CodeBlock code={`helmr session create hello ${scope()}`} copy label="Start a Session" />
+                <span>From the CLI, or from Slack once the agent is connected.</span>
+                <CodeBlock code={`helmr session create hello ${scope()}`} copy label="Start a session" />
               </>,
             },
           ]}
@@ -148,19 +147,17 @@ function FirstDeployment(props: { projectID: string; environmentID: string; envi
 
 function QueueItem(props: { item: AttentionItem }) {
   return (
-    <ListItem label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
-      <div class="flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
+    <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
         <StatusBadge resource="attention" status={props.item.kind} />
-        <span class="min-w-0 flex-[1_1_280px] truncate text-body" title={summary(props.item)}>{summary(props.item)}</span>
-        <span class="flex items-center gap-1.5 font-mono text-chrome text-console-muted">
+        <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first" title={summary(props.item)}>{summary(props.item)}</span>
+        <span class="flex shrink-0 items-center gap-1.5 font-mono text-chrome text-console-muted">
           <A class="text-console-accent hover:text-console-accent-hover" href={agentHref(props.item.agent)}>{props.item.agent}</A>
           <Show when={props.item.session_id}>
             {(session) => <>· <IDText value={session()} mode="link" href={sessionConsolePath(session())} /></>}
           </Show>
         </span>
-        <span class="font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
-        <A class={ui.compactButton} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
-      </div>
+        <span class="shrink-0 font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
+        <A class={cx(ui.compactButton, "ml-auto")} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
     </ListItem>
   );
 }
@@ -238,8 +235,8 @@ export function Overview() {
             <FirstDeployment projectID={ids().projectID} environmentID={ids().environmentID} environmentName={scope.selectedEnvironment()?.name ?? ids().environmentID} />
           </Match>
           <Match when={total() === 0}>
-            <EmptyState title="Nothing is waiting on you." hint="Questions, holds, failed Turns and Slack connections that need you appear here as they happen.">
-              <A class={ui.monoLink} href="/sessions">View Sessions</A>
+            <EmptyState title="Nothing is waiting on you." hint="Questions, holds, failed turns and Slack connections that need you appear here as they happen.">
+              <A class={ui.monoLink} href="/sessions">View sessions</A>
             </EmptyState>
           </Match>
           <Match when={attention.data}>

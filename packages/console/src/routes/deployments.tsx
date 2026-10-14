@@ -18,7 +18,7 @@ import { StatusBadge } from "../ui/StatusBadge";
 import { cx } from "../ui/styles";
 
 const deploymentsErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load Deployments.", { forbidden: "You do not have permission to view Deployments." });
+  errorMessage(error, "Could not load deployments.", { forbidden: "You do not have permission to view deployments." });
 
 function DeploymentRow(props: {
   deployment: Deployment;
@@ -83,11 +83,11 @@ export function Deployments() {
       <PageHeader title="Deployments" />
       <QueryState
         query={deployments}
-        pending="Loading Deployments..."
+        pending="Loading deployments..."
         error={deploymentsErrorMessage}
         empty={{
           when: (data) => data.pages.every((page) => page.deployments.length === 0),
-          title: "No Deployments yet.",
+          title: "No deployments yet.",
           hint: <>Run <code>helmr deploy</code> against this environment to create the first one.</>,
         }}
       >
@@ -95,7 +95,7 @@ export function Deployments() {
           <DataTable
             columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]}
             minWidth="min-w-180"
-            footer={<LoadMore count={items().length} noun={{ one: "Deployment", other: "Deployments" }} hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "deployment", other: "deployments" }} hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
           >
             <For each={items()}>
               {(deployment) => (

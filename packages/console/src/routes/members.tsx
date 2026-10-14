@@ -16,13 +16,11 @@ import {
   type OrganizationMember,
 } from "../lib/members";
 import { DataTable, EmptyCell, LoadMore, RowActions, RowError } from "../ui/DataTable";
-import { IDText } from "../ui/IDText";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { Field, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
-import { Section } from "../ui/Page";
 import { QueryState } from "../ui/QueryState";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -124,6 +122,11 @@ function CreateInviteDialog(props: {
   );
 }
 
+// One table for the organization: members, then pending invitations in the
+// server's order (the invited email as the member, invited time as joined), with
+// the status telling them apart.
+const COLUMNS = ["Member", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }] as const;
+
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
@@ -152,7 +155,6 @@ function MemberRow(props: {
     <>
       <tr>
         <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
-        <td><IDText value={props.member.user_id} /></td>
         <td><Show when={props.member.email} fallback={<EmptyCell />}>{props.member.email}</Show></td>
         <td>
           <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
@@ -173,7 +175,7 @@ function MemberRow(props: {
           items={canRemove() ? [{ label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) }] : []}
         />
       </tr>
-      <RowError columns={7} message={props.error} />
+      <RowError columns={COLUMNS.length} message={props.error} />
     </>
   );
 }
@@ -187,9 +189,10 @@ function InvitationRow(props: {
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
+      <td>{props.invitation.email}</td>
       <td><StatusBadge resource="role" status={props.invitation.role} /></td>
-      <td><StatusBadge resource="invitation" status={props.invitation.status ?? "pending"} /></td>
-      <td><RelativeTime value={props.invitation.expires_at} /></td>
+      <td><StatusBadge resource="member" status="invited" /></td>
+      <td><RelativeTime value={props.invitation.created_at} /></td>
       <RowActions
         label={`Actions for ${props.invitation.email}`}
         items={props.canManage && id() !== "" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.invitation) }] : []}
@@ -221,6 +224,8 @@ export function Members() {
   }));
 
   const canManage = createMemo(() => canManageFromMe(me.data?.role, me.data?.permissions));
+  // The server lists pending invitations, newest first; further pages are
+  // appended in that order.
   const pendingInvitations = createMemo(() =>
     invitations.data?.pages.flatMap((page) => page.invitations) ?? [],
   );
@@ -261,62 +266,46 @@ export function Members() {
         <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
       </Show>
 
-      <div class={ui.sectionStack}>
-        <Section
-          title="Current members"
-          count={members.data?.members.length}
-        >
-          <QueryState
-            query={members}
-            pending="Loading members..."
-            error={membersErrorMessage}
-            empty={{ when: (data) => data.members.length === 0, title: "No members found." }}
+      <QueryState
+        query={members}
+        pending="Loading members..."
+        error={membersErrorMessage}
+      >
+        {(data) => <>
+          <Show when={invitations.isError && !invitations.isFetchNextPageError}>
+            <Notice
+              tone="danger"
+              class="mb-3"
+              action={<button type="button" class={ui.compactButton} onClick={() => void invitations.refetch()}>Retry</button>}
+            >
+              Could not load invitations.
+            </Notice>
+          </Show>
+          <DataTable
+            columns={COLUMNS}
+            minWidth="min-w-210"
+            footer={<LoadMore count={data().members.length} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
           >
-            {(data) => (
-              <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
-                <For each={data().members}>
-                  {(member) => (
-                    <MemberRow
-                      member={member}
-                      canManage={canManage()}
-                      isCurrentUser={isCurrentUser(member)}
-                      currentUserRole={me.data?.role}
-                      busy={memberRows.busy(memberResourceID(member))}
-                      error={memberRows.error(memberResourceID(member))}
-                      onRoleChange={changeMemberRole}
-                      onRemove={setRemoving}
-                    />
-                  )}
-                </For>
-              </DataTable>
-            )}
-          </QueryState>
-        </Section>
-
-        <Section
-          title="Pending invitations"
-          count={pendingInvitations().length}
-        >
-          <QueryState
-            query={invitations}
-            pending="Loading invitations..."
-            error={membersErrorMessage}
-            empty={{ when: (data) => data.pages.every((page) => page.invitations.length === 0), title: "No pending invitations." }}
-          >
-            {() => (
-              <DataTable
-                columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]}
-                minWidth="min-w-225"
-                footer={<LoadMore count={pendingInvitations().length} noun={{ one: "invitation", other: "invitations" }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
-              >
-                <For each={pendingInvitations()}>
-                  {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
-                </For>
-              </DataTable>
-            )}
-          </QueryState>
-        </Section>
-      </div>
+            <For each={data().members}>
+              {(member) => (
+                <MemberRow
+                  member={member}
+                  canManage={canManage()}
+                  isCurrentUser={isCurrentUser(member)}
+                  currentUserRole={me.data?.role}
+                  busy={memberRows.busy(memberResourceID(member))}
+                  error={memberRows.error(memberResourceID(member))}
+                  onRoleChange={changeMemberRole}
+                  onRemove={setRemoving}
+                />
+              )}
+            </For>
+            <For each={pendingInvitations()}>
+              {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
+            </For>
+          </DataTable>
+        </>}
+      </QueryState>
 
       <Show when={inviting()}>
         <CreateInviteDialog

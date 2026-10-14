@@ -29,12 +29,13 @@ const FILTERS: SelectOption<SessionFilter>[] = [
 ];
 
 const sessionsErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load Sessions.", { forbidden: "You do not have permission to view Sessions." });
+  errorMessage(error, "Could not load sessions.", { forbidden: "You do not have permission to view sessions." });
 
 function SessionRow(props: { session: Session; agentColumn: boolean }) {
   return (
     <tr>
       <td><IDText value={props.session.id} mode="link" href={sessionConsolePath(props.session.id)} /></td>
+      <td><StatusBadge resource="session" status={props.session.status} /></td>
       <Show when={props.agentColumn}>
         <td><PrimaryLink href={agentHref(props.session.agent)}>{props.session.agent}</PrimaryLink></td>
       </Show>
@@ -43,8 +44,7 @@ function SessionRow(props: { session: Session; agentColumn: boolean }) {
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><StatusBadge resource="session" status={props.session.status} /></td>
-      <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
+      <td><Show when={props.session.holds.length} fallback={<EmptyCell />}>{(count) => `${count()} active`}</Show></td>
       <td>
         <Show when={props.session.computer_id} fallback={<EmptyCell />}>
           {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
@@ -87,8 +87,8 @@ export function SessionList(props: { agent?: string }) {
   );
 
   const columns = () => agent()
-    ? ["Session", "Key", "Status", "Holds", "Computer", "Created"]
-    : ["Session", "Agent", "Key", "Status", "Holds", "Computer", "Created"];
+    ? ["Session", "Status", "Key", "Holds", "Computer", "Created"]
+    : ["Session", "Status", "Agent", "Key", "Holds", "Computer", "Created"];
 
   return (
     <>
@@ -101,19 +101,19 @@ export function SessionList(props: { agent?: string }) {
       />
       <QueryState
         query={sessions}
-        pending="Loading Sessions..."
+        pending="Loading sessions..."
         error={sessionsErrorMessage}
         empty={{
           when: (data) => data.pages.every((page) => page.sessions.length === 0),
-          title: filter() !== "all" ? "No Sessions match this filter." : agent() ? "This Agent has no Sessions yet." : "No Sessions yet.",
-          hint: filter() === "all" ? "Starting an Agent creates a Session." : undefined,
+          title: filter() !== "all" ? "No sessions match this filter." : agent() ? "This agent has no sessions yet." : "No sessions yet.",
+          hint: filter() === "all" ? "Starting an agent creates a session." : undefined,
         }}
       >
         {() => (
           <DataTable
             columns={columns()}
             minWidth="min-w-200"
-            footer={<LoadMore count={items().length} noun={{ one: "Session", other: "Sessions" }} hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
+            footer={<LoadMore count={items().length} noun={{ one: "session", other: "sessions" }} hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
           >
             <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!agent()} />}</For>
           </DataTable>

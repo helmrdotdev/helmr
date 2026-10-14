@@ -23,10 +23,10 @@ test("Console IDs remain usable through API operations and display-name edits", 
   await page.goto(`/settings/environments?${scope}`);
   const row = page.getByRole("row").filter({ has: page.getByTitle("production", { exact: true }) });
   await row.getByRole("button", { name: /^Actions for / }).click();
-  await page.getByRole("button", { name: "Copy ID", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Copy ID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("production");
   await row.getByRole("button", { name: /^Actions for / }).click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Environment ID (not editable)")).toHaveValue("production");
   await dialog.getByLabel("Name", { exact: true }).fill("Live workspace");
@@ -39,7 +39,7 @@ test("Console IDs remain usable through API operations and display-name edits", 
   await page.getByLabel("Value", { exact: true }).fill("synthetic-browser-value");
   await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Actions for GITHUB_TOKEN", exact: true }).click();
-  await page.getByRole("button", { name: "Copy ID", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Copy ID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("GITHUB_TOKEN");
   const secret = await (await page.request.get(`${base}/environments/production/secrets/GITHUB_TOKEN`)).json();
   expect(secret.secret).toBe("GITHUB_TOKEN");

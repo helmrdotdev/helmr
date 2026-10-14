@@ -71,7 +71,7 @@ test("the shortcut and the Search button open the palette, Escape closes it and 
 
 test("typing in an input never opens the palette without the modifier, and composing text never does", async ({ page }) => {
   await open(page, "/agents");
-  const filter = page.getByLabel("Filter Agents", { exact: true });
+  const filter = page.getByLabel("Filter agents", { exact: true });
   await filter.press("k");
   await expect(filter).toHaveValue("k");
   await expect(palette(page)).toHaveCount(0);

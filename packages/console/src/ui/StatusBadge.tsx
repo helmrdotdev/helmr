@@ -14,7 +14,9 @@ const TONE_CLASSES: Record<Tone, string> = {
 const TONES = {
   turn: { queued: "waiting", running: "active", finalizing: "waiting", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
   session: { open: "active", closing: "waiting", closed: "succeeded", cancelled: "revoked" },
-  computer: { available: "succeeded", deleted: "expired", deleting: "expired" },
+  // Only the lifecycle states the console shows; an available Computer shows its
+  // residency (ComputerStatus).
+  computer: { deleted: "expired", deleting: "expired" },
   computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", restoring: "waiting", unavailable: "revoked" },
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   trigger: { active: "active", errored: "revoked", archived: "expired" },
@@ -22,8 +24,7 @@ const TONES = {
   environment: { working: "active", default: "expired" },
   api_key: { active: "succeeded", expired: "expired", revoked: "revoked" },
   secret: { active: "succeeded", revoked: "revoked" },
-  member: { active: "succeeded", disabled: "revoked" },
-  invitation: { pending: "waiting", accepted: "succeeded", revoked: "revoked", expired: "expired" },
+  member: { active: "succeeded", disabled: "revoked", invited: "waiting" },
   role: { owner: "active", admin: "expired", developer: "expired", viewer: "expired" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
   agent: { defined: "active", not_defined: "expired" },
@@ -38,10 +39,7 @@ const TONES = {
 
 // Labels that read better than the status name.
 const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
-  agent: { defined: "In current Deployment", not_defined: "Not in current Deployment" },
-  // A Computer's status is its lifecycle (not deleted); whether it can run work
-  // is its residency, so "available" would contradict an unavailable residency.
-  computer: { available: "Active" },
+  agent: { defined: "In current deployment", not_defined: "Not in current deployment" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
 };
 

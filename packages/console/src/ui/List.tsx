@@ -2,7 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { cx, ui } from "./styles";
 
 // Non-tabular rows (turns, holds, delivery issues, linked identities) with one
-// divider style and 12px padding. `footer` renders under the rows inside the
+// divider style. `footer` renders under the rows inside the
 // frame (see LoadMore). Like a table, it has no frame of its own as a direct child
 // of a Panel body.
 export function List(props: { children: JSX.Element; label?: string; footer?: JSX.Element; class?: string }) {
@@ -16,6 +16,13 @@ export function List(props: { children: JSX.Element; label?: string; footer?: JS
   );
 }
 
-export function ListItem(props: { children: JSX.Element; id?: string; class?: string; label?: string }) {
-  return <li id={props.id} class={cx("p-3 text-body", props.class)} aria-label={props.label}>{props.children}</li>;
+// A row is one of two kinds. A single-line row (`line`) is 36px like a table
+// row: one flex line, 4px vertical padding so a 24px compact button fits. A
+// multi-block row (a Turn, a hold) pads 12px all round.
+export function ListItem(props: { children: JSX.Element; id?: string; class?: string; label?: string; line?: boolean }) {
+  return (
+    <li id={props.id} class={cx("text-body", props.line ? "flex min-h-9 items-center gap-3 px-3 py-1" : "p-3", props.class)} aria-label={props.label}>
+      {props.children}
+    </li>
+  );
 }

@@ -13,7 +13,7 @@ import { InlineStatus, Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
-import { cx, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
 export function ProjectSettings() {
   const scope = useScope();
@@ -79,7 +79,7 @@ export function ProjectSettings() {
 
       <Show when={project()} fallback={<EmptyState title="No project selected." />}>
         {(current) => (
-          <div class={cx(ui.sectionStack, "max-w-220")}>
+          <div class={ui.sectionStack}>
             <Panel title="Profile">
               <form onSubmit={submitProject}>
                 <Field label="Name" error={saveError()}>
@@ -168,14 +168,14 @@ function ProjectHistorySettings(props: { project: string }) {
   }
 
   return (
-    <Panel title="Session history">
+    <Panel title="Session history retention">
       <QueryState query={settings} pending="Loading history retention..." error={() => "Could not load history retention."}>
         {() => (
           <form onSubmit={submit}>
             <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>
               <HistoryRetentionFields value={draft()} onChange={value => { setDraft(value); setSaved(false); }} />
             </fieldset>
-            <Show when={!canManage()}><p class={ui.muted}>Only Owners and Admins can change this setting.</p></Show>
+            <Show when={!canManage()}><p class={ui.muted}>Only owners and admins can change this setting.</p></Show>
             <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
             <Show when={canManage()}>
               <div class="flex flex-wrap items-center justify-end gap-3">
@@ -202,7 +202,7 @@ function ProjectHistorySettings(props: { project: string }) {
             onClose={() => setShortening(null)}
             onConfirm={() => save(next())}
           >
-            Older Session content in every Environment may be permanently deleted on the next cleanup pass. This cannot be undone.
+            Older session content in every environment may be permanently deleted on the next cleanup pass. This cannot be undone.
           </ConfirmDialog>
         )}
       </Show>

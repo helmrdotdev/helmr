@@ -49,7 +49,7 @@ function CreateWorkerGroupDialog(props: { regions: AdminRegion[]; onClose: () =>
 
   return (
     <FormDialog
-      title="New Worker Group"
+      title="New worker group"
       submitLabel="Create"
       busyLabel="Creating..."
       busy={submitting()}
@@ -155,45 +155,45 @@ export function AdminWorkerGroups() {
   return (
     <Page>
       <PageHeader
-        title="Worker Groups"
-        subtitle="Execution fleets, routing, and Worker enrollment."
-        actions={<button type="button" class={ui.button} disabled={regionList().length === 0} onClick={() => setCreating(true)}>New Worker Group</button>}
+        title="Worker groups"
+        subtitle="Execution fleets, routing, and worker enrollment."
+        actions={<button type="button" class={ui.button} disabled={regionList().length === 0} onClick={() => setCreating(true)}>New worker group</button>}
       />
       <Toolbar
         start={
           <Select
             value={regionFilter()}
-            options={[{ value: "", label: "All Regions" }, ...regionList().map((region) => ({ value: region.id, label: region.display_name }))]}
+            options={[{ value: "", label: "All regions" }, ...regionList().map((region) => ({ value: region.id, label: region.display_name }))]}
             onChange={setRegionFilter}
-            ariaLabel="Filter by Region"
+            ariaLabel="Filter by region"
             minWidth="160px"
           />
         }
       />
       <QueryState
         query={groups}
-        pending="Loading Worker Groups..."
-        error={(error) => errorMessage(error, "Could not load Worker Groups.")}
+        pending="Loading worker groups..."
+        error={(error) => errorMessage(error, "Could not load worker groups.")}
         empty={{
           when: (data) => data.worker_groups.length === 0,
-          title: "No Worker Groups configured.",
+          title: "No worker groups configured.",
           action: (
-            <Show when={regionList().length > 0} fallback={<A href="/admin/regions" class={ui.secondaryButton}>Create a Region first</A>}>
-              <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button>
+            <Show when={regionList().length > 0} fallback={<A href="/admin/regions" class={ui.secondaryButton}>Create a region first</A>}>
+              <button type="button" class={ui.button} onClick={() => setCreating(true)}>Create worker group</button>
             </Show>
           ),
         }}
       >
         {(data) => (
-          <DataTable columns={["Worker Group", "ID", "Region", "Status", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
+          <DataTable columns={["Worker group", "Status", "ID", "Region", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
             <For each={data().worker_groups}>
               {(group) => (
                 <>
                   <tr>
                     <td><strong class="font-medium text-console-text">{group.name}</strong></td>
+                    <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td><IDText value={group.id} /></td>
                     <td><code>{group.region_id}</code></td>
-                    <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td>{group.claim_version}</td>
                     <RowActions label={`Actions for ${group.name}`} items={actions(group)} />
                   </tr>

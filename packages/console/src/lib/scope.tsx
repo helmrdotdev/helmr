@@ -226,7 +226,7 @@ export function ScopeProvider(props: { children: JSX.Element }) {
   const notice = createMemo((): ScopeNotice | undefined => {
     const kind = linkNotice(link(), settledScope());
     if (!kind) return undefined;
-    return { kind, projectName: selectedProject()?.name ?? "no Project", environmentName: selectedEnvironment()?.name ?? "no Environment" };
+    return { kind, projectName: selectedProject()?.name ?? "no project", environmentName: selectedEnvironment()?.name ?? "no environment" };
   });
 
   const chooseProjectID = (id: string) => {

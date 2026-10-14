@@ -37,7 +37,7 @@ export function AgentSlackConnection(props: { agentName: string }) {
       fallback={
         <DetailLayout rail={<ConnectionFacts environmentName={environmentName()} />}>
           <Panel title="Slack connection">
-            <p class="m-0 text-body">Each Agent can have its own Slack app in this environment. Its app name and avatar identify it in conversations.</p>
+            <p class="m-0 text-body">Each agent can have its own Slack app in this environment. Its app name and avatar identify it in conversations.</p>
             <Notice tone="info">{MANAGERS} can view and manage this connection. Ask one of them to connect, reauthorize or disconnect it.</Notice>
           </Panel>
         </DetailLayout>
@@ -51,7 +51,7 @@ export function AgentSlackConnection(props: { agentName: string }) {
 function ConnectionFacts(props: { environmentName: string; children?: JSX.Element }) {
   return (
     <KeyValueList title="Connection">
-      <KeyValue label="Scope">This Agent in {props.environmentName}. Kept across Deployments.</KeyValue>
+      <KeyValue label="Scope">This agent in {props.environmentName}. Kept across deployments.</KeyValue>
       {props.children}
       <KeyValue label="Managed by">{MANAGERS}</KeyValue>
     </KeyValueList>
@@ -107,7 +107,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   when={connection().installation_id}
                   fallback={
                     <DangerZone title="Discard setup" action={<button type="button" class={ui.dangerOutlineButton} disabled={busy()} onClick={() => setRemoving(connection())}>Discard setup</button>}>
-                      Frees this Agent’s connection. The app in Slack is not deleted.
+                      Frees this agent’s connection. The app in Slack is not deleted.
                     </DangerZone>
                   }
                 >
@@ -127,7 +127,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
               <SetupPanel status="Not connected" step={1}>
                 <Steps label="Slack setup" steps={setupSteps({
                   create: { state: "current", content: <>
-                    <p class={ui.muted}>Each Agent has one Slack app in this environment. Its app name and avatar identify it in conversations. Start to get the app manifest for <strong>{props.agentName}</strong>.</p>
+                    <p class={ui.muted}>Each agent has one Slack app in this environment. Its app name and avatar identify it in conversations. Start to get the app manifest for <strong>{props.agentName}</strong>.</p>
                     <div><button type="button" class={ui.button} disabled={busy()} onClick={() => attempt(() => beginAgentSlackConnection(address()))}>Connect Slack</button></div>
                   </> },
                 })} />
@@ -177,7 +177,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
               >
                 {connection().installation_id
                   ? "Disconnecting stops Slack input, answers and output in existing threads. Work can continue through the CLI or API. Reconnecting creates a new connection; existing threads stay disconnected and triggers require re-promotion."
-                  : "Discard this setup to release the Agent’s connection slot. The app in Slack is not deleted."}
+                  : "Discard this setup to release the agent’s connection slot. The app in Slack is not deleted."}
               </ConfirmDialog>
             )}
           </Show>
@@ -193,10 +193,10 @@ type StepState = Pick<Step, "state" | "content" | "description">;
 function setupSteps(states: { create: StepState; credentials?: StepState | undefined; install?: StepState | undefined }): Step[] {
   const upcoming: StepState = { state: "upcoming" };
   return [
-    { title: "Create the Slack app", description: "From the manifest, with this Agent’s name and icon.", ...states.create },
+    { title: "Create the Slack app", description: "From the manifest, with this agent’s name and icon.", ...states.create },
     { title: "Save app credentials", description: "From Basic Information in the Slack app. Secrets are never shown again.", ...(states.credentials ?? upcoming) },
     { title: "Install in your workspace", description: "Opens Slack to authorize, then returns here.", ...(states.install ?? upcoming) },
-    { title: "Invite the app to a channel", description: "Mention it to start a Session.", ...upcoming },
+    { title: "Invite the app to a channel", description: "Mention it to start a session.", ...upcoming },
   ];
 }
 
@@ -262,7 +262,7 @@ function InstalledConnection(props: {
   return (
     <SetupPanel status={statusLabel(props.connection.status)}>
       <Show when={props.connection.status === "connected"}>
-        <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a Session.</Notice>
+        <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a session.</Notice>
       </Show>
       <Show when={props.connection.status === "reauthorization_required"}>
         <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>

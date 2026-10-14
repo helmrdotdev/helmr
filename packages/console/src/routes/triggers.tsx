@@ -10,7 +10,7 @@ import { IDText } from "../ui/IDText";
 import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 
-const failure = (error: unknown) => errorMessage(error, "Could not load Triggers.");
+const failure = (error: unknown) => errorMessage(error, "Could not load triggers.");
 
 // Trigger activations across Deployments: every Agent's in the tab's Environment,
 // or one Agent's.
@@ -39,18 +39,18 @@ export function TriggerList(props: { agent?: string }) {
   return (
     <QueryState
       query={triggers}
-      pending="Loading Triggers..."
+      pending="Loading triggers..."
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.triggers.length === 0),
-        title: agent() ? "No Trigger activations for this Agent." : "No Trigger activations in this environment.",
+        title: agent() ? "No trigger activations for this agent." : "No trigger activations in this environment.",
       }}
     >
       {() => (
         <DataTable
           columns={columns()}
           minWidth="min-w-230"
-          footer={<LoadMore count={items().length} noun={{ one: "Trigger", other: "Triggers" }} hasMore={triggers.hasNextPage} loading={triggers.isFetchingNextPage} failed={triggers.isFetchNextPageError} onLoadMore={() => void triggers.fetchNextPage()} />}
+          footer={<LoadMore count={items().length} noun={{ one: "trigger", other: "triggers" }} hasMore={triggers.hasNextPage} loading={triggers.isFetchingNextPage} failed={triggers.isFetchNextPageError} onLoadMore={() => void triggers.fetchNextPage()} />}
         >
           <For each={items()}>{trigger => (
             <tr>

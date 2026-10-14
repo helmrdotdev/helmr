@@ -37,7 +37,7 @@ function RegionDialog(props: { region: AdminRegion | null; onClose: () => void; 
 
   return (
     <FormDialog
-      title={props.region ? `Edit ${props.region.id}` : "New Region"}
+      title={props.region ? `Edit ${props.region.id}` : "New region"}
       submitLabel={props.region ? "Save" : "Create"}
       busyLabel={props.region ? "Saving..." : "Creating..."}
       busy={submitting()}
@@ -72,17 +72,17 @@ export function AdminRegions() {
     <Page>
       <PageHeader
         title="Regions"
-        subtitle="Logical placement domains available to projects and Worker Groups."
-        actions={<button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>New Region</button>}
+        subtitle="Logical placement domains available to projects and worker groups."
+        actions={<button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>New region</button>}
       />
       <QueryState
         query={regions}
-        pending="Loading Regions..."
-        error={(error) => errorMessage(error, "Could not load Regions.")}
+        pending="Loading regions..."
+        error={(error) => errorMessage(error, "Could not load regions.")}
         empty={{
           when: (data) => data.regions.length === 0,
-          title: "No Regions configured.",
-          action: <button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>Create Region</button>,
+          title: "No regions configured.",
+          action: <button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>Create region</button>,
         }}
       >
         {(data) => (

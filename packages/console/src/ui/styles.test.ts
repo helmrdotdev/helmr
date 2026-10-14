@@ -24,3 +24,8 @@ test("default and undefined tones use the default text colour and never the dang
     expect(value).not.toContain("danger");
   }
 });
+
+test("the Settings button's open state is the bar's current-item box", () => {
+  const open = ui.iconButton.split(" ").filter((name) => name.startsWith("data-[open=true]:")).map((name) => name.slice("data-[open=true]:".length));
+  expect(open.sort()).toEqual(ui.barItemCurrent.split(" ").sort());
+});

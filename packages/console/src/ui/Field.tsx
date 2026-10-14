@@ -148,7 +148,10 @@ export function SlugInput(props: Omit<InputProps, "value" | "onInput"> & { slug:
   );
 }
 
-// A color picker with preset swatches.
+// A color picker: preset swatches, then one custom swatch that opens the
+// browser's color picker. Every swatch is 24px; the chosen one has the accent
+// ring. The custom swatch shows its color only when it is not a preset, so a
+// color never appears twice.
 export function ColorField(props: {
   value: string;
   onChange: (colorHex: string) => void;
@@ -158,36 +161,43 @@ export function ColorField(props: {
   ariaLabel?: string;
 }) {
   const label = () => props.label ?? "Color";
+  const custom = () => !props.presets.some((preset) => preset.toUpperCase() === props.value.toUpperCase());
   return (
     <div class="mb-3 grid gap-1">
       <span class={ui.fieldLabel}>{label()}</span>
-      <div class="flex items-center gap-2">
-        <input
-          type="color"
-          class="size-8 cursor-pointer border border-console-border bg-console-surface p-0.5"
-          value={props.value}
-          onInput={(event) => props.onChange(event.currentTarget.value.trim().toUpperCase())}
-          aria-label={props.ariaLabel ?? label()}
-        />
-        <div class="flex flex-wrap gap-1.5">
-          <For each={props.presets}>
-            {(preset) => (
-              <button
-                type="button"
-                class="size-6 cursor-pointer border border-console-border bg-console-surface p-0.5 aria-pressed:border-console-text"
-                aria-label={`Use ${preset}`}
-                aria-pressed={preset.toUpperCase() === props.value.toUpperCase()}
-                onClick={() => props.onChange(preset)}
-              >
-                <span class="block size-full" style={{ "background-color": preset }} />
-              </button>
-            )}
-          </For>
-        </div>
+      <div class="flex flex-wrap items-center gap-1.5">
+        <For each={props.presets}>
+          {(preset) => (
+            <button
+              type="button"
+              class={SWATCH}
+              aria-label={`Use ${preset}`}
+              aria-pressed={preset.toUpperCase() === props.value.toUpperCase()}
+              onClick={() => props.onChange(preset)}
+            >
+              <span class="block size-full" style={{ "background-color": preset }} />
+            </button>
+          )}
+        </For>
+        <label class={cx(SWATCH, "relative has-focus-visible:outline-2 has-focus-visible:outline-offset-1 has-focus-visible:outline-solid")} data-selected={custom() ? "true" : undefined} title="Custom color">
+          <input
+            type="color"
+            class="absolute inset-0 size-full cursor-pointer opacity-0"
+            value={props.value}
+            onInput={(event) => props.onChange(event.currentTarget.value.trim().toUpperCase())}
+            aria-label={props.ariaLabel ?? label()}
+          />
+          <Show when={custom()} fallback={<span class="grid size-full place-items-center font-mono text-control leading-none text-console-muted" aria-hidden="true">+</span>}>
+            <span class="block size-full" style={{ "background-color": props.value }} />
+          </Show>
+        </label>
       </div>
     </div>
   );
 }
+
+const SWATCH =
+  "grid size-6 shrink-0 cursor-pointer place-items-center rounded-xs border border-console-border bg-console-surface p-0.5 aria-pressed:border-2 aria-pressed:border-console-accent aria-pressed:p-px data-[selected=true]:border-2 data-[selected=true]:border-console-accent data-[selected=true]:p-px";
 
 // Two to five mutually exclusive options that change a view. An option's
 // `count` follows its label, as in a filter showing how many items each shows.
@@ -224,7 +234,9 @@ type Choice<T extends string> = { value: T; label: string; description?: string 
 
 // Options that need a description: one choice (radio) or several (checkbox).
 export function ChoiceCards<T extends string>(
-  props: { label: string; name: string; options: readonly Choice<T>[]; disabled?: boolean } & (
+  // `hideLabel` keeps the legend for assistive technology only, where the
+  // container's title already names the group.
+  props: { label: string; name: string; options: readonly Choice<T>[]; disabled?: boolean; hideLabel?: boolean } & (
     | { multiple?: false; value: T; onChange: (value: T) => void }
     | { multiple: true; value: readonly T[]; onChange: (value: T[]) => void }
   ),
@@ -241,7 +253,7 @@ export function ChoiceCards<T extends string>(
   const id = createUniqueId();
   return (
     <fieldset class={ui.fieldSet}>
-      <legend class={ui.fieldLegend}>{props.label}</legend>
+      <legend class={props.hideLabel ? "sr-only" : ui.fieldLegend}>{props.label}</legend>
       <div class="grid gap-1.5">
         <For each={props.options}>
           {(option, index) => (
@@ -303,7 +315,7 @@ export function CheckboxGroup<T extends string>(props: {
                       checked={selected() === values().length}
                       ref={(element) => createEffect(() => (element.indeterminate = selected() > 0 && selected() < values().length))}
                       disabled={props.disabled}
-                      aria-label={`Select all ${group.label}`}
+                      aria-label={`Select all ${group.label.toLowerCase()}`}
                       onChange={(event) => update(values(), event.currentTarget.checked)}
                     />
                     Select all

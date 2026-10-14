@@ -193,10 +193,10 @@ test("a row menu moves with arrow keys, Home and End, and Tab or Escape close it
   await fixture(page);
   await page.goto(`/settings/secrets?${scope}`);
   const trigger = page.getByRole("button", { name: `Actions for ${secretID}` });
-  const menu = page.getByRole("group", { name: `Actions for ${secretID}` });
-  const update = menu.getByRole("button", { name: "Update", exact: true });
-  const copy = menu.getByRole("button", { name: "Copy ID", exact: true });
-  const revoke = menu.getByRole("button", { name: "Revoke", exact: true });
+  const menu = page.getByRole("menu", { name: `Actions for ${secretID}` });
+  const update = menu.getByRole("menuitem", { name: "Update", exact: true });
+  const copy = menu.getByRole("menuitem", { name: "Copy ID", exact: true });
+  const revoke = menu.getByRole("menuitem", { name: "Revoke", exact: true });
 
   await trigger.click();
   await expect(update).toBeFocused();
@@ -230,7 +230,7 @@ test("closing a dialog opened from a row menu returns focus to the menu trigger"
   await page.goto(`/settings/secrets?${scope}`);
   const trigger = page.getByRole("button", { name: `Actions for ${secretID}` });
   await trigger.click();
-  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Update", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Update secret" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Value", { exact: true })).toBeFocused();
@@ -239,7 +239,7 @@ test("closing a dialog opened from a row menu returns focus to the menu trigger"
   await expect(trigger).toBeFocused();
 
   await trigger.click();
-  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Update", exact: true }).click();
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -283,7 +283,7 @@ test("revoking a secret confirms in a dialog that names the secret and its Envir
   const dialog = page.getByRole("dialog", { name: "Revoke secret" });
 
   await trigger.click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(secretID);
   await expect(dialog.getByText("Production", { exact: true })).toBeVisible();
@@ -294,7 +294,7 @@ test("revoking a secret confirms in a dialog that names the secret and its Envir
   expect(state.revocations).toBe(0);
 
   await trigger.click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.revocations).toBe(1);
@@ -309,9 +309,9 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
   const readSessions = form.getByRole("checkbox", { name: "Read sessions", exact: true });
   await expect(readSessions).toBeChecked();
-  await expect(readSessions).toHaveAccessibleDescription("Allow automation to read Session state in the selected project and environment.");
-  await expect(form.getByText("Allow automation to delete Computers.", { exact: true })).toBeVisible();
-  await form.getByRole("checkbox", { name: "Select all Computers" }).check();
+  await expect(readSessions).toHaveAccessibleDescription("Allow automation to read session state in the selected project and environment.");
+  await expect(form.getByText("Allow automation to delete computers.", { exact: true })).toBeVisible();
+  await form.getByRole("checkbox", { name: "Select all computers" }).check();
   await form.getByRole("button", { name: "Generate", exact: true }).click();
 
   const reveal = page.getByRole("dialog", { name: "API key generated" });
@@ -335,11 +335,11 @@ test("a table footer shows the row count and loads the next page", async ({ page
   await page.goto(`/sessions?${scope}`);
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(3);
-  await expect(page.getByText("Showing 2 Sessions", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Load more Sessions", exact: true }).click();
+  await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Load more sessions", exact: true }).click();
   await expect(table.getByRole("row")).toHaveCount(4);
-  await expect(page.getByText("Showing 3 Sessions", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Load more Sessions", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Showing 3 sessions", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more sessions", exact: true })).toHaveCount(0);
   expect(state.sessionCursors).toContain("page-2");
 });
 
@@ -383,7 +383,7 @@ test("a multi-line secret value is masked and sent with its line breaks intact",
   await expect(dialog).toHaveCount(0);
 
   await page.getByRole("button", { name: `Actions for ${secretID}` }).click();
-  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Update", exact: true }).click();
   const update = page.getByRole("dialog", { name: "Update secret" });
   await expect(update.getByLabel("Value", { exact: true })).toHaveValue("");
   await update.getByLabel("Value", { exact: true }).fill(value);
@@ -426,14 +426,14 @@ test("a failed Load more is reported in the footer and retries only the next pag
   await page.goto(`/sessions?${scope}`);
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(3);
-  await page.getByRole("button", { name: "Load more Sessions", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText("Could not load more Sessions.");
+  await page.getByRole("button", { name: "Load more sessions", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Could not load more sessions.");
   await expect(table.getByRole("row")).toHaveCount(3);
   await expect(page.getByText("Sessions are unavailable.")).toHaveCount(0);
 
   state.failNextSessions = false;
   state.sessionCursors.length = 0;
-  await page.getByRole("button", { name: "Retry loading more Sessions", exact: true }).click();
+  await page.getByRole("button", { name: "Retry loading more sessions", exact: true }).click();
   await expect(table.getByRole("row")).toHaveCount(4);
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(state.sessionCursors).toEqual(["page-2"]);
@@ -445,7 +445,7 @@ test("revoking an API key confirms with the key and its Environment", async ({ p
   const dialog = page.getByRole("dialog", { name: "Revoke API key" });
   const open = async () => {
     await page.getByRole("button", { name: "Actions for Deploy bot", exact: true }).click();
-    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
     await expect(dialog).toContainText("Deploy bot");
     await expect(dialog.getByText("Production", { exact: true })).toBeVisible();
   };
@@ -459,29 +459,103 @@ test("revoking an API key confirms with the key and its Environment", async ({ p
   expect(state.deletions).toEqual([`${base}/api-keys/key-1`]);
 });
 
+test("members and pending invitations share one table told apart by status", async ({ page }) => {
+  await fixture(page);
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+  const table = page.getByRole("table");
+  await expect(table).toHaveCount(1);
+  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Email", "Role", "Status", "Joined", "Actions"]);
+  const rows = table.getByRole("row");
+  await expect(rows).toHaveCount(4);
+  await expect(rows.nth(1)).toContainText("Local");
+  await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
+  await expect(rows.nth(2)).toContainText("Second Member");
+  await expect(rows.nth(2).getByRole("cell").nth(3)).toHaveText("Active");
+  // The invitation follows the members: its invited email is the member, its
+  // status Invited.
+  await expect(rows.nth(3).getByRole("cell").nth(0)).toHaveText("pending@example.test");
+  await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Viewer");
+  await expect(rows.nth(3).getByRole("cell").nth(3)).toHaveText("Invited");
+  await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
+});
+
+test("without pending invitations the members footer counts members only", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/invitations", route => route.request().method() === "GET" ? route.fulfill({ json: { invitations: [] } }) : route.fallback());
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByRole("table").getByRole("row")).toHaveCount(3);
+  await expect(page.getByText("Showing 2 members", { exact: true })).toBeVisible();
+  await expect(page.getByText(/invitation/)).toHaveCount(0);
+});
+
+test("the members table footer loads more invitations and counts every row", async ({ page }) => {
+  await fixture(page);
+  const earlier = new Date(Date.parse(now) - 60_000).toISOString();
+  await page.route("**/api/invitations**", async route => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.pathname !== "/api/invitations") return route.fallback();
+    await route.fulfill({ json: url.searchParams.get("cursor") === "invitations-2"
+      ? { invitations: [{ id: "inv-3", email: "earlier@example.test", role: "developer", status: "pending", created_at: earlier, expires_at: earlier }] }
+      : { invitations: [{ id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }], next_cursor: "invitations-2" } });
+  });
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Load more invitations", exact: true }).click();
+  await expect(page.getByText("Showing 2 members, 2 invitations", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
+  const rows = page.getByRole("table").getByRole("row");
+  // The server lists invitations newest first; the older page is appended last.
+  await expect(rows).toHaveCount(5);
+  await expect(rows.nth(3).getByRole("cell").first()).toHaveText("pending@example.test");
+  await expect(rows.nth(4).getByRole("cell").first()).toHaveText("earlier@example.test");
+  await expect(rows.nth(4).getByRole("cell").nth(3)).toHaveText("Invited");
+});
+
+test("invitations that fail to load leave the members and offer Retry", async ({ page }) => {
+  await fixture(page);
+  let fail = true;
+  await page.route("**/api/invitations", route => {
+    if (route.request().method() !== "GET") return route.fallback();
+    if (fail) return route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Unavailable" } } });
+    return route.fulfill({ json: { invitations: [{ id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }] } });
+  });
+  await page.goto(`/settings/members?${scope}`);
+  const notice = page.getByRole("alert").filter({ hasText: "Could not load invitations." });
+  await expect(notice).toBeVisible();
+  await expect(page.getByRole("table").getByRole("row")).toHaveCount(3);
+  await expect(page.getByText("Showing 2 members", { exact: true })).toBeVisible();
+  fail = false;
+  await notice.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
+  await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
+});
+
 test("removing a member and revoking an invitation each confirm before the request", async ({ page }) => {
   const state = await fixture(page);
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   const remove = page.getByRole("dialog", { name: "Remove member" });
   await expect(remove).toContainText("Second Member");
   await remove.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(state.deletions).toEqual([]);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   await remove.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(remove).toHaveCount(0);
   expect(state.deletions).toEqual(["/api/members/member-2"]);
 
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   const revoke = page.getByRole("dialog", { name: "Revoke invitation" });
   await expect(revoke).toContainText("pending@example.test");
   await revoke.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(state.deletions).toEqual(["/api/members/member-2"]);
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   await revoke.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(revoke).toHaveCount(0);
   expect(state.deletions).toEqual(["/api/members/member-2", "/api/invitations/inv-1"]);

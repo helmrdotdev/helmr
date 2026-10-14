@@ -76,7 +76,7 @@ export function Environments() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const me = useMe();
-  const clipboard = useClipboard({ copied: "Environment ID copied", failed: "Could not copy the Environment ID" });
+  const clipboard = useClipboard({ copied: "Environment ID copied", failed: "Could not copy the environment ID" });
   const canManage = () => hasPermission(me.data, "projects.manage");
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<Environment | null>(null);
@@ -96,14 +96,14 @@ export function Environments() {
       />
 
       <Show when={project()} fallback={<EmptyState title="No project selected." />}>
-        <DataTable columns={["Name", "Environment ID", "Default", "Status", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+        <DataTable columns={["Name", "Status", "Environment ID", "Default", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
           <For each={environments()}>
             {(env) => (
               <tr>
                 <td><EnvChip name={env.name} colorHex={env.color_hex} protected={isProtectedEnvironment(env)} /></td>
+                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.environment} /></td>
                 <td><IDText value={env.environment} /></td>
                 <td><Show when={env.is_default} fallback={<EmptyCell />}><StatusBadge resource="environment" status="default" /></Show></td>
-                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.environment} /></td>
                 <RowActions
                   label={`Actions for ${env.name}`}
                   items={[

@@ -12,7 +12,7 @@ export function canPromoteDeployment(options: { permitted: boolean; currentLoade
 }
 
 const promoteErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not promote this Deployment.", { forbidden: "You do not have permission to promote Deployments." });
+  errorMessage(error, "Could not promote this deployment.", { forbidden: "You do not have permission to promote deployments." });
 
 export function PromoteDeploymentModal(props: {
   deployment: Deployment;
@@ -25,7 +25,7 @@ export function PromoteDeploymentModal(props: {
   return (
     <ConfirmDialog
       cancelLabel="Keep"
-      title="Promote Deployment"
+      title="Promote deployment"
       confirmLabel="Promote"
       busyLabel="Promoting..."
       target={props.deployment.version}
@@ -38,8 +38,8 @@ export function PromoteDeploymentModal(props: {
       }}
       errorMessage={promoteErrorMessage}
     >
-      <strong>{props.deployment.version}</strong> becomes the current Deployment for{" "}
-      <strong>{props.environment?.name ?? "this environment"}</strong>. New Sessions use its Agents and its triggers take effect. Agents absent from this Deployment stop accepting new independent Sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced Agent IDs retain their identity. Existing Sessions keep their pinned Deployment, and inactive trigger intervals are not replayed.
+      <strong>{props.deployment.version}</strong> becomes the current deployment for{" "}
+      <strong>{props.environment?.name ?? "this environment"}</strong>. New sessions use its agents and its triggers take effect. Agents absent from this deployment stop accepting new independent sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced agent IDs retain their identity. Existing sessions keep their pinned deployment, and inactive trigger intervals are not replayed.
     </ConfirmDialog>
   );
 }

@@ -18,7 +18,9 @@ export function ContainerHeader(props: { id: string; title: string; count?: numb
 // The in-page container: one border, one header when titled, and a body whose
 // blocks sit 12px apart. A description belongs on the body's first line. A table
 // or list that is a direct child of the body runs flush to its edges with no frame
-// of its own (`ui.containerBody`).
+// of its own (`ui.containerBody`). The body is never rendered empty: when its
+// content renders nothing (a query still loading without a pending line), only
+// the header shows. A Panel with nothing to say is not rendered by its page.
 export function Panel(props: {
   title?: string;
   count?: number | undefined;
@@ -27,12 +29,14 @@ export function Panel(props: {
   class?: string;
 }) {
   const id = createUniqueId();
+  const body = children(() => props.children);
+  const hasBody = () => body.toArray().some((node) => node !== undefined && node !== null && node !== false && node !== "");
   return (
     <section class={cx(ui.container, props.class)} aria-labelledby={props.title ? id : undefined}>
       <Show when={props.title}>{(title) => <ContainerHeader id={id} title={title()} count={props.count} actions={props.actions} />}</Show>
-      <div class={ui.containerBody}>
-        {props.children}
-      </div>
+      <Show when={hasBody()}>
+        <div class={ui.containerBody}>{body()}</div>
+      </Show>
     </section>
   );
 }
@@ -41,7 +45,7 @@ export function Panel(props: {
 // rail that moves under it on narrow screens.
 export function DetailLayout(props: { children: JSX.Element; rail: JSX.Element }) {
   return (
-    <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
+    <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-6 max-[960px]:grid-cols-1">
       <div class={cx(ui.sectionStack, "min-w-0")}>{props.children}</div>
       {props.rail}
     </div>

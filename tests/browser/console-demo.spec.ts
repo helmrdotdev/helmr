@@ -13,7 +13,7 @@ async function selectDemoEnvironment(page: Page) {
   await page.goto("/settings/environments");
   const demoRow = page.getByRole("row").filter({ hasText: "Demo" });
   await demoRow.getByRole("button", { name: "Actions for Demo", exact: true }).click();
-  await page.getByRole("button", { name: "Use", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Use", exact: true }).click();
   await expect(demoRow.getByText("Working", { exact: true })).toBeVisible();
 }
 
@@ -22,7 +22,7 @@ test("console demo shows its waiting work on the Overview and retained history i
   await selectDemoEnvironment(page);
   await page.goto("/");
   await expect(page.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", "/deployments/00000000-0000-7000-8000-000000000501");
-  await expect(page.getByText(/promoted 3 days ago/)).toBeVisible();
+  await expect(page.getByText(/Promoted 3 days ago/)).toBeVisible();
   // The seed holds one Session for approval and has one recent failure in an
   // open Session; closed history and the older failure wait on no one.
   const items = page.getByRole("list", { name: "Waiting items" }).getByRole("listitem");
@@ -75,6 +75,6 @@ test("console demo retains failed Turn input and terminal Session history", asyn
   await expect(page.getByText("Demo input", { exact: true })).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Failed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Send work, close the Session or resume held work from the CLI.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Cancel Session", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
 });

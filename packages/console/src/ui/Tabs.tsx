@@ -2,10 +2,16 @@ import { A, useNavigate } from "@solidjs/router";
 import { For, Show, type JSX } from "solid-js";
 import { cx } from "./styles";
 
+// A page tab. The underline of the selected tab sits on the tablist's bottom
+// edge under its label; the first tab has no leading padding, so its label lines
+// up with the page title.
 const TAB =
-  "relative inline-flex h-9 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3 py-0 font-mono text-chrome font-medium text-console-muted transition-colors hover:text-console-text aria-selected:text-console-text aria-selected:after:absolute aria-selected:after:-bottom-px aria-selected:after:left-3 aria-selected:after:right-3 aria-selected:after:h-px aria-selected:after:bg-console-accent";
+  "relative inline-flex h-9 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3 py-0 font-mono text-chrome font-medium text-console-muted transition-colors hover:text-console-text aria-selected:text-console-text aria-selected:after:absolute aria-selected:after:-bottom-px aria-selected:after:left-3 aria-selected:after:right-3 aria-selected:after:h-px aria-selected:after:bg-console-accent first:pl-0 first:aria-selected:after:left-0";
 
 export type TabItem<T extends string> = { value: T; label: string; count?: number | undefined };
+
+// A tab with a count is named "Label, count" rather than its run-together text.
+const tabName = (item: TabItem<string>) => (item.count === undefined ? undefined : `${item.label}, ${item.count}`);
 
 const tabID = (base: string, value: string) => `${base}-tab-${value}`;
 const panelID = (base: string, value: string) => `${base}-panel-${value}`;
@@ -62,6 +68,7 @@ export function Tabs<T extends string>(props: {
             aria-selected={item.value === props.selected}
             aria-controls={item.value === props.selected ? panelID(props.id, item.value) : undefined}
             tabIndex={item.value === props.selected ? 0 : -1}
+            aria-label={tabName(item)}
             onClick={() => props.onSelect(item.value)}
           >
             <TabLabel label={item.label} count={item.count} />
@@ -106,6 +113,7 @@ export function LinkTabs<T extends string>(props: {
             aria-selected={item.value === props.selected}
             aria-controls={item.value === props.selected ? panelID(props.id, item.value) : undefined}
             tabIndex={item.value === props.selected ? 0 : -1}
+            aria-label={tabName(item)}
           >
             <TabLabel label={item.label} count={item.count} />
           </A>

@@ -43,7 +43,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
                       href={link.href}
                       class={cx(
                         ui.settingsNavLink,
-                        location.pathname === link.href ? ui.settingsNavLinkActive : ui.settingsNavLinkHover,
+                        location.pathname === link.href ? ui.activeBar : ui.settingsNavLinkHover,
                       )}
                       aria-current={location.pathname === link.href ? "page" : undefined}
                     >

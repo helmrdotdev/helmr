@@ -2,10 +2,12 @@ import { Match, Show, Switch, untrack, type Accessor, type JSX } from "solid-js"
 import { Notice } from "./Notice";
 import { cx, ui } from "./styles";
 
-// What is missing and the next step; may hold a CodeBlock or an action.
+// What is missing and the next step; may hold a CodeBlock or an action. Dashed
+// and tinted directly on the page; inside a container body it drops both
+// (`ui.containerBody`).
 export function EmptyState(props: { title: string; hint?: JSX.Element; children?: JSX.Element; class?: string }) {
   return (
-    <div class={cx(ui.emptyState, props.class)}>
+    <div class={cx(ui.emptyState, props.class)} data-empty-state>
       <strong class="font-medium text-console-text">{props.title}</strong>
       <Show when={props.hint}><span>{props.hint}</span></Show>
       {props.children}

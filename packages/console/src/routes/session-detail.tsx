@@ -43,7 +43,7 @@ import { List, ListItem } from "../ui/List";
 import { Notice } from "../ui/Notice";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
+import { DangerZone, DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge, type BadgeStatus } from "../ui/StatusBadge";
@@ -123,7 +123,7 @@ function SessionDetailContent() {
   type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string };
   const [control, setControl] = createSignal<Control>();
   const controlKeys = new Map<string, string>();
-  const controlLabels = { interrupt: "Interrupt Session", cancel: "Cancel Session", turn_interrupt: "Interrupt Turn" };
+  const controlLabels = { interrupt: "Interrupt session", cancel: "Cancel session", turn_interrupt: "Interrupt turn" };
   const performControl = async (operation: Control) => {
     const operationKey = operation.kind === "turn_interrupt" ? `${operation.kind}:${operation.turnID}` : operation.kind;
     const key = controlKeys.get(operationKey) ?? crypto.randomUUID();
@@ -162,16 +162,13 @@ function SessionDetailContent() {
           <>
             <CopyLinkButton />
             <Show when={can("sessions.interrupt") && polling()}>
-              <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt Session</button>
-            </Show>
-            <Show when={can("sessions.cancel") && polling()}>
-              <button type="button" class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel Session</button>
+              <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt session</button>
             </Show>
           </>
         }
       />
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-        <QueryState query={session} pending="Loading Session..." error={sessionError}>
+        <QueryState query={session} pending="Loading session..." error={sessionError}>
           {(current) => (
             <DetailLayout
               rail={
@@ -196,16 +193,16 @@ function SessionDetailContent() {
                   <KeyValue label="Agent">
                     <PrimaryLink href={agentHref(current().agent)}>{current().agent}</PrimaryLink>
                   </KeyValue>
-                  <KeyValue label="Initial Turn">
+                  <KeyValue label="Initial turn">
                     <Show when={current().initial_turn} fallback="No input yet">
                       {turn => <span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span>}
                     </Show>
                   </KeyValue>
                   <Show when={current().parent_session_id}>
-                    {id => <KeyValue label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
+                    {id => <KeyValue label="Owner session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
                   </Show>
                   <Show when={current().requester_session_id}>
-                    {id => <KeyValue label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
+                    {id => <KeyValue label="Requester session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
                   </Show>
                   <Show when={current().key}>
                     {(key) => <KeyValue label="Key"><code>{key()}</code></KeyValue>}
@@ -226,7 +223,7 @@ function SessionDetailContent() {
                     <RelativeTime value={current().created_at} />
                   </KeyValue>
                   <KeyValue label="Holds">
-                    <Show when={current().holds.length} fallback="None">
+                    <Show when={current().holds.length}>
                       <List label="Holds">
                         <For each={current().holds}>
                           {(hold) => (
@@ -262,14 +259,14 @@ function SessionDetailContent() {
               <Panel title="Turns">
                 <QueryState
                   query={turns}
-                  pending="Loading Turns..."
+                  pending="Loading turns..."
                   error={sessionError}
-                  empty={{ when: (data) => data.pages.every((page) => page.turns.length === 0), title: "No Turns yet." }}
+                  empty={{ when: (data) => data.pages.every((page) => page.turns.length === 0), title: "No turns yet." }}
                 >
                   {() => (
                     <List
                       label="Turns"
-                      footer={<LoadMore count={items().length} noun={{ one: "Turn", other: "Turns" }} hasMore={turns.hasNextPage} loading={turns.isFetchingNextPage} failed={turns.isFetchNextPageError} onLoadMore={() => void turns.fetchNextPage()} />}
+                      footer={<LoadMore count={items().length} noun={{ one: "turn", other: "turns" }} hasMore={turns.hasNextPage} loading={turns.isFetchingNextPage} failed={turns.isFetchNextPageError} onLoadMore={() => void turns.fetchNextPage()} />}
                     >
                       <For each={items()}>
                         {(turn) => (
@@ -279,7 +276,7 @@ function SessionDetailContent() {
                               <StatusBadge resource="turn" status={turn.status} />
                               <IDText value={turn.id} />
                               <Show when={turn.status === "running" && can("sessions.interrupt")}>
-                                <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "turn_interrupt", turnID: turn.id })}>Interrupt Turn</button>
+                                <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "turn_interrupt", turnID: turn.id })}>Interrupt turn</button>
                               </Show>
                             </div>
                             <Show when={turn.stop}>
@@ -291,7 +288,7 @@ function SessionDetailContent() {
                               )}
                             </Show>
                             <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
-                              <p class={ui.muted}>Input</p>
+                              <p class={ui.microLabel}>Input</p>
                               <CodeBlock code={turn.input?.map(part => part.text).join("") ?? ""} label={`Turn #${turn.sequence} input`} />
                             </Show>
                             <Show when={turn.status === "finalizing"}>
@@ -304,11 +301,11 @@ function SessionDetailContent() {
                               {error => <Notice tone="danger" role="none"><code>{error().code}</code><Show when={error().message}>: {error().message}</Show></Notice>}
                             </Show>
                             <Show when={Object.hasOwn(turn, "result")}>
-                              <p class={ui.muted}>Result</p>
+                              <p class={ui.microLabel}>Result</p>
                               <CodeBlock code={JSON.stringify(turn.result, null, 2)} label={`Turn #${turn.sequence} result`} />
                             </Show>
                             <Show when={turn.status === "completed" && turn.response}>
-                              {response => <div class={ui.blockStack}><p class={ui.muted}>Response</p><ContentView content={response()} /></div>}
+                              {response => <div class={ui.blockStack}><p class={ui.microLabel}>Response</p><ContentView content={response()} /></div>}
                             </Show>
                             <TurnQuestions address={address()} turnID={turn.id} polling={polling()} />
                             <Show when={turn.terminal_at}>
@@ -320,12 +317,20 @@ function SessionDetailContent() {
                     </List>
                   )}
                 </QueryState>
+                <p class={ui.muted}>
+                  <Show when={current().slack_channel_id} fallback="Send work, close the session or resume held work from the CLI.">
+                    Send work from the CLI or Slack; close the session or resume held work from the CLI.
+                  </Show>
+                </p>
               </Panel>
-              <p class={ui.muted}>
-                <Show when={current().slack_channel_id} fallback="Send work, close the Session or resume held work from the CLI.">
-                  Send work from the CLI or Slack; close the Session or resume held work from the CLI.
-                </Show>
-              </p>
+              <Show when={can("sessions.cancel") && polling()}>
+                <DangerZone
+                  title="Cancel session"
+                  action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel session</button>}
+                >
+                  Cancel queued turns and request that active work in this session and its owned children stop. The session ends as cancelled.
+                </DangerZone>
+              </Show>
             </DetailLayout>
           )}
         </QueryState>
@@ -345,13 +350,13 @@ function SessionDetailContent() {
             onConfirm={() => performControl(operation)}
           >
             <Show when={operation.kind === "interrupt"}>
-              Request running work and initialization in this Session and its owned children to stop, and hold queued work. Results already being saved can finish. Interrupted Turns do not restart when the hold is released.
+              Request running work and initialization in this session and its owned children to stop, and hold queued work. Results already being saved can finish. Interrupted turns do not restart when the hold is released.
             </Show>
             <Show when={operation.kind === "turn_interrupt"}>
-              Request this running Turn to stop. Queued work can proceed after stopping is confirmed. Existing Session holds remain in force.
+              Request this running turn to stop. Queued work can proceed after stopping is confirmed. Existing session holds remain in force.
             </Show>
             <Show when={operation.kind === "cancel"}>
-              Cancel queued Turns and request that active work in this Session and its owned children stop. Retained inputs remain available for inspection. Other Sessions sharing the Computer are not cancelled.
+              Cancel queued turns and request that active work in this session and its owned children stop. Retained inputs remain available for inspection. Other sessions sharing the computer are not cancelled.
             </Show>
           </ConfirmDialog>
         )}

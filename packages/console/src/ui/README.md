@@ -29,10 +29,28 @@ silently change nested controls.
 - **Spacing.** 4/8/12/16/24/32. Buttons in a group sit 8px apart (`ui.buttonGroup`),
   page sections stack 24px apart (`ui.sectionStack`), blocks inside a container,
   dialog or list row sit 12px apart (`ui.blockStack`).
-- **Micro-label** (`ui.microLabel`). The one uppercase mono label: table column
-  headers, rail value labels, group labels.
-- **Focus.** Every interactive element shows the same 2px focus ring on keyboard
-  focus; text controls show an accent border and ring instead.
+- **Copy.** Sentence case everywhere: only the first word of a label, heading,
+  badge, button or sentence is capitalized. Product terms are ordinary nouns
+  mid-sentence ("In current deployment", "Showing 3 sessions", "No triggers
+  yet."); proper nouns and acronyms keep theirs (Slack, GitHub, CLI, API, ID,
+  Helmr).
+- **Micro-label** (`ui.microLabel`). The one uppercase mono label: rail value
+  labels, group labels and a Turn's field labels (Input, Result, Response): the
+  same role gets the same style. Table column headers use it semibold in muted
+  text over a strong rule (`ui.tableWrap`).
+- **Empty values.** A missing value is "—" everywhere (`EmptyCell`, `KeyValue`,
+  `IDText`, `RelativeTime`), never "None". Relative times are muted.
+- **Focus.** Every interactive element shows the same 2px accent focus ring on
+  keyboard focus; text controls show an accent border and ring instead. Every
+  element carries the ring colour unfocused too, so a transition never fades it
+  in from the text colour, and no component sets an outline colour of its own.
+- **Current item.** Three indicators, nothing else. App bar items (section tabs
+  and the Settings button) show the bordered box of their hover state
+  (`ui.barItemCurrent`: strong border, panel background, full text colour). A
+  vertical list (settings navigation, the phone drawer) marks its current item
+  with the accent tint and a 2px accent bar on the inner left edge
+  (`ui.activeBar`). Page tabs mark it with a 1px accent underline on the bottom
+  edge.
 
 ## Containers
 
@@ -62,18 +80,33 @@ Every container has:
   header.
 - **One body.** 12px padding, blocks 12px apart (`ui.containerBody`). The gap is
   the only spacing: the body's direct children drop their vertical margins.
-  Dialog bodies pad 12px too; AuthWindow keeps 16px around its larger title.
+  Dialog bodies pad 12px too; AuthWindow keeps 16px around its larger title. A
+  Panel never renders an empty body: when its content renders nothing, only the
+  header shows, and a page does not render a Panel it has nothing to put in (a
+  Session without progress has no Progress panel).
 
 Tables and lists: a DataTable or List is its own container (its own border). As a
 direct child of a Panel body (`data-list-frame`, also through QueryState, which
 adds no element) it has no frame: it runs flush to the Panel's edges, with a
 divider only where other blocks sit above or below it, and the Panel's header
 names it. Nested deeper (inside a list row, a rail value or a wrapper element) it
-keeps its own frame. A table or list that needs a title sits in a Panel. Steps have
-no frame; they sit in a Panel.
+keeps its own frame. Steps have no frame; they sit in a Panel.
 
-A page `Section` heading sits outside containers and never repeats the title of
-the container right under it.
+A container header never sits directly above a table's column header row:
+
+- a page with one table shows the table itself as the container, with no Panel
+  title above it (QueryState still gives it pending, error and empty states);
+- a page with several named tables puts them in Tabs, one table per tab (the
+  Computer page: Sessions, Commands, Secret placements, with a count where it is
+  already loaded), never in stacked titled Panels;
+- a list without a column header row (the Overview queue, Turns, progress,
+  delivery issues, linked identities) may sit in a titled Panel.
+
+An EmptyState that is a direct child of a container body has no dashed
+border or tint; the dashed box is only for an empty state directly on the page.
+
+There is no page-level section heading: anything titled that holds content is a
+Panel.
 
 ## Shell
 
@@ -81,11 +114,15 @@ the container right under it.
   settings and admin areas: `leading` (scope selector or `BrandMark`),
   `nav` items, `trailing` controls. A protected Environment draws a 2px line in its
   color along the top edge of the bar, inside its 40px height (`protectedColor`).
-  Below 720px the section tabs collapse into a menu button that opens a drawer
-  (a `Popover` dialog with 44px `ui.drawerItem` targets); `drawerStart` and
-  `drawerEnd` add the scope and the Settings and account entries.
+  Below 720px the section tabs collapse into a menu button that opens an untitled
+  drawer (a `Popover` dialog with 44px `ui.drawerItem` targets); the bar keeps
+  both scope pickers at phone width, so the drawer holds only the sections and
+  `drawerEnd`'s Settings and account entries. Sign out is a neutral item, in the
+  drawer and the profile menu.
 - **NavTab.** One bar tab; it is current on its path, every path below it, and the
-  paths in its `match` (a section's other sub-pages). The console has four
+  paths in its `match` (a section's other sub-pages). The current tab is the
+  bar's current-item box (no underline), with the count badge (14px,
+  `leading-none`) inside it, clear of its edges; the tab stays 26px. The console has four
   sections: Overview, Agents (`/agents`, `/sessions`, `/triggers`), Computers
   (`/computers`, `/templates`) and Deployments. A `count` above zero shows as a
   warning badge and names the tab "Overview, 3 waiting" (the Overview's waiting
@@ -101,8 +138,7 @@ the container right under it.
   environment" (the shared create dialogs) and "Manage" (Project settings or
   Environments). The Project picker loads further pages while open, up to 200
   Projects, so its search covers them; past that "Load more projects" remains and
-  the search says it covers loaded Projects. The phone menu's "Change project" and
-  "Change environment" open the same pickers.
+  the search says it covers loaded Projects. "Manage" is a 28px link.
 - **CommandPalette** (`components/`). The header's Search button and Cmd+K on
   Apple platforms or Ctrl+K elsewhere (never a bare key, never the other
   platform's combination, never while an input method composes or another modal
@@ -111,10 +147,12 @@ the container right under it.
   Projects, by Environment when their details are loaded), Go to (sections and
   Settings pages), Agents and recent Sessions (one bounded request each). Enter
   chooses, Escape closes, focus returns to where it was.
-- **ProfileMenu** (`components/`). Opens in a `Popover`.
+- **ProfileMenu** (`components/`). Opens in a `Popover` under a 32px container
+  header with the name and role on one line (the name truncates).
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
-  Account, Project and Organization.
+  Account, Project and Organization. Every settings page uses the full content
+  column; no page narrows it.
 - **EnvironmentSelectorLayout** and `useEditedEnvironment` (`components/`). An
   Environment-specific settings page (Secrets, API keys) edits one Environment of
   the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
@@ -128,28 +166,35 @@ the container right under it.
 
 - **Page.** Width, padding and vertical rhythm. Every route renders inside one.
 - **PageHeader.** `breadcrumb` (parent pages, ending with the current page: the
-  title when it is text, or `current`), `title`, `badge`, `subtitle` (one line, only
-  for what the page shows nowhere else, never a restatement of the title),
-  `meta` (IDs and times), `actions` (Copy link first, the primary action last).
-  Every route page starts with it.
+  title when it is text, or `current`, a short form for long titles), `title`,
+  `badge`, `subtitle` (one line, only for what the page shows nowhere else, never a
+  restatement of the title), `meta` (IDs and times as separate items, never joined
+  by "·"), `actions` (Copy link first, the primary action last). Every route page
+  starts with it. Layout: a 24px breadcrumb slot first, kept empty on pages
+  without a breadcrumb so every h1 sits at the same height; then the title row,
+  with the actions on its right; then subtitle and meta. The h1 is one line,
+  truncated with the full title in `title`. A breadcrumb separator ends the crumb
+  before it, so a wrapped line never starts with "/". On phones the actions
+  follow the meta.
 - **Tabs** and **TabPanel.** Sub-sections of a page with real tab roles; arrow
   keys, Home and End move between tabs. A tab is in the URL only when it is a page
   of its own; then use **LinkTabs**, whose tabs are links with the same keyboard
   behavior, inside a layout route so focus stays on the tablist (section sub-tabs,
   Agent tabs at `/agents/:agent/{triggers,slack}`, Sessions at
-  `/agents/:agent`).
+  `/agents/:agent`). The first page tab has no leading padding and its underline
+  starts at its label, so the label lines up with the h1. A tab's count follows
+  its label; the tab is named "Secret placements, 2".
 - **Toolbar.** Above a list: search and filters at `start`, secondary then primary
   actions at `end`. Filters never live in the page header.
-- **Section.** Page-level heading with optional count and actions, then content
-  (see Containers).
 - **Panel.** The in-page container: optional `title`, `count` and `actions` in the
   container header, then the body (see Containers).
 - **DangerZone.** A destructive page action: the danger-tone header, the
   consequence and one danger button that opens a `ConfirmDialog`. Last in the rail
-  or on the page.
+  or in the main column (Cancel session). Destructive page actions live here, not
+  in the page header.
 - **DetailLayout**, **KeyValueList**, **KeyValue.** Detail pages: main column plus a
-  300px rail; the rail's title is its container header, then label/value pairs; a
-  missing value renders "—".
+  300px rail, 24px apart; the rail's title is its container header, then
+  label/value pairs; a missing value renders "—".
 - **CopyLinkButton** (`components/`). The first `PageHeader` action on Session,
   Computer, Deployment and Agent detail pages. Project and Environment are tab
   state, never part of in-app links; this button copies the one link that carries
@@ -159,7 +204,12 @@ the container right under it.
 
 - **DataTable.** The only table. Pass `columns` (strings, or `{ label, srOnly }` for
   the actions column) and render `<tr>` rows (framing rules under Containers). Rows
-  are single-line; secondary information gets its own column. Conventions:
+  are single-line; secondary information gets its own column. Columns go in order
+  of importance, the status second where there is one, so a phone shows what
+  matters before it scrolls; a table that overflows fades at its right edge while
+  more columns sit past it. Code in cells is body text colour; muted text is for
+  explicitly secondary values. The footer is white with only a top rule.
+  Conventions:
   - **PrimaryLink** — the primary cell, a mono link to the row's resource (or
     `IDText mode="link"` for IDs).
   - **EmptyCell** — "—" for a cell with no value.
@@ -167,19 +217,28 @@ the container right under it.
     applies. Never inline button rows.
   - **RowError** — an action's error as its own row under the row it belongs to.
   - **LoadMore** — the `footer`: "Load more" (busy "Loading…") and the shown count.
-    `noun` is the singular and plural (`{ one: "Turn", other: "Turns" }`): the
-    count reads "Showing 1 Turn" or "Showing 3 Turns", the button is named
-    "Load more Turns". Product terms keep their capital; other nouns are lower
-    case ("event", "invitation").
+    `noun` is the singular and plural, lower case (`{ one: "turn", other: "turns" }`):
+    the count reads "Showing 1 turn" or "Showing 3 turns", the button is named
+    "Load more turns". A table of two kinds of row counts both and loads the
+    second (`extra`): "Showing 3 members, 1 invitation", "Load more invitations";
+    the second count is left out while it is zero.
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
-  identities, the Overview queue) with one divider style and 12px padding; framed
-  like a DataTable; `footer` takes a LoadMore.
+  identities, the Overview queue) with one divider style; framed like a DataTable;
+  `footer` takes a LoadMore. A single-line row (`line`: the Overview queue, a
+  Turn's Questions, linked identities) is 36px like a table row; a multi-block
+  row (a Turn, a hold) pads 12px.
 - **StatusBadge.** Every status. One tone map per resource lives in
   `StatusBadge.tsx`, with a label map where the status name does not read well
-  ("In current Deployment"); add a resource there instead of styling a badge
-  locally.
+  ("In current deployment"); add a resource there instead of styling a badge
+  locally. A Computer's status is **ComputerStatus** (`features/computers/`): its
+  residency (cold, starting, running, parking, restoring, unavailable, with the
+  unavailable reason as the tooltip and in the rail), or its lifecycle only while
+  it is deleting or deleted.
 - **EnvChip** and **EnvDot.** The only way an Environment is shown: its color, name
-  and "protected" tag. **EnvironmentTarget** names the Environment a dialog writes to.
+  and "protected" tag. **ProtectedBadge** is the one "protected" tag, in chips,
+  the scope picker, the command palette and the settings selector; in pickers it
+  sits in a trailing column right-aligned before the check mark.
+  **EnvironmentTarget** names the Environment a dialog writes to.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
 - **CodeBlock.** Every block of code or output, with `copy` for things meant to be
   pasted.
@@ -196,7 +255,9 @@ the container right under it.
   through `createDerivedSlug` until edited), **SecretInput** (write-only, never
   echoes), **SecretTextArea** (write-only and multi-line for keys and tokens: line
   breaks kept, never prefilled or shown after saving, masked where the browser
-  supports it), **SearchInput**, **ColorField** (custom color plus preset swatches).
+  supports it), **SearchInput**, **ColorField** (24px preset swatches, then one
+  24px custom swatch that shows its color only when it is not a preset; the chosen
+  swatch has the accent ring).
 - **FormActions.** Cancel, then the primary action, right-aligned 8px apart. While
   submitting, Cancel is disabled and the primary action shows its busy label;
   `cancelDisabled` covers a Cancel with work of its own (signing out).
@@ -210,7 +271,9 @@ the container right under it.
 | Options that need a description | **ChoiceCards** (radio, or `multiple` for checkboxes) |
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
-There is one Select. Native `<select>` elements are not used.
+There is one Select. Native `<select>` elements are not used. An option's
+`trailing` tags (a protected badge) sit in a trailing column and show in the
+trigger for the chosen option.
 
 ## Feedback
 
@@ -222,6 +285,7 @@ There is one Select. Native `<select>` elements are not used.
   only that page. Without `pending`, nothing renders during the first load.
 - **EmptyState.** What is missing and the next step; may hold a CodeBlock or action.
   Also the state for something a page computes itself, such as no selected scope.
+  Dashed and tinted directly on the page; plain inside a container body.
 - **ErrorState.** A failure with Retry; QueryState uses it.
 - **Notice.** `info`, `warning`, `danger` or `success`; inline or `variant="bar"`
   under the app bar; `onDismiss` adds a close control. Danger is announced as an
@@ -255,12 +319,13 @@ There is one Select. Native `<select>` elements are not used.
   text they move the cursor), Enter chooses, items may be
   grouped and the current one is checked. Nothing reacts while an input method is
   composing.
-- **ActionMenu.** The row menu: an icon-only 28px trigger whose `aria-label` is
-  `Actions for <target>`. Item labels are sentence-case verbs with no trailing
-  ellipsis ("Cancel Session", "Promote", "Delete"). Pass `href` for navigation and
+- **ActionMenu.** The row menu: an icon-only 28px trigger (`aria-haspopup="menu"`)
+  whose `aria-label` is `Actions for <target>`, opening a `menu` of `menuitem`s
+  that are out of the tab order. Item labels are sentence-case verbs with no trailing
+  ellipsis ("Cancel session", "Promote", "Delete"). Pass `href` for navigation and
   `tone: "danger"` for destructive items; the menu orders navigation, then ordinary
   actions, then the danger group after a separator, and supports
-  ArrowUp/ArrowDown/Home/End, Enter/Space and Escape.
+  ArrowUp/ArrowDown/Home/End, Enter (Space too on action buttons) and Escape.
 
 ## Auth windows
 
@@ -301,7 +366,7 @@ choosing per page.
 | Overview queue | Agent name and Session short form (`IDText mode="link"`) as links. | One primary action per item (Answer, Review, Inspect, Reauthorize) leading to where it is done. The Console never answers Questions; Answer opens the Question page with its Slack and CLI guidance. |
 
 `IDText` renders every ID and digest: monospace, muted, full value in `title`.
-Three modes; the copy affordance exists only in `full`:
+Four modes; the copy affordance exists only in `full` and `copy`:
 
 - `short` (default): the short form as plain text. `formatID` in `ui/id.ts` is the
   shared rule: the last hyphen segment of a UUID (12 hex characters), `algo:` plus
@@ -313,6 +378,9 @@ Three modes; the copy affordance exists only in `full`:
 - `full`: the full value once; the text itself copies on click with a brief
   "Copied" and an `aria-label` that switches between `Copy …` and `Copied …`. There
   is no sibling copy button and no `cursor: copy`.
+- `copy`: the short form, copying the full value on click like `full`. Only where
+  the full ID is already on the page in another form: a Deployment's meta, whose
+  version (the title) ends with the ID.
 
 `fallback` renders for the empty case (default "—"). `RelativeTime` renders every
 timestamp: relative text with the absolute time in `title`; `fallback` renders when

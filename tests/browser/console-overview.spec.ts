@@ -85,8 +85,25 @@ test("the Overview queues every kind oldest first with its context, links and ac
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
   await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
-  await expect(page.getByText(/promoted 2 hours ago/)).toBeVisible();
+  await expect(page.getByText(/Promoted 2 hours ago/)).toBeVisible();
   await expect(overviewTab(page)).toHaveAccessibleName("Overview, 5 waiting");
+  // The current section is the bar's bordered box, not an underline, with its
+  // count badge inside the 26px box clear of every edge.
+  const tab = await overviewTab(page).evaluate((link) => {
+    const box = link.getBoundingClientRect();
+    const badge = link.querySelector("span")!.getBoundingClientRect();
+    const style = getComputedStyle(link);
+    return {
+      height: box.height,
+      border: style.borderTopColor,
+      underline: getComputedStyle(link, "::after").content,
+      clear: Math.min(badge.top - box.top, box.bottom - badge.bottom, box.right - badge.right) - parseFloat(style.borderTopWidth),
+    };
+  });
+  expect(tab.height).toBe(26);
+  expect(tab.border).not.toBe("rgba(0, 0, 0, 0)");
+  expect(tab.underline).toBe("none");
+  expect(tab.clear).toBeGreaterThan(2);
 
   const items = queue(page).getByRole("listitem");
   await expect(items).toHaveCount(5);
@@ -155,7 +172,7 @@ test("with nothing waiting the Overview says so and links to Sessions", async ({
   await fixture(page, { items: [] });
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
   await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "View Sessions", exact: true })).toHaveAttribute("href", "/sessions");
+  await expect(page.getByRole("link", { name: "View sessions", exact: true })).toHaveAttribute("href", "/sessions");
   await expect(overviewTab(page)).toHaveAccessibleName("Overview");
   await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
 });
@@ -164,10 +181,10 @@ test("before the first Deployment the Overview shows the CLI steps for this tab'
   await fixture(page, { items: [], current: false, anySession: false });
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
   const setup = page.getByRole("region", { name: "Set up Preview" });
-  await expect(setup.getByRole("list", { name: "First Deployment" }).getByRole("listitem")).toHaveCount(3);
+  await expect(setup.getByRole("list", { name: "First deployment" }).getByRole("listitem")).toHaveCount(3);
   await expect(setup.getByLabel("Create and deploy")).toContainText(`helmr deploy . --project ${projectID} --env ${environmentID}`);
-  await expect(setup.getByLabel("Start a Session")).toHaveText(`helmr session create hello --project ${projectID} --env ${environmentID}`);
-  await expect(page.getByText("No current Deployment")).toBeVisible();
+  await expect(setup.getByLabel("Start a session")).toHaveText(`helmr session create hello --project ${projectID} --env ${environmentID}`);
+  await expect(page.getByText("No current deployment")).toBeVisible();
 });
 
 test("an Environment with Sessions but no current Deployment is not treated as new", async ({ page }) => {
