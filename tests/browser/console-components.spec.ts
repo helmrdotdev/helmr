@@ -89,7 +89,7 @@ const scope = `project=${projectID}&environment=${environmentID}`;
 
 async function openNewProject(page: Page) {
   await page.goto(`/settings/secrets?${scope}`);
-  await page.getByRole("button", { name: "Project Test / Env Production" }).click();
+  await page.getByRole("button", { name: "Project: Test" }).click();
   await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name: "New project", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New project" });
   await expect(dialog).toBeVisible();
@@ -108,7 +108,7 @@ test("Escape closes a Select inside a dialog before the dialog, and the dialog r
   await expect(region).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Project Test / Env Production" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Project: Test" })).toBeFocused();
 });
 
 test("a dialog keeps Tab inside it, and Tab out of a Select returns to its trigger", async ({ page }) => {

@@ -50,14 +50,12 @@ export const ui = {
   drawerItemIdle: "bg-transparent text-console-muted hover:bg-console-bg-panel hover:text-console-text",
   drawerItemActive: "bg-console-accent-soft text-console-text shadow-[inset_2px_0_0_var(--console-accent)]",
 
-  // Scope selector
-  scopeTrigger:
-    "flex h-6.5 cursor-pointer max-w-107.5 items-center gap-1.5 rounded-xs border border-transparent bg-transparent px-2 py-0 font-mono text-badge text-console-text transition hover:border-console-border-strong hover:bg-console-bg-panel hover:text-console-text disabled:cursor-not-allowed disabled:opacity-50 data-[open=true]:border-console-border-strong data-[open=true]:bg-console-bg-panel",
+  // Environment rows in the Settings Environment rail
   scopeItem:
     "grid min-h-6 w-full cursor-pointer grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left font-mono text-badge font-medium text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel",
   scopeItemSelected:
     "border-console-accent bg-console-accent-soft text-console-text hover:border-console-accent hover:bg-console-accent-soft",
-  // A full-width text action inside a popover (profile menu, scope selector footer).
+  // A full-width text action inside a popover (profile menu).
   scopeAction:
     "flex h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-xs border-0 bg-transparent px-2 font-mono text-badge font-medium text-console-muted transition hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
 
@@ -116,7 +114,7 @@ export const ui = {
   fieldSet: "mb-3 mt-1 border-0 p-0",
   fieldLegend: "mb-2 p-0 text-control font-medium text-console-text",
   segment:
-    "h-6.5 cursor-pointer border-0 border-l border-console-border-strong gradient-button px-2.5 font-mono text-chrome font-medium text-console-text first:border-l-0 hover:gradient-button-hover disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:gradient-pressed aria-pressed:shadow-console-pressed",
+    "h-6.5 cursor-pointer whitespace-nowrap border-0 border-l border-console-border-strong gradient-button px-2.5 font-mono text-chrome font-medium text-console-text first:border-l-0 hover:gradient-button-hover disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:gradient-pressed aria-pressed:shadow-console-pressed",
   choiceCard:
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-console-surface has-checked:border-console-accent has-checked:bg-console-accent-soft [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-control [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-chrome [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
 

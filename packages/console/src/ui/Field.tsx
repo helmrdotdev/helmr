@@ -189,16 +189,17 @@ export function ColorField(props: {
   );
 }
 
-// Two to five mutually exclusive options that change a view.
+// Two to five mutually exclusive options that change a view. An option's
+// `count` follows its label, as in a filter showing how many items each shows.
 export function Segmented<T extends string>(props: {
   label: string;
   value: T;
-  options: readonly { value: T; label: string }[];
+  options: readonly { value: T; label: string; count?: number }[];
   onChange: (value: T) => void;
   disabled?: boolean;
 }) {
   return (
-    <div class="inline-flex overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
+    <div class="inline-flex max-w-full flex-wrap overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
       <For each={props.options}>
         {(option) => (
           <button
@@ -209,6 +210,9 @@ export function Segmented<T extends string>(props: {
             onClick={() => props.onChange(option.value)}
           >
             {option.label}
+            <Show when={option.count !== undefined}>
+              {" "}<span class="ml-0.5 text-console-subtle">{option.count}</span>
+            </Show>
           </button>
         )}
       </For>

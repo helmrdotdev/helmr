@@ -33,8 +33,12 @@ async function mockConsole(context: BrowserContext) {
   return scoped;
 }
 
-function scopeTrigger(page: Page) {
-  return page.locator("header").getByRole("button", { name: /^Project/ });
+function environmentTrigger(page: Page) {
+  return page.locator("header").getByRole("button", { name: /^Environment:/ });
+}
+
+function projectTrigger(page: Page) {
+  return page.locator("header").getByRole("button", { name: /^Project:/ });
 }
 
 function notice(page: Page) {
@@ -42,14 +46,14 @@ function notice(page: Page) {
 }
 
 async function chooseEnvironment(page: Page, name: string) {
-  await scopeTrigger(page).click();
-  await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name, exact: true }).click();
+  await environmentTrigger(page).click();
+  await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name }).click();
 }
 
 async function openLink(page: Page, search: string, expected: string) {
   await page.goto(`/sessions?${search}`);
   await expect(page).toHaveURL("/sessions");
-  await expect(scopeTrigger(page)).toContainText(expected);
+  await expect(environmentTrigger(page)).toContainText(expected);
 }
 
 test("each tab keeps its own Environment across reloads", async ({ context }) => {
@@ -59,15 +63,15 @@ test("each tab keeps its own Environment across reloads", async ({ context }) =>
 
   const second = await context.newPage();
   await second.goto("/sessions");
-  await expect(scopeTrigger(second)).toContainText("Production");
+  await expect(environmentTrigger(second)).toContainText("Production");
   await chooseEnvironment(second, "Staging");
-  await expect(scopeTrigger(second)).toContainText("Staging");
+  await expect(environmentTrigger(second)).toContainText("Staging");
   await expect(second).toHaveURL("/sessions");
 
   await first.reload();
   await second.reload();
-  await expect(scopeTrigger(first)).toContainText("Production");
-  await expect(scopeTrigger(second)).toContainText("Staging");
+  await expect(environmentTrigger(first)).toContainText("Production");
+  await expect(environmentTrigger(second)).toContainText("Staging");
   await expect(notice(first)).toHaveText("");
   await expect(notice(second)).toHaveText("");
 });
@@ -79,7 +83,7 @@ test("a new tab starts in the scope of the tab last in front", async ({ context 
   const second = await context.newPage();
   await second.goto("/sessions");
   await chooseEnvironment(second, "Staging");
-  await expect(scopeTrigger(second)).toContainText("Staging");
+  await expect(environmentTrigger(second)).toContainText("Staging");
 
   // Headless Chromium keeps every page visible and focused and fires no event on
   // bringToFront, so deliver the focus event a real tab switch would.
@@ -87,7 +91,7 @@ test("a new tab starts in the scope of the tab last in front", async ({ context 
   await first.evaluate(() => window.dispatchEvent(new Event("focus")));
   const opened = await context.newPage();
   await opened.goto(`/sessions/${sessionID}`);
-  await expect(scopeTrigger(opened)).toContainText("Production");
+  await expect(environmentTrigger(opened)).toContainText("Production");
   expect(scoped).toContain(`${project}/production/sessions/${sessionID}`);
   expect(scoped).not.toContain(`${project}/staging/sessions/${sessionID}`);
 });
@@ -101,7 +105,7 @@ test("a share link switches the tab without touching its old scope, leaves a cle
   await page.goto(`/sessions?ref=share&project=${project}&environment=staging#history`);
   await expect(page).toHaveURL("/sessions?ref=share#history");
   await expect(notice(page)).toHaveText("Switched to Scope Tabs / Staging from the link.");
-  await expect(scopeTrigger(page)).toContainText("Staging");
+  await expect(environmentTrigger(page)).toContainText("Staging");
   expect(scoped).toContain(`${project}/staging/sessions`);
   expect(scoped.filter(path => path.startsWith(`${project}/production`))).toEqual([]);
   await notice(page).getByRole("button", { name: "Dismiss notice" }).click();
@@ -115,7 +119,7 @@ test("a link to an unavailable Project returns the tab to its own scope and says
   const scoped = await mockConsole(page.context());
   await openLink(page, `project=${project}&environment=staging`, "Staging");
   await openLink(page, "project=missing&environment=production", "Staging");
-  await expect(scopeTrigger(page)).toContainText("Scope Tabs");
+  await expect(projectTrigger(page)).toContainText("Scope Tabs");
   await expect(notice(page)).toHaveText("The link's Project or Environment is not available; showing Scope Tabs / Staging.");
   // The organization default Project is never shown on the way back.
   expect(scoped.filter(path => path.startsWith("other/"))).toEqual([]);
@@ -171,4 +175,84 @@ test("Copy link reports a clipboard failure", async ({ page }) => {
   await page.getByRole("button", { name: "Copy link" }).click();
   await expect(page.getByRole("button", { name: "Could not copy" })).toBeVisible();
   await expect(page.getByText("Could not copy link")).toBeAttached();
+});
+
+test("the Environment picker checks the current Environment and moves, searches and chooses by keyboard", async ({ page }) => {
+  await mockConsole(page.context());
+  await openLink(page, `project=${project}&environment=production`, "Production");
+  await environmentTrigger(page).click();
+  const picker = page.getByRole("dialog", { name: "Choose environment" });
+  const search = picker.getByRole("combobox", { name: "Find an environment" });
+  await expect(search).toBeFocused();
+  const production = picker.getByRole("option", { name: /^Production/ });
+  const staging = picker.getByRole("option", { name: /^Staging/ });
+  await expect(picker.getByRole("option")).toHaveCount(2);
+  await expect(production).toHaveAttribute("aria-checked", "true");
+  await expect(staging).not.toHaveAttribute("aria-checked", "true");
+  await expect(production).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await expect(staging).toHaveAttribute("aria-selected", "true");
+  await expect(search).toHaveAttribute("aria-activedescendant", (await staging.getAttribute("id"))!);
+  await page.keyboard.press("Home");
+  await expect(production).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("End");
+  await expect(staging).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+  await expect(picker).toHaveCount(0);
+  await expect(environmentTrigger(page)).toContainText("Staging");
+  await expect(environmentTrigger(page)).toBeFocused();
+  await expect(page).toHaveURL("/sessions");
+
+  await page.keyboard.press("Enter");
+  await expect(search).toBeFocused();
+  await page.keyboard.type("prod");
+  await expect(picker.getByRole("option")).toHaveCount(1);
+  // With text in the box, Home moves the text cursor rather than the list.
+  await page.keyboard.press("Home");
+  expect(await search.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(0);
+  await expect(picker.getByRole("option")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+  await expect(environmentTrigger(page)).toContainText("Production");
+});
+
+test("the Project picker switches Project by search and its Manage links lead to Settings", async ({ page }) => {
+  await mockConsole(page.context());
+  await openLink(page, `project=${project}&environment=staging`, "Staging");
+  await projectTrigger(page).click();
+  const picker = page.getByRole("dialog", { name: "Choose project" });
+  await expect(picker.getByRole("combobox", { name: "Find a project" })).toBeFocused();
+  await expect(picker.getByRole("option", { name: "Scope Tabs" })).toHaveAttribute("aria-checked", "true");
+  await expect(picker.getByRole("link", { name: "Manage", exact: true })).toHaveAttribute("href", "/settings/project");
+  await page.keyboard.type("oth");
+  await expect(picker.getByRole("option")).toHaveText([/^Other/]);
+  await page.keyboard.press("Enter");
+  await expect(projectTrigger(page)).toContainText("Other");
+  await expect(environmentTrigger(page)).toContainText("Other Production");
+
+  await environmentTrigger(page).click();
+  const environments = page.getByRole("dialog", { name: "Choose environment" });
+  await expect(environments).toContainText("Environment · Other");
+  await environments.getByRole("link", { name: "Manage", exact: true }).click();
+  await expect(page).toHaveURL("/settings/environments");
+  await expect(environments).toHaveCount(0);
+});
+
+test("the Project picker loads the remaining pages so its search covers every Project", async ({ page }) => {
+  await mockConsole(page.context());
+  const cursors: (string | null)[] = [];
+  await page.context().route((url) => url.pathname === "/api/projects", async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+    cursors.push(cursor);
+    await route.fulfill({ json: cursor === "page-2" ? { projects: [projects[1]] } : { projects: [projects[0]], next_cursor: "page-2" } });
+  });
+  await openLink(page, "project=other&environment=production", "Other Production");
+  await projectTrigger(page).click();
+  const picker = page.getByRole("dialog", { name: "Choose project" });
+  await expect(picker.getByRole("option")).toHaveText([/^Other/, /^Scope Tabs/]);
+  await expect(picker.getByRole("combobox", { name: "Find a project" })).toBeVisible();
+  await expect(picker.getByRole("button", { name: "Load more projects" })).toHaveCount(0);
+  expect(cursors).toEqual([null, "page-2"]);
+  await page.keyboard.type("scope");
+  await page.keyboard.press("Enter");
+  await expect(projectTrigger(page)).toContainText("Scope Tabs");
 });

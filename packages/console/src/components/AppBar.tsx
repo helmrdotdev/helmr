@@ -1,11 +1,26 @@
 import { A, useLocation } from "@solidjs/router";
 import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
 import { focusableIn, Popover } from "../ui/Popover";
-import { cx, ui } from "../ui/styles";
+import { cx, toneClass, ui } from "../ui/styles";
 
 // A section of the bar. `match` lists further paths the section owns, such as the
-// other pages of a section with sub-tabs.
-export type NavItem = { href: string; label: string; match?: readonly string[] };
+// other pages of a section with sub-tabs; `count` is a number waiting there,
+// shown as a badge when above zero.
+export type NavItem = { href: string; label: string; match?: readonly string[]; count?: () => number | undefined };
+
+// The badge after a section's label; the link then reads "Overview, 3 waiting".
+function NavCount(props: { count: number | undefined }) {
+  return (
+    <Show when={(props.count ?? 0) > 0}>
+      <span class={cx("rounded-xs border px-1 font-mono text-micro leading-normal", toneClass.warning)} aria-hidden="true">{props.count}</span>
+    </Show>
+  );
+}
+
+function navLabel(item: NavItem): string | undefined {
+  const count = item.count?.() ?? 0;
+  return count > 0 ? `${item.label}, ${count} waiting` : undefined;
+}
 
 const NAV_TAB =
   "relative flex h-6.5 shrink-0 cursor-pointer items-center rounded-xs border border-transparent px-2.5 font-mono text-chrome font-medium text-console-muted transition duration-100";
@@ -26,8 +41,9 @@ export function NavTab(props: { item: NavItem }) {
   const location = useLocation();
   const active = () => isCurrentSection(location.pathname, props.item);
   return (
-    <A href={props.item.href} class={cx(NAV_TAB, active() ? NAV_TAB_ACTIVE : NAV_TAB_IDLE)} aria-current={active() ? "page" : undefined}>
+    <A href={props.item.href} class={cx(NAV_TAB, "gap-1.5", active() ? NAV_TAB_ACTIVE : NAV_TAB_IDLE)} aria-current={active() ? "page" : undefined} aria-label={navLabel(props.item)}>
       {props.item.label}
+      <NavCount count={props.item.count?.()} />
     </A>
   );
 }
@@ -119,8 +135,9 @@ export function AppBar(props: {
             {(item) => {
               const active = () => isCurrentSection(location.pathname, item);
               return (
-                <A href={item.href} class={cx(ui.drawerItem, active() ? ui.drawerItemActive : ui.drawerItemIdle)} aria-current={active() ? "page" : undefined} onClick={close}>
+                <A href={item.href} class={cx(ui.drawerItem, active() ? ui.drawerItemActive : ui.drawerItemIdle)} aria-current={active() ? "page" : undefined} aria-label={navLabel(item)} onClick={close}>
                   {item.label}
+                  <NavCount count={item.count?.()} />
                 </A>
               );
             }}

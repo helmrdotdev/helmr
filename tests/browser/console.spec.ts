@@ -34,12 +34,20 @@ test("local developer can enter the console and sees the four sections", async (
   await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings/project");
 });
 
-test("an environment without a deployment shows the CLI onboarding on the Overview", async ({ page }) => {
+test("an environment before its first Deployment shows the CLI steps for this scope on the Overview", async ({ page }) => {
   await login(page);
 
-  await expect(page.getByRole("heading", { name: "Set up your first Agent" })).toBeVisible();
-  await expect(page.getByText("helmr init --dir ./my-agent")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Needs you" })).toHaveCount(0);
+  const setup = page.getByRole("region", { name: "Set up Production" });
+  await expect(setup.getByRole("heading", { name: "Set up Production" })).toBeVisible();
+  const steps = setup.getByRole("list", { name: "First Deployment" });
+  await expect(steps.getByRole("listitem")).toHaveCount(3);
+  const origin = new URL(page.url()).origin;
+  await expect(setup.getByLabel("Install and sign in")).toContainText(`helmr login ${origin}`);
+  await expect(setup.getByLabel("Create and deploy")).toHaveText("helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . --project console-demo --env production");
+  await expect(setup.getByLabel("Start a Session")).toHaveText("helmr session create hello --project console-demo --env production");
+  await expect(page.getByText("No current Deployment")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Waiting on you" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Overview", exact: true })).toBeVisible();
 });
 
 test("the header marks exactly the section that owns each route", async ({ page }) => {
@@ -146,15 +154,23 @@ test("on a phone the menu button opens a drawer that reaches every section, Sett
   await drawer.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL("/settings/project");
 
-  await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("dialog", { name: "Menu" }).getByRole("button", { name: "Change project or environment" }).click();
-  await expect(page.getByRole("dialog", { name: "Menu" })).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Choose project" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  for (const [button, picker, search] of [["Change project", "Choose project", "Find a project"], ["Change environment", "Choose environment", "Find an environment"]] as const) {
+    await page.getByRole("button", { name: "Open menu" }).click();
+    await page.getByRole("dialog", { name: "Menu" }).getByRole("button", { name: button, exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Menu" })).toHaveCount(0);
+    const dialog = page.getByRole("dialog", { name: picker });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("combobox", { name: search })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
 
   await page.getByRole("button", { name: "Open menu" }).click();
   const menu = page.getByRole("dialog", { name: "Menu" });
-  await expect(menu.getByRole("button", { name: "Change project or environment" })).toBeFocused();
+  await expect(menu.getByRole("button", { name: "Change project", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(menu.getByRole("button", { name: "Change environment", exact: true })).toBeFocused();
   for (const name of NAVIGATION) {
     await page.keyboard.press("Tab");
     await expect(menu.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true })).toBeFocused();

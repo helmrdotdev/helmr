@@ -45,12 +45,31 @@ silently change nested controls.
 - **NavTab.** One bar tab; it is current on its path, every path below it, and the
   paths in its `match` (a section's other sub-pages). The console has four
   sections: Overview, Agents (`/agents`, `/sessions`, `/triggers`), Computers
-  (`/computers`, `/templates`) and Deployments.
+  (`/computers`, `/templates`) and Deployments. A `count` above zero shows as a
+  warning badge and names the tab "Overview, 3 waiting" (the Overview's waiting
+  items).
 - **SectionLayout** (`components/`). A section whose pages are sub-tabs: one
   `PageHeader` and `LinkTabs` that stay mounted (a layout route) while the selected
   page renders in the tab panel. It shows the no-scope state for every page.
 - **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
-- **ScopeSwitcher** and **ProfileMenu** (`components/`). Both open in a `Popover`.
+- **ScopeSelector** (`components/`). The tab's scope as two segments,
+  `<Project> / <Environment>` (with its dot and "protected" tag), each opening its
+  own picker: a `Popover` with a title strip, a `CommandList` of the Projects or
+  the Project's Environments (current one checked), "New project" / "New
+  environment" (the shared create dialogs) and "Manage" (Project settings or
+  Environments). The Project picker loads further pages while open, up to 200
+  Projects, so its search covers them; past that "Load more projects" remains and
+  the search says it covers loaded Projects. The phone menu's "Change project" and
+  "Change environment" open the same pickers.
+- **CommandPalette** (`components/`). The header's Search button and Cmd+K on
+  Apple platforms or Ctrl+K elsewhere (never a bare key, never the other
+  platform's combination, never while an input method composes or another modal
+  dialog is open) open a `Dialog` with a
+  `CommandList`: Switch environment (the Project's Environments, then other loaded
+  Projects, by Environment when their details are loaded), Go to (sections and
+  Settings pages), Agents and recent Sessions (one bounded request each). Enter
+  chooses, Escape closes, focus returns to where it was.
+- **ProfileMenu** (`components/`). Opens in a `Popover`.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
   Account, Project and Organization.
@@ -114,9 +133,10 @@ silently change nested controls.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
 - **CodeBlock.** Every block of code or output, with `copy` for things meant to be
   pasted.
-- **Steps.** Numbered setup steps with done, current and upcoming states. Multi-step
-  setup is never a modal; it is Steps on the owning page or tab (the Agent's Slack
-  tab).
+- **Steps.** Numbered setup steps with done, current and upcoming states; a step's
+  description may hold a CodeBlock. Multi-step setup is never a modal; it is Steps
+  on the owning page or tab (the Agent's Slack tab, the Overview before the first
+  Deployment).
 
 ## Inputs
 
@@ -135,7 +155,7 @@ silently change nested controls.
 
 | Situation | Control |
 | --- | --- |
-| 2–5 mutually exclusive options that change a view | **Segmented** |
+| 2–5 mutually exclusive options that change a view | **Segmented** (an option's `count` follows its label) |
 | A value in a form, more than 5 options, or long labels | **Select** (filters itself past 10 options) |
 | Options that need a description | **ChoiceCards** (radio, or `multiple` for checkboxes) |
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
@@ -178,6 +198,12 @@ There is one Select. Native `<select>` elements are not used.
     actions. `window.confirm` is not used;
   - **RevealDialog** for a value shown once (API key, invite link, enrollment
     token) with Copy and a warning.
+- **CommandList.** A search box over a list for pickers and the command palette:
+  focus stays in the box (combobox with `aria-activedescendant`), typing filters
+  by every word, ArrowUp/ArrowDown move (Home/End too while the box is empty; with
+  text they move the cursor), Enter chooses, items may be
+  grouped and the current one is checked. Nothing reacts while an input method is
+  composing.
 - **ActionMenu.** The row menu: an icon-only 28px trigger whose `aria-label` is
   `Actions for <target>`. Item labels are sentence-case verbs with no trailing
   ellipsis ("Cancel Session", "Promote", "Delete"). Pass `href` for navigation and
@@ -221,7 +247,7 @@ choosing per page.
 | --- | --- | --- |
 | List rows | Prefer a human-readable identifier (Agent name, key, version). Keep an ID column only where nothing better exists (Sessions, Computers), rendered with `IDText` short form: last hyphen segment of the UUID, mono muted, full ID in `title`. No copy control. | None inline. Rows navigate to the detail page: the primary cell is the link (`IDText mode="link"` or `PrimaryLink` on the readable identifier). Rarely used actions go into `RowActions` in a trailing `{ label: "Actions", srOnly: true }` column. Never render a menu whose only items duplicate the primary cell's navigation. |
 | Detail pages | The full ID once, in the `PageHeader` `meta` or `subtitle`, with `IDText mode="full"` (click-to-copy). Rail entries for related resources use `IDText mode="link"`, so long UUIDs never wrap. | Page-wide actions in the `PageHeader` `actions` slot; actions on individual holds stay with that hold, confirmed with `ConfirmDialog` or a `FormDialog`. |
-| Overview sections | Same as list rows: short form (`IDText mode="link"` to the detail page) or the readable identifier as the link. | Open the Session detail to inspect retained work and apply its controls. |
+| Overview queue | Agent name and Session short form (`IDText mode="link"`) as links. | One primary action per item (Answer, Review, Inspect, Reauthorize) leading to where it is done. The Console never answers Questions; Answer opens the Question page with its Slack and CLI guidance. |
 
 `IDText` renders every ID and digest: monospace, muted, full value in `title`.
 Three modes; the copy affordance exists only in `full`:

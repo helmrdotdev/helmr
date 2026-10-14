@@ -21,8 +21,13 @@ test("console demo shows retained history in current navigation", async ({ page 
   await login(page);
   await selectDemoEnvironment(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Set up your first Agent" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent Sessions" })).toBeVisible();
+  // Retained Sessions without anything waiting: the Overview says so instead of
+  // repeating the Sessions list or the first-Deployment steps.
+  await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
+  await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "000000000701", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "View Sessions", exact: true }).click();
+  await expect(page).toHaveURL("/sessions");
   await expect(page.getByRole("link", { name: "000000000701", exact: true })).toBeVisible();
   const navigation = page.getByRole("navigation", { name: "Sections" });
   await navigation.getByRole("link", { name: "Deployments", exact: true }).click();

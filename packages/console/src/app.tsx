@@ -6,7 +6,9 @@ import { ProfileMenu } from "./components/ProfileMenu";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
-import { ScopeSwitcher } from "./components/ScopeSwitcher";
+import { ScopeSelector, type ScopePickerOpeners } from "./components/ScopeSelector";
+import { CommandPalette } from "./components/CommandPalette";
+import { attentionTotal, useAttention } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
 import { useMe } from "./lib/me";
@@ -51,13 +53,6 @@ import { NotFound, NotFoundWindow } from "./routes/not-found";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
 
-const CONSOLE_NAV: NavItem[] = [
-  { href: "/", label: "Overview" },
-  { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
-  { href: "/computers", label: "Computers", match: ["/templates"] },
-  { href: "/deployments", label: "Deployments" },
-];
-
 function SettingsLink() {
   const location = useLocation();
   const active = () => location.pathname.startsWith("/settings");
@@ -77,11 +72,15 @@ function SettingsLink() {
   );
 }
 
-// The phone menu's scope: the tab's Project and Environment, changed through the
-// scope selector in the bar.
-function DrawerScope(props: { close: () => void; openScope: () => void }) {
+// The phone menu's scope: the tab's Project and Environment, each changed
+// through its picker in the bar.
+function DrawerScope(props: { close: () => void; openers: ScopePickerOpeners | undefined }) {
   const scope = useScope();
   const environment = () => environmentChip(scope.selectedEnvironment());
+  const open = (picker: keyof ScopePickerOpeners) => {
+    props.close();
+    props.openers?.[picker]();
+  };
   return (
     <div class="flex flex-col gap-1 border-b border-console-border p-2">
       <dl class="m-0 grid gap-1.5 px-2.5 py-1.5">
@@ -96,16 +95,8 @@ function DrawerScope(props: { close: () => void; openScope: () => void }) {
           </dd>
         </div>
       </dl>
-      <button
-        type="button"
-        class={cx(ui.drawerItem, ui.drawerItemIdle)}
-        onClick={() => {
-          props.close();
-          props.openScope();
-        }}
-      >
-        Change project or environment
-      </button>
+      <button type="button" class={cx(ui.drawerItem, ui.drawerItemIdle)} onClick={() => open("project")}>Change project</button>
+      <button type="button" class={cx(ui.drawerItem, ui.drawerItemIdle)} disabled={!scope.selectedProject()} onClick={() => open("environment")}>Change environment</button>
     </div>
   );
 }
@@ -141,7 +132,14 @@ function DrawerAccount(props: { close: () => void }) {
 
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
-  const [openScope, setOpenScope] = createSignal<() => void>(() => undefined);
+  const attention = useAttention();
+  const [openers, setOpeners] = createSignal<ScopePickerOpeners>();
+  const nav: NavItem[] = [
+    { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
+    { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
+    { href: "/computers", label: "Computers", match: ["/templates"] },
+    { href: "/deployments", label: "Deployments" },
+  ];
   const protectedColor = () => {
     const environment = scope.selectedEnvironment();
     return environment && isProtectedEnvironment(environment) ? environment.color_hex : undefined;
@@ -149,12 +147,12 @@ function AppShell(props: { children?: JSX.Element }) {
   return (
     <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
-        leading={<ScopeSwitcher opener={(open) => setOpenScope(() => open)} />}
-        nav={CONSOLE_NAV}
-        trailing={<div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div>}
+        leading={<ScopeSelector openers={setOpeners} />}
+        nav={nav}
+        trailing={<><CommandPalette /><div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div></>}
         protectedColor={protectedColor()}
         drawerTitle="Helmr Console"
-        drawerStart={(close) => <DrawerScope close={close} openScope={() => openScope()()} />}
+        drawerStart={(close) => <DrawerScope close={close} openers={openers()} />}
         drawerEnd={(close) => <DrawerAccount close={close} />}
       />
       <Show when={scope.error()}>

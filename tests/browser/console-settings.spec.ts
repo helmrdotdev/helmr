@@ -46,7 +46,7 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
 }
 
 const scope = `project=${projectID}&environment=production`;
-const scopeTrigger = (page: Page) => page.locator("header").getByRole("button", { name: /^Project/ });
+const scopeTrigger = (page: Page) => page.locator("header").getByRole("button", { name: /^Environment:/ });
 const subtitle = (page: Page) => page.locator("h1").locator("xpath=../following-sibling::div[1]");
 const rail = (page: Page) => page.getByRole("region", { name: "Environment" });
 const radio = (page: Page, name: string) => rail(page).getByRole("radio", { name: new RegExp(`^${name}\\b`) });
@@ -167,11 +167,11 @@ test("the Secrets Environment selector edits another Environment without changin
 
   // A change of the tab's scope starts the selector over from the new working Environment.
   await scopeTrigger(page).click();
-  await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name: "Staging", exact: true }).click();
+  await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Staging" }).click();
   await expect(scopeTrigger(page)).toContainText("Staging");
   await expect(staging).toBeChecked();
   await scopeTrigger(page).click();
-  await page.getByRole("dialog", { name: "Choose project" }).getByRole("button", { name: "Production", exact: true }).click();
+  await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Production" }).click();
   await expect(scopeTrigger(page)).toContainText("Production");
   await expect(production).toBeChecked();
   await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();

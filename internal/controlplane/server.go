@@ -470,6 +470,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/projects/{project}/environments/{environment}/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/projects/{project}/environments/{environment}/deployments/{deploymentID}/promote", s.promoteDeployment)
+		r.Get("/projects/{project}/environments/{environment}/attention", s.listAttentionHTTP)
 		r.Get("/projects/{project}/environments/{environment}/agents", s.listManagementAgents)
 		r.Get("/projects/{project}/environments/{environment}/agents/{agent}/status", s.getAgentStatus)
 		r.Get("/projects/{project}/environments/{environment}/agents/{agent}", s.getAgentDefinition)
