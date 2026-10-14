@@ -16,12 +16,12 @@ export const questionAgent = agent({
     const { marker } = z.object({ marker: z.string() }).strict().parse(fixtureValue(turn.input))
     const response = await turn.ask({
       prompt: [{ type: "text", text: `Approve ${marker}` }],
-      answer: { type: "choice", options: [
+       type: "choice", options: [
         { id: "approve", label: "Approve", value: true },
         { id: "decline", label: "Decline", value: false },
-      ], allowText: true },
+      ], allowCustom: true, allowNotes: true,
     })
     const answer = response.answer
-    return { marker, answer, respondedBy: response.respondedBy }
+    return { marker, answer, answeredBy: response.answeredBy }
   },
 })

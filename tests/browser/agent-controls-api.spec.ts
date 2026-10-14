@@ -22,7 +22,7 @@ test("Console inspects externally admitted work and applies interrupt and cancel
   });
   expect(enqueued.ok(), await enqueued.text()).toBeTruthy();
   await page.goto(`/sessions/${receipt.session_id}?${scope}`);
-  await expect(page.getByText("retained", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("Turn #1 input", { exact: true })).toHaveText("retained");
   await expect(page.locator("pre").filter({ hasText: /^queued$/ })).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await confirm(page, "Interrupt session");
@@ -38,6 +38,6 @@ test("Console inspects externally admitted work and applies interrupt and cancel
   const turns = await (await page.request.get(`${base}/sessions/${receipt.session_id}/turns`)).json();
   expect(turns.turns.map((turn: { status: string }) => turn.status)).toEqual(["cancelled", "cancelled"]);
   expect(turns.turns.map((turn: { input: unknown }) => turn.input)).toEqual([[{ type: "text", text: "retained" }], [{ type: "text", text: "queued" }]]);
-  await expect(page.getByText("retained", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("Turn #1 input", { exact: true })).toHaveText("retained");
   await expect(page.locator("pre").filter({ hasText: /^queued$/ })).toBeVisible();
 });

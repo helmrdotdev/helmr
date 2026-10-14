@@ -56,6 +56,15 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		} else if err != nil {
 			return err
 		}
+		// The Environment lock also serializes connection configuration. An
+		// active conversational front cannot acquire a structured input contract.
+		var incompatible bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_connections c JOIN agent_definitions d ON (d.environment_id,d.agent_id)=(c.environment_id,c.agent_id) WHERE c.environment_id=$1 AND c.revoked_at IS NULL AND d.deployment_id=$2 AND d.input_kind<>'text')`, env, id).Scan(&incompatible); err != nil {
+			return err
+		}
+		if incompatible {
+			return invalidInput(errors.New("a connected Slack agent must accept conversation input"))
+		}
 		var cutover time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cutover); err != nil {
 			return err

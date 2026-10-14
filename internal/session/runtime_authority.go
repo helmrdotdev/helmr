@@ -35,10 +35,11 @@ func RenewRuntimeAuthority(ctx context.Context, pool db.TxBeginner, host workerg
 // lost response may leave a gap; acquiring again must advance rather than reuse
 // an attachment that could already have reached the guest.
 type RuntimeAttachment struct {
-	Stopped   bool
-	Starting  bool
-	Authority RuntimeAuthority
-	Sequence  int64
+	Stopped      bool
+	Starting     bool
+	RetireAbsent bool
+	Authority    RuntimeAuthority
+	Sequence     int64
 }
 
 // AcquireRuntimeAttachment authorizes only a current physical owner's control
@@ -61,6 +62,11 @@ func AcquireRuntimeAttachment(ctx context.Context, pool db.TxBeginner, host work
 			result.Authority = RuntimeAuthority{}
 			return nil
 		}
+		control, err := desiredSessionControl(ctx, tx, e)
+		if err != nil {
+			return err
+		}
+		result.RetireAbsent = control == "shutdown"
 		if err = tx.QueryRow(ctx, `UPDATE session_processes SET attachment_sequence=attachment_sequence+1
     WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND attachment_sequence<9223372036854775807
     RETURNING attachment_sequence`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&result.Sequence); err != nil {

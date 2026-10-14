@@ -3,7 +3,7 @@ import { ApiError, del, postJson, request } from "./api";
 type ApiKeyStatus = "active" | "expired" | "revoked";
 
 export type ApiKeyScope =
-  | "asks:respond"
+  | "asks:answer"
   | "sessions:read"
   | "sessions:create"
   | "sessions:send"

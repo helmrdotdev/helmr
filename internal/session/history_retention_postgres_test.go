@@ -37,8 +37,8 @@ func fenceHistoryProcess(t *testing.T, f fixture) {
 func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	f, a, id, _ := askFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=60 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
-	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, ResponseID: "answer", Answer: json.RawMessage(`""`)}
-	if _, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req); err != nil {
+	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "answer", Answer: json.RawMessage(`""`)}
+	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[{"type":"text","text":"response"}]`)); err != nil {
@@ -78,10 +78,10 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 		t.Fatalf("expired Turn: %+v %v", view, err)
 	}
 	answer, err := session.GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
-	if err != nil || answer.Question != nil || answer.Answer != nil || answer.PayloadExpiredAt == nil || answer.RespondedByUserID == nil {
+	if err != nil || answer.Question != nil || answer.Answer != nil || answer.PayloadExpiredAt == nil || answer.AnsweredByUserID == nil {
 		t.Fatalf("expired answer: %+v %v", answer, err)
 	}
-	replay, err := session.RespondAsk(t.Context(), f.pool, f.caller(), req)
+	replay, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req)
 	if err != nil || replay.PayloadExpiredAt == nil {
 		t.Fatalf("answer replay: %+v %v", replay, err)
 	}

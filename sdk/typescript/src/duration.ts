@@ -1,5 +1,6 @@
 /** A positive integer unit string, or a positive integer number of milliseconds. */
-export type Duration = string | number
+export type Duration = `${number}${"ms" | "s" | "m" | "h" | "d"}` | number
+export type Retention = Duration | "never"
 
 export function durationMilliseconds(value: Duration, label = "Duration"): number {
   let milliseconds: bigint
@@ -17,10 +18,10 @@ export function durationMilliseconds(value: Duration, label = "Duration"): numbe
 }
 
 /** Resource-retention opt-out; execution timeouts still require a duration. */
-export function retentionMilliseconds(value: Duration, label: string): number | null {
+export function retentionMilliseconds(value: Retention, label: string): number | null {
   return value === "never" ? null : durationMilliseconds(value, label)
 }
-export function retentionFromMilliseconds(value: unknown, label: string): Duration {
+export function retentionFromMilliseconds(value: unknown, label: string): Retention {
   if (value === null) return "never"
   if (typeof value !== "number") throw new Error(`${label} must be null or milliseconds`)
   return durationMilliseconds(value, label)

@@ -1,8 +1,8 @@
-import type { InputContent } from "../../../sdk/typescript/src/content"
+import type { LoadedAgentDefinition } from "../../../sdk/typescript/src/internal/program"
 import { readFile, realpath } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import type { AgentDefinition, TemplateDefinition, Json } from "@helmr/sdk"
+import type { TemplateDefinition } from "@helmr/sdk"
 import type { DefinitionIndex } from "@helmr/sdk/internal"
 
 export type { DefinitionIndex } from "@helmr/sdk/internal"
@@ -35,15 +35,15 @@ export function parseDefinitionIndex(value: unknown): DefinitionIndex {
 // The managed Node preload enforces module provenance for the whole lifetime.
 // Each Session imports only the selected, compiler-verified export. Node's
 // module cache and the Session owner retain it through transport renewal/RAM.
-export async function loadAgentBundle(indexURL: URL, agentId: string): Promise<AgentDefinition<InputContent, Json, unknown>> {
+export async function loadAgentBundle(indexURL: URL, agentId: string): Promise<LoadedAgentDefinition> {
   const indexPath = fileURLToPath(indexURL)
   const index = parseDefinitionIndex(JSON.parse(await readFile(indexPath, "utf8")))
   const selected = index.agents.find(agent => agent.id === agentId)
   if (!selected) throw new Error("Agent is absent from the verified bundle")
   const namespace = await loadExport(indexPath, selected.modulePath)
-  const definition = namespace[selected.exportName] as Partial<AgentDefinition> | undefined
+  const definition = namespace[selected.exportName] as Partial<LoadedAgentDefinition> | undefined
   if (definition?.kind !== "agent" || definition.id !== selected.id || definition.template?.kind !== "template" || definition.template.id !== selected.templateDefinitionId || typeof definition.turn !== "function" || (definition.init !== undefined && typeof definition.init !== "function")) throw new Error("Agent export differs from the verified bundle")
-  return definition as AgentDefinition<InputContent, Json, unknown>
+  return definition as LoadedAgentDefinition
 }
 
 async function loadExport(indexPath: string, selectedModulePath: string): Promise<Record<string, unknown>> {
@@ -62,8 +62,8 @@ export async function loadComputerBundle(indexURL: URL, templateDefinitionId: st
   const selected = index.templates.find(computer => computer.id === templateDefinitionId)
   if (!selected) throw new Error("Computer is absent from the verified bundle")
   const namespace = await loadExport(indexPath, selected.modulePath)
-  const exported = namespace[selected.exportName] as Partial<AgentDefinition> | Partial<TemplateDefinition> | undefined
-  const definition = selected.throughAgent ? (exported as Partial<AgentDefinition> | undefined)?.template : exported as Partial<TemplateDefinition> | undefined
-  if ((selected.throughAgent && (exported as Partial<AgentDefinition> | undefined)?.kind !== "agent") || definition?.kind !== "template" || definition.id !== templateDefinitionId || (definition.prepare !== undefined && typeof definition.prepare !== "function")) throw new Error("Computer export differs from the verified bundle")
+  const exported = namespace[selected.exportName] as Partial<LoadedAgentDefinition> | Partial<TemplateDefinition> | undefined
+  const definition = selected.throughAgent ? (exported as Partial<LoadedAgentDefinition> | undefined)?.template : exported as Partial<TemplateDefinition> | undefined
+  if ((selected.throughAgent && (exported as Partial<LoadedAgentDefinition> | undefined)?.kind !== "agent") || definition?.kind !== "template" || definition.id !== templateDefinitionId || (definition.prepare !== undefined && typeof definition.prepare !== "function")) throw new Error("Computer export differs from the verified bundle")
   return definition as TemplateDefinition
 }

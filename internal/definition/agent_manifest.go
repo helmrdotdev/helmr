@@ -13,6 +13,8 @@ import (
 
 type AgentManifest struct {
 	TemplateDefinitionID string                 `json:"templateDefinitionId"`
+	InputKind            string                 `json:"inputKind"`
+	InputSchema          *InputSchemaDiscovery  `json:"inputSchema,omitempty"`
 	HasInit              bool                   `json:"hasInit"`
 	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
@@ -44,6 +46,9 @@ type TemplateInputManifest struct {
 }
 
 func ValidateAgentManifest(m AgentManifest) error {
+	if err := ValidateInputContract(m.InputKind, m.InputSchema); err != nil {
+		return err
+	}
 	if m.CloseAfterIdleNever && m.CloseAfterIdleMs != nil {
 		return errors.New("conflicting idle close policy")
 	}
@@ -59,8 +64,10 @@ func ValidateAgentManifest(m AgentManifest) error {
 		return errors.New("agent triggers must be an object")
 	}
 	for id, trigger := range m.Triggers {
-		if _, err := SlackChannelReference(trigger.Slack); err != nil {
+		if channel, err := SlackChannelReference(trigger.Slack); err != nil {
 			return fmt.Errorf("agent trigger %q: %w", id, err)
+		} else if channel != nil && m.InputKind != "text" {
+			return errors.New("structured-input agents cannot have a Slack cron destination")
 		}
 		if !ValidDeclaredID(id) {
 			return errors.New("agent trigger id is invalid")
@@ -74,7 +81,7 @@ func ValidateAgentManifest(m AgentManifest) error {
 		if err := ValidateTimezone(trigger.Timezone); err != nil {
 			return fmt.Errorf("agent trigger %q: %w", id, err)
 		}
-		if _, err := content.Input(trigger.Input); err != nil {
+		if _, err := content.InvocationFor(m.InputKind, trigger.Input); err != nil {
 			return fmt.Errorf("agent trigger %q input: %w", id, err)
 		}
 	}

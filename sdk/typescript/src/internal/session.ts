@@ -1,3 +1,4 @@
+import { parseSessionEventData } from "./session-event"
 import { retentionFromMilliseconds } from "../duration"
 import type {
   JsonValue,
@@ -14,7 +15,7 @@ import type {
   SessionEventKind,
   SessionEventPage,
 } from "../contract"
-import { normalizeContent, normalizeInput } from "../content"
+import { normalizeContent, normalizeInvocation } from "../content"
 import { canonicalizeJsonValue } from "./jsoncanon"
 import { validateDefinitionId } from "../schema/definition"
 import { resourceID } from "./id"
@@ -99,6 +100,7 @@ export function parseTurnState(value: unknown): TurnState {
   if (expired && (!terminal || ["input", "result", "response"].some(key => Object.hasOwn(v, key))))
     throw new Error("Expired Turn payload is inconsistent")
   if (!expired && !Object.hasOwn(v, "input")) throw new Error("Turn.input is required")
+  if (status === "completed" && !expired && !Object.hasOwn(v, "result")) throw new Error("Completed Turn.result is required")
   const failure = v["error"] === undefined ? undefined : objectValue(v["error"], "Turn.error")
   if (failure !== undefined && (v["status"] !== "failed" || typeof failure["code"] !== "string" || !failure["code"] || (expired ? failure["message"] !== undefined : typeof failure["message"] !== "string")))
     throw new Error("Turn.error is invalid")
@@ -108,7 +110,7 @@ export function parseTurnState(value: unknown): TurnState {
     id: resourceID(v["id"], "Turn.id"),
     sessionId: resourceID(v["session_id"], "Turn.session_id"),
     sequence: safeSequence(v["sequence"], "Turn.sequence"),
-    ...(expired ? { payloadExpiredAt: timestampString(v["payload_expired_at"], "Turn.payload_expired_at") } : { input: normalizeInput(v["input"]) }),
+    ...(expired ? { payloadExpiredAt: timestampString(v["payload_expired_at"], "Turn.payload_expired_at") } : { input: normalizeInvocation(v["input"]) }),
     status,
     ...(v["started_at"] === undefined
       ? {}
@@ -126,7 +128,7 @@ export function parseTurnState(value: unknown): TurnState {
         }),
     ...(Object.hasOwn(v, "response") ? { response: normalizeContent(v["response"], false) } : {}),
     ...(Object.hasOwn(v, "result") ? { result: jsonValue(v["result"]) } : {}),
-  })
+  } as TurnState)
 }
 export function parseTurnAdmission(
   value: unknown,
@@ -202,7 +204,7 @@ export function parseSessionResumeReceipt(
 const eventKinds: readonly SessionEventKind[] = [
   "message.admitted", "message.started", "message.delivered", "message.rejected",
   "slack.delivery_unavailable",
-  "ask.created", "ask.responded", "ask.cancelled",
+  "ask.created", "ask.answered", "ask.cancelled",
   "turn.output",
   "turn.queued",
   "turn.running",
@@ -232,8 +234,8 @@ export function parseSessionEvent(value: unknown): SessionEvent {
     sequence: safeSequence(v["sequence"], "Session event.sequence"),
     createdAt: timestampString(v["created_at"], "Session event.created_at"),
     kind: v["kind"] as SessionEventKind,
-    data: jsonValue(v["data"]),
-  })
+    data: parseSessionEventData(v["kind"] as SessionEventKind, v["data"]),
+  } as SessionEvent)
 }
 export function parseSessionEventPage(value: unknown): SessionEventPage {
   const v = objectValue(value, "Session events")

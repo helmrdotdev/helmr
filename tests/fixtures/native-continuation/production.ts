@@ -1,7 +1,7 @@
 import { fixtureValue } from "../../e2e/support/runtime-mcp"
 // Authored application for the integrated worker qualification. The driver
 // starts the local model through an ordinary Computer command before native setup.
-import { agent, template, image, source, type Json, type InputContent } from "../../../sdk/typescript/src/index"
+import { agent, template, image, source, type JsonValue } from "../../../sdk/typescript/src/index"
 import assert from "node:assert/strict"
 import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
@@ -59,7 +59,7 @@ function native(definition: typeof nativeCodex) {
           release = resolve
           turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true })
         })
-        await turn.onMessage(message => { assert.equal(fixtureValue(message), "lose-native-launcher"); release() })
+        await turn.onMessage(message => { assert.equal(fixtureValue(message.content), "lose-native-launcher"); release() })
         await turn.output.write("native launcher loss ready")
         await requested
         const child = context.initResult.nativeProcess
@@ -129,7 +129,7 @@ function native(definition: typeof nativeCodex) {
 export const codex = native(nativeCodex)
 export const claude = native(nativeClaude)
 
-export const receipt = agent<InputContent, Json, unknown>({
+export const receipt = agent({
   id: "receipt", template: workspace,
   async turn(turn, { session }) {
     const input = fixtureValue(turn.input)
@@ -150,7 +150,7 @@ export const peer = agent({
   id: "peer",
   template: workspace,
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
-  async turn(turn, { initResult: state, session, computer, mcp }): Promise<Json> {
+  async turn(turn, { initResult: state, session, computer, mcp }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
@@ -160,7 +160,7 @@ export const peer = agent({
       state.discovery = await checkSessionDiscovery(turn, session.id, computer, receipt, mcp, state.discovery)
     }
     let released = false
-    await turn.onMessage(message => { if (fixtureValue(message) === "release") released = true })
+    await turn.onMessage(message => { if (fixtureValue(message.content) === "release") released = true })
     while (!released) {
       turn.signal.throwIfAborted()
       let io: { bytes: number; writeReadMs: number; observedAt: string } | undefined
@@ -195,7 +195,7 @@ export const models = agent({
     await writeFile("/workspace/native-models.json", JSON.stringify(model.endpoints))
     return { ...model, target, nonce: crypto.randomUUID(), count: 0 }
   },
-  async turn(turn, { initResult: state }): Promise<Json> {
+  async turn(turn, { initResult: state }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
     assert(typeof input === "string" || (input && typeof input === "object" && !Array.isArray(input)))
     if (input === "park") {

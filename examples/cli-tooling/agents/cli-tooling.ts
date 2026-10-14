@@ -68,6 +68,7 @@ interface RipgrepMatch {
 }
 
 function runCommand(command: readonly string[], signal: AbortSignal): Promise<{ stdout: string, stderr: string, exitCode: number | null }> {
+  signal.throwIfAborted()
   return new Promise((resolve, reject) => {
     const proc = spawn(command[0] ?? "", command.slice(1), { signal, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
@@ -80,9 +81,11 @@ function runCommand(command: readonly string[], signal: AbortSignal): Promise<{ 
     proc.stderr.on("data", (chunk: string) => {
       stderr += chunk
     })
-    proc.on("error", reject)
+    let failure: Error | undefined
+    proc.on("error", (error) => { failure = error })
     proc.on("close", (exitCode) => {
-      resolve({ stdout, stderr, exitCode })
+      if (failure) reject(failure)
+      else resolve({ stdout, stderr, exitCode })
     })
   })
 }

@@ -57,7 +57,7 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | `POST` | `/v1/sessions/{sessionID}/enqueue` |
 | `POST` | `/v1/sessions/{sessionID}/interrupt` |
 | `POST` | `/v1/sessions/{sessionID}/resume` |
-| `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond` |
+| `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer` |
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/interrupt` |
 | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/messages` |
 
@@ -106,13 +106,14 @@ It requires `computers:update`.
 - Request and response bodies are JSON. Most fields use snake case. Secret
   bindings use `secret`, `env`, `file` and `allowedOrigins`, the same names
   as the SDK.
-- Input and messages are arrays of text parts. Output and responses are
-  Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).
+- Inputs are JSON values validated by the Agent's input schema. Agents without
+  an input schema accept arrays of text parts, as do Turn messages. Output and
+  responses are Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).
 - Retention fields are milliseconds: `close_after_idle_ms` and
   `delete_after_unused_ms` take a positive integer or `null` for never. Omit
   them to inherit the definition.
-- Mutations accept an `idempotency_key`; question responses use
-  `response_id`. Reuse the same value and body to retry an uncertain request.
+- Mutations accept an `idempotency_key`; question answers use
+  `answer_id`. Reuse the same value and body to retry an uncertain request.
   See [Errors](/docs/reference/api/errors).
 - Session creation returns a Session and an optional initial Turn admission; exec returns a Command
   admission. Neither confirms completion.

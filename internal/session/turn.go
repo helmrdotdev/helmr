@@ -257,7 +257,15 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		}
-		req.Input, err = content.Input(req.Input)
+		if method == "enqueue" {
+			var inputKind string
+			if err = tx.QueryRow(ctx, `SELECT d.input_kind FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&inputKind); err != nil {
+				return err
+			}
+			req.Input, err = content.InvocationFor(inputKind, req.Input)
+		} else {
+			req.Input, err = content.Input(req.Input)
+		}
 		if err != nil {
 			return err
 		}

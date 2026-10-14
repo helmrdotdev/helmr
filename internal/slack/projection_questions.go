@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"strings"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
@@ -18,10 +19,48 @@ func projectQuestionState(ctx context.Context, tx pgx.Tx, o projectionOwner, e p
 		return errors.New("question update has no exact ask")
 	}
 	var state string
-	if err := tx.QueryRow(ctx, `SELECT status FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND id=$3`, o.environment, o.session, source.Ask).Scan(&state); err != nil {
+	var question, answer []byte
+	var responder string
+	if err := tx.QueryRow(ctx, `SELECT a.status,a.question,a.answer,CASE WHEN a.answered_by_user_id IS NOT NULL THEN COALESCE(u.display_name,'user') WHEN a.answered_by_api_key_id IS NOT NULL THEN 'API key' ELSE '' END FROM turn_asks a LEFT JOIN users u ON u.id=a.answered_by_user_id WHERE a.environment_id=$1 AND a.session_id=$2 AND a.id=$3`, o.environment, o.session, source.Ask).Scan(&state, &question, &answer, &responder); err != nil {
 		return err
 	}
-	label := map[string]string{"responded": "Question answered.", "cancelled": "Question withdrawn."}[state]
+	label := map[string]string{"answered": "Question answered.", "cancelled": "Question withdrawn."}[state]
+	if state == "answered" {
+		name := []rune(responder)
+		if len(name) > 80 {
+			name = name[:80]
+		}
+		label = "Answered by " + string(name) + "."
+		if question != nil && answer != nil {
+			q, err := parseFormQuestion(question)
+			if err != nil {
+				return err
+			}
+			if q.Type == "choice" {
+				var resolved struct {
+					Selected []struct {
+						ID string `json:"id"`
+					} `json:"selected"`
+				}
+				if err := json.Unmarshal(answer, &resolved); err != nil {
+					return err
+				}
+				ids := map[string]bool{}
+				for _, item := range resolved.Selected {
+					ids[item.ID] = true
+				}
+				labels := []string{}
+				for _, option := range q.Options {
+					if ids[option.ID] {
+						labels = append(labels, option.Label)
+					}
+				}
+				if len(labels) > 0 {
+					label = "Answered by " + string(name) + ": " + strings.Join(labels, ", ")
+				}
+			}
+		}
+	}
 	if label == "" {
 		return nil
 	}
@@ -37,7 +76,7 @@ func projectQuestionState(ctx context.Context, tx pgx.Tx, o projectionOwner, e p
 	if err != nil {
 		return err
 	}
-	for _, p := range posts {
+	for index, p := range posts {
 		var body map[string]json.RawMessage
 		if err = json.Unmarshal(p.body, &body); err != nil {
 			return err
@@ -48,12 +87,8 @@ func projectQuestionState(ctx context.Context, tx pgx.Tx, o projectionOwner, e p
 		}
 		keptBlocks := blocks[:0]
 		for _, block := range blocks {
-			var kind, blockID string
+			var kind string
 			_ = json.Unmarshal(block["type"], &kind)
-			_ = json.Unmarshal(block["block_id"], &blockID)
-			if blockID == "helmr_answer_cli" {
-				continue
-			}
 			if kind != "actions" {
 				keptBlocks = append(keptBlocks, block)
 				continue
@@ -66,7 +101,7 @@ func projectQuestionState(ctx context.Context, tx pgx.Tx, o projectionOwner, e p
 			for _, action := range actions {
 				var id string
 				_ = json.Unmarshal(action["action_id"], &id)
-				if id != "helmr.open_answer" {
+				if id != "choice" && id != "helmr.submit_choices" && id != "helmr.open_answer" && !strings.HasPrefix(id, "helmr.choose.") {
 					kept = append(kept, action)
 				}
 			}
@@ -75,14 +110,27 @@ func projectQuestionState(ctx context.Context, tx pgx.Tx, o projectionOwner, e p
 				keptBlocks = append(keptBlocks, block)
 			}
 		}
-		stateBlock, _ := json.Marshal(map[string]any{"type": "context", "elements": []any{plainText(label)}})
-		var block map[string]json.RawMessage
-		_ = json.Unmarshal(stateBlock, &block)
-		blocks = append(keptBlocks, block)
+		blocks = keptBlocks
+		if index == len(posts)-1 {
+			content, _ := json.Marshal([]map[string]string{{"type": "text", "text": label}})
+			rendered, err := RenderContent([]ContentSource{{Sequence: 1, Content: content}}, false)
+			if err != nil {
+				return err
+			}
+			for _, part := range rendered {
+				for _, value := range part.Body.Blocks {
+					encoded, _ := json.Marshal(value)
+					var block map[string]json.RawMessage
+					_ = json.Unmarshal(encoded, &block)
+					blocks = append(blocks, block)
+				}
+			}
+			var text string
+			_ = json.Unmarshal(body["text"], &text)
+			body["text"], _ = json.Marshal(text + "\n" + label)
+		}
 		body["blocks"], _ = json.Marshal(blocks)
-		var text string
-		_ = json.Unmarshal(body["text"], &text)
-		body["text"], _ = json.Marshal(text + "\n" + label)
+
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return err

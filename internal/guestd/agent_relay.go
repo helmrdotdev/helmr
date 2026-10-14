@@ -64,6 +64,26 @@ type agentRelay struct {
 func newAgentRelay(ctx context.Context, session *agentSession, onClosed func(error)) *agentRelay {
 	return &agentRelay{logChanged: make(chan struct{}, 1), session: session, ctx: ctx, changed: make(chan struct{}), nextSequence: 1, onClosed: onClosed, writes: make(chan agentQueuedWrite, 16), finished: make(chan struct{})}
 }
+
+// An absent epoch has no process or diagnostic producers. Retain its terminal
+// receipt in the ordinary registry so delayed startup cannot recreate it.
+// It never owns a process: terminal command rejection and the completed finish
+// guard prevent process access, and only its transport sender is started.
+func newRetiredAgentRelay(ctx context.Context, entry *computerMountEntry, grant *agentv1.SessionGrant) *agentRelay {
+	session := &agentSession{entry: entry, grant: proto.Clone(grant).(*agentv1.SessionGrant), clock: entry.authorityNow,
+		terminal: true, physicalClosed: true, held: true, turns: make(map[string]*agentTurnProof), pending: make(map[string]*agentPendingOperation), deliveries: make(map[string]*agentv1.GuestCommand)}
+	for i := range session.logs {
+		session.logs[i] = &diagnosticBuffer{next: 1}
+		session.logs[i].close(true, entry.authorityNow())
+	}
+	relay := newAgentRelay(ctx, session, nil)
+	relay.finishOnce.Do(func() {
+		relay.enqueue(&agentv1.GuestSessionMessage{Identity: session.grant.GetIdentity(), Message: &agentv1.GuestSessionMessage_Stopped{Stopped: &agentv1.SessionStopped{}}})
+		close(relay.finished)
+	})
+	return relay
+}
+
 func (relay *agentRelay) notifyLocked() { close(relay.changed); relay.changed = make(chan struct{}) }
 
 func (relay *agentRelay) run() {
@@ -578,15 +598,19 @@ func (relay *agentRelay) finish(cause error) {
 		relay.session.mu.Lock()
 		identity := proto.Clone(relay.session.grant.GetIdentity()).(*agentv1.SessionIdentity)
 		relay.session.mu.Unlock()
-		if err == nil && expected {
-			relay.enqueue(&agentv1.GuestSessionMessage{Identity: identity, Message: &agentv1.GuestSessionMessage_Stopped{Stopped: &agentv1.SessionStopped{}}})
-		} else {
+		if err != nil || !expected {
 			failure := errors.Join(cause, err)
 			if failure == nil {
 				failure = errors.New("session process ended")
 			}
 			event := &agentv1.ProgramEvent{Identity: identity, Event: &agentv1.ProgramEvent_Failed{Failed: &agentv1.SessionFailed{Code: "session_process_lost", Message: failure.Error()}}}
 			relay.enqueue(&agentv1.GuestSessionMessage{Identity: identity, Message: &agentv1.GuestSessionMessage_Event{Event: event}})
+		}
+		// Failure and physical absence are independent facts. A terminal relay
+		// cannot accept a later shutdown command, so retain the joined scope's
+		// stop receipt after its failure for the host to reconcile on reattachment.
+		if err == nil {
+			relay.enqueue(&agentv1.GuestSessionMessage{Identity: identity, Message: &agentv1.GuestSessionMessage_Stopped{Stopped: &agentv1.SessionStopped{}}})
 		}
 		if relay.onClosed != nil {
 			relay.onClosed(err)

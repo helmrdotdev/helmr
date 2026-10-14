@@ -180,12 +180,19 @@ func TestInterruptSetupRejectsStaleReadyAndRetainsQueue(t *testing.T) {
 	e := f.execution()
 	e.AuthorityGeneration += 2
 	control, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
-	if err != nil || control.StopTurnID != nil || control.StopDeadline == nil {
+	if err != nil || control.Kind != "shutdown" || control.StopTurnID != nil || control.StopDeadline == nil {
 		t.Fatalf("setup stop: %+v %v", control, err)
 	}
 	assertStopDeadlineMargin(t, f)
-	if err := session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", control.StopSequence); !errors.Is(err, session.ErrConflict) {
-		t.Fatalf("setup reused: %v", err)
+	if err := session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", control.StopSequence); err != nil {
+		t.Fatalf("shutdown acknowledgement: %v", err)
+	}
+	var awaitingStop bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT stop_deadline_at IS NOT NULL AND fenced_at IS NULL FROM session_processes WHERE session_id=$1 AND epoch=1`, f.session).Scan(&awaitingStop); err != nil || !awaitingStop {
+		t.Fatalf("acknowledgment replaced physical cessation: %v %v", awaitingStop, err)
+	}
+	if _, err := session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("shutdown acknowledgement allowed startup: %v", err)
 	}
 	view, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
 	if err != nil || view.Activity.Process == nil || view.Activity.Process.Stop == nil || view.Activity.Process.Stop.TurnID != nil {

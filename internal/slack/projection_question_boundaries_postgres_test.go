@@ -18,26 +18,22 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		parts = append(parts, map[string]string{"type": "text", "text": fmt.Sprintf("part-%02d-%s", i, strings.Repeat("x", 64))})
 	}
-	full, _ := json.Marshal(map[string]any{"prompt": parts, "answer": map[string]any{"type": "choice", "options": []map[string]string{{"id": "a", "label": "Complete choice label", "description": "Complete choice description", "value": "PRIVATE_VALUE"}}}})
+	full, _ := json.Marshal(map[string]any{"prompt": parts, "type": "choice", "options": []map[string]string{{"id": "a", "label": "Complete choice label", "description": "Complete choice description", "value": "PRIVATE_VALUE"}}})
 	for _, tc := range []struct {
 		name     string
 		question json.RawMessage
 		answer   bool
 	}{
 		{"full-choice", full, true},
-		{"long-description", json.RawMessage(`{"prompt":[{"type":"text","text":"Full prompt"}],"answer":{"type":"choice","options":[{"id":"a","label":"Choice","description":"` + strings.Repeat("d", 76) + `","value":"PRIVATE_VALUE"}]}}`), false},
-		{"long-label", json.RawMessage(`{"prompt":[{"type":"text","text":"Full prompt"}],"answer":{"type":"choice","options":[{"id":"a","label":"` + strings.Repeat("l", 76) + `","value":"PRIVATE_VALUE"}]}}`), false},
-		{"large-prompt", json.RawMessage(`{"prompt":[{"type":"text","text":"` + strings.Repeat("x", 245000) + `"}],"answer":{"type":"text"}}`), false},
-		{"empty-array-text", json.RawMessage(`{"prompt":[],"answer":{"type":"text"}}`), true},
-		{"empty-part-text", json.RawMessage(`{"prompt":[{"type":"text","text":""}],"answer":{"type":"text"}}`), true},
+		{"long-description", json.RawMessage(`{"prompt":[{"type":"text","text":"Full prompt"}],"type":"choice","options":[{"id":"a","label":"Choice","description":"` + strings.Repeat("d", 76) + `","value":"PRIVATE_VALUE"}]}`), true},
+		{"long-label", json.RawMessage(`{"prompt":[{"type":"text","text":"Full prompt"}],"type":"choice","options":[{"id":"a","label":"` + strings.Repeat("l", 76) + `","value":"PRIVATE_VALUE"}]}`), false},
+		{"large-prompt", json.RawMessage(`{"prompt":[{"type":"text","text":"` + strings.Repeat("x", 245000) + `"}],"type":"text"}`), false},
+		{"empty-array-text", json.RawMessage(`{"prompt":[],"type":"text"}`), true},
+		{"empty-part-text", json.RawMessage(`{"prompt":[{"type":"text","text":""}],"type":"text"}`), true},
 	} {
 		for _, unbound := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/unbound=%v", tc.name, unbound), func(t *testing.T) {
 				f := newStatusFixture(t)
-				var project, environment string
-				if err := f.Pool.QueryRow(t.Context(), `SELECT p.slug,e.slug FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, f.Environment).Scan(&project, &environment); err != nil {
-					t.Fatal(err)
-				}
 				if unbound {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET thread_ts=NULL WHERE id=$1`, f.thread)
 				}
@@ -59,6 +55,7 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				defer rows.Close()
 				var text strings.Builder
 				count := 0
 				for rows.Next() {
@@ -84,33 +81,11 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 					if bytes.Contains(raw, []byte("helmr.open_answer")) != (tc.answer && lastPost) || bytes.Contains(raw, []byte("PRIVATE_VALUE")) {
 						t.Fatal("question controls or private data", string(raw))
 					}
-					var card struct {
-						Blocks []struct {
-							ID   string `json:"block_id"`
-							Text struct {
-								Text string `json:"text"`
-							} `json:"text"`
-						} `json:"blocks"`
+					if bytes.Contains(raw, []byte("View question and CLI instructions")) != lastPost {
+						t.Fatalf("Console guidance must appear only on last post: %d/%d", count+1, total)
 					}
-					if err := json.Unmarshal(raw, &card); err != nil {
-						t.Fatal(err)
-					}
-					guide := ""
-					for _, block := range card.Blocks {
-						if block.ID == "helmr_answer_cli" {
-							guide = block.Text.Text
-						}
-					}
-					if (guide != "") != lastPost {
-						t.Fatalf("CLI guidance must appear only on the last question post: post %d of %d", count+1, total)
-					}
-					if lastPost {
-						target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", ask, f.Session, turn, project, environment)
-						for _, expected := range []string{"session turn ask get " + target + " --json", "session turn ask respond " + target + " --answer-file answer.json --response-id RESPONSE_ID", "helmr login", "--api-url", "unset HELMR_API_KEY", "same answer for retries"} {
-							if !strings.Contains(guide, expected) {
-								t.Fatalf("missing CLI guidance %q: %s", expected, guide)
-							}
-						}
+					if lastPost && !bytes.Contains(raw, []byte("/turns/"+turn.String()+"/asks/"+ask.String())) {
+						t.Fatal("question link lost exact identity")
 					}
 					count++
 				}

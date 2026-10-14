@@ -7,8 +7,8 @@ import (
 
 func BuildPlan() definition.BuildPlan {
 	return definition.BuildPlan{FormatVersion: definition.BuildPlanFormatVersion, Definitions: []definition.Input{
-		{Kind: definition.KindAgent, DeclaredID: "build", Agent: &definition.AgentManifest{TemplateDefinitionID: "repo", HasInit: true, Triggers: map[string]definition.CronTrigger{"daily": {Cron: "0 9 * * *", Timezone: "UTC", Input: json.RawMessage(`[]`)}}}},
-		{Kind: definition.KindAgent, DeclaredID: "chat", Agent: &definition.AgentManifest{TemplateDefinitionID: "repo", Triggers: map[string]definition.CronTrigger{}}},
+		{Kind: definition.KindAgent, DeclaredID: "build", Agent: &definition.AgentManifest{InputKind: "text", TemplateDefinitionID: "repo", HasInit: true, Triggers: map[string]definition.CronTrigger{"daily": {Cron: "0 9 * * *", Timezone: "UTC", Input: json.RawMessage(`[]`)}}}},
+		{Kind: definition.KindAgent, DeclaredID: "chat", Agent: &definition.AgentManifest{InputKind: "text", TemplateDefinitionID: "repo", Triggers: map[string]definition.CronTrigger{}}},
 		{Kind: definition.KindTemplate, DeclaredID: "repo", Template: &definition.TemplateInputManifest{
 			ImageBuild: definition.ImageBuild{Root: "repo", Images: []definition.ImageSpec{{Key: "repo", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"}, Steps: []definition.ImageStep{
 				{From: &definition.ImageFrom{Ref: "debian:bookworm-slim"}}, {CopySourceFile: &definition.ImageCopySourceFile{Dst: "/app/package.json", Path: "package.json"}},

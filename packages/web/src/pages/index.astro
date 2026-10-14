@@ -68,9 +68,9 @@ const computerNotes: Note[] = [
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "return { client", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
-  { from: "client.session.promptAsync", to: "    })", title: "One conversation, every turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
-  { from: "OpenCode asks", to: "client.question.reply", title: "Questions go to your team.", text: "When OpenCode asks, turn.ask brings the question to a teammate." },
+  { from: "async init", to: "return OpenCodeHarness.open", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
+  { from: "const { response, ...result }", to: "if (response !== undefined)", title: "One conversation, every turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
+  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
   { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
 ];
 

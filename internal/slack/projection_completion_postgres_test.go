@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestSlackCommittedResponseWaitsForCoreCompletionAndIntermediateDrain(t *testing.T) {
+func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 	for _, kind := range []string{"text", "empty", "quiet", "cancelled", "failed", "stream", "stream-status-warning"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStatusFixture(t)
@@ -87,13 +87,6 @@ func TestSlackCommittedResponseWaitsForCoreCompletionAndIntermediateDrain(t *tes
 				want = 0
 			}
 			assertResponses(want)
-			var final uuid.UUID
-			if want == 1 {
-				if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_posts WHERE role='response'`).Scan(&final); err != nil {
-					t.Fatal(err)
-				}
-				f.noPostClaim(t, final)
-			}
 			var calls []string
 			client := deliveryTestClient(func(r *http.Request) string {
 				raw, err := io.ReadAll(r.Body)

@@ -174,7 +174,7 @@ POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/enq
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/resume
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}
-POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
+POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages
 POST /api/slack/installations/finish
@@ -202,7 +202,7 @@ POST /v1/sessions/{sessionID}/close
 POST /v1/sessions/{sessionID}/enqueue
 POST /v1/sessions/{sessionID}/interrupt
 POST /v1/sessions/{sessionID}/resume
-POST /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
+POST /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer
 POST /v1/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /v1/sessions/{sessionID}/turns/{turnID}/messages
 POST /worker/v1/agent-computers/capture/begin

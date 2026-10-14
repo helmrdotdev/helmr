@@ -38,6 +38,7 @@
       "request_url": "https://helmr-verification.invalid/integrations/slack/apps/REGISTRATION_ID/events",
       "bot_events": [
         "app_mention",
+        "agent_session_stopped",
         "message.channels",
         "message.groups",
         "app_uninstalled",

@@ -26,7 +26,7 @@ export const persistenceAgent = agent({
     if (awaitStart) {
       let start!: () => void
       const ready = new Promise<void>(resolve => { start = resolve })
-      await turn.onMessage(message => { if (fixtureValue(message) === "start") start() })
+      await turn.onMessage(message => { if (fixtureValue(message.content) === "start") start() })
       await turn.output.write([{ type: "json", value: { ...result, phase: "ready" } }])
       // Admit every shared member before either first Turn can finish.
       await ready
@@ -34,7 +34,7 @@ export const persistenceAgent = agent({
     if (holdForObservation) {
       let finish!: () => void
       const observed = new Promise<void>(resolve => { finish = resolve })
-      await turn.onMessage(message => { if (fixtureValue(message) === "finish") finish() })
+      await turn.onMessage(message => { if (fixtureValue(message.content) === "finish") finish() })
       await turn.output.write([{ type: "json", value: { ...result, phase: "restored" } }])
       // Keep the restored allocation active while its exact lineage is observed.
       await observed

@@ -109,6 +109,32 @@ func TestStartAllocatedAgentSessionDoesNotInferAbsenceFromTransportFailure(t *te
 	<-done
 }
 
+type retiringSessionStartClient struct{ retainedSessionStartClient }
+
+func (c retiringSessionStartClient) AcquireAgentAttachment(context.Context, workerapi.RuntimeSession) (workerapi.AgentAttachmentResponse, error) {
+	return workerapi.AgentAttachmentResponse{RetireAbsent: true, Starting: true, AttachmentSequence: 5, AuthorityGeneration: 4, ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func TestStartAllocatedAgentSessionRetiresAbsentWithoutProgram(t *testing.T) {
+	machine, done := programTransferMachine(t, func(stream net.Conn, r *agentv1.SessionAttach) error {
+		if !r.RetireAbsent || r.Start != nil || len(r.Secrets) != 0 {
+			t.Error("missing retirement or unexpected startup")
+		}
+		return frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: r.Grant.Identity, AttachmentSequence: r.AttachmentSequence, Message: &agentv1.GuestSessionMessage_Attached{Attached: &agentv1.SessionAttached{Terminal: true}}})
+	})
+	var machines PreparedMachines
+	connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retiringSessionStartClient{retainedSessionStartClient{t}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if !attached.Terminal {
+		t.Fatal("retirement did not attach to terminal receipt")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type absentSessionStartClient struct {
 	retainedSessionStartClient
 	kind                string
@@ -137,7 +163,9 @@ func (c *absentSessionStartClient) checkRequest(request workerapi.AgentControlRe
 	}
 }
 
-func TestStartAllocatedAgentSessionCancelledBeforeSetup(t *testing.T) {
+// The attachment predates the control decision, so it has no retirement flag.
+// Shutdown observed after the absent reply must still complete without startup.
+func TestStartAllocatedAgentSessionControlAfterAbsentAttachment(t *testing.T) {
 	rejected := errors.New("authority rejected")
 	for _, test := range []struct {
 		name, kind, receipt        string

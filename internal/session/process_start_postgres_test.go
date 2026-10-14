@@ -37,6 +37,15 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 			case "deleted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 			}
+
+			if mode == "current" || mode == "held" || mode == "cancelled" || mode == "ready" || mode == "stopping" {
+				fresh, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+				wantRetirement := mode == "cancelled" || mode == "stopping"
+				if err != nil || fresh.RetireAbsent != wantRetirement {
+					t.Fatalf("retirement authority: %+v %v", fresh, err)
+				}
+				sequence = fresh.Sequence
+			}
 			start, err := session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, sequence)
 			if mode == "current" {
 				if err != nil || start.BundleDigest == "" || start.AgentKey == "" || start.Authority.Generation != 1 || !start.Authority.ExpiresAt.After(time.Now()) {
@@ -55,5 +64,66 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
+	f, a, e := startingSessionFixture(t)
+	f.session = e.SessionID
+	before, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil || before.RetireAbsent {
+		t.Fatalf("initial attachment: %+v %v", before, err)
+	}
+	req := controlRequest(f, "interrupt", "early-stop")
+	req.InterruptQueued = true
+	stop, err := session.ControlSession(t.Context(), f.pool, f.caller(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil || !attachment.RetireAbsent || !attachment.Starting {
+		t.Fatalf("retirement: %+v %v", attachment, err)
+	}
+	if _, err := session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("stopped startup authorized: %v", err)
+	}
+	control, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+	if err != nil || control.Kind != "shutdown" {
+		t.Fatalf("prestart control: %+v %v", control, err)
+	}
+	again, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+	if err != nil || again.Kind != "shutdown" || again.Sequence != control.Sequence {
+		t.Fatalf("control replay: %+v %v", again, err)
+	}
+	if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+		t.Fatal(err)
+	}
+	var clean bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='stopped' AND fenced_at IS NOT NULL AND failure_recorded_at IS NULL FROM session_processes WHERE session_id=$1 AND epoch=1`, f.session).Scan(&clean); err != nil || !clean {
+		t.Fatalf("expected cessation became failure: %v %v", clean, err)
+	}
+	resume := controlRequest(f, "resume", "resume-after-stop")
+	resume.HoldID = stop.HoldID
+	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+		t.Fatal(err)
+	}
+	next := f.enqueue(t, "new-message")
+	allocation, err := a.AllocateSessionProcess(t.Context(), f.env, f.session, 2)
+	if err != nil || allocation.Epoch != 2 {
+		t.Fatalf("fresh allocation: %+v %v", allocation, err)
+	}
+	e.ProcessEpoch = 2
+	attachment, err = session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
+	if err != nil || attachment.RetireAbsent {
+		t.Fatalf("fresh attachment: %+v %v", attachment, err)
+	}
+	if err := session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+		t.Fatal(err)
+	}
+	e.AuthorityGeneration = attachment.Authority.Generation
+	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
+	dispatched, err := dispatchTurnForTest(t.Context(), f.pool, e)
+	if err != nil || dispatched.TurnID != next.TurnID {
+		t.Fatalf("old input replayed or fresh input blocked: %+v %v", dispatched, err)
 	}
 }

@@ -322,3 +322,60 @@ func TestAgentTurnCommittedDispatchPrecedesConcurrentStop(t *testing.T) {
 		t.Fatal("stop overtook committed dispatch")
 	}
 }
+
+func TestExecutingSessionFailureReattachesToPhysicalStop(t *testing.T) {
+	grant := sessionTransportGrant()
+	reports := 0
+	controls := &terminalControlClient{failure: func(context.Context, workerapi.AgentControlRequest) error {
+		reports++
+		return nil
+	}}
+	client := &turnExecutionTestClient{AgentControlClient: controls}
+	acks := make(chan uint64, 2)
+	machine := sessionTransportMachine(t, func(stream net.Conn, attach *agentv1.SessionAttach) {
+		message := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: attach.AttachmentSequence}
+		if attach.AttachmentSequence == 1 {
+			message.Message = &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Failed{Failed: &agentv1.SessionFailed{Code: "setup_failed", Message: "initialization failed"}}}}
+		} else {
+			message.Message = &agentv1.GuestSessionMessage_Stopped{Stopped: &agentv1.SessionStopped{}}
+		}
+		if err := frameio.WriteProtoFrame(stream, message); err != nil {
+			t.Error(err)
+			return
+		}
+		var ack agentv1.HostSessionMessage
+		if err := frameio.ReadProtoFrameBounded(stream, agentTransportFrameLimit, &ack); err != nil {
+			t.Error(err)
+			return
+		}
+		acks <- ack.GetAcknowledged().GetThroughSequence()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	for sequence := uint64(1); sequence <= 2; sequence++ {
+		connection, attached, err := OpenAgentSession(ctx, machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: sequence})
+		if err != nil {
+			t.Fatal(err)
+		}
+		attached.Terminal = true
+		err = ServeExecutingAgentSession(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error {
+			return errors.New("unexpected unowned event")
+		})
+		if sequence == 1 {
+			var failure SessionControlFailedError
+			if !errors.As(err, &failure) || failure.FailureError != nil || reports != 1 || controls.stopped {
+				t.Fatalf("failure transition: %v reports=%d stopped=%v", err, reports, controls.stopped)
+			}
+		} else if err != nil || reports != 1 || !controls.stopped {
+			t.Fatalf("physical stop transition: %v reports=%d stopped=%v", err, reports, controls.stopped)
+		}
+		select {
+		case ack := <-acks:
+			if ack != sequence {
+				t.Fatalf("acknowledged %d, want %d", ack, sequence)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}

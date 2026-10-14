@@ -60,7 +60,7 @@ include `deploymentId`. Treat cursors as opaque.
 A non-2xx response rejects with an `Error` whose `name` is `"HelmrError"`:
 
 ```ts
-interface APIError extends Error {
+interface HelmrError extends Error {
   readonly code: string
   readonly details?: Readonly<Record<string, JsonValue>>
   readonly requestId?: string
@@ -69,7 +69,20 @@ interface APIError extends Error {
 
 `code` comes from the response's error body, or from the HTTP status when the
 body has none. `requestId` is the `X-Request-ID` response header. Codes are
-listed in [Errors](/docs/reference/api/errors).
+listed in [Errors](/docs/reference/api/errors). Use the exported `isHelmrError`
+guard when catching an unknown value:
+
+```ts
+try {
+  await client.sessions.get(sessionId)
+} catch (error) {
+  if (isHelmrError(error)) console.error(error.code, error.requestId)
+  else throw error
+}
+```
+
+Import `isHelmrError` from `@helmr/sdk`. Network and abort errors retain their
+native identity and are not automatically converted to API errors.
 
 ## Deployments
 

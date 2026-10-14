@@ -64,16 +64,16 @@ func assertAskCLIHTTP(t *testing.T, serverURL, key, session, turn, goAsk, cliAsk
 		t.Fatalf("Go ask continuation=%+v err=%v", next, err)
 	}
 	ask, err := cp.GetTurnAsk(t.Context(), session, turn, goAsk, client.EnvironmentScopeOptions{})
-	if err != nil || ask.ID != goAsk || ask.Status != "pending" || len(ask.Prompt) == 0 || len(ask.AnswerControl) == 0 {
+	if err != nil || ask.ID != goAsk || ask.Status != "pending" || len(ask.Question) == 0 {
 		t.Fatalf("Go ask=%+v err=%v", ask, err)
 	}
-	request := api.RespondAgentAskRequest{Answer: json.RawMessage(`""`), ResponseID: "go-response"}
-	receipt, err := cp.RespondTurnAsk(t.Context(), session, turn, goAsk, request, client.EnvironmentScopeOptions{})
-	if err != nil || receipt.Status != "responded" || string(receipt.Answer) != `""` || receipt.RespondedByAPIKeyID == nil {
+	request := api.AnswerAgentAskRequest{Answer: json.RawMessage(`""`), AnswerID: "go-response"}
+	receipt, err := cp.AnswerTurnAsk(t.Context(), session, turn, goAsk, request, client.EnvironmentScopeOptions{})
+	if err != nil || receipt.Status != "answered" || string(receipt.Answer) != `""` || receipt.AnsweredByAPIKeyID == nil {
 		t.Fatalf("Go answer=%+v err=%v", receipt, err)
 	}
-	retry, err := cp.RespondTurnAsk(t.Context(), session, turn, goAsk, request, client.EnvironmentScopeOptions{})
-	if err != nil || retry.ID != receipt.ID || retry.RespondedAt == nil || !retry.RespondedAt.Equal(*receipt.RespondedAt) {
+	retry, err := cp.AnswerTurnAsk(t.Context(), session, turn, goAsk, request, client.EnvironmentScopeOptions{})
+	if err != nil || retry.ID != receipt.ID || retry.AnsweredAt == nil || !retry.AnsweredAt.Equal(*receipt.AnsweredAt) {
 		t.Fatalf("Go retry=%+v err=%v", retry, err)
 	}
 	run := newAgentTestCLI(t, serverURL, key)
@@ -87,7 +87,7 @@ func assertAskCLIHTTP(t *testing.T, serverURL, key, session, turn, goAsk, cliAsk
 	}
 	var cliReceipt api.AgentAsk
 	for range 2 {
-		if err := json.Unmarshal(run("session", "turn", "ask", "respond", cliAsk, "--session", session, "--turn", turn, "--answer-json", `"Approve"`, "--response-id", "cli-answer", "--json"), &cliReceipt); err != nil || cliReceipt.Status != "responded" || string(cliReceipt.Answer) != `"Approve"` || cliReceipt.RespondedByAPIKeyID == nil {
+		if err := json.Unmarshal(run("session", "turn", "ask", "answer", cliAsk, "--session", session, "--turn", turn, "--answer-json", `"Approve"`, "--answer-id", "cli-answer", "--json"), &cliReceipt); err != nil || cliReceipt.Status != "answered" || string(cliReceipt.Answer) != `"Approve"` || cliReceipt.AnsweredByAPIKeyID == nil {
 			t.Fatalf("CLI answer=%+v err=%v", cliReceipt, err)
 		}
 	}

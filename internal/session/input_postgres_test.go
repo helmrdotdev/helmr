@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
@@ -37,8 +38,8 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	bad := json.RawMessage(`[{"type":"json","value":null}]`)
 	req.Input = bad
 	req.IdempotencyKey = "json"
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrUnsupported) {
-		t.Fatalf("existing start ignored pin: %v", err)
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+		t.Fatalf("existing Session key did not reject a distinct create: %v", err)
 	}
 	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("enqueue ignored pin: %v", err)
@@ -70,5 +71,41 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	canonical, _ := content.Input(input)
 	if string(got) != string(canonical) {
 		t.Fatalf("trigger input changed %s", got)
+	}
+}
+
+func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
+	f := newAdmissionFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent)
+	for i, raw := range []string{`{"count":"2","nested":[true,null]}`, `null`, `[]`, `"text"`, `3`} {
+		req := f.startRequest(fmt.Sprint("structured-", i))
+		req.Input = json.RawMessage(raw)
+		receipt, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, receipt.SessionID, receipt.TurnID)
+		want, _ := content.Invocation(req.Input)
+		if err != nil || string(view.Input) != string(want) {
+			t.Fatalf("structured input changed: %s %v", view.Input, err)
+		}
+		// A new current deployment does not change the retained Session contract.
+		if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Input: json.RawMessage(`{"next":true}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestStructuredScheduledInput(t *testing.T) {
+	f := newAdmissionFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent)
+	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, []byte(`{"count":"3"}`))
+	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	if err := f.pool.QueryRow(t.Context(), `SELECT t.input FROM turns t JOIN trigger_occurrences o ON o.turn_id=t.id WHERE o.activation_id=$1`, id).Scan(&got); err != nil || string(got) != `{"count":"3"}` {
+		t.Fatalf("scheduled JSON %s: %v", got, err)
 	}
 }

@@ -10,9 +10,9 @@ func TestQuestionSummaryIsTheFirstTextPartOnOneShortLine(t *testing.T) {
 	for _, tc := range []struct {
 		name, question, want string
 	}{
-		{"first text part", `{"answer":{"type":"text"},"prompt":[{"type":"json","value":{"a":1}},{"type":"text","text":"Ship\n\tthe  release?\u0000"},{"type":"text","text":"later"}]}`, "Ship the release?"},
-		{"no text part", `{"answer":{"type":"text"},"prompt":[{"type":"json","value":1}]}`, ""},
-		{"shortened", `{"answer":{"type":"text"},"prompt":[{"type":"text","text":"` + long + `"}]}`, strings.Repeat("雪", attentionSummaryRunes) + "…"},
+		{"first text part", `{"type":"text","prompt":[{"type":"json","value":{"a":1}},{"type":"text","text":"Ship\n\tthe  release?\u0000"},{"type":"text","text":"later"}]}`, "Ship the release?"},
+		{"no text part", `{"type":"text","prompt":[{"type":"json","value":1}]}`, ""},
+		{"shortened", `{"type":"text","prompt":[{"type":"text","text":"` + long + `"}]}`, strings.Repeat("雪", attentionSummaryRunes) + "…"},
 		{"expired", "", ""},
 		{"unreadable", `{"prompt":`, ""},
 	} {

@@ -8,12 +8,12 @@ describe("Agent definition inspection", () => {
     const client = new HelmrClient({ apiKey: "key", url: "https://api.example.test", fetch: (async (input, init) => {
       requests.push({ url: String(input), signal: init?.signal })
       return Response.json(requests.length === 1
-        ? { deployment_id: deploymentId, agents: [{ agent: "worker", template: "machine" }], next_cursor: "next" }
-        : { deployment_id: deploymentId, agent: "worker", template: "machine" })
+        ? { deployment_id: deploymentId, agents: [{ agent: "worker", template: "machine", input_kind: "text" }], next_cursor: "next" }
+        : { deployment_id: deploymentId, agent: "worker", template: "machine", input_kind: "text" })
     }) as typeof fetch })
     const signal = new AbortController().signal
-    expect(await client.agents.list({ deploymentId, cursor: "after", limit: 2 }, { signal })).toEqual({ deploymentId, items: [{ agent: "worker", template: "machine" }], nextCursor: "next" })
-    expect(await client.agents.get("worker", { deploymentId }, { signal })).toEqual({ deploymentId, agent: "worker", template: "machine" })
+    expect(await client.agents.list({ deploymentId, cursor: "after", limit: 2 }, { signal })).toEqual({ deploymentId, items: [{ agent: "worker", template: "machine", inputKind: "text" }], nextCursor: "next" })
+    expect(await client.agents.get("worker", { deploymentId }, { signal })).toEqual({ deploymentId, agent: "worker", template: "machine", inputKind: "text" })
     expect(requests).toEqual([
       { url: `https://api.example.test/v1/agents?deployment_id=${deploymentId}&cursor=after&limit=2`, signal },
       { url: `https://api.example.test/v1/agents/worker?deployment_id=${deploymentId}`, signal },
@@ -26,7 +26,7 @@ describe("Agent definition inspection", () => {
     for (response of [null, [], { agents: [] }, { deployment_id: deploymentId, agents: [{}] }, { deployment_id: deploymentId, agents: [], next_cursor: 4 }]) {
       await expect(client.agents.list()).rejects.toThrow()
     }
-    for (response of [null, { agent: "worker", template: "machine" }, { deployment_id: deploymentId, agent: "bad/id" }]) {
+    for (response of [null, { agent: "worker", template: "machine", inputKind: "text" }, { deployment_id: deploymentId, agent: "bad/id" }]) {
       await expect(client.agents.get("worker")).rejects.toThrow()
     }
     const before = calls
@@ -45,7 +45,7 @@ test("a UUID-shaped definition ID is never interpreted as the Agent UUID", async
   const definitionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40"
   const client = new HelmrClient({ apiKey: "key", fetch: (async (input) => {
     expect(new URL(String(input)).pathname).toBe(`/v1/agents/${definitionId}`)
-    return Response.json({ agent: definitionId, template: "machine", deployment_id: deploymentId })
+    return Response.json({ agent: definitionId, template: "machine", input_kind: "text", deployment_id: deploymentId })
   }) as typeof fetch })
-  expect(await client.agents.get(definitionId)).toEqual({ agent: definitionId, template: "machine", deploymentId })
+  expect(await client.agents.get(definitionId)).toEqual({ agent: definitionId, template: "machine", inputKind: "text", deploymentId })
 })

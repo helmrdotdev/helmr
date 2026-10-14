@@ -55,7 +55,8 @@ Agent Apps.
 
 Mention Alpha's installed bot followed directly by
 `case:progress marker:unique_01`. Markers contain 1–64 ASCII letters, digits,
-underscores or hyphens. Ordinary replies continue the front Agent's conversation.
+underscores or hyphens. Mention the front Agent again in thread replies to continue its conversation.
+Unmentioned human discussion does not admit work.
 For Console/API admission, initial input is a text-part array:
 
 ```json
@@ -72,16 +73,20 @@ those openings separately from a human-authored Slack root.
 | `progress` | Three ordered text/JSON outputs followed by a staged response. Compare Slack with retained events and the Turn's completed/own-Save boundary. |
 | `long` | Twenty-four outputs with about 1.8 KiB of text plus JSON each. Inspect continuation, order and absence of duplicate or missing content. Announce this verbose test first. |
 | `text` | Text question and twelve progress outputs over about eighteen seconds. Answer during progress and inspect authenticated attribution and the retained answer. |
-| `choice` | Two structured choices plus optional text, alongside progress. Compare the retained canonical answer, including JSON null. |
+| `choice` | Multiple choices plus separate custom answers and notes, alongside progress. Compare the retained canonical answer, including JSON null. |
+| `radio` | Single choice with descriptions and an optional custom-answer modal. Selecting a radio must leave the ask pending; Submit answer commits it. Reopening/cancelling the modal must not answer. |
+| `direct` | Two single choices with direct buttons and an optional notes modal. Answer one choice and confirm the public label and verified actor replace the buttons. |
+| `groups` | Six sequential question boundaries. Answer each to verify chronological explanations, the four-work-message cap and the single Console continuation notice. |
+| `failure` | Retain one explanation, then fail after staging a response. Observe one failure notice and no staged response. |
 | `withdraw` | Leave the question unanswered. After fifteen seconds the Agent cancels it. Observe removal of answer controls while progress continues. Answering intentionally fails the case. |
-| `empty` | Stage an empty response. Observe successful settlement without an invented response body. |
+| `empty` | Stage an empty response. Observe the documented explicit-empty response presentation on successful settlement. |
 | `silent` | Return only a private result. Observe settlement without leaking that result. |
 | `multi` | Start Alpha with a marker of at most 59 characters. Its runtime `start` operation starts an independent Beta choice conversation on the same Computer. Answer each conversation independently. |
-| `stop` | Emit a waiting message, then wait for up to eight minutes. Stop the conversation through Console and inspect interruption, hold and physical stop. Failure to stop fails this case. |
+| `stop` | Emit a waiting message, then wait for up to eight minutes. Use Slack’s native Stop, inspect its receipt, interruption and exact hold, and wait for cessation. Send a fresh mention followed by `case:progress` in the same thread to verify scoped resume. Failure to stop fails this case. |
 
 Every completed case returns `PRIVATE_RETURN_<marker>` privately. This value must
-remain absent from Slack and output/response events. Answers remain absent from
-thread posts; retained ask records, `ask.responded` events and authorized Console
+remain absent from Slack and output/response events. Custom answers, notes and text answers remain absent from
+thread posts. Choice answers show only already-public option labels and verified attribution; retained ask records, `ask.answered` events and authorized Console
 reads contain the answer. Post-answer fixture output contains only marker,
 speaker, phase and responder kind.
 
@@ -96,13 +101,58 @@ reservations fill the test Environment.
 For owned delegation, start `verification-coordinator` with
 `case:progress marker:<unique marker>` and a marker of at most 58 characters.
 The coordinator uses runtime `spawn` to create Beta on its Computer and waits for
-that exact Turn. Beta's authored content appears in the coordinator's existing
-conversation with delegated-work context and its Turn activity card. There is no
-second conversation root, and the sending identity remains the coordinator App.
-Inspect complete text/JSON content, stable task identity, private-result isolation
-and coordinator completion. This child does not ask questions: human questions
-belong to the front Agent. The activity surface's **Stop conversation** control
-targets the front and its owned work; inspect stopping until physical cessation.
+that exact Turn. Beta's transcript stays in Console. Its lifecycle card attaches to the
+coordinator's original explanation and updates there. There is no second root
+or separate child work post. Inspect stable card identity, unchanged original
+prose, private-result isolation and coordinator completion. This child does not
+ask questions: human questions belong to the front Agent. With `case:stop`,
+Slack's native Stop targets the front and its owned child. The status remains
+processing while cessation is unconfirmed. After the one cessation notice,
+a fresh reply mentioning the front Agent followed by `case:progress` resumes
+only the native Stop hold.
+
+## Candidate smoke payloads
+
+Use one approved private test channel with the generated candidate manifest.
+The manifest change adds `agent_session_stopped` to bot events; it adds no OAuth
+scope. The app registration, workspace, private channel, deployment, artifact
+identities and cleanup scope must be recorded before running this check.
+Use the approved front's actual mention, followed by these exact synthetic
+commands (replace `candidate_01` once with a unique campaign marker):
+
+1. `case:direct marker:candidate_01_direct`: select First; inspect its public
+   acknowledgement and retained answer.
+2. `case:choice marker:candidate_01_modal`: submit Second and a synthetic note;
+   confirm the note stays private and the null option value is preserved.
+3. `case:long marker:candidate_01_long`: inspect original Unicode/JSON content,
+   the work cap and the Console continuation. Completion leaves explanations
+   in place and adds only the separate settled response.
+4. `case:stop marker:candidate_01_stop`: click native Stop while working. After
+   cessation, mention the same front Agent and send
+   `case:progress marker:candidate_01_resume` in the same thread. Record the exact released hold and new Turn. Repeat with the fresh
+   reply arriving before cessation to verify no overlap.
+5. On the coordinator, `case:progress marker:candidate_01_child`: inspect the
+   card inside the original explanation and the absence of child transcript.
+6. `case:failure marker:candidate_01_failure`: verify one failure notice and
+   no staged final response. `case:silent marker:candidate_01_silent` verifies
+   successful settlement without filler.
+
+This is a prepared script, not authorization to install, deploy, post, invite,
+change capacity or manipulate a running process. Unknown-cessation injection
+requires a separately identified operation; local reconciliation tests alone do
+not establish the provider's live client appearance.
+
+## Question-only waiting state
+
+Slack shows native Stop while processing, but not when a question is the only
+pending work and the status is suspended. Exercise `case:text` without answering,
+then use `helmr session turn interrupt TURN_ID --session SESSION_ID --project
+PROJECT --env ENVIRONMENT` against the exact waiting Turn. Verify withdrawal,
+removal of answer controls, and absence of a native Stop cessation notice. Send
+a fresh mention with `case:progress` to verify a subsequent Turn can run.
+Report this as CLI interruption evidence, never native Stop-during-question
+acceptance. Native Stop while working and while an owned child runs are separate
+cases.
 
 ## Native acceptance and cleanup
 

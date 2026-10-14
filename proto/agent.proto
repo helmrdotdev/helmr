@@ -197,6 +197,9 @@ message SessionAttach {
   repeated SessionSecret secrets = 4;
   map<string, string> protected_env = 5;
   bytes proxy_ca = 6;
+  // Retire this exact epoch if absent, preventing delayed startup admission.
+  // An existing process is attached and stopped through ordinary controls.
+  bool retire_absent = 7;
 }
 
 message HostSessionMessage {

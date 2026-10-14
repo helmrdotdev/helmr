@@ -89,6 +89,12 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 				map[string]any{"type": "section", "text": map[string]string{"type": "plain_text", "text": text}},
 				map[string]any{"type": "actions", "elements": []any{map[string]any{"type": "button", "action_id": "link_account", "text": map[string]string{"type": "plain_text", "text": "Link your account"}, "url": link}}},
 			}
+		case "ask_already_answered":
+			text = "This question has already been answered. Check the updated question for its recorded answer."
+		case "ask_cancelled":
+			text = "This question was withdrawn and no longer accepts answers."
+		case "answer_invalid":
+			text = "That answer does not match the question. Use the current question controls or inspect it in Console."
 		case "gesture_expired", "stale_gesture":
 			text = "This action is out of date. Send a new message or use the latest question controls to try again."
 		case "session_unavailable":

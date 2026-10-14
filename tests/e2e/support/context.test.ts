@@ -137,11 +137,11 @@ test("progress wait reads canonical Content through the SDK before terminal sett
     const after = url.searchParams.get("after")!
     cursors.push(after)
     if (after === "0") return Response.json({
-      records: [event(1, otherTurnID, "turn.completed", null)], next_after: 1, has_more: true, retained_after: 0,
+      records: [event(1, otherTurnID, "turn.completed", {})], next_after: 1, has_more: true, retained_after: 0,
     })
     return Response.json({ records: [
       event(2, turnID, "turn.output", [{ type: "text", text: "ready" }, { type: "json", value: null }]),
-      event(3, turnID, "turn.completed", null),
+      event(3, turnID, "turn.completed", {}),
     ], next_after: 3, has_more: false, retained_after: 0 })
   } })
   try {

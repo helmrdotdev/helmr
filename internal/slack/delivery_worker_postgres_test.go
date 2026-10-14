@@ -157,7 +157,7 @@ func TestSlackDeliveryWorkerSelectsQuestionAheadOfBlockedOutputBacklog(t *testin
 	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Proceed?"}],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Proceed?"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)

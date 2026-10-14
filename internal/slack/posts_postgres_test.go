@@ -134,7 +134,7 @@ func TestSlackPostRateLimitRetriesFrozenRevisionBeforeNewerContent(t *testing.T)
 	}
 }
 
-func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *testing.T) {
+func TestSlackPostUncertainProgressBlocksContinuationButAllowsQuestionAndResponse(t *testing.T) {
 	f := newStatusFixture(t)
 	turn, ask := f.pendingQuestion(t)
 	progress := f.post(t, 1, "progress", "intermediate", &turn)
@@ -143,14 +143,17 @@ func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *tes
 	response := f.post(t, 3, "response", "response", &turn)
 	question := f.post(t, 4, "attention", "lifecycle", nil)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='question',turn_id=$2,ask_id=$3 WHERE id=$1`, question, turn, ask)
-	f.noPostClaim(t, response)
 	p := f.postClaim(t, progress)
 	if err := FinishPost(t.Context(), f.Pool, p, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, continuation)
-	f.noPostClaim(t, response)
+	r := f.postClaim(t, response)
+	if err := FinishPost(t.Context(), f.Pool, r, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.099"}); err != nil {
+		t.Fatal(err)
+	}
+	f.due(t)
 	q := f.postClaim(t, question)
 	if err := FinishPost(t.Context(), f.Pool, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.100"}); err != nil {
 		t.Fatal(err)
@@ -164,7 +167,7 @@ func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *tes
 		t.Fatal(err)
 	}
 	f.due(t)
-	f.postClaim(t, response)
+	f.noPostClaim(t, response)
 }
 
 func TestSlackPostRechecksConnectionAndAuthorizationLoss(t *testing.T) {
@@ -338,6 +341,45 @@ func TestDefinitivelyUnavailableOpeningSettlesDependentProjection(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM slack_posts WHERE thread_id=$1)=$2 AND t.thread_ts IS NULL AND src.projected_event_seq=s.next_event_seq-1 FROM slack_threads t JOIN slack_thread_sources src ON src.thread_id=t.id JOIN sessions s ON s.environment_id=src.environment_id AND s.id=src.session_id WHERE t.id=$1`, f.thread, count).Scan(&settled); err != nil || !settled {
 				t.Fatal("future projection recreated unavailable conversation", settled, err)
 			}
+		})
+	}
+}
+
+func TestSlackPostNewQuestionAndResponseFollowInitialNarrative(t *testing.T) {
+	for _, role := range []string{"question", "response"} {
+		t.Run(role, func(t *testing.T) {
+			f := newStatusFixture(t)
+			turn, ask := f.pendingQuestion(t)
+			work := f.post(t, 1, "work", "intermediate", &turn)
+			next := f.post(t, 2, "next", "lifecycle", &turn)
+			if role == "question" {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='question',ask_id=$2 WHERE id=$1`, next, ask)
+			} else {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='response' WHERE id=$1`, next)
+			}
+			f.noPostClaim(t, next)
+			candidates, err := deliveryCandidates(t.Context(), f.Pool, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, candidate := range candidates {
+				if candidate.id == next {
+					t.Fatal("question/response overtook pending narrative")
+				}
+				found = found || candidate.id == work
+			}
+			if !found {
+				t.Fatal("initial narrative was not discoverable")
+			}
+			claim := f.postClaim(t, work)
+			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {
+				t.Fatal(err)
+			}
+			// A later edit has an established reading position and must not block the next message.
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='pending',desired_revision=desired_revision+1,next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, work)
+			f.due(t)
+			f.postClaim(t, next)
 		})
 	}
 }

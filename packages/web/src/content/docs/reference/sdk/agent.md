@@ -13,11 +13,10 @@ they behave, see [Agents](/docs/concepts/agents),
 
 ## `agent()`
 
-```ts
-function agent<I extends InputContent = InputContent, O extends Json = Json, S = undefined>(
-  config: Omit<AgentDefinition<I, O, S>, "kind">,
-): AgentDefinition<I, O, S>
-```
+`agent(config)` infers the Agent ID, initialization state, validated input and
+result types. Prefer inference over explicit generic arguments. `inputSchema`
+and `resultSchema` accept Standard Schema v1 validators, including asynchronous
+validators and transforms.
 
 Returns a frozen definition with `kind: "agent"`. Throws `TypeError` when `id`
 is blank, `template` is not a Template definition, or `turn` is not a function.
@@ -49,25 +48,18 @@ export const reviewer = agent({
 
 ## `AgentDefinition`
 
-```ts
-interface AgentDefinition<I extends InputContent = InputContent, O extends Json = Json, S = unknown> {
-  readonly kind: "agent"
-  readonly id: string
-  readonly template: TemplateDefinition
-  readonly init?: (ctx: InitContext) => MaybePromise<S>
-  readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<O>
-  readonly closeAfterIdle?: Duration
-  readonly maxTurnDuration?: Duration
-  readonly triggers?: readonly CronTrigger<I>[]
-}
-```
+`AgentDefinition` retains the inferred invocation and result contract. Use
+`typeof yourAgent` with typed client calls; do not duplicate its types manually.
+When `init` is absent, `ctx.initResult` is `undefined`.
 
 | Field | Required | Description |
 | --- | --- | --- |
 | `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create({ agent: id })` and `helmr session create`. |
 | `template` | yes | A `template()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
 | `init` | no | Runs once per Session process before its first Turn. The returned value is `ctx.initResult`. |
-| `turn` | yes | Handles one Turn. Its JSON return value is the Turn's machine `result`. |
+| `turn` | yes | Handles one Turn. Its return value is validated by `resultSchema` when supplied and becomes the machine `result`. |
+| `inputSchema` | no | Validates incoming JSON before the handler; `turn.input` is the schema output. Without it, input is conversational text content. |
+| `resultSchema` | no | Validates or transforms the handler return value before successful settlement. The persisted result must be finite JSON. |
 | `closeAfterIdle` | no | Idle retention for new Sessions: a `Duration` or `"never"`. Default `"7d"`. |
 | `maxTurnDuration` | no | A `Duration` after which a running Turn reaches its deadline. No limit when omitted. |
 | `triggers` | no | Cron triggers. See [Triggers](/docs/reference/sdk/triggers). |
@@ -76,10 +68,43 @@ A `closeAfterIdle` option on `client.sessions.create()` (or `closeAfterIdleMs` o
 the runtime MCP `spawn`/`start` tools) overrides the definition for that new
 Session. Enqueuing later work keeps the Session's existing policy.
 
+### Typed invocation
+
+```ts
+import type { worker } from "./agents/worker"
+
+const started = await client.sessions.create<typeof worker>({
+  agent: "worker",
+  input: { issue: 42 }, // checked against this Agent's schema input
+})
+const outcome = await started.turn.wait()
+if (outcome.status === "completed" && outcome.payloadExpiredAt === undefined) {
+  console.log(outcome.result) // inferred persisted result type
+}
+```
+
+The example assumes `worker` accepts `{ issue: number }`. Type-only imports do
+not load its tools or credentials into the caller. `AgentInput<typeof worker>`
+and `AgentResult<typeof worker>` expose the inferred types. A create call with
+supplied non-undefined input returns a Turn; an omitted input returns `turn: null`.
+
+These types require the imported definition to match the deployed code. To attach
+to an existing Session, use `client.sessions.attach<typeof worker>({ id, agent:
+"worker", deploymentId })`; it checks the actual Agent and Deployment identity.
+A dynamic `ref(id)` retains JSON types and does not claim a checked contract.
+
+Input validation follows Session initialization. Rejected input can therefore
+have incurred initialization work. Invalid input settles as `input_invalid`;
+invalid results settle as `result_invalid` and never publish a staged response.
+Runtime schema validation is authoritative. Optional JSON Schema discovery is
+advisory and can be unavailable for validators that do not provide conversion.
+Structured-input Agents use a conversational front for Slack; child results are
+not automatically posted as human text.
+
 ## `Turn`
 
 ```ts
-interface Turn<I extends InputContent = InputContent> {
+interface Turn<I = InputContent> {
   readonly id: string
   readonly sequence: number
   readonly createdAt: string
@@ -92,18 +117,18 @@ interface Turn<I extends InputContent = InputContent> {
     pipe(values: AsyncIterable<HumanContent>, options?: { signal?: AbortSignal }): Promise<void>
   }
   respond(value: HumanContent): Promise<void>
-  onMessage(handler: (input: InputContent, message: InputMessage) => MaybePromise<void>): Promise<void>
-  ask<C extends AnswerControl>(
-    question: Question<C>,
+  onMessage(handler: (message: Message) => MaybePromise<void>): Promise<void>
+  ask<const Q extends Question>(
+    question: Q,
     options?: { signal?: AbortSignal },
-  ): Promise<AskResponse<AnswerFor<C>>>
+  ): Promise<AskAnswer<AnswerFor<Q>>>
 }
 ```
 
 | Member | Description |
 | --- | --- |
 | `id`, `sequence`, `createdAt` | Turn ID, admission sequence within the Session, and creation time. |
-| `input` | The Turn's input: an array of text parts. |
+| `input` | Validated schema output, or conversational text parts when no input schema is declared. |
 | `source` | Where the input came from. See [`InputSource`](#inputsource). |
 | `signal` | Aborts when this Turn is cancelled, interrupted, or fails. |
 | `onCancel(handler)` | Registers asynchronous cancellation work that the runtime joins alongside the handler. |
@@ -120,9 +145,9 @@ questions are not admitted after the handler returns.
 
 | Value | Shape | String shorthand |
 | --- | --- | --- |
-| `turn.input`, message input | `InputContent`: `readonly { type: "text"; text: string }[]` | no |
+| `turn.input` without an input schema; live message input | `InputContent`: `readonly { type: "text"; text: string }[]` | no |
 | `output.write`, `output.pipe` items, `respond` | `HumanContent`: `Content \| string` | yes |
-| Question prompt | `Content` | no |
+| Question prompt | `HumanContent`: `Content \| string` | yes |
 
 `Content` is `readonly ContentPart[]`, where a part is
 `{ type: "text", text }` or `{ type: "json", value }`. Adjacent text fragments
@@ -141,30 +166,26 @@ bytes.
 ### `InputSource`
 
 ```ts
-interface InputSource {
-  readonly kind: string
-  readonly requesterSessionId?: string
-  readonly originTurnId?: string
-  readonly slack?: Readonly<{
-    teamId: string
-    channelId: string
-    threadTs: string
-    messageTs: string
-    userId: string
-  }>
-}
+type InputSource =
+  | { kind: "user"; slack?: SlackInputSource }
+  | { kind: "api_key" }
+  | { kind: "schedule" }
+  | { kind: "session"; requesterSessionId: string; originTurnId?: string }
 
-interface InputMessage {
+type MessageSource = Exclude<InputSource, { kind: "schedule" }>
+interface Message {
   readonly id: string
-  readonly source: InputSource
+  readonly content: InputContent
+  readonly source: MessageSource
 }
 ```
 
-`kind` is the caller kind. `requesterSessionId` and `originTurnId` identify the
-Session and Turn that created the input, when another Session did.
-`slack` is present for input that arrived through the native Slack
-integration; see [Slack](/docs/concepts/slack). Each `onMessage` callback
-receives its own `InputMessage` with its own `source`.
+Narrow `source.kind` before reading caller-specific fields. Session-originated
+input includes `requesterSessionId`; `originTurnId` is present when it was
+created during a Turn. Slack input belongs to a user source and includes
+`teamId`, `channelId`, `threadTs`, `messageTs` and `userId`.
+Each `onMessage` callback receives one Message envelope with its own content,
+identity and source. Schedules create Turns and are not live message sources.
 
 ### Cancellation and native SDKs
 
@@ -229,8 +250,7 @@ interface AgentContext<S> extends InitContext {
 
 ```ts
 class MessageRejected extends Error {
-  readonly details?: Json
-  constructor(message: string, details?: Json)
+  constructor(message: string)
 }
 ```
 
@@ -252,10 +272,10 @@ not through an SDK method. See [Runtime MCP](/docs/reference/sdk/mcp) and
 ```ts
 client.sessions.create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
 
-interface SessionCreateRequest {
-  readonly agent: string
-  readonly input?: InputContent
-  readonly closeAfterIdle?: Duration          // or "never"
+interface SessionCreateRequest<A extends AgentContract = AgentContract<string, JsonValue, JsonValue>> {
+  readonly agent: A["id"]
+  readonly input?: AgentInput<A>
+  readonly closeAfterIdle?: Retention
   readonly slack?: Readonly<{ channelId: string }>
   readonly computer?: Readonly<{ id: string }>
   readonly key?: string
@@ -263,16 +283,16 @@ interface SessionCreateRequest {
 }
 
 interface SessionCreateReceipt {
-  readonly session: ClientSessionRef
+  readonly session: SessionRef
   readonly turn: TurnRef | null
-  readonly closeAfterIdle: Duration          // resolved policy; "never" when disabled
+  readonly closeAfterIdle: Retention         // resolved policy; "never" when disabled
 }
 ```
 
 | Option | Description |
 | --- | --- |
 | `agent` | Authored Agent ID in the current Deployment. |
-| `input` | Optional initial Turn input. Omit for zero Turns; explicit empty input is rejected. |
+| `input` | Optional initial Turn input. Omit for zero Turns; supplied input must be finite JSON and match the Agent contract. |
 | `closeAfterIdle` | Overrides the definition's idle retention for a new Session. |
 | `slack.channelId` | Opens the Session in a Slack channel, by raw channel ID (for example `C0123456789`). See [Slack](/docs/concepts/slack). |
 | `computer.id` | Runs on an existing Computer. Omit to assign one from the pinned Template definition on first input. |
@@ -288,7 +308,7 @@ completion.
 ```ts
 client.sessions.get(id: string, options?): Promise<Session>
 client.sessions.list(query?: SessionListQuery, options?): Promise<CursorPage<Session>>
-client.sessions.ref(id: string): ClientSessionRef
+client.sessions.ref(id: string): SessionRef
 ```
 
 `ref()` builds a local handle without a network request.
@@ -301,7 +321,7 @@ client.sessions.ref(id: string): ClientSessionRef
 | Agent filter | `agent` (declared identifier); current membership is not required |
 | Exact key lookup | One Agent selector plus the Session `key`; no other filters or pagination |
 
-### `ClientSessionRef`
+### `SessionRef`
 
 | Method | Returns | Description |
 | --- | --- | --- |
@@ -331,7 +351,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `key` | `string`, optional |
 | `slackChannelId` | `string`, optional |
 | `status` | `"open" \| "closing" \| "closed" \| "cancelled"` |
-| `closeAfterIdle` | `Duration` (`"never"` when disabled) |
+| `closeAfterIdle` | `Retention` (`Duration` or `"never"`) |
 | `idleSince` | `string \| null` |
 | `initialTurn` | `{ id, status } \| null` |
 | `holds` | `{ id, sessionId, scope: "local" \| "subtree", reason, createdAt }[]` |
@@ -345,7 +365,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `get(options?)` | `TurnState` | Current Turn state. |
 | `wait({ signal? }?)` | `TurnOutcome` | Resolves when the Turn settles. |
 | `wait({ timeout, signal? })` | `TimedTurnWaitResult` | `{ status: "timeout" }` or `{ status: "settled", outcome }`. A timeout never cancels the Turn. |
-| `send(data, { idempotencyKey? }?, options?)` | `MessageReceipt` | Sends a message to exactly this Turn. Returns `{ id, status: "accepted" }`. |
+| `send(content, { idempotencyKey? }?, options?)` | `MessageReceipt` | Sends a message to exactly this Turn. Returns `{ id, status: "accepted" }`. |
 | `interrupt({ idempotencyKey? }?, options?)` | `TurnInterruptReceipt` | Interrupts this running Turn without a hold. Returns `{ id, sessionId, turnId, status: "accepted" }`. |
 | `asks` | `TurnAsks` | Question methods. See [Questions](/docs/reference/sdk/questions#client-methods). |
 
@@ -354,8 +374,12 @@ payloads are listed in [Session events](/docs/reference/events).
 (`{ code, message? }`) and `payloadExpiredAt`. `TurnStatus` is one of `queued`,
 `running`, `finalizing`, `completed`, `failed`, `interrupted`, `cancelled`.
 
-`TurnOutcome` has `status` (`completed`, `failed`, `interrupted` or
-`cancelled`) and optional `result`, `response`, `error` and `payloadExpiredAt`.
+`TurnOutcome` is discriminated by `status`. A completed outcome with retained
+payload has its typed `result` and optional human `response`; an expired payload
+has `payloadExpiredAt` and no result or response. Failed outcomes may contain an
+error; interrupted and cancelled outcomes never contain a result or response.
+Narrow status and retention before reading payload fields. Timed waits use the
+separate `timeout` / `settled` envelope shown above.
 
 ## Client: Agents
 
@@ -364,8 +388,13 @@ client.agents.get(id: string, query?: { deploymentId?: string }, options?): Prom
 client.agents.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<AgentPage>
 ```
 
-`AgentInfo` is `{ agent, template, deploymentId }`, where `agent` is the
-identifier declared in code and remains stable across Deployments within its environment.
-`AgentPage` is `{ deploymentId, items: { agent, template }[], nextCursor? }`.
+`AgentInfo` includes `agent`, `template`, `deploymentId` and the input contract.
+The `agent` identifier is declared in code and remains stable across Deployments
+within its environment. `inputKind: "text"` identifies conversational input;
+`inputKind: "json"` includes `inputSchema`, which is either an available JSON
+Schema or an explicit unavailability reason. This discovery does not replace
+runtime validation.
+`AgentPage` is `{ deploymentId, items, nextCursor? }`; each item includes
+`agent`, `template` and the same input contract.
 Omitting `deploymentId` reads the current Deployment; a list cursor keeps its
 original Deployment.

@@ -1,5 +1,5 @@
 import { callMcp, fixtureInput, fixtureValue, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, template, image, type Json } from "@helmr/sdk"
+import { agent, template, image, type JsonValue } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
 import { z } from "zod"
@@ -21,7 +21,7 @@ export const helperChild = agent({
     const input = helperInput.parse(fixtureValue(turn.input))
     await writeFile("helper-smoke.json", JSON.stringify({ marker: input.marker, turnId: turn.id, sessionId: ctx.session.id }))
     await turn.output.write([{ type: "json", value: { phase: "helper-started", marker: input.marker } }])
-    if (input.waitForAnswer) await turn.ask({ prompt: [{ type: "text", text: "Finish independent helper" }], answer: { type: "text" } })
+    if (input.waitForAnswer) await turn.ask({ prompt: [{ type: "text", text: "Finish independent helper" }],  type: "text" })
     if (input.holdSeconds > 0) await sleep(input.holdSeconds * 1000, undefined, { signal: turn.signal })
     if (input.fail) throw new Error(`intentional helper failure for ${input.marker}`)
     return { marker: input.marker, childTurnId: turn.id, childSessionId: ctx.session.id }
@@ -34,7 +34,7 @@ const callerInput = z.object({
 }).strict()
 export const helperCaller = agent({
   id: "helper-smoke", template: helperCallerComputer, maxTurnDuration: "10m",
-  turn: async (turn, ctx): Promise<Json> => {
+  turn: async (turn, ctx): Promise<JsonValue> => {
     const input = callerInput.parse(fixtureValue(turn.input))
     const options = {
       agent: helperChild.id, computerId: input.mode === "same-computer" ? ctx.computer.id : input.childComputerId,
@@ -47,7 +47,7 @@ export const helperCaller = agent({
     const outcome = await waitManagedTurn(await ctx.mcp.getConnectionOptions(), turn.signal, child.sessionId, child.turnId)
     if (input.mode === "spawn-failure") {
       if (outcome.status !== "failed" || outcome.error?.code !== "handler_failed") throw new Error(`Unexpected helper failure: ${JSON.stringify(outcome)}`)
-      return { ...identity, childFailure: outcome.error }
+      return { ...identity, childFailure: { code: outcome.error.code, ...(outcome.error.message === undefined ? {} : { message: outcome.error.message }) } }
     }
     if (outcome.status !== "completed" || (outcome.result as {marker?:string} | undefined)?.marker !== input.marker || (outcome.result as {childTurnId:string}).childTurnId !== child.turnId) {
       throw new Error(`Unexpected helper outcome: ${JSON.stringify(outcome)}`)

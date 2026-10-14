@@ -18,7 +18,7 @@ has `sessionId`, nullable `turnId`, numeric `sequence`, `createdAt`, `kind` and 
 | `turn.completed`, `turn.failed`, `turn.interrupted`, `turn.cancelled` | Terminal Turn outcome. |
 | `turn.output` | One normalized Content fragment in `data`, such as `[{ "type": "text", "text": "Working" }]`. |
 | `message.admitted`, `message.started`, `message.delivered`, `message.rejected` | Exact-Turn message acceptance and delivery facts. |
-| `ask.created`, `ask.responded`, `ask.cancelled` | Question lifecycle; use exact ask reads for current prompt/control/answer. |
+| `ask.created`, `ask.answered`, `ask.cancelled` | Question lifecycle; use exact ask reads for current prompt/control/answer. |
 | `session.interrupt`, `session.resume`, `session.close`, `session.cancel` | Accepted Session controls. |
 | `session.closed`, `session.cancelled` | Session lifecycle facts. |
 | `session.process_stopped`, `session.process_failed`, `session.deadline` | Runtime process or deadline facts. |

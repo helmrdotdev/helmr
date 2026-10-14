@@ -29,18 +29,19 @@
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
+    "@standard-schema/spec": "1.1.0",
     "@tsconfig/bun": "^1.0.11",
     "@types/node": "^24.13.2",
     "bun-types": "^1.3.14",
-    "typescript": "7.0.2",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
   },
   "scripts": {
     "buf": "buf",
     "projects:typecheck": "scripts/ts-projects-typecheck.sh",
     "gen:proto": "bun run --cwd proto/typescript gen",
     "test:ts": "scripts/build-compiler-entry.sh && scripts/build-hostconfig-entry.sh && scripts/build-npm-packages.sh && bun run test:ts:prepared",
-    "test:ts:prepared": "bun test compiler/typescript/src sdk/typescript/src packages/console/src tests/build/agentic-work.test.ts && bun run --cwd runtime/typescript test",
+    "test:ts:prepared": "bun test compiler/typescript/src sdk/typescript/src packages/console/src tests/build/agentic-work.test.ts && bun run --cwd runtime/typescript test && bun run --cwd examples/issue-fixer test:commands && bun run --cwd examples/cli-tooling test",
     "typecheck": "bun run --cwd proto/typescript typecheck && bun run --cwd sdk/typescript typecheck && bun run --cwd compiler/typescript typecheck && bun run --cwd runtime/typescript typecheck && bun run --cwd packages/console typecheck && bun run typecheck:web && bun run projects:typecheck",
     "build:npm": "scripts/build-npm-packages.sh",
     "pack:npm": "scripts/pack-npm-packages.sh",

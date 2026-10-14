@@ -1,21 +1,22 @@
 import type { InputContent } from "../../../sdk/typescript/src/content"
-import type { AskResponse } from "../../../sdk/typescript/src/question"
+import type { AskAnswer } from "../../../sdk/typescript/src/question"
 import type { HumanContent } from "../../../sdk/typescript/src/content"
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { AgentDefinition, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { OperationError } from "./agent-channel"
 import { MessageBusy, SessionRuntime, type SessionDriver, type TurnTiming } from "./agent-session"
 import { parseAsk } from "../../../sdk/typescript/src/internal/asks"
 
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
-const question = (text: string) => ({ prompt: [{ type: "text" as const, text }], answer: { type: "text" as const } })
-const reply = (answer: Json): AskResponse => ({ answer, respondedBy: { kind: "user", id: "answerer" } })
+const question = (text: string) => ({ prompt: [{ type: "text" as const, text }],  type: "text" as const })
+const reply = (answer: JsonValue): AskAnswer => ({ answer, answeredBy: { kind: "user", id: "answerer" } })
 const context: InitContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: new AbortController().signal }
 const textInput = (text: string): InputContent => [{ type: "text", text }]
-const request = (sequence = 1) => ({ id: `turn-${sequence}`, sequence, createdAt: "2026-10-04T00:00:00Z", input: textInput(String(sequence)), source: { kind: "api" } })
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "init">, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
+const request = (sequence = 1) => ({ id: `turn-${sequence}`, sequence, createdAt: "2026-10-04T00:00:00Z", input: textInput(String(sequence)), source: { kind: "api_key" as const } })
+function fixture(definition: Pick<AgentDefinition<InputContent, JsonValue, unknown>, "turn"> & Partial<Pick<AgentDefinition<InputContent, JsonValue, unknown>, "init">> & { inputSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1; resultSchema?: import("../../../sdk/typescript/src/agent").StandardSchemaV1<unknown, JsonValue> }, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
   const calls: string[] = []
   const driver: SessionDriver = {
     registerMessages: async () => { calls.push("register") },
@@ -25,7 +26,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     output: async () => { calls.push("output"); return { sequence: 1 } },
     confirmDrain: async () => { calls.push("drained") },
     finalize: async (_id, result) => { calls.push("finalize"); return { status: "completed", result } },
-    fail: async (_id, error) => { calls.push("fail"); return { status: error.code === "interrupted" ? "interrupted" : "failed", error } },
+    fail: async (_id, error) => { calls.push("fail", `failure:${error.message}`); return error.code === "interrupted" ? { status: "interrupted" } : { status: "failed", error } },
     hold: async reason => { calls.push(`hold:${reason}`) },
     ...overrides,
   }
@@ -192,7 +193,7 @@ test("authored question identity can be read by the external SDK", async () => {
     ask: async (_turn, creationId, question) => {
       const resource = parseAsk({ id: creationId,
         session_id: "01900000-0000-7000-8000-000000000001", turn_id: "01900000-0000-7000-8000-000000000002",
-        status: "pending", created_at: "2026-10-07T00:00:00Z", prompt: question.prompt, answer_control: question.answer })
+        status: "pending", created_at: "2026-10-07T00:00:00Z", question })
       assert.equal(resource.id, creationId)
       return { answer: Promise.resolve(reply("yes")), withdraw: async () => assert.fail("answered question withdrawn") }
     },
@@ -201,7 +202,7 @@ test("authored question identity can be read by the external SDK", async () => {
 })
 
 test("forgotten question is withdrawn and cannot become success", async () => {
-  const answer = deferred<AskResponse>(); let withdrawals = 0
+  const answer = deferred<AskAnswer>(); let withdrawals = 0
   const { runtime, calls } = fixture({ turn: turn => { void turn.ask(question("permission")); return 1 } }, { ask: async () => ({ answer: answer.promise, withdraw: async () => { withdrawals++; answer.reject(new Error("withdrawn")) } }) })
   assert.equal((await runtime.dispatch(request())).status, "failed")
   assert.ok(withdrawals >= 1)
@@ -210,7 +211,7 @@ test("forgotten question is withdrawn and cannot become success", async () => {
 })
 
 test("already-started callback drains its question and output after return", async () => {
-  const handlerReady = deferred<void>(), returnHandler = deferred<void>(), answer = deferred<AskResponse>(), asked = deferred<void>()
+  const handlerReady = deferred<void>(), returnHandler = deferred<void>(), answer = deferred<AskAnswer>(), asked = deferred<void>()
   let callbackTurn: Turn | undefined
   const { runtime, calls } = fixture({ turn: async turn => {
     callbackTurn = turn
@@ -398,7 +399,7 @@ test("exact interruption settles without adding a hold", async () => {
   await runtime.interrupt("turn-1", new Error("operator interrupted"))
   const outcome = await result
   assert.equal(outcome.status, "interrupted")
-  assert.equal(outcome.error?.code, "interrupted")
+  assert.equal(outcome.error, undefined)
   assert.equal(runtime.idle, true)
 })
 
@@ -416,9 +417,9 @@ test("failure withdraws only outstanding asks exactly once even when answer neve
 
 test("message backpressure is distinguishable and the exact payload can be retried", async () => {
   const ready = deferred<void>(), release = deferred<void>(), returnHandler = deferred<void>()
-  const received: Json[] = []
+  const received: JsonValue[] = []
   const { runtime } = fixture({ turn: async turn => {
-    await turn.onMessage(async value => { received.push(value); if (value[0]?.text === "1") await release.promise })
+    await turn.onMessage(async value => { received.push(value.content); if (value.content[0]?.text === "1") await release.promise })
     ready.resolve(); await returnHandler.promise; return 1
   } })
   const result = runtime.dispatch(request())
@@ -489,7 +490,7 @@ test("interrupt immediately closes message admission before asynchronous cleanup
 
 test("uncertain finalization retains a snapshot of the returned JSON", async () => {
   const authored = { value: 1 }
-  const observed: Json[] = []
+  const observed: JsonValue[] = []
   const { runtime } = fixture({ turn: () => authored }, { finalize: async (_id, result) => {
     observed.push(structuredClone(result))
     if (observed.length === 1) throw new Error("reply lost")
@@ -546,7 +547,7 @@ test("failure attestation follows cancellation and authored drainage", async () 
     return null
   } }, {
     confirmDrain: async () => { order.push("drained") },
-    fail: async (_id, error) => { order.push("settle"); return { status: "interrupted", error } },
+    fail: async (_id, error) => { order.push("settle"); return { status: "interrupted" } },
   })
   const pending = runtime.dispatch(request())
   await entered.promise
@@ -613,7 +614,7 @@ test("lost native continuation still joins authored callbacks before interrupted
   await callback
   const outcome = await pending
   assert.equal(outcome.status, "interrupted")
-  assert.match(outcome.error?.message ?? "", /native continuation lost/)
+  assert.ok(calls.includes("failure:native continuation lost"))
   assert.ok(calls.includes("hold:session_continuation_lost"))
   assert.equal(runtime.idle, false)
   assert.throws(() => runtime.resume(), /reconstruction/)
@@ -622,18 +623,18 @@ test("lost native continuation still joins authored callbacks before interrupted
 test("message callbacks retain their own immutable Slack source", async () => {
   const ready = deferred<void>(), done = deferred<void>()
   let received: unknown
-  const initialSource = { kind: "user", slack: { teamId: "T", channelId: "C", threadTs: "1.0", messageTs: "1.0", userId: "first" } }
+  const initialSource = { kind: "user" as const, slack: { teamId: "T", channelId: "C", threadTs: "1.0", messageTs: "1.0", userId: "first" } }
   const { runtime } = fixture({ turn: async turn => {
-    await turn.onMessage((_input, message) => { received = message; assert.equal(turn.source.slack?.userId, "first") })
+    await turn.onMessage(message => { received = message; assert.equal(turn.source.slack?.userId, "first") })
     ready.resolve(); await done.promise; return 1
   } })
   const result = runtime.dispatch({ ...request(), source: initialSource })
   await ready.promise
-  const source = { kind: "user", slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } }
+  const source = { kind: "user" as const, slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } }
   const callback = runtime.deliverMessage("turn-1", "message", textInput("hello"), source)
   source.slack.userId = "mutated"
   await callback
-  assert.deepEqual(received, { id: "message", source: { kind: "user", slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } } })
+  assert.deepEqual(received, { id: "message", content: textInput("hello"), source: { kind: "user", slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } } })
   await assert.rejects(runtime.deliverMessage("turn-1", "message", textInput("hello"), source), /identity changed/)
   done.resolve(); await result
 })
@@ -730,7 +731,7 @@ test("a hanging cancellation hook holds without attesting or settling the Turn",
   const { runtime, calls } = fixture({ turn: turn => {
     turn.onCancel(() => new Promise<void>(() => {}))
     entered.resolve()
-    return new Promise<Json>((_resolve, reject) => turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }))
+    return new Promise<JsonValue>((_resolve, reject) => turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }))
   } }, {}, { failureConvergenceMs: 20 })
   const pending = runtime.dispatch(request())
   await entered.promise
@@ -754,4 +755,95 @@ test("an interruption winning finalization joins cancellation before its receipt
   assert.equal((await pending).status, "interrupted")
   assert.equal(completed, true)
   assert.equal(runtime.idle, true)
+})
+
+test("schemas validate after init and transform exactly once through settlement retry", async () => {
+  const order: string[] = []
+  let finalizations = 0
+  const { runtime } = fixture({
+    init: () => { order.push("init"); return { alive: true } },
+    inputSchema: { "~standard": { version: 1, vendor: "test", validate: async value => {
+      order.push("input"); return { value: { count: Number((value as { count: string }).count) } }
+    } } },
+    resultSchema: { "~standard": { version: 1, vendor: "test", validate: async value => {
+      order.push("result"); return { value: { doubled: (value as { doubled: number }).doubled + 1 } }
+    } } },
+    turn: turn => { order.push("turn"); return { doubled: (turn.input as unknown as { count: number }).count * 2 } },
+  }, { finalize: async (_id, result) => { if (++finalizations === 1) throw new Error("lost receipt"); return { status: "completed", result } } })
+  await assert.rejects(runtime.dispatch({ ...request(), input: { count: "2" } }), /lost receipt/)
+  assert.deepEqual(await runtime.reconcileFinalization("turn-1"), { status: "completed", result: { doubled: 5 } })
+  assert.deepEqual(order, ["init", "input", "turn", "result"])
+})
+
+test("invalid input skips handler; invalid result cannot finalize staged response", async () => {
+  for (const stage of ["input", "result"] as const) {
+    let handled = false
+    const schema = { "~standard": { version: 1 as const, vendor: "test", validate: () => ({ issues: [{ message: "bad", path: ["field"] }] }) } }
+    const { runtime, calls } = fixture({
+      ...(stage === "input" ? { inputSchema: schema } : { resultSchema: schema }),
+      turn: async turn => { handled = true; await turn.respond("not publishable"); return 1 },
+    })
+    const outcome = await runtime.dispatch(request())
+    assert.equal(outcome.status, "failed")
+    assert.equal(outcome.error?.code, `${stage}_invalid`)
+    assert.equal(handled, stage === "result")
+    assert.equal(calls.includes("finalize"), false)
+  }
+})
+
+test("cancellation joins asynchronous validation before native convergence settles", async () => {
+  const entered = deferred<void>(), release = deferred<void>()
+  let handled = false, ended = false
+  const { runtime, calls } = fixture({
+    inputSchema: { "~standard": { version: 1, vendor: "test", validate: async value => { entered.resolve(); await release.promise; ended = true; return { value } } } },
+    turn: () => { handled = true; return 1 },
+  })
+  const pending = runtime.dispatch(request())
+  await entered.promise
+  const stop = runtime.interrupt("turn-1", new Error("stopped"))
+  assert.equal(calls.includes("fail"), false)
+  release.resolve()
+  await stop
+  assert.equal((await pending).status, "interrupted")
+  assert.equal(ended, true)
+  assert.equal(handled, false)
+})
+
+test("non-JSON result is result_invalid, while a throwing validator is handler_failed", async () => {
+  for (const throwing of [false, true]) {
+    const { runtime } = fixture({
+      ...(throwing ? { resultSchema: { "~standard": { version: 1 as const, vendor: "test", validate: () => { throw new Error("validator crashed") } } } } : {}),
+      turn: () => throwing ? null : new Date() as never,
+    })
+    const outcome = await runtime.dispatch(request())
+    assert.equal(outcome.error?.code, throwing ? "handler_failed" : "result_invalid")
+  }
+})
+
+
+test("default invocation rejects non-text input before the authored handler", async () => {
+  let handled = false
+  const { runtime, calls } = fixture({ turn: () => { handled = true; return null } })
+  const outcome = await runtime.dispatch({ ...request(), input: [{ type: "file", path: "/private" }] })
+  assert.equal(outcome.status, "failed")
+  assert.equal(outcome.error?.code, "input_invalid")
+  assert.equal(handled, false)
+  assert.equal(calls.includes("finalize"), false)
+})
+
+test("live messages reject non-text content before the authored callback", async () => {
+  const ready = deferred<void>(), release = deferred<void>()
+  let callbacks = 0
+  const { runtime } = fixture({ turn: async turn => {
+    await turn.onMessage(() => { callbacks++ })
+    ready.resolve(); await release.promise; return null
+  } })
+  const result = runtime.dispatch(request())
+  await ready.promise
+  try {
+    await assert.rejects(runtime.deliverMessage("turn-1", "invalid", [{ type: "file", path: "/private" }] as unknown as InputContent, { kind: "user" }))
+    assert.equal(callbacks, 0)
+    await runtime.deliverMessage("turn-1", "valid", textInput("follow-up"), { kind: "user" })
+    assert.equal(callbacks, 1)
+  } finally { release.resolve(); await result }
 })

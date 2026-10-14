@@ -81,7 +81,7 @@ func TestSlackRuntimeContentPreservesAdmissionRoute(t *testing.T) {
 			}
 			ask := uuid.NewV7()
 			for range 2 {
-				if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
+				if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -266,8 +266,10 @@ def install(raw):
     except KeyError:
         run('useradd', '--system', '--user-group', '--no-create-home', '--home-dir', str(DATA), '--shell', '/usr/sbin/nologin', USER)
     CONFIG.mkdir(mode=0o750)
+    CONFIG.chmod(0o750)
     shutil.chown(CONFIG, group=USER)
     (CONFIG / 'bin').mkdir(mode=0o755)
+    (CONFIG / 'bin').chmod(0o755)
     for name in ['control-plane', 'dispatcher']:
         destination = CONFIG / 'bin' / name
         shutil.copyfile(Path(cfg['services_candidate']) / name, destination)
@@ -316,14 +318,14 @@ def state(name):
 def start(cfg):
     if state('helmr-worker.service') != 'inactive':
         raise RuntimeError('start expects an inactive Worker; inspect a running or failed attempt')
-    for name in SERVICES[3:]:
+    for name in SERVICES[2:]:
         if state(unit(name)) not in ['inactive', 'failed']:
             raise RuntimeError('stop application services before running migrations')
     b = cfg['binaries']
     # Validate native service configuration before starting dependencies or migrating.
     for name, values in [('control-plane', cfg['control_plane']), ('dispatcher', cfg['dispatcher'])]:
         service_run(b[name], 'check-config', env={'PATH': os.environ.get('PATH', os.defpath)} | values)
-    for name in SERVICES[:3]:
+    for name in SERVICES[:2]:
         run('systemctl', 'start', unit(name))
     def sql(query):
         return service_run(b['psql'], '-h', str(DATA), '-p', '55432', '-d', 'postgres', '-X', '-v', 'ON_ERROR_STOP=1', '-At', input=query, capture_output=True, text=True).stdout.strip()
@@ -340,7 +342,7 @@ def start(cfg):
     migration = cp | {'CLICKHOUSE_USER': cfg['clickhouse']['CLICKHOUSE_MIGRATION_USER'],
                       'CLICKHOUSE_PASSWORD': cfg['clickhouse']['CLICKHOUSE_MIGRATION_PASSWORD']}
     service_run(b['control-plane'], 'migrate', 'up', env=dict(os.environ) | migration)
-    for name in SERVICES[3:]:
+    for name in SERVICES[2:]:
         run('systemctl', 'start', unit(name))
     wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'Control Plane', unit_name=unit('control-plane'))
     run('systemctl', 'start', 'helmr-worker.service')

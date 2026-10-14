@@ -38,7 +38,7 @@ export const captureAbortAgent = agent({
       await writeFile(file, marker, { flag: "wx" })
       let start!: () => void
       const armed = new Promise<void>(resolve => { start = resolve })
-      await turn.onMessage(message => { if (fixtureValue(message) === "start") start() })
+      await turn.onMessage(message => { if (fixtureValue(message.content) === "start") start() })
       await turn.output.write([{ type: "json", value: { ...state(), phase: "ready" } }])
       await armed
       // Only a completed Turn with no authored timers/I/O can become capturable.
@@ -56,7 +56,7 @@ export const captureAbortAgent = agent({
     if (await readFile(file, "utf8") !== marker) throw new Error("capture lost the file")
     let finish!: () => void
     const inspected = new Promise<void>(resolve => { finish = resolve })
-    await turn.onMessage(message => { if (fixtureValue(message) === "finish") finish() })
+    await turn.onMessage(message => { if (fixtureValue(message.content) === "finish") finish() })
     await turn.output.write([{ type: "json", value: { ...state(), phase: count === 2 ? "resumed" : "restored" } }])
     // Keep this allocation active until the driver observes its exact checkpoint.
     await inspected

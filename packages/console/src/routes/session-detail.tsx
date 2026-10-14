@@ -1,3 +1,4 @@
+import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { isOrganizationAdmin, useMe } from "../lib/me";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
 import { SessionProgress } from "../features/asks/SessionProgress";
@@ -289,7 +290,7 @@ function SessionDetailContent() {
                             </Show>
                             <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
                               <p class={ui.microLabel}>Input</p>
-                              <CodeBlock code={turn.input?.map(part => part.text).join("") ?? ""} label={`Turn #${turn.sequence} input`} />
+                              <InvocationInput value={turn.input} label={`Turn #${turn.sequence} input`} />
                             </Show>
                             <Show when={turn.status === "finalizing"}>
                               <p class={ui.muted}>
@@ -363,4 +364,19 @@ function SessionDetailContent() {
       </Show>
     </Page>
   );
+}
+
+function InvocationInput(props: { value: JsonValue | undefined; label: string }) {
+  const text = createMemo(() => {
+    const value = props.value;
+    if (!Array.isArray(value) || !value.every(part => part !== null && typeof part === "object" && !Array.isArray(part) && part.type === "text" && typeof part.text === "string" && Object.keys(part).length === 2)) return undefined;
+    return value.map(part => (part as { text: string }).text).join("");
+  });
+  const json = () => JSON.stringify(props.value, null, 2);
+  return <>
+    <CodeBlock code={text() ?? json() ?? ""} label={props.label} />
+    <Show when={text() !== undefined}>
+      <details><summary class="cursor-pointer font-mono text-chrome">Inspect input JSON</summary><CodeBlock code={json() ?? ""} class="mt-2" /></details>
+    </Show>
+  </>;
 }

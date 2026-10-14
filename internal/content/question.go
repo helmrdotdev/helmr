@@ -1,27 +1,29 @@
 package content
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 const ChoiceTextBytes = 8 * 1024
 
-var ErrAnswerInvalid = errors.New("answer does not match its declared control")
+var ErrAnswerInvalid = errors.New("answer does not match its declared question")
 
 type choiceOption struct {
 	ID    string          `json:"id"`
 	Value json.RawMessage `json:"value"`
 }
-type answerControl struct {
-	Type      string
-	Options   []choiceOption
-	Multiple  bool
-	AllowText bool
+type questionDefinition struct {
+	Type        string
+	Options     []choiceOption
+	Multiple    bool
+	AllowCustom bool
+	AllowNotes  bool
 }
 
 func objectFields(raw json.RawMessage, required []string, optional ...string) (map[string]json.RawMessage, error) {
@@ -64,7 +66,7 @@ func boolField(raw json.RawMessage) (bool, error) {
 	return *value, nil
 }
 
-// Question validates a complete prompt/control before it can consume budget or
+// Question validates a complete question before it can consume budget or
 // become visible. In particular every configured choice must be answerable.
 func Question(raw json.RawMessage) (json.RawMessage, error) {
 	canonical, err := jsoncanon.Transform(raw)
@@ -74,30 +76,39 @@ func Question(raw json.RawMessage) (json.RawMessage, error) {
 	if len(canonical) > ContentBytes {
 		return nil, fmt.Errorf("%w: Question exceeds 256 KiB", ErrLimit)
 	}
-	fields, err := objectFields(canonical, []string{"prompt", "answer"})
+	fields, err := objectFields(canonical, []string{"prompt", "type"}, "title", "options", "multiple", "allowCustom", "allowNotes")
 	if err != nil {
 		return nil, err
+	}
+	if title := fields["title"]; title != nil {
+		text, err := stringField(title)
+		if err != nil || strings.TrimSpace(text) == "" {
+			return nil, ErrInvalid
+		}
+		if len(text) > 256 {
+			return nil, ErrLimit
+		}
 	}
 	if _, err := Content(fields["prompt"], false); err != nil {
 		return nil, err
 	}
-	if _, err := parseControl(fields["answer"]); err != nil {
+	if _, err := parseQuestion(canonical); err != nil {
 		return nil, err
 	}
 	return canonical, nil
 }
-func parseControl(raw json.RawMessage) (answerControl, error) {
-	fields, err := objectFields(raw, []string{"type"}, "options", "multiple", "allowText")
+func parseQuestion(raw json.RawMessage) (questionDefinition, error) {
+	fields, err := objectFields(raw, []string{"prompt", "type"}, "title", "options", "multiple", "allowCustom", "allowNotes")
 	if err != nil {
-		return answerControl{}, err
+		return questionDefinition{}, err
 	}
 	kind, err := stringField(fields["type"])
 	if err != nil {
-		return answerControl{}, err
+		return questionDefinition{}, err
 	}
-	result := answerControl{Type: kind}
+	result := questionDefinition{Type: kind}
 	if kind == "text" {
-		if len(fields) != 1 {
+		if fields["options"] != nil || fields["multiple"] != nil || fields["allowCustom"] != nil || fields["allowNotes"] != nil {
 			return result, ErrInvalid
 		}
 		return result, nil
@@ -115,7 +126,10 @@ func parseControl(raw json.RawMessage) (answerControl, error) {
 	if result.Multiple, err = boolField(fields["multiple"]); err != nil {
 		return result, err
 	}
-	if result.AllowText, err = boolField(fields["allowText"]); err != nil {
+	if result.AllowCustom, err = boolField(fields["allowCustom"]); err != nil {
+		return result, err
+	}
+	if result.AllowNotes, err = boolField(fields["allowNotes"]); err != nil {
 		return result, err
 	}
 	seen := map[string]bool{}
@@ -165,8 +179,15 @@ func parseControl(raw json.RawMessage) (answerControl, error) {
 			maxBytes = len(canonical)
 		}
 	}
-	if result.AllowText {
-		maxBytes += len(`,"text":`) + ChoiceTextBytes
+	if result.AllowCustom {
+		if result.Multiple {
+			maxBytes += len(`,"custom":`) + ChoiceTextBytes
+		} else {
+			maxBytes = max(maxBytes, len(`{"selected":[],"custom":}`)+ChoiceTextBytes)
+		}
+	}
+	if result.AllowNotes {
+		maxBytes += len(`,"notes":`) + ChoiceTextBytes
 	}
 	if maxBytes > AnswerBytes {
 		return result, fmt.Errorf("%w: Configured choice answer exceeds 64 KiB", ErrLimit)
@@ -174,78 +195,121 @@ func parseControl(raw json.RawMessage) (answerControl, error) {
 	return result, nil
 }
 
-// Answer preserves the submitted JSON exactly after canonicalization; option
-// values cannot be replaced, expanded from IDs, reordered or interpreted here.
-func Answer(question, raw json.RawMessage) (json.RawMessage, error) {
+// Submission defines replay identity without depending on retained option payloads.
+// Choice order is immaterial; the resolved answer uses declaration order.
+func Submission(raw json.RawMessage) (json.RawMessage, error) {
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return nil, ErrAnswerInvalid
 	}
 	if len(canonical) > AnswerBytes {
-		return nil, fmt.Errorf("%w: Answer exceeds 64 KiB", ErrLimit)
+		return nil, ErrLimit
+	}
+	if _, err := stringField(canonical); err == nil {
+		return canonical, nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(canonical, &envelope) == nil {
+		for _, key := range []string{"custom", "notes"} {
+			if len(envelope[key]) > ChoiceTextBytes {
+				return nil, ErrLimit
+			}
+		}
+	}
+	fields, err := objectFields(canonical, []string{"selectedIds"}, "custom", "notes")
+	if err != nil {
+		return nil, ErrAnswerInvalid
+	}
+	var ids []string
+	if json.Unmarshal(fields["selectedIds"], &ids) != nil || ids == nil {
+		return nil, ErrAnswerInvalid
+	}
+	sort.Strings(ids)
+	for i, id := range ids {
+		if id == "" || len(id) > 128 || (i > 0 && ids[i-1] == id) {
+			return nil, ErrAnswerInvalid
+		}
+	}
+	for _, key := range []string{"custom", "notes"} {
+		if raw := fields[key]; raw != nil {
+			if len(raw) > ChoiceTextBytes {
+				return nil, ErrLimit
+			}
+			text, err := stringField(raw)
+			if err != nil || strings.TrimSpace(text) == "" {
+				return nil, ErrAnswerInvalid
+			}
+		}
+	}
+	fields["selectedIds"], _ = json.Marshal(ids)
+	encoded, _ := json.Marshal(fields)
+	return jsoncanon.Transform(encoded)
+}
+
+// Answer resolves IDs against the immutable question. Callers cannot supply values.
+func Answer(question, raw json.RawMessage) (json.RawMessage, error) {
+	submitted, err := Submission(raw)
+	if err != nil {
+		return nil, err
 	}
 	validated, err := Question(question)
 	if err != nil {
 		return nil, err
 	}
-	fields, _ := objectFields(validated, []string{"prompt", "answer"})
-	control, err := parseControl(fields["answer"])
+	control, err := parseQuestion(validated)
 	if err != nil {
 		return nil, err
 	}
 	if control.Type == "text" {
-		if _, err := stringField(canonical); err != nil {
+		if _, err := stringField(submitted); err != nil {
 			return nil, ErrAnswerInvalid
 		}
-		return canonical, nil
+		return submitted, nil
 	}
-	// Size errors take precedence over shape errors for a present choice text member.
-	var envelope map[string]json.RawMessage
-	if json.Unmarshal(canonical, &envelope) == nil && len(envelope["text"]) > ChoiceTextBytes {
-		return nil, fmt.Errorf("%w: Choice custom text exceeds 8 KiB", ErrLimit)
-	}
-	answer, err := objectFields(canonical, []string{"selected"}, "text")
+	fields, err := objectFields(submitted, []string{"selectedIds"}, "custom", "notes")
 	if err != nil {
 		return nil, ErrAnswerInvalid
 	}
-	var selected []json.RawMessage
-	if json.Unmarshal(answer["selected"], &selected) != nil || selected == nil || (!control.Multiple && len(selected) > 1) {
+	var ids []string
+	if json.Unmarshal(fields["selectedIds"], &ids) != nil {
 		return nil, ErrAnswerInvalid
 	}
-	text := ""
-	if rawText := answer["text"]; rawText != nil {
-		if !control.AllowText {
-			return nil, ErrAnswerInvalid
-		}
-		text, err = stringField(rawText)
-		if err != nil {
-			return nil, ErrAnswerInvalid
-		}
-	}
-	if len(selected) == 0 && text == "" {
+	if (!control.Multiple && len(ids) > 1) || (fields["custom"] != nil && !control.AllowCustom) || (fields["notes"] != nil && !control.AllowNotes) {
 		return nil, ErrAnswerInvalid
 	}
-	previous := -1
-	for _, rawSelection := range selected {
-		selection, err := objectFields(rawSelection, []string{"id", "value"})
-		if err != nil {
-			return nil, ErrAnswerInvalid
+	if len(ids) == 0 && fields["custom"] == nil {
+		return nil, ErrAnswerInvalid
+	}
+	if !control.Multiple && len(ids) > 0 && fields["custom"] != nil {
+		return nil, ErrAnswerInvalid
+	}
+	selected := make([]choiceOption, 0, len(ids))
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	for _, option := range control.Options {
+		if wanted[option.ID] {
+			selected = append(selected, option)
+			delete(wanted, option.ID)
 		}
-		id, err := stringField(selection["id"])
-		if err != nil {
-			return nil, ErrAnswerInvalid
+	}
+	if len(wanted) != 0 {
+		return nil, ErrAnswerInvalid
+	}
+	resolved := map[string]any{"selected": selected}
+	for _, key := range []string{"custom", "notes"} {
+		if fields[key] != nil {
+			resolved[key] = fields[key]
 		}
-		index := -1
-		for i, option := range control.Options {
-			if option.ID == id {
-				index = i
-				break
-			}
-		}
-		if index <= previous || index < 0 || !bytes.Equal(selection["value"], control.Options[index].Value) {
-			return nil, ErrAnswerInvalid
-		}
-		previous = index
+	}
+	encoded, _ := json.Marshal(resolved)
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, err
+	}
+	if len(canonical) > AnswerBytes {
+		return nil, ErrLimit
 	}
 	return canonical, nil
 }

@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.0",
-    "@helmr/proto": "workspace:*"
+    "@helmr/proto": "workspace:*",
+    "@standard-schema/spec": "1.1.0"
   },
   "exports": {
     ".": "./src/index.ts",

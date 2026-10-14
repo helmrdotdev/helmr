@@ -1,3 +1,4 @@
+import { parseTurnOutcome } from "./turn-outcome"
 import { durationMilliseconds } from "../duration"
 import type { TurnOutcome, TurnState, TimedTurnWaitResult, TurnWaitOptions } from "../contract"
 import { abortableDelay } from "./abort"
@@ -5,7 +6,7 @@ import { abortableDelay } from "./abort"
 export type TurnObservation = Pick<TurnState, "id" | "sessionId" | "status" | "result" | "response" | "error" | "payloadExpiredAt"> & { readonly waitBlocked?: "capacity_wait_blocked" }
 
 // Observation uses the ordinary authenticated read and never sends a control.
-export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
+export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions & { readonly timeout: import("../duration").Duration }): Promise<TimedTurnWaitResult>
 export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
 export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
 export async function waitForTurn(
@@ -36,13 +37,13 @@ export async function waitForTurn(
       signal.throwIfAborted()
       if (state.id !== turnId || state.sessionId !== sessionId) throw new Error("Turn response changed identity")
       if (state.status !== "queued" && state.status !== "running" && state.status !== "finalizing") {
-        const outcome: TurnOutcome = Object.freeze({
+        const outcome = Object.freeze(parseTurnOutcome({
           status: state.status,
           ...(state.result === undefined ? {} : { result: state.result }),
           ...(state.response === undefined ? {} : { response: state.response }),
           ...(state.error === undefined ? {} : { error: state.error }),
           ...(state.payloadExpiredAt === undefined ? {} : { payloadExpiredAt: state.payloadExpiredAt }),
-        })
+        }))
         return timeout === undefined ? outcome : Object.freeze({ status: "settled", outcome })
       }
       if (state.waitBlocked === "capacity_wait_blocked") throw Object.assign(new Error("Waiting depends on releasing the caller's retained Computer allocation"), { code: "capacity_wait_blocked" })

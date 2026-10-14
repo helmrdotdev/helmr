@@ -9,16 +9,16 @@ await verify("questions", async ({ marker, objects, computer, startAgent }) => {
   objects.ask_ids.push(ask.id)
   assertEqual(ask.turnId, turn.id, "Question changed its Turn")
   assertEqual(ask.sessionId, turn.sessionId, "Question changed its Session")
-  const request = { answer: { selected: [{ id: "approve", value: true }], text: marker }, responseId: `answer:${marker}` }
-  const receipt = await turn.asks.respond(ask.id, request)
-  assertEqual(receipt.status, "responded", "Question did not accept answer")
+  const request = { answer: { selectedIds: ["approve"], notes: marker }, answerId: `answer:${marker}` }
+  const receipt = await turn.asks.answer(ask.id, request)
+  assertEqual(receipt.status, "answered", "Question did not accept answer")
   const output = await completedResult(turn)
   assert(output !== null && typeof output === "object" && "answer" in output)
-  assertEqual(output.answer, request.answer, "Answer changed before handler resumed")
-  assert("respondedBy" in output && output.respondedBy !== null && typeof output.respondedBy === "object" && "kind" in output.respondedBy)
-  assertEqual(output.respondedBy.kind, "api_key", "Answer attribution was lost")
-  const replay = await turn.asks.respond(ask.id, request)
+  assertEqual(output.answer, { selected: [{ id: "approve", value: true }], notes: marker }, "Answer changed before handler resumed")
+  assert("answeredBy" in output && output.answeredBy !== null && typeof output.answeredBy === "object" && "kind" in output.answeredBy)
+  assertEqual(output.answeredBy.kind, "api_key", "Answer attribution was lost")
+  const replay = await turn.asks.answer(ask.id, request)
   assertEqual(replay.id, receipt.id, "Answer retry changed question identity")
-  assertEqual(replay.respondedByApiKeyId, receipt.respondedByApiKeyId, "Answer retry changed attribution")
-  return { createdInsideTurn: true, resumed: true, responseRetry: true }
+  assertEqual(replay.answeredByApiKeyId, receipt.answeredByApiKeyId, "Answer retry changed attribution")
+  return { createdInsideTurn: true, resumed: true, answerRetry: true }
 })

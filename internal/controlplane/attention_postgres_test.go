@@ -57,14 +57,14 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		t.Fatal(err)
 	}
 	question := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, question, json.RawMessage(`{"prompt":[{"type":"json","value":1},{"type":"text","text":"Ship\n the  release?\u0000"}],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, question, json.RawMessage(`{"prompt":[{"type":"json","value":1},{"type":"text","text":"Ship\n the  release?\u0000"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	answered := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, answered, json.RawMessage(`{"prompt":[{"type":"text","text":"Already answered"}],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, answered, json.RawMessage(`{"prompt":[{"type":"text","text":"Already answered"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: answered, ResponseID: "reply", Answer: json.RawMessage(`"yes"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: answered, AnswerID: "reply", Answer: json.RawMessage(`"yes"`)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,7 +226,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	}
 
 	// Answering the Question removes it from the list.
-	if _, err := session.RespondAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, ResponseID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, AnswerID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
 		t.Fatal(err)
 	}
 	if after := read(h.session(t, f.User, org)); after.Counts.Question != 0 || len(after.Items) != 2 {

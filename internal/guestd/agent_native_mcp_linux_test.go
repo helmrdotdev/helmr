@@ -269,7 +269,7 @@ func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request wo
 	case workerapi.AgentMethodAsk:
 		value = json.RawMessage(`{"id":"fixture-approval"}`)
 	case workerapi.AgentMethodWaitAsk:
-		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"respondedBy":{"kind":"api_key","id":"fixture-operator"}}`)
+		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"answeredBy":{"kind":"api_key","id":"fixture-operator"}}`)
 	case workerapi.AgentMethodOutput:
 		value = json.RawMessage(`{"sequence":1}`)
 	case workerapi.AgentMethodFail:
@@ -319,7 +319,7 @@ func (peer *nativeManagedMCPPeer) dispatch(t *testing.T, index int) {
 	text, _ := json.Marshal(fmt.Sprintf("unique input %d", index))
 	input, _ := json.Marshal([]map[string]string{{"type": "text", "text": string(text)}})
 	identity := peer.connection.CurrentGrant().Identity
-	if err := peer.connection.SendCommand(t.Context(), &agentv1.GuestCommand{Identity: identity, DeliveryId: fmt.Sprintf("delivery-%d", index), Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: fmt.Sprintf("turn-%d", index), Sequence: int64(index), InputJson: input, SourceJson: []byte(`{"kind":"api"}`)}}}); err != nil {
+	if err := peer.connection.SendCommand(t.Context(), &agentv1.GuestCommand{Identity: identity, DeliveryId: fmt.Sprintf("delivery-%d", index), Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: fmt.Sprintf("turn-%d", index), Sequence: int64(index), InputJson: input, SourceJson: []byte(`{"kind":"api_key"}`)}}}); err != nil {
 		t.Fatal(err)
 	}
 }

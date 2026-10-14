@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { readFile, writeFile, rename } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { HelmrClient } from "../../../sdk/typescript/src/client"
-import type { ClientSessionRef } from "../../../sdk/typescript/src/client-session"
+import type { SessionRef } from "../../../sdk/typescript/src/contract"
 import type { SessionEvent, TurnState, TurnRef, TurnOutcome } from "../../../sdk/typescript/src/contract"
 import { runHealthyContinuation } from "./healthy-driver"
 import type { CommandRef } from "../../../sdk/typescript/src/command"
@@ -17,7 +17,7 @@ assert(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0)
 if (options.healthyRAM || options.checkpointFault) { await runHealthyContinuation(options); process.exit(0) }
 const signal = AbortSignal.timeout(options.timeoutMs)
 const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
-const sessions: ClientSessionRef[] = []
+const sessions: SessionRef[] = []
 const peer = await client.sessions.create({ agent: "peer", input: fixtureInput("hold" ) }, { signal })
 sessions.push(peer.session)
 let model: CommandRef | undefined
@@ -46,7 +46,7 @@ async function nativeOutcome(turn: TurnRef, provider: string, count: number, out
         const ask = await turn.asks.get(summary.id, { signal: outcomeSignal })
         assert.equal(provider, "claude", "unexpected native approval")
         assert.equal(ask.turnId, turn.id)
-        const action = ask.prompt?.find(part => part.type === "json")
+        const action = ask.question?.prompt.find(part => part.type === "json")
         assert(action?.type === "json")
         const value = action.value as Record<string, unknown>
         assert.equal(value["provider"], "claude")
@@ -54,8 +54,8 @@ async function nativeOutcome(turn: TurnRef, provider: string, count: number, out
         assert.deepEqual(value["input"], {
           sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}`,
         })
-        await turn.asks.respond(ask.id, {
-          answer: { selected: [{ id: "allow", value: true }] }, responseId: `fixture-allow-${ask.id}`,
+        await turn.asks.answer(ask.id, {
+          answer: { selectedIds: ["allow"] }, answerId: `fixture-allow-${ask.id}`,
         }, { signal: outcomeSignal })
         answered.add(ask.id)
       }

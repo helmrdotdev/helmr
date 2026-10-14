@@ -1,5 +1,5 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, template, image, type Json } from "@helmr/sdk"
+import { agent, template, image, type JsonValue } from "@helmr/sdk"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -18,14 +18,14 @@ export const edgeSmoke = agent({
   id: "edge-smoke",
   template: edgeSmokeComputer,
   maxTurnDuration: "5m",
-  async turn(turn): Promise<Json> {
+  async turn(turn): Promise<JsonValue> {
     const input = inputSchema.parse(fixtureValue(turn.input))
     const marker = input.marker?.trim() || `edge-${turn.id}`
     switch (input.mode) {
       case "concurrent-questions": {
         const responses = await Promise.all(["first", "second"].map(label => turn.ask({
           prompt: [{ type: "text", text: `${label}:${marker}` }],
-          answer: { type: "text" },
+           type: "text",
         })))
         return { mode: input.mode, marker, answers: responses.map(response => response.answer) }
       }

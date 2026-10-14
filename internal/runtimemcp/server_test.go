@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestCatalogPreservesTextInputAndRejectsOtherShapes(t *testing.T) {
+func TestCatalogPreservesStructuredInvocationAndTextMessages(t *testing.T) {
 	var admitted map[string]any
 	handler := NewHandler(func(_ context.Context, _ string, body json.RawMessage) (json.RawMessage, error) {
 		if err := json.Unmarshal(body, &admitted); err != nil {
@@ -46,15 +46,15 @@ func TestCatalogPreservesTextInputAndRejectsOtherShapes(t *testing.T) {
 			continue
 		}
 		schema := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)["input"]
-		if fields, ok := schema.(map[string]any); !ok || fields["type"] != "array" {
-			t.Fatalf("%s input schema is not an array: %v", tool["name"], schema)
+		if fields, ok := schema.(map[string]any); !ok || fields["type"] != nil {
+			t.Fatalf("%s input schema restricts structured input: %v", tool["name"], schema)
 		}
 		count++
 	}
 	if count != 3 {
 		t.Fatalf("mutation catalog count=%d", count)
 	}
-	for _, input := range []string{`[]`, `[{"type":"text","text":"hello"}]`, `[{"type":"text","text":"Hello"},{"type":"text","text":" world\n"}]`} {
+	for _, input := range []string{`null`, `true`, `7.5`, `"text"`, `{"task":"work"}`, `[]`, `[{"type":"text","text":"hello"}]`, `[{"type":"text","text":"Hello"},{"type":"text","text":" world\n"}]`} {
 		admitted = nil
 		result := post(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"enqueue","arguments":{"sessionId":"peer","idempotencyKey":"stable","input":` + input + `}}}`)
 		if result["isError"] == true {
@@ -70,7 +70,7 @@ func TestCatalogPreservesTextInputAndRejectsOtherShapes(t *testing.T) {
 	}
 	for _, input := range []string{`null`, `true`, `7.5`, `"text"`, `{"task":"work"}`, `{"type":"message","content":[]}`, `[{"type":"json","value":null}]`, `[{"type":"text","text":"hello","actor":"someone"}]`} {
 		admitted = nil
-		result := post(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"enqueue","arguments":{"sessionId":"peer","idempotencyKey":"stable","input":` + input + `}}}`)
+		result := post(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"send_turn","arguments":{"sessionId":"peer","turnId":"turn","idempotencyKey":"stable","message":` + input + `}}}`)
 		if result["isError"] != true || admitted != nil {
 			t.Fatalf("invalid input admitted %s: %v", input, result)
 		}

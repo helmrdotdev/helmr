@@ -65,7 +65,18 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 		var e projectionEvent
 		err = tx.QueryRow(ctx, `SELECT seq,turn_id,kind,data,created_at FROM session_events WHERE environment_id=$1 AND session_id=$2 AND seq>$3 ORDER BY seq LIMIT 1`, o.environment, o.session, o.cursor).Scan(&e.sequence, &e.turn, &e.kind, &e.data, &e.at)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+			if active && !deleted {
+				var authorized time.Time
+				if err = tx.QueryRow(ctx, `SELECT authorized_at FROM slack_installations WHERE id=$1`, o.installation).Scan(&authorized); err != nil {
+					return err
+				}
+				progressed, err = projectControlState(ctx, tx, o, authorized)
+				return err
+			}
+			// Inactive sources still dispose observed control state so they cannot
+			// occupy discovery batches forever or replay it after reauthorization.
+			progressed, err = slackroute.AdvanceControlProjection(ctx, tx, o.participant, o.environment, o.session)
+			return err
 		}
 		if err != nil {
 			return err
@@ -85,7 +96,9 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 			if err = projectEvent(ctx, tx, o, e); err != nil {
 				return err
 			}
-			if err = projectActivity(ctx, tx, o, authorized); err != nil {
+			// The current event is already projected within this transaction.
+			o.cursor = e.sequence
+			if _, err = projectControlState(ctx, tx, o, authorized); err != nil {
 				return err
 			}
 		}
@@ -99,6 +112,12 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 }
 
 func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectionEvent) error {
+	// Child transcript stays in Console. Its lifecycle is projected into the
+	// front's existing work messages, never relabelled as front-authored prose.
+	if o.session != o.front {
+		return nil
+	}
+
 	switch e.kind {
 	case "message.rejected":
 		return projectMessageFailure(ctx, tx, o, e)
@@ -123,6 +142,9 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 		}
 		return projectContent(ctx, tx, o, e, "response", response, true, nil)
 	case "ask.created":
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate'`, o.participant, e.turn); err != nil {
+			return err
+		}
 		if o.session != o.front {
 			return errors.New("owned work cannot publish a human question")
 		}
@@ -137,14 +159,16 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 			return errors.New("the Slack question has no exact target")
 		}
 		return projectContent(ctx, tx, o, e, "question", question.Question, false, &question.ID)
-	case "ask.responded", "ask.cancelled":
+	case "ask.answered", "ask.cancelled":
 		return projectQuestionState(ctx, tx, o, e)
 	case "turn.failed", "turn.interrupted", "turn.cancelled", "session.closed", "session.cancelled":
 		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND role='intermediate' AND ($2::uuid IS NULL OR turn_id=$2)`, o.participant, e.turn); err != nil {
 			return err
 		}
-		label := map[string]string{"turn.failed": "Turn failed.", "turn.interrupted": "Turn interrupted.", "turn.cancelled": "Turn cancelled.", "session.closed": "Session closed.", "session.cancelled": "Session cancelled."}[e.kind]
-		content, _ := json.Marshal([]map[string]string{{"type": "text", "text": label}})
+		if e.kind != "turn.failed" {
+			return nil
+		}
+		content, _ := json.Marshal([]map[string]string{{"type": "text", "text": "Execution failed. View details in Console."}})
 		return projectContent(ctx, tx, o, e, "lifecycle", content, false, nil)
 	}
 	return nil
@@ -160,6 +184,13 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 	path := "post"
 	var recipientTeam, recipientUser *string
 	if role == "intermediate" {
+		var exhausted bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE thread_source_id=$1 AND post_key=$2)`, o.participant, "overflow:"+e.turn.String()).Scan(&exhausted); err != nil {
+			return err
+		}
+		if exhausted {
+			return nil
+		}
 		var raw []byte
 		err := tx.QueryRow(ctx, `SELECT p.post_key,p.source_start_seq,p.payload,p.presentation_path,p.recipient_team_id,p.recipient_user_id FROM slack_posts p
  WHERE p.thread_source_id=$1 AND p.turn_id=$2 AND p.role='intermediate' AND p.continuation_ordinal=0 AND p.suppressed_revision=0 AND p.status NOT IN ('failed','suppressed')
@@ -187,7 +218,7 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 		if err != nil {
 			return err
 		}
-		if o.session == o.front && (role == "intermediate" || role == "response") {
+		if o.session == o.front && role == "response" {
 			var root *string
 			if err = tx.QueryRow(ctx, `SELECT thread_ts FROM slack_threads WHERE id=$1`, o.thread).Scan(&root); err != nil {
 				return err
@@ -202,7 +233,7 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 				}
 			}
 		}
-	} else {
+	} else if role != "intermediate" {
 		var err error
 		presentation, err = frozenPresentationBlocks(appearance["blocks"])
 		if err != nil {
@@ -231,10 +262,28 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 	if role == "question" {
 		rendered, err = renderQuestion(e.sequence, content)
 	} else {
-		rendered, err = RenderContent(sources, empty)
+		if role == "intermediate" {
+			rendered, err = renderCanonicalContentLimit(sources, "", 6000)
+		} else {
+			rendered, err = RenderContent(sources, empty)
+		}
 	}
 	if err != nil {
 		return err
+	}
+	overflow := false
+	if role == "intermediate" {
+		// Three narrative messages leave the fourth slot for one explicit escape
+		// to the complete Console output, even across arbitrarily many asks.
+		var other int
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM slack_posts WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate' AND post_key<>$3`, o.participant, e.turn, key).Scan(&other); err != nil {
+			return err
+		}
+		remaining := max(0, 3-other)
+		if len(rendered) > remaining {
+			rendered = rendered[:remaining]
+			overflow = true
+		}
 	}
 	for ordinal, part := range rendered {
 		body, err := json.Marshal(part.Body)
@@ -246,21 +295,15 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 			return err
 		}
 		blocks := make([]any, 0, len(presentation)+len(part.Body.Blocks))
-		if len(presentation) > 0 {
-			blocks = append(blocks, presentation[0])
-		}
 		for _, block := range part.Body.Blocks {
 			blocks = append(blocks, block)
 		}
-		if len(presentation) > 1 && (role != "question" || ordinal == len(rendered)-1) {
-			blocks = append(blocks, presentation[1:]...)
+		if role != "question" || ordinal == len(rendered)-1 {
+			blocks = append(blocks, presentation...)
 		}
 		payload["blocks"], _ = json.Marshal(blocks)
-		label := o.label + " · Helmr Agent"
-		if o.session != o.front {
-			label = "Delegated work · " + o.label
-		}
-		payload["text"], _ = json.Marshal(label + "\n" + part.Body.Text)
+		payload["text"], _ = json.Marshal(part.Body.Text)
+
 		body, err = json.Marshal(payload)
 		if err != nil {
 			return err
@@ -287,5 +330,8 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 		}
 	}
 
+	if overflow {
+		return projectWorkOverflow(ctx, tx, o, e)
+	}
 	return err
 }

@@ -18,6 +18,10 @@ export function canonicalizeJsonValue(value: JsonValue): Uint8Array {
   return textEncoder.encode(serialize(value, new Set<object>()))
 }
 
+export function normalizeJsonValue(value: unknown): JsonValue {
+  return JSON.parse(new TextDecoder().decode(canonicalizeJsonValue(value as JsonValue))) as JsonValue
+}
+
 function serialize(value: JsonValue, ancestors: Set<object>): string {
   if (value === null || typeof value === "boolean") {
     return String(value)
@@ -43,7 +47,8 @@ function serialize(value: JsonValue, ancestors: Set<object>): string {
   try {
     if (Array.isArray(value)) {
       assertPlainArray(value)
-      const items = value.map((item) => serialize(item, ancestors))
+      const items: string[] = []
+      for (let index = 0; index < value.length; index++) items.push(serialize(value[index]!, ancestors))
       return `[${items.join(",")}]`
     }
 
@@ -67,6 +72,12 @@ function assertPlainArray(value: readonly JsonValue[]): void {
   expected.push("length")
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
     throw new Error("canonical JSON arrays must be dense and have no extra properties")
+  }
+  for (let index = 0; index < value.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new Error("canonical JSON array elements must be enumerable data properties")
+    }
   }
 }
 

@@ -197,6 +197,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				}
 				err = session.StartError(err)
 			} else {
+				if err = resumeNativeStops(ctx, core, id, p); err != nil {
+					return err
+				}
 				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {

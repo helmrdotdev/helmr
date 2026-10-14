@@ -130,7 +130,7 @@ func TestSlackProjectionUsesInstallationIdentityAcrossContinuations(t *testing.T
 		}
 		count++
 	}
-	if err := rows.Err(); err != nil || count != 2 {
+	if err := rows.Err(); err != nil || count != 3 {
 		t.Fatal(count, err)
 	}
 }
@@ -191,7 +191,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	ask := uuid.NewV7()
-	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a path"}],"answer":{"type":"choice","options":[{"id":"a","label":"Display label","description":"Why this choice","value":"PRIVATE_MACHINE_VALUE"}]}}`)
+	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a path"}],"type":"choice","options":[{"id":"a","label":"Display label","description":"Why this choice","value":"PRIVATE_MACHINE_VALUE"}]}`)
 	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, question); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id,payload FROM slack_posts WHERE ask_id=$1`, ask).Scan(&post, &body); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(body, []byte("Display label")) || !bytes.Contains(body, []byte("Why this choice")) || bytes.Contains(body, []byte("PRIVATE_MACHINE_VALUE")) || !bytes.Contains(body, []byte("helmr.open_answer")) {
+	if !bytes.Contains(body, []byte("Display label")) || !bytes.Contains(body, []byte("Why this choice")) || bytes.Contains(body, []byte("PRIVATE_MACHINE_VALUE")) || !bytes.Contains(body, []byte("helmr.submit_choices")) {
 		t.Fatal("question presentation", string(body))
 	}
 	f.due(t)
@@ -209,13 +209,13 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	if err := FinishPost(t.Context(), f.Pool, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RespondAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, ResponseID: "answer", Answer: json.RawMessage(`{"selected":[{"id":"a","value":"PRIVATE_MACHINE_VALUE"}]}`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`{"selectedIds":["a"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)
 	f.due(t)
 	updated := f.postClaim(t, post)
-	if updated.Method != "chat.update" || bytes.Contains(updated.Payload, []byte("helmr.open_answer")) || bytes.Contains(updated.Payload, []byte("helmr_answer_cli")) || bytes.Contains(updated.Payload, []byte("PRIVATE_MACHINE_VALUE")) || !bytes.Contains(updated.Payload, []byte("Question answered.")) {
+	if updated.Method != "chat.update" || bytes.Contains(updated.Payload, []byte("helmr.open_answer")) || bytes.Contains(updated.Payload, []byte("helmr_answer_cli")) || bytes.Contains(updated.Payload, []byte("PRIVATE_MACHINE_VALUE")) || !bytes.Contains(updated.Payload, []byte("Answered by Developer: Display label")) {
 		t.Fatal("answered update", string(updated.Payload))
 	}
 	f.noPostClaim(t, output)

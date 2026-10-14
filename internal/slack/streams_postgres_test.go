@@ -26,7 +26,13 @@ func streamBody(t *testing.T, text string) []byte {
 	if err != nil || len(posts) != 1 {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(posts[0].Body)
+	rawBody, _ := json.Marshal(posts[0].Body)
+	var rendered map[string]any
+	if err := json.Unmarshal(rawBody, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	rendered["blocks"] = append(rendered["blocks"].([]any), consoleContext("https://console.example/sessions/test", "View in Console"))
+	body, err := json.Marshal(rendered)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +60,9 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	first := f.postClaim(t, post)
 	if first.Method != "chat.startStream" || first.StatusEpoch == 0 {
 		t.Fatal("stream did not own status", first)
+	}
+	if bytes.Index(first.Payload, []byte(`"type":"markdown_text"`)) > bytes.Index(first.Payload, []byte(`"type":"blocks"`)) {
+		t.Fatal("Console link precedes response", string(first.Payload))
 	}
 	f.due(t)
 	f.noPostClaim(t, peer)
@@ -161,7 +170,7 @@ func TestSlackStreamUnknownContentIsNotReplayedAndStopHasNoContent(t *testing.T)
 func observedStream(t *testing.T, f statusFixture, post uuid.UUID, value, nativeState string) observedMessage {
 	t.Helper()
 	body := streamBody(t, value)
-	header, err := streamHeader(post, body)
+	header, err := streamContext(post, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +180,13 @@ func observedStream(t *testing.T, f statusFixture, post uuid.UUID, value, native
 	if err = json.Unmarshal(body, &content); err != nil {
 		t.Fatal(err)
 	}
-	blocks, err := json.Marshal(append(header, content.Blocks...))
+	visible := []any{}
+	for _, block := range content.Blocks {
+		if block.(map[string]any)["type"] == "rich_text" {
+			visible = append(visible, block)
+		}
+	}
+	blocks, err := json.Marshal(append(visible, header...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +333,7 @@ func TestSlackStreamSuppressedRevisionCanReconcileAndStop(t *testing.T) {
 	}
 }
 
-func TestSlackDeletedStreamReleasesLaterResponseWithoutRetry(t *testing.T) {
+func TestSlackDeletedStreamKeepsIndependentResponseWithoutRetry(t *testing.T) {
 	for _, method := range []string{"event", "append", "stop"} {
 		t.Run(method, func(t *testing.T) {
 			f := newStatusFixture(t)
@@ -336,7 +351,10 @@ func TestSlackDeletedStreamReleasesLaterResponseWithoutRetry(t *testing.T) {
 			}
 			response := f.post(t, 2, "response", "response", &turn)
 			f.due(t)
-			f.noPostClaim(t, response)
+			independent := f.postClaim(t, response)
+			if err := FinishPost(t.Context(), f.Pool, independent, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
+				t.Fatal(err)
+			}
 			if method == "event" {
 				handler := EventHandler{Database: f.Pool, AppID: "app"}
 				if err := handler.observeDeletion(t.Context(), "team", "C1", "123.790"); err != nil {
@@ -360,9 +378,7 @@ func TestSlackDeletedStreamReleasesLaterResponseWithoutRetry(t *testing.T) {
 			}
 			f.due(t)
 			f.noPostClaim(t, post)
-			if c := f.postClaim(t, response); c.Method != "chat.postMessage" {
-				t.Fatal(c.Method)
-			}
+			f.noPostClaim(t, response)
 		})
 	}
 }
@@ -497,5 +513,38 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 				t.Fatal("expired stream left a content copy", safe, err)
 			}
 		})
+	}
+}
+
+func TestStreamContextPositionPreservesExactContentProof(t *testing.T) {
+	post := uuid.NewV7()
+	body := streamBody(t, "first second")
+	context, err := streamContext(post, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := map[string]string{"type": "markdown", "text": "first"}
+	second := map[string]string{"type": "markdown", "text": " second"}
+	for _, blocks := range [][]any{
+		append([]any{first, second}, context...),
+		append(append([]any{first}, context...), second),
+		append(append([]any{}, context...), first, second),
+	} {
+		raw, _ := json.Marshal(blocks)
+		if !sameStreamContent(post, body, "first second", raw) {
+			t.Fatal("exact content not recognized", string(raw))
+		}
+		if sameStreamContent(post, body, "first", raw) {
+			t.Fatal("prefix accepted")
+		}
+	}
+	for _, blocks := range [][]any{
+		append(append([]any{first, second}, context...), context...),
+		append([]any{first, second, map[string]string{"type": "markdown", "text": " extra"}}, context...),
+	} {
+		raw, _ := json.Marshal(blocks)
+		if sameStreamContent(post, body, "first second", raw) {
+			t.Fatal("ambiguous or extra content accepted", string(raw))
+		}
 	}
 }

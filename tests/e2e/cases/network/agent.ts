@@ -11,7 +11,7 @@ export const networkAgent = agent({
     const started = new Promise<void>(resolve => { start = resolve })
     const finished = new Promise<void>(resolve => { finish = resolve })
     await turn.onMessage(value => {
-      const message = z.object({ phase: z.enum(["start", "finish"]) }).strict().parse(fixtureValue(value))
+      const message = z.object({ phase: z.enum(["start", "finish"]) }).strict().parse(fixtureValue(value.content))
       if (message.phase === "start") start()
       else finish()
     })

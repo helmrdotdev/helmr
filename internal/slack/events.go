@@ -33,6 +33,7 @@ type eventEnvelope struct {
 	Challenge string `json:"challenge"`
 	Event     struct {
 		Type             string           `json:"type"`
+		EventTimestamp   string           `json:"event_ts"`
 		StreamingState   string           `json:"streaming_state"`
 		Subtype          string           `json:"subtype"`
 		User             string           `json:"user"`
@@ -124,6 +125,9 @@ func (h EventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) error {
 	e := envelope.Event
+	if e.Type == "agent_session_stopped" {
+		return h.receiveNativeStop(ctx, envelope)
+	}
 	if e.Type == "message" {
 		if e.Subtype == "message_deleted" {
 			return h.observeDeletion(ctx, envelope.TeamID, e.Channel, e.DeletedTimestamp)

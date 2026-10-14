@@ -112,7 +112,7 @@ test("question CLI instructions bind origin, scope and exact question without in
   const commands = questionCLICommands({ sessionID: "s'$(command)", turnID: "t", askID: "a", projectID: "p", environmentID: "e" }, "https://helmr.example");
   expect(commands.login).toBe("helmr login 'https://helmr.example'");
   expect(commands.get).toBe(`helmr --api-url 'https://helmr.example' session turn ask get 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --json`);
-  expect(commands.respond).toBe(`helmr --api-url 'https://helmr.example' session turn ask respond 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --answer-file answer.json --response-id RESPONSE_ID`);
+  expect(commands.answer).toBe(`helmr --api-url 'https://helmr.example' session turn ask answer 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --answer-file answer.json --answer-id ANSWER_ID`);
 });
 
 test("Agent navigation filters Sessions by stable Agent identity without a Deployment filter", async () => {

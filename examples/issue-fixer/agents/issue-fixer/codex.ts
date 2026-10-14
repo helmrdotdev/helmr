@@ -13,8 +13,9 @@ export const codexIssueFixer = agent({
     return { cwd, harness }
   },
   async turn(turn, { initResult }) {
-    const result = await initResult.harness.run(turn, issuePrompt(turn.input))
+    const { response, ...result } = await initResult.harness.run(turn, issuePrompt(turn.input))
     await checkRepository(initResult.cwd, turn.signal)
+    if (response !== undefined) await turn.respond(response)
     return result
   },
 })

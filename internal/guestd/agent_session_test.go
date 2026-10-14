@@ -157,7 +157,7 @@ func agentSessionFixture(t *testing.T) (*agentSession, *fakeAgentProcess) {
 }
 func guestDispatch(t *testing.T, session *agentSession, id string, sequence int64) {
 	t.Helper()
-	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "dispatch-" + id, Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: id, Sequence: sequence, InputJson: []byte(`[{"type":"text","text":"fixture input"}]`), SourceJson: []byte(`{"kind":"api"}`)}}}); err != nil {
+	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "dispatch-" + id, Command: &agentv1.GuestCommand_Dispatch{Dispatch: &agentv1.TurnDispatch{TurnId: id, Sequence: sequence, InputJson: []byte(`[{"type":"text","text":"fixture input"}]`), SourceJson: []byte(`{"kind":"api_key"}`)}}}); err != nil {
 		t.Fatal(err)
 	}
 }

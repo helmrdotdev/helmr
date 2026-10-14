@@ -1,5 +1,5 @@
 import { verify, assert, assertEqual, errorCode, completedResult, waitOutput, deleteComputer } from "../../support/context"
-import type { ClientComputerRef, CommandRef } from "@helmr/sdk"
+import type { ComputerRef, CommandRef } from "@helmr/sdk"
 await verify("computer-command", async ({ client, marker, objects, cleanup, startAgent }) => {
   const computerKey = `runtime-smoke-${marker}`
   const computerCreateOptions = {
@@ -11,7 +11,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
   cleanup(() => deleteComputer(created, `computer:delete:${marker}`))
   const replayedCreate = await client.computers.create({ template: "helmr-runtime-smoke", ...computerCreateOptions })
   assertEqual(replayedCreate.id, created.id, "computer create replay changed the ID")
-  let unexpectedConflictComputer: ClientComputerRef | undefined
+  let unexpectedConflictComputer: ComputerRef | undefined
   try {
     unexpectedConflictComputer = await client.computers.create({ template: "helmr-runtime-smoke", ...computerCreateOptions,
       key: `${computerKey}-conflict`, })

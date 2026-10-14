@@ -16,12 +16,12 @@ test("grants only permissions the session reports", () => {
   const developer: Me = { ...base, permissions: ["sessions.read", "sessions.cancel", "deployments.write"] };
   expect(hasPermission(developer, "sessions.cancel")).toBe(true);
   expect(hasPermission(developer, "deployments.write")).toBe(true);
-  expect(hasPermission(developer, "asks.respond")).toBe(false);
+  expect(hasPermission(developer, "asks.answer")).toBe(false);
 });
 
 test("denies everything for a viewer-like session and while unauthenticated", () => {
   const viewer: Me = { ...base, permissions: ["sessions.read", "computers.read"] };
-  for (const permission of ["sessions.cancel", "asks.respond", "sessions.interrupt", "deployments.write"]) {
+  for (const permission of ["sessions.cancel", "asks.answer", "sessions.interrupt", "deployments.write"]) {
     expect(hasPermission(viewer, permission)).toBe(false);
   }
   expect(hasPermission(undefined, "sessions.read")).toBe(false);

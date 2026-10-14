@@ -219,7 +219,7 @@ func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, gran
 
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
-		api.APIKeyScopeAsksRespond,
+		api.APIKeyScopeAsksAnswer,
 		api.APIKeyScopeSessionsRead,
 		api.APIKeyScopeSessionsCreate,
 		api.APIKeyScopeSessionsSend,

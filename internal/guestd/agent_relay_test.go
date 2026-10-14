@@ -331,9 +331,50 @@ func TestAgentRelayPhysicalFailureIsReportedWhileFrozen(t *testing.T) {
 	}
 	relay.mu.Lock()
 	frozen := relay.expiryFrozen
+	for _, event := range relay.outbox {
+		if event.GetStopped() != nil {
+			t.Error("unjoined scope reported physical absence")
+		}
+	}
 	relay.mu.Unlock()
 	if !frozen || !session.entry.recoveryRequired {
 		t.Fatal("unproved physical scope lost its fence")
+	}
+}
+
+func TestAgentRelayUnexpectedExitRetainsFailureThenPhysicalStop(t *testing.T) {
+	session, _ := agentSessionFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	relay := newAgentRelay(ctx, session, nil)
+	relay.finish(errors.New("session initialization failed"))
+	go relay.sendLoop()
+	first := attachAgentRelay(t, relay, 1, session.grant)
+	var failure agentv1.GuestSessionMessage
+	if err := frameio.ReadProtoFrameBounded(first, maxAgentTransportFrameBytes, &failure); err != nil {
+		t.Fatal(err)
+	}
+	if failure.GetEvent().GetFailed() == nil {
+		t.Fatal("unexpected exit did not preserve its failure")
+	}
+	_ = first.Close()
+	second := attachAgentRelay(t, relay, 2, session.grant)
+	var replay agentv1.GuestSessionMessage
+	if err := frameio.ReadProtoFrameBounded(second, maxAgentTransportFrameBytes, &replay); err != nil {
+		t.Fatal(err)
+	}
+	if replay.GetEventSequence() != failure.GetEventSequence() || !proto.Equal(replay.GetEvent(), failure.GetEvent()) {
+		t.Fatal("reattachment lost the unacknowledged failure")
+	}
+	if err := writeAgentTransportFrame(second, &agentv1.HostSessionMessage{AttachmentSequence: 2, Message: &agentv1.HostSessionMessage_Acknowledged{Acknowledged: &agentv1.SessionEventsAcknowledged{ThroughSequence: replay.GetEventSequence()}}}); err != nil {
+		t.Fatal(err)
+	}
+	var stopped agentv1.GuestSessionMessage
+	if err := frameio.ReadProtoFrameBounded(second, maxAgentTransportFrameBytes, &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.GetStopped() == nil || stopped.GetEventSequence() <= replay.GetEventSequence() || !session.physicalClosed {
+		t.Fatal("joined scope did not retain its ordered physical-stop receipt")
 	}
 }
 

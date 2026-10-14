@@ -19,7 +19,7 @@ func interactionBody(t *testing.T, handler InteractionHandler, claims controlEnv
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(map[string]any{"type": "block_actions", "api_app_id": "app", "team": map[string]string{"id": "team"}, "user": map[string]string{"id": actor}, "actions": []any{map[string]string{"type": "button", "action_id": "helmr.stop", "value": value, "action_ts": actionTime}}})
+	payload, _ := json.Marshal(map[string]any{"type": "block_actions", "api_app_id": "app", "team": map[string]string{"id": "team"}, "user": map[string]string{"id": actor}, "channel": map[string]string{"id": "C1"}, "message": map[string]string{"thread_ts": "123.456"}, "actions": []any{map[string]string{"type": "button", "action_id": "helmr.choose.0", "value": value, "action_ts": actionTime}}})
 	return []byte(url.Values{"payload": []string{string(payload)}}.Encode())
 }
 func serveSignedInteraction(handler InteractionHandler, body []byte) *httptest.ResponseRecorder {
@@ -30,10 +30,12 @@ func serveSignedInteraction(handler InteractionHandler, body []byte) *httptest.R
 	handler.ServeHTTP(response, request)
 	return response
 }
-func TestSlackStopInteractionReceiptsBeforeACKWithoutCoreEffects(t *testing.T) {
+func TestSlackChoiceInteractionReceiptsBeforeACKWithoutCoreEffects(t *testing.T) {
 	f := newStatusFixture(t)
 	handler := InteractionHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret"), ControlKey: []byte(strings.Repeat("k", 32))}
-	claims := f.control("stop")
+	turn, ask := f.pendingQuestion(t)
+	claims := f.control("choose")
+	claims.Target.Turn, claims.Target.Ask, claims.OptionID = turn, ask, "yes"
 	timestamp := slackNow()
 	body := interactionBody(t, handler, claims, "human", timestamp)
 	for range 2 {
@@ -64,17 +66,19 @@ func TestSlackInteractionAuthenticatesRawFormAndSignedTargetBeforeSQL(t *testing
 	}
 	for _, body := range [][]byte{
 		[]byte("payload=%7B%7D&payload=%7B%7D"),
-		[]byte(url.Values{"payload": []string{`{"type":"block_actions","api_app_id":"app","team":{"id":"team"},"user":{"id":"human"},"actions":[{"type":"button","action_id":"helmr.stop","value":"forged.control","action_ts":"123.456"}]}`}}.Encode()),
+		[]byte(url.Values{"payload": []string{`{"type":"block_actions","api_app_id":"app","team":{"id":"team"},"user":{"id":"human"},"actions":[{"type":"button","action_id":"helmr.choose.0","value":"forged.control","action_ts":"123.456"}]}`}}.Encode()),
 	} {
 		if response := serveSignedInteraction(handler, body); response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid form/target reached SQL: %d", response.Code)
 		}
 	}
 }
-func TestSlackStopInteractionDoesNotReviveExpiredOrUnauthorizedControls(t *testing.T) {
+func TestSlackChoiceInteractionDoesNotReviveExpiredOrUnauthorizedControls(t *testing.T) {
 	f := newStatusFixture(t)
 	handler := InteractionHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret"), ControlKey: []byte(strings.Repeat("k", 32))}
-	claims := f.control("stop")
+	turn, ask := f.pendingQuestion(t)
+	claims := f.control("choose")
+	claims.Target.Turn, claims.Target.Ask, claims.OptionID = turn, ask, "yes"
 	claims.ExpiresAt = time.Now().Add(-time.Minute).Unix()
 	if response := serveSignedInteraction(handler, interactionBody(t, handler, claims, "human", slackNow())); response.Code != http.StatusOK {
 		t.Fatalf("expired callback: %d", response.Code)
@@ -83,8 +87,9 @@ func TestSlackStopInteractionDoesNotReviveExpiredOrUnauthorizedControls(t *testi
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM slack_requests WHERE status='rejected' AND error='gesture_expired'`).Scan(&rejected); err != nil || !rejected {
 		t.Fatalf("expired token revived: %v %v", rejected, err)
 	}
+	claims.ExpiresAt = time.Now().Add(time.Hour).Unix()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
-	if response := serveSignedInteraction(handler, interactionBody(t, handler, f.control("stop"), "human", slackNow())); response.Code != http.StatusOK {
+	if response := serveSignedInteraction(handler, interactionBody(t, handler, claims, "human", slackNow())); response.Code != http.StatusOK {
 		t.Fatalf("unavailable callback: %d", response.Code)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM slack_requests WHERE status='rejected' AND error='installation_unavailable'`).Scan(&rejected); err != nil || !rejected {

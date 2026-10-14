@@ -270,7 +270,7 @@ func TestSessionProgramRechecksAdmissionAfterTransfer(t *testing.T) {
 	if os.Getenv("HELMR_SESSION_PROGRAM_TESTS") != "1" {
 		t.Skip("requires disposable privileged Linux container")
 	}
-	for _, mode := range []string{"retired", "recovery fault"} {
+	for _, mode := range []string{"retired", "recovery fault", "session retired"} {
 		t.Run(mode, func(t *testing.T) {
 			session, _ := agentSessionFixture(t)
 			registry := newComputerOperationRegistry()
@@ -281,7 +281,11 @@ func TestSessionProgramRechecksAdmissionAfterTransfer(t *testing.T) {
 			start.Program = &agentv1.SessionProgram{Runtime: descriptor, Artifact: descriptor}
 			source := &fileAgentProgramInput{files: map[string]string{descriptor.Digest: path}, grant: session.grant}
 			source.release = func(context.Context) (*agentv1.SessionGrant, error) {
-				if mode == "retired" {
+				if mode == "session retired" {
+					if _, err := registry.openAgentSession(t.Context(), &agentv1.SessionAttach{Grant: session.grant, AttachmentSequence: 2, RetireAbsent: true}, nil); err != nil {
+						t.Fatal(err)
+					}
+				} else if mode == "retired" {
 					registry.retire(session.entry.computerInstanceID, session.entry)
 				} else {
 					session.entry.processesMu.Lock()
@@ -294,7 +298,11 @@ func TestSessionProgramRechecksAdmissionAfterTransfer(t *testing.T) {
 			if relay != nil || err == nil || !strings.Contains(err.Error(), "superseded Session admission") {
 				t.Fatalf("stale admission: %v %v", relay, err)
 			}
-			if len(registry.agentSessions) != 0 || len(registry.agentStarting) != 0 || session.entry.active != 0 {
+			wantSessions := 0
+			if mode == "session retired" {
+				wantSessions = 1
+			}
+			if len(registry.agentSessions) != wantSessions || len(registry.agentStarting) != 0 || session.entry.active != 0 {
 				t.Fatal("rejected start retained ownership")
 			}
 			files, err := os.ReadDir(registry.agentPrograms.root)

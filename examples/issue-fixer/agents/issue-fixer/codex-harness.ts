@@ -1,7 +1,7 @@
 import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
 import { MessageRejected } from "@helmr/sdk"
 import { z } from "zod"
-import type { Json, Turn } from "@helmr/sdk"
+import type { JsonValue, Turn } from "@helmr/sdk"
 import { CodexStdio, CodexRequestRejected, spawnCodex, type NativeMessage } from "./codex-stdio"
 import { nativeText, steeringText } from "./native-content"
 import type { HumanContent } from "@helmr/sdk"
@@ -31,6 +31,11 @@ interface Operation {
   stop?: () => void
   hasCommentary?: boolean
   finalText?: string
+  candidate?: string
+  unknownPhase: boolean
+  nativeFailed: boolean
+  outputBytes: number
+  outputChain: Promise<void>
   readonly publishedItems: Set<string>
   terminal: boolean
   readonly commands: Set<string>
@@ -86,8 +91,8 @@ export class CodexHarness {
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }
   get reusable(): boolean { return !this.closed && !this.broken }
-  run(turn: Turn, prompt: HumanContent): Promise<Json> {
-    let running: Promise<Json>
+  run(turn: Turn, prompt: HumanContent): Promise<{ nativeThreadId: string; nativeTurnId: string; response?: string }> {
+    let running: Promise<{ nativeThreadId: string; nativeTurnId: string; response?: string }>
     turn.onCancel(async () => {
       if (this.active?.turn === turn) this.active.stop?.()
       await running.catch(() => {})
@@ -101,11 +106,11 @@ export class CodexHarness {
     if (this.broken) throw this.broken
     if (this.closed) throw new Error("Native conversation is closed")
   }
-  private async runTurn(turn: Turn, prompt: HumanContent): Promise<Json> {
+  private async runTurn(turn: Turn, prompt: HumanContent): Promise<{ nativeThreadId: string; nativeTurnId: string; response?: string }> {
     this.assertUsable()
     if (this.active) throw new Error("Native conversation is not ready")
     turn.signal.throwIfAborted()
-    const operation: Operation = { turn, done: deferred<string>(), publishedItems: new Set(), abort: new AbortController(), jobs: new Set(), requests: new Map(), resolved: new Set(), starting: deferred<{ id: string; status: string }>(), accepting: true, terminal: false, commands: new Set(), commandsDrained: deferred<void>(), boundary: deferred<void>() }
+    const operation: Operation = { turn, unknownPhase: false, nativeFailed: false, outputBytes: 0, outputChain: Promise.resolve(),  done: deferred<string>(), publishedItems: new Set(), abort: new AbortController(), jobs: new Set(), requests: new Map(), resolved: new Set(), starting: deferred<{ id: string; status: string }>(), accepting: true, terminal: false, commands: new Set(), commandsDrained: deferred<void>(), boundary: deferred<void>() }
     let interruptSent = false
     let startIssued = false
     const stop = () => {
@@ -122,8 +127,7 @@ export class CodexHarness {
       registration = turn.onMessage(async value => {
         const operation = this.active
         if (!operation || operation.turn !== turn || !operation.accepting) throw new MessageRejected("Native Turn input is closed")
-        let text: string
-        try { text = steeringText(value) } catch { throw new MessageRejected("Valid message content or steering text is required") }
+        const text = steeringText(value.content)
         const native = await operation.starting.promise
         if (!operation.accepting || this.active !== operation) throw new MessageRejected("Native Turn input is closed")
         try {
@@ -155,8 +159,9 @@ export class CodexHarness {
       if (operation.failure !== undefined) throw operation.failure
       if (status !== "completed") throw new Error(`Native Turn ended: ${status}`)
       if (operation.commands.size) throw new Error("Native command cessation is not established")
-      if (operation.finalText !== undefined) await turn.respond(operation.finalText)
-      return { nativeThreadId: this.threadId, nativeTurnId: native.id }
+      if (operation.unknownPhase && operation.finalText === undefined) throw new Error("Native work completed with an unsupported message phase; its side effects may already have occurred")
+      const response = operation.finalText ?? operation.candidate
+      return { nativeThreadId: this.threadId, nativeTurnId: native.id, ...(response === undefined ? {} : { response }) }
     } catch (error) {
       operation.accepting = false
       operation.abort.abort(error)
@@ -181,6 +186,10 @@ export class CodexHarness {
         } catch { await this.close() }
       }
       if (!operation.terminal || this.broken || operation.commands.size) await this.close()
+      if (operation.nativeFailed && !turn.signal.aborted && !this.broken) {
+        this.flushCandidate(operation)
+        if (operation.finalText !== undefined) this.publish(operation, operation.finalText)
+      }
       await Promise.allSettled([...operation.jobs])
       throw error
     } finally {
@@ -224,6 +233,8 @@ export class CodexHarness {
     if (message.method === "item/started" || message.method === "item/completed") {
       const params = target.parse(message.params)
       if (params.threadId === this.threadId && params.turnId === operation.nativeId) {
+        const started = z.object({ type: z.string() }).parse(params.item)
+        if (message.method === "item/started" && ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "imageView"].includes(started.type)) this.flushCandidate(operation)
         const command = z.object({type:z.literal("commandExecution"),id:z.string(),status:z.string(),exitCode:z.number().nullable().optional()}).safeParse(params.item)
         if (command.success) {
           if (message.method === "item/completed" && (command.data.exitCode != null || ["completed", "failed", "declined"].includes(command.data.status))) { operation.commands.delete(command.data.id); if (!operation.commands.size) operation.commandsDrained.resolve() }
@@ -234,6 +245,7 @@ export class CodexHarness {
     if (message.method === "turn/completed") {
       const params = turnResponse.extend({ threadId: z.string() }).parse(message.params)
       if (params.threadId !== this.threadId || params.turn.id !== operation.nativeId) return
+      operation.nativeFailed = params.turn.error != null || params.turn.status !== "completed"
       if (params.turn.error != null) operation.failure ??= new Error("Native Turn returned an error")
       operation.accepting = false
       operation.abort.abort(new Error("Native Turn completed"))
@@ -243,21 +255,48 @@ export class CodexHarness {
     } else if (message.method === "item/completed" && operation.accepting) {
       const params = target.parse(message.params)
       if (params.threadId !== this.threadId || params.turnId !== operation.nativeId) return
-      const item = z.object({ type: z.literal("agentMessage"), id: z.string(), text: z.string(), phase: z.enum(["commentary", "final_answer"]).nullish() }).safeParse(params.item)
-      if (!item.success || operation.publishedItems.has(item.data.id)) return
-      operation.publishedItems.add(item.data.id)
-      if (item.data.phase === "final_answer") operation.finalText = item.data.text
-      else if (item.data.phase === "commentary") {
-        const text = (operation.hasCommentary ? "\n\n" : "") + item.data.text
-        operation.hasCommentary = true
-        this.track(operation, operation.turn.output.write(text).then(() => {}))
+      const shape = z.object({ type: z.string() }).parse(params.item)
+      if (shape.type !== "agentMessage") return
+      const item = z.object({ type: z.literal("agentMessage"), id: z.string(), text: z.string(), phase: z.string().nullish(), delivery: z.unknown().optional(), questions: z.unknown().optional() }).parse(params.item)
+      if (item.delivery === "async" || item.questions != null) {
+        this.track(operation, Promise.reject(new Error("Detached asynchronous questions are unsupported by this turn-bound bridge")))
+        return
       }
-      // Unknown-phase text is excluded; deltas never duplicate completed snapshots.
+      if (operation.publishedItems.has(item.id)) return
+      if (operation.publishedItems.size >= 16384 || Buffer.byteLength(item.text) > 256 * 1024) throw new Error("Native message buffer limit exceeded")
+      operation.publishedItems.add(item.id)
+      if (item.phase != null && item.phase !== "commentary" && item.phase !== "final_answer") {
+        if (!operation.unknownPhase) process.stderr.write("Unsupported native agent message phase was excluded from human output.\n")
+        operation.unknownPhase = true
+        return
+      }
+      this.flushCandidate(operation)
+      if (item.phase === "final_answer") operation.finalText = item.text
+      else if (item.phase === "commentary") this.publish(operation, item.text)
+      else operation.candidate = item.text
+
     }
+  }
+
+  private flushCandidate(operation: Operation): void {
+    if (operation.candidate === undefined) return
+    const text = operation.candidate
+    operation.candidate = undefined
+    this.publish(operation, text)
+  }
+  private publish(operation: Operation, value: string): void {
+    if (!value || operation.turn.signal.aborted) return
+    const text = (operation.hasCommentary ? "\n\n" : "") + value
+    operation.hasCommentary = true
+    operation.outputBytes += Buffer.byteLength(text)
+    if (operation.outputBytes > 8 * 1024 * 1024) throw new Error("Native output limit exceeded")
+    operation.outputChain = operation.outputChain.then(() => operation.turn.output.write(text).then(() => {}))
+    this.track(operation, operation.outputChain)
   }
 
   private track(operation: Operation, job: Promise<void>): void {
     operation.jobs.add(job)
+    void job.finally(() => operation.jobs.delete(job)).catch(() => {})
     void job.catch(error => {
       operation.failure ??= error
       operation.accepting = false
@@ -281,8 +320,8 @@ export class CodexHarness {
     operation.requests.set(key, cancel)
     const signal = AbortSignal.any([operation.turn.signal, operation.abort.signal, cancel.signal])
     try {
-      const action = JSON.parse(JSON.stringify({ provider: "codex", nativeRequestId: message.id, method: message.method, params })) as Json
-      let result: Json
+      const action = JSON.parse(JSON.stringify({ provider: "codex", nativeRequestId: message.id, method: message.method, params })) as JsonValue
+      let result: JsonValue
       if (message.method === "item/tool/requestUserInput") {
         let questions
         try { questions = nativeQuestions("codex", params.questions) }
@@ -290,7 +329,7 @@ export class CodexHarness {
           await this.server.send({ id: message.id, error: { code: -32602, message: "Unsupported native question" } })
           return
         }
-        const answers = await askNativeQuestions(operation.turn, questions, signal)
+        const { answers } = await askNativeQuestions(operation.turn, questions, signal)
         result = { answers: Object.fromEntries(Object.entries(answers).map(([id, answers]) => [id, { answers }])) }
       } else if (message.method === "item/commandExecution/requestApproval" || message.method === "item/fileChange/requestApproval") {
         if (params.availableDecisions != null && (!Array.isArray(params.availableDecisions) || !params.availableDecisions.includes("accept") || !params.availableDecisions.includes("decline"))) {

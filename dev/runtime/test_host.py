@@ -191,10 +191,28 @@ class ProfileTests(unittest.TestCase):
             self.assertLess(calls.index(('systemctl', 'stop', host.unit('control-plane'))), calls.index(('systemctl', 'stop', host.unit('postgres'))))
 
     def test_start_does_not_migrate_under_live_application(self):
-        with patch.object(host, 'state', side_effect=['inactive', 'active']), patch.object(host, 'run') as run:
-            with self.assertRaises(RuntimeError):
-                host.start(host.compile_config(config()))
-            run.assert_not_called()
+        for application in ['control-plane', 'dispatcher']:
+            with self.subTest(application=application), patch.object(host, 'state', side_effect=lambda name: 'active' if name == host.unit(application) else 'inactive'), patch.object(host, 'run') as run:
+                with self.assertRaises(RuntimeError):
+                    host.start(host.compile_config(config()))
+                run.assert_not_called()
+
+    def test_migrations_finish_before_either_application_starts(self):
+        events = []
+
+        def record(*args, **kwargs):
+            events.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout='1\n')
+
+        with patch.object(host, 'state', return_value='inactive'), patch.object(host, 'run', side_effect=record), patch.object(host, 'service_run', side_effect=record), patch.object(host, 'wait_for'), patch.object(host, 'require_active_services'):
+            cfg = host.compile_config(config())
+            host.start(cfg)
+        migration = events.index((cfg['binaries']['control-plane'], 'migrate', 'up'))
+        for dependency in ['postgres', 'clickhouse']:
+            self.assertLess(events.index(('systemctl', 'start', host.unit(dependency))), migration)
+        for application in ['control-plane', 'dispatcher']:
+            self.assertGreater(events.index(('systemctl', 'start', host.unit(application))), migration)
+        self.assertGreater(events.index(('systemctl', 'start', 'helmr-worker.service')), migration)
 
     def test_dead_dispatcher_prevents_success(self):
         with patch.object(host, 'state', side_effect=['active'] * 3 + ['failed']):

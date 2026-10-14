@@ -28,54 +28,55 @@ helmr session turn ask list --session SESSION_ID --turn TURN_ID \
   --project demo --env staging
 ```
 
-Each line shows a question ID, its status (`pending`, `responded` or
+Each line shows a question ID, its status (`pending`, `answered` or
 `cancelled`) and its prompt. If you do not know the Turn, run
 `helmr session turn list --session SESSION_ID` and check the Turns that are
 still `running`.
 
-## Read the answer control
+## Read the question
 
 ```sh
 helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID \
   --project demo --env staging --json
 ```
 
-The `answer_control` field says what shape the answer must have:
+The `question` field says what shape the answer must have:
 
 | Control | Answer JSON |
 | --- | --- |
 | `{"type":"text"}` | A JSON string, such as `"revision-42"`. |
-| `{"type":"choice", ...}` | An object with a `selected` array of `{ "id", "value" }` entries copied from the options, in the order the options are declared. |
-| Choice with `"multiple": true` | `selected` may contain more than one option. |
-| Choice with `"allowText": true` | The object may also include `"text"` with free text. |
+| `{"type":"choice", ...}` | An object with a `selectedIds` array of option IDs. The server resolves their values. |
+| Choice with `"multiple": true` | `selectedIds` may contain more than one option. |
+| Choice with `"allowNotes": true` | Optional `"notes"` supplement an answer and do not replace a selection. |
+| Choice with `"allowCustom": true` | Use `"custom"` for an alternative answer; a single choice cannot combine it with a selection. |
 
 For example, for a choice question with options `approve` and `reject`:
 
 ```json
-{ "selected": [{ "id": "approve", "value": "approve" }] }
+{ "selectedIds": ["approve"] }
 ```
 
 ## Answer it
 
 ```sh
-helmr session turn ask respond ASK_ID --session SESSION_ID --turn TURN_ID \
+helmr session turn ask answer ASK_ID --session SESSION_ID --turn TURN_ID \
   --project demo --env staging \
   --answer-json '"revision-42"' \
-  --response-id answer:issue-42:revision
+  --answer-id answer:issue-42:revision
 ```
 
-Use `--answer-file answer.json` for longer answers. `--response-id` identifies
+Use `--answer-file answer.json` for longer answers. `--answer-id` identifies
 this answer: if the command fails with an uncertain result, run it again with the
-same response ID and the same answer.
+same answer ID and the same answer.
 
 The answer is recorded under the identity that sent it. A signed-in member of
-the organization can answer. An API key needs the `asks:respond` permission.
+the organization can answer. An API key needs the `asks:answer` permission.
 Once the question is answered, the Agent's `turn.ask` call returns and the Turn
 continues; follow it as described in
 [Start and observe a Session](/docs/guides/start-and-observe-a-session).
 
 A message sent with `helmr session turn send` does not answer a
-question. Use the respond command.
+question. Use the answer command.
 
 ## Answer from the SDK
 
@@ -91,15 +92,15 @@ const turn = client.sessions.ref("SESSION_ID").turns.ref("TURN_ID")
 const page = await turn.asks.list({ limit: 50 })
 const pending = page.items.find(ask => ask.status === "pending")
 
-if (pending?.answerControl?.type === "text") {
-  await turn.asks.respond(pending.id, {
+if (pending?.question?.type === "text") {
+  await turn.asks.answer(pending.id, {
     answer: "revision-42",
-    responseId: "answer:issue-42:revision",
+    answerId: "answer:issue-42:revision",
   })
 }
 ```
 
-`turn.asks.get(id)` returns one question with its `prompt`, `answerControl`,
+`turn.asks.get(id)` returns one question with its `question`,
 `status` and, once answered, `answer`.
 
 ## Answer in Slack

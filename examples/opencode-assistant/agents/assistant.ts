@@ -1,4 +1,4 @@
-import { normalizeInput } from "@helmr/sdk/internal"
+import type { InputContent } from "@helmr/sdk"
 import { agent, template, image, MessageRejected } from "@helmr/sdk"
 import { OpenCodeHarness } from "./opencode"
 
@@ -6,7 +6,8 @@ export const workspace = template({
   id: "opencode-workspace",
   image: image("opencode-workspace")
     .from("node:24-bookworm-slim")
-    .run(["sh", "-ceu", "apt-get update && apt-get install -y --no-install-recommends git ripgrep ca-certificates && rm -rf /var/lib/apt/lists/*"])
+    .run(["node", "-e", "const fs = require('node:fs'); fs.mkdirSync('/etc/ssl/certs', { recursive: true }); fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt', require('node:tls').rootCertificates.join(String.fromCharCode(10)) + String.fromCharCode(10))"])
+    .run(["sh", "-ceu", "sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep && rm -rf /var/lib/apt/lists/*"])
     .run(["npm", "install", "-g", "opencode-ai@1.18.30"])
     .workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -31,12 +32,14 @@ export const assistant = agent({
     await turn.onMessage(async () => {
       throw new MessageRejected("Answer the current question, or enqueue a new instruction after this task")
     })
-    return initResult.run(turn, inputText(turn.input))
+    const { response, ...result } = await initResult.run(turn, inputText(turn.input))
+    if (response !== undefined) await turn.respond(response)
+    return result
   },
 })
 
-export function inputText(value: unknown): string {
-  const text = normalizeInput(value).map(part => part.text).join("")
+export function inputText(value: InputContent): string {
+  const text = value.map(part => part.text).join("")
   if (!text.trim()) throw new Error("Send a nonempty text message")
   return text
 }

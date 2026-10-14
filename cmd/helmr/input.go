@@ -56,9 +56,12 @@ func parseContentInput(cmd *cobra.Command, file, raw, label string) (json.RawMes
 	if len(value) == 0 {
 		return nil, fmt.Errorf("--text, %s-file or %s-json is required", label, label)
 	}
-	normalized, err := content.Input(value)
+	normalized, err := content.Invocation(value)
+	if label == "--data" {
+		normalized, err = content.Input(value)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("input must be an array of text parts: %w", err)
+		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 	return normalized, nil
 }

@@ -67,8 +67,8 @@ A Turn opts into messages by registering one handler:
 import { MessageRejected, type Turn } from "@helmr/sdk"
 
 export async function acceptCorrections(turn: Turn, notes: string[]) {
-  await turn.onMessage(async (input, message) => {
-    const text = input.map((part) => part.text).join("")
+  await turn.onMessage(async (message) => {
+    const text = message.content.map((part) => part.text).join("")
     if (!text.trim()) throw new MessageRejected("Send a nonempty correction")
     notes.push(text)
   })

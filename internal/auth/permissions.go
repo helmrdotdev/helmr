@@ -13,7 +13,7 @@ const (
 	PermissionAPIKeysManage         Permission = "api_keys.manage"
 	PermissionMembersManage         Permission = "members.manage"
 	PermissionProjectsManage        Permission = "projects.manage"
-	PermissionAsksRespond           Permission = "asks.respond"
+	PermissionAsksAnswer            Permission = "asks.answer"
 	PermissionSessionsRead          Permission = "sessions.read"
 	PermissionSessionsCreate        Permission = "sessions.create"
 	PermissionSessionsSend          Permission = "sessions.send"
@@ -35,7 +35,7 @@ const (
 // the constants.
 func AllPermissions() []Permission {
 	return []Permission{
-		PermissionAsksRespond,
+		PermissionAsksAnswer,
 		PermissionAPIKeysManage,
 		PermissionMembersManage,
 		PermissionProjectsManage,
@@ -119,7 +119,7 @@ func RoleAllows(role Role, permission Permission) bool {
 func ParseAPIKeyGrant(value string) (Permission, bool) {
 	permission := Permission(strings.TrimSpace(value))
 	switch permission {
-	case PermissionAsksRespond,
+	case PermissionAsksAnswer,
 		PermissionSessionsRead,
 		PermissionSessionsCreate,
 		PermissionSessionsSend,

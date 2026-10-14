@@ -66,12 +66,20 @@ cat > "$tmp/buildkitd.toml" <<EOF
   http = true
   insecure = true
 EOF
+# Isolated builder DNS may need the host network's reachable resolver.
+if [[ -n ${HELMR_NATIVE_BUILD_DNS:-} ]]; then
+  python3 - "$HELMR_NATIVE_BUILD_DNS" >> "$tmp/buildkitd.toml" <<'DNS'
+import ipaddress,json,sys
+print("[dns]\n  nameservers = " + json.dumps([str(ipaddress.ip_address(sys.argv[1]))]))
+DNS
+fi
 docker buildx create --name "$fixture_builder" --driver docker-container \
   --driver-opt network=host --buildkitd-config "$tmp/buildkitd.toml" >/dev/null
 docker buildx inspect --bootstrap "$fixture_builder" >/dev/null
 bun install --frozen-lockfile --ignore-scripts > "$output/dependencies.log" 2>&1
 scripts/build-npm-packages.sh >> "$output/dependencies.log" 2>&1
 (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts) >> "$output/dependencies.log" 2>&1
+bun x tsc --noEmit -p tests/fixtures/native-continuation/tsconfig.json >> "$output/dependencies.log" 2>&1
 make platform-entries > "$output/entries.log" 2>&1
 go build -trimpath -ldflags="-X main.deploymentBundleBuilderImage=$endpoint/builder@$digest" -o "$tmp/helmr" ./cmd/helmr
 mkdir -p "$tmp/project/agents"

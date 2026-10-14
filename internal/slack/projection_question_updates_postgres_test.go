@@ -18,7 +18,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			peer := uuid.NewV7()
-			if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"answer":{"type":"text"}}`)); err != nil {
+			if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"type":"text"}`)); err != nil {
 				t.Fatal(err)
 			}
 			f.projectAll(t)
@@ -52,7 +52,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 			if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE ask_id=$1`, peer).Scan(&other); err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Contains(other, []byte("helmr.open_answer")) || !bytes.Contains(other, []byte("helmr_answer_cli")) || bytes.Contains(other, []byte("withdrawn")) {
+			if !bytes.Contains(other, []byte("helmr.open_answer")) || !bytes.Contains(other, []byte("View question and CLI instructions")) || bytes.Contains(other, []byte("withdrawn")) {
 				t.Fatal("another question changed")
 			}
 			if phase != "pending" {

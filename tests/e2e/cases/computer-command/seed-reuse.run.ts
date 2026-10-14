@@ -1,4 +1,4 @@
-import type { ClientComputerRef } from "@helmr/sdk"
+import type { ComputerRef } from "@helmr/sdk"
 import { verify, assert, assertEqual, deadline, deleteComputer } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 
@@ -6,7 +6,7 @@ import { hostObservation } from "../../support/host-observation"
 // seed is needed to measure conversion; an existing seed is recorded as adoption.
 await verify("computer-seed-reuse", async ({ client, marker, computer }) => {
   const samples: unknown[] = []
-  async function command(target: ClientComputerRef, suffix: string, script: string, value: string) {
+  async function command(target: ComputerRef, suffix: string, script: string, value: string) {
     const requestAt = performance.now()
     const ref = await client.computers.ref(target.id).exec({ command: ["sh", "-ceu", script], env: { VALUE: value },
       idempotencyKey: `${marker}:${suffix}`, timeout: "2m" }, { signal: deadline(900_000) })

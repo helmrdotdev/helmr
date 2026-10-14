@@ -1,7 +1,7 @@
-import type { ClientSessionRef } from "./client-session"
+import type { SessionRef } from "./contract"
 import type { TurnOutcome, TimedTurnWaitResult, TurnWaitOptions } from "./contract"
 
-declare const session: ClientSessionRef
+declare const session: SessionRef
 declare const options: TurnWaitOptions
 const turn = session.turns.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34")
 const outcome: Promise<TurnOutcome> = turn.wait()

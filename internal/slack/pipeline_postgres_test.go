@@ -100,7 +100,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(ctx, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"answer":{"type":"text"}}`)); err != nil {
+	if err := session.RuntimeAsk(ctx, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	wait("question delivered", `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE ask_id=$1 AND status='posted')`, ask)
@@ -147,7 +147,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 			t.Fatalf("submit=%d", response.Code)
 		}
 	}
-	wait("answer consumed and card updated", `SELECT EXISTS(SELECT 1 FROM turn_asks a JOIN slack_posts p ON p.ask_id=a.id WHERE a.id=$1 AND a.status='responded' AND p.status='posted' AND p.confirmed_revision=p.desired_revision AND p.desired_revision=2)`, ask)
+	wait("answer consumed and card updated", `SELECT EXISTS(SELECT 1 FROM turn_asks a JOIN slack_posts p ON p.ask_id=a.id WHERE a.id=$1 AND a.status='answered' AND p.status='posted' AND p.confirmed_revision=p.desired_revision AND p.desired_revision=2)`, ask)
 	wait("progress delivered", `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE turn_id=$1 AND role='intermediate' AND status='posted')`, turn)
 	var correct bool
 	if err := f.Pool.QueryRow(ctx, `SELECT (SELECT count(*)=1 FROM turns WHERE session_id=$1) AND (SELECT count(*)=1 FROM slack_requests WHERE ask_id=$2 AND status='accepted') AND NOT EXISTS(SELECT 1 FROM slack_posts WHERE convert_from(payload,'UTF8') LIKE '%PRIVATE_ANSWER%')`, f.Session, ask).Scan(&correct); err != nil || !correct {

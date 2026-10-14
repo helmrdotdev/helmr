@@ -3,7 +3,6 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -56,33 +55,10 @@ func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 	}
 	ask := uuid.NewV7()
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err = session.RuntimeAsk(t.Context(), f.Pool, host, execution, admission.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Choose"}],"answer":{"type":"text"}}`)); err != nil {
+	if err = session.RuntimeAsk(t.Context(), f.Pool, host, execution, admission.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Choose"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	return admission.TurnID, ask
-}
-
-func TestSlackStopCommitsOneControlAndItsHoldReceipt(t *testing.T) {
-	f := newStatusFixture(t)
-	f.link(t)
-	id := f.controlReceipt(t, f.control("stop"), nil)
-	var wg sync.WaitGroup
-	for range 4 {
-		wg.Go(func() {
-			if err := admitControl(t.Context(), f.Pool, id); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	wg.Wait()
-	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='accepted' AND r.operation='stop' AND r.ask_id IS NULL AND r.turn_id IS NULL AND c.kind='interrupt' AND c.session_id=$2 AND h.session_id=$2 AND h.scope='subtree' AND convert_from(r.payload,'UTF8')::jsonb->'receipt'->>'hold_id'=h.id::text FROM slack_requests r JOIN session_controls c ON c.environment_id=r.environment_id AND c.id=r.control_id JOIN session_holds h ON h.environment_id=c.environment_id AND h.id=c.hold_id WHERE r.id=$1`, id, f.Session).Scan(&exact); err != nil || !exact {
-		t.Fatalf("stop receipt mismatch: %v %v", exact, err)
-	}
-	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_controls WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("repeated Stop: %d %v", count, err)
-	}
 }
 
 func TestSlackAnswerAllowsLinkedViewerAndKeepsExactAskOnlyReceipt(t *testing.T) {
@@ -99,7 +75,7 @@ func TestSlackAnswerAllowsLinkedViewerAndKeepsExactAskOnlyReceipt(t *testing.T) 
 		}
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='accepted' AND r.operation='answer' AND r.ask_id=$2 AND r.turn_id IS NULL AND r.control_id IS NULL AND a.responded_by_user_id=$3 AND a.answer=$4 FROM slack_requests r JOIN turn_asks a ON a.environment_id=r.environment_id AND a.id=r.ask_id WHERE r.id=$1`, first, ask, f.User, []byte(`"yes"`)).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='accepted' AND r.operation='answer' AND r.ask_id=$2 AND r.turn_id IS NULL AND r.control_id IS NULL AND a.answered_by_user_id=$3 AND a.answer=$4 FROM slack_requests r JOIN turn_asks a ON a.environment_id=r.environment_id AND a.id=r.ask_id WHERE r.id=$1`, first, ask, f.User, []byte(`"yes"`)).Scan(&exact); err != nil || !exact {
 		t.Fatalf("answer receipt mismatch: %v %v", exact, err)
 	}
 	c.Nonce = uuid.NewV7()
@@ -110,8 +86,8 @@ func TestSlackAnswerAllowsLinkedViewerAndKeepsExactAskOnlyReceipt(t *testing.T) 
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='ask_already_answered' FROM slack_requests WHERE id=$1`, second).Scan(&exact); err != nil || !exact {
 		t.Fatalf("competing answer replaced first: %v %v", exact, err)
 	}
-	stop := f.controlReceipt(t, f.control("stop"), nil)
-	if err := admitControl(t.Context(), f.Pool, stop); err != nil {
+	stop := f.nativeStop(t, "viewer-stop")
+	if err := admitNativeStop(t.Context(), f.Pool, stop); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='permission_denied' FROM slack_requests WHERE id=$1`, stop).Scan(&exact); err != nil || !exact {
@@ -124,18 +100,19 @@ func TestSlackControlRejectsStaleBindingActorAndToken(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f := newStatusFixture(t)
 			f.link(t)
-			c := f.control("stop")
+			c := f.control("answer")
+			c.Target.Turn, c.Target.Ask = f.pendingQuestion(t)
 			want := "target_unavailable"
 			switch kind {
 			case "target":
 				c.Target.Thread = uuid.NewV7()
 			case "actor":
-				c = f.control("answer")
-				c.Target.Turn, c.Target.Ask = f.pendingQuestion(t)
+				c.Actor = "human"
 				c.Actor = "another-human"
 				want = "control_actor_mismatch"
 			case "expiry":
 				c.ExpiresAt = time.Now().Add(-time.Minute).Unix()
+				c.Action, c.Actor, c.SourceTimestamp, c.OptionID = "choose", "", "", "yes"
 				want = "gesture_expired"
 			case "publication":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
@@ -162,9 +139,20 @@ func TestSlackControlRollsBackOperationWhenReceiptCannotCommit(t *testing.T) {
 			if action == "answer" {
 				c.Target.Turn, c.Target.Ask = f.pendingQuestion(t)
 			}
-			id := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
+			var id uuid.UUID
+			if action == "stop" {
+				id = f.nativeStop(t, "rollback")
+			} else {
+				id = f.controlReceipt(t, c, json.RawMessage(`"yes"`))
+			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT fail_control_receipt CHECK(status<>'accepted')`)
-			if err := admitControl(t.Context(), f.Pool, id); err == nil {
+			var err error
+			if action == "stop" {
+				err = admitNativeStop(t.Context(), f.Pool, id)
+			} else {
+				err = admitControl(t.Context(), f.Pool, id)
+			}
+			if err == nil {
 				t.Fatal("receipt failure missing")
 			}
 			var unchanged bool
@@ -187,7 +175,7 @@ func TestSlackControlRollsBackOperationWhenReceiptCannotCommit(t *testing.T) {
 func TestSlackStopExpiresDuringCoreLockWaitWithoutLeavingHold(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	id := f.controlReceipt(t, f.control("stop"), nil)
+	id := f.nativeStop(t, "expires-in-lock")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, id)
 	blocker, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -202,7 +190,7 @@ func TestSlackStopExpiresDuringCoreLockWaitWithoutLeavingHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := make(chan error, 1)
-	go func() { result <- admitControl(t.Context(), f.Pool, id) }()
+	go func() { result <- admitNativeStop(t.Context(), f.Pool, id) }()
 	deadline := time.Now().Add(5 * time.Second)
 	var blocked bool
 	for !blocked && time.Now().Before(deadline) {

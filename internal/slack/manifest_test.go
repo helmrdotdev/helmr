@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"uuid"
@@ -39,12 +40,16 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 			} `json:"oauth_config"`
 			Settings struct {
 				Events struct {
-					URL string `json:"request_url"`
+					URL       string   `json:"request_url"`
+					BotEvents []string `json:"bot_events"`
 				} `json:"event_subscriptions"`
 			} `json:"settings"`
 		}
 		if err := json.Unmarshal(AppManifest(origin, registration, name), &manifest); err != nil {
 			t.Fatal(err)
+		}
+		if !slices.Contains(manifest.Settings.Events.BotEvents, "agent_session_stopped") {
+			t.Fatal("native Stop subscription missing")
 		}
 		if len([]rune(manifest.Display.Name)) > 35 || manifest.Features.Bot.Name == "" || strings.ContainsAny(manifest.Features.Bot.Name, " ABCDEFGHIJKLMNOPQRSTUVWXYZ") || manifest.Features.Agent.Description == "" {
 			t.Fatal("invalid display or Agent feature", manifest.Features)

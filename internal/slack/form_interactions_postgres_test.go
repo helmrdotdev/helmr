@@ -99,7 +99,7 @@ func TestSlackFormOpeningAndSubmissionKeepImmediateReceiptBoundary(t *testing.T)
 		t.Fatalf("accepted retry: %d", response.Code)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT a.status='responded' AND a.answer=$2 AND r.status='accepted' AND r.source_occurred_at=$3 FROM turn_asks a JOIN slack_requests r ON r.ask_id=a.id WHERE a.id=$1`, c.Target.Ask, []byte(`"yes"`), func() time.Time { v, _ := slackMessageTime(opened); return v }()).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT a.status='answered' AND a.answer=$2 AND r.status='accepted' AND r.source_occurred_at=$3 FROM turn_asks a JOIN slack_requests r ON r.ask_id=a.id WHERE a.id=$1`, c.Target.Ask, []byte(`"yes"`), func() time.Time { v, _ := slackMessageTime(opened); return v }()).Scan(&exact); err != nil || !exact {
 		t.Fatalf("answer/provenance changed: %v %v", exact, err)
 	}
 }

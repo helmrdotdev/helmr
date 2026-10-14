@@ -10,7 +10,7 @@ import (
 )
 
 func controlFixture() controlEnvelope {
-	return controlEnvelope{Nonce: uuid.NewV7(), Action: "stop", ExpiresAt: 1780000300, Target: controlTarget{Installation: uuid.NewV7(), Thread: uuid.NewV7(), Participant: uuid.NewV7(), Environment: uuid.NewV7(), Session: uuid.NewV7()}}
+	return controlEnvelope{Nonce: uuid.NewV7(), Action: "open_answer", ExpiresAt: 1780000300, Target: controlTarget{Installation: uuid.NewV7(), Thread: uuid.NewV7(), Participant: uuid.NewV7(), Environment: uuid.NewV7(), Session: uuid.NewV7(), Turn: uuid.NewV7(), Ask: uuid.NewV7()}}
 }
 
 func TestSlackControlBindsExactTargetAndExpiry(t *testing.T) {
@@ -39,7 +39,7 @@ func TestSlackControlBindsExactTargetAndExpiry(t *testing.T) {
 	}
 	claims.Actor = "human"
 	if _, err = encodeControl(key, claims); err == nil {
-		t.Fatal("public Stop bound to unknown future actor")
+		t.Fatal("public question bound to unknown future actor")
 	}
 }
 
@@ -53,7 +53,7 @@ func TestSlackControlGestureIdentityDistinguishesTransportRetryFromNewClick(t *t
 	otherClick, _ := controlRequestKey(stop, "U1", "123.002")
 	otherHuman, _ := controlRequestKey(stop, "U2", "123.001")
 	if a != retry || a == otherClick || a == otherHuman {
-		t.Fatal("Stop gesture identity conflated retries/intent")
+		t.Fatal("Question gesture identity conflated retries/intent")
 	}
 	answer := controlFixture()
 	answer.Action = "answer"

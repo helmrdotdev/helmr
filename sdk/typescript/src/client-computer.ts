@@ -1,4 +1,4 @@
-import { durationMilliseconds, retentionMilliseconds, type Duration } from "./duration"
+import { durationMilliseconds, retentionMilliseconds, type Retention } from "./duration"
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
 import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions, type CommandOutcome, type TimedCommandWaitResult } from "./command"
 import type { CursorPage } from "./contract"
@@ -21,20 +21,21 @@ import {
   type Computer,
 } from "./computer"
 
-export type ComputerListItem = Omit<Computer, "secrets">
+type WithoutSecrets<T> = T extends Computer ? Omit<T, "secrets"> : never
+export type ComputerListItem = WithoutSecrets<Computer>
 
 export type ComputerListQuery =
   | Readonly<{ key?: never; cursor?: string; limit?: number }>
   | Readonly<{ key: string; cursor?: never; limit?: never }>
 
 export interface ClientComputersApi {
-  create(request: ComputerCreateRequest, options?: RequestOptions): Promise<ClientComputerRef>
+  create(request: ComputerCreateRequest, options?: RequestOptions): Promise<ComputerRef>
   get(id: string, options?: RequestOptions): Promise<Computer>
   list(
     query?: ComputerListQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<ComputerListItem>>
-  ref(id: string): ClientComputerRef
+  ref(id: string): ComputerRef
 }
 
 export interface ComputerTransport {
@@ -52,7 +53,7 @@ export function createClientComputers(
     async create(
       request: ComputerCreateRequest,
       options: RequestOptions = {},
-    ): Promise<ClientComputerRef> {
+    ): Promise<ComputerRef> {
       validateDefinitionId(request.template)
       const secrets = encodeComputerSecrets(request.secrets)
       const computer = parseComputer(await transport.request(
@@ -101,7 +102,7 @@ export function createClientComputers(
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    ref(id: string): ClientComputerRef {
+    ref(id: string): ComputerRef {
       return createClientComputerRef(resourceID(id, "Computer ID"), transport)
     },
   })
@@ -112,15 +113,10 @@ function parseComputerListItem(value: unknown): ComputerListItem {
   return Object.freeze(item)
 }
 
-export interface ClientComputerRef extends ComputerRef {
-  update(request: Readonly<{ deleteAfterUnused: Duration }>, options?: RequestOptions): Promise<Computer>
-  exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<CommandRef>
-}
-
 export function createClientComputerRef(
   id: string,
   transport: ComputerTransport,
-): ClientComputerRef {
+): ComputerRef {
   const computerID = resourceID(id, "Computer ID")
   const path = `/v1/computers/${encodeURIComponent(computerID)}`
   function usageCollection(collection: "sessions" | "commands") {
@@ -135,7 +131,7 @@ export function createClientComputerRef(
   }
   const ref = {
     id: computerID,
-    async update(request: Readonly<{ deleteAfterUnused: Duration }>, options: RequestOptions = {}): Promise<Computer> {
+    async update(request: Readonly<{ deleteAfterUnused: Retention }>, options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
     },
     sessions: usageCollection("sessions"),

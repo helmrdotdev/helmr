@@ -9,7 +9,8 @@ trap 'rm -rf "${consumer}"' EXIT
 mkdir -p \
   "${consumer}/node_modules/@helmr/proto" \
   "${consumer}/node_modules/@helmr/sdk" \
-  "${consumer}/node_modules/@bufbuild"
+  "${consumer}/node_modules/@bufbuild" \
+  "${consumer}/node_modules/@standard-schema"
 
 if [ "$#" -eq 0 ]; then
   scripts/build-npm-packages.sh
@@ -32,13 +33,24 @@ for package in proto sdk; do
 done
 ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
   "${consumer}/node_modules/@bufbuild/protobuf"
+ln -s "${repo_root}/node_modules/@standard-schema/spec" \
+  "${consumer}/node_modules/@standard-schema/spec"
 
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
-  HelmrClient, agent, template, image, source,
+  HelmrClient, agent, template, image, source, validateQuestion, ContentError, type Question,
   type AgentDefinition, type TemplateDefinition, type ImageBuilder, type InputContent,
   type SecretCreateRequest, type SourceDirectory, type SourceFile, type RuntimeMcpConnectionOptions,
 } from "@helmr/sdk"
+
+const questionInput: unknown = Object.freeze({ type: "text", prompt: "Explain" })
+validateQuestion(questionInput)
+const validated: Question = questionInput
+if (validated.prompt !== "Explain") throw new Error("validation changed the prompt")
+let rejected = false
+try { validateQuestion({ type: "text", prompt: [], title: "x".repeat(257) }) }
+catch (error) { rejected = error instanceof ContentError && error.code === "invalid_arguments" }
+if (!rejected) throw new Error("invalid question was accepted")
 
 const sourceFile: SourceFile = source.file("./package.json")
 const sourceDirectory: SourceDirectory = source.directory("./src")
@@ -50,7 +62,7 @@ const machine: TemplateDefinition = template({
   id: "packed-machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" },
   prepare: async (build) => { await build.exec(["true"]) },
 })
-const fixture: AgentDefinition<InputContent, string, { ready: boolean }> = agent<InputContent, string, { ready: boolean }>({
+const fixture: AgentDefinition<InputContent, string, { ready: boolean }> = agent({
   id: "packed-consumer", template: machine,
   init: async ctx => {
     const options: RuntimeMcpConnectionOptions = await ctx.mcp.getConnectionOptions()
@@ -114,6 +126,13 @@ cat >"${consumer}/package.json" <<'EOF'
 {"private":true,"type":"module"}
 EOF
 
+# Exercise the public packed declarations with the same negative type cases.
+# These files are compiled, never executed.
+for probe in agent-schema lifecycle; do
+  sed -E 's#"\./(agent|content|client|contract|index)"#"@helmr/sdk"#g' \
+    "${repo_root}/sdk/typescript/src/${probe}.typecheck.ts" >"${consumer}/${probe}.typecheck.ts"
+done
+
 cat >"${consumer}/tsconfig.json" <<'EOF'
 {
   "compilerOptions": {
@@ -125,7 +144,7 @@ cat >"${consumer}/tsconfig.json" <<'EOF'
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": false
   },
-  "include": ["consumer.ts"]
+  "include": ["consumer.ts", "*.typecheck.ts"]
 }
 EOF
 

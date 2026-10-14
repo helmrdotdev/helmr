@@ -67,7 +67,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
       { id: "2", kind: "deployment.promoted", message: "Deployment promoted", at: ago(125), attributes: {} },
     ] };
     else if (path === `${base}/sessions`) json = { sessions: state.anySession ? [{ id: sessions.asked, agent: "support", status: "open", holds: [], created_at: ago(500) }] : [] };
-    else if (ask && method === "GET") json = { id: ask[3], session_id: ask[1], turn_id: ask[2], status: "pending", created_at: ago(120), prompt: [{ type: "text", text: "Ship the release today?" }], answer_control: { type: "text" } };
+    else if (ask && method === "GET") json = { id: ask[3], session_id: ask[1], turn_id: ask[2], status: "pending", created_at: ago(120), question: { type: "text", prompt: [{ type: "text", text: "Ship the release today?" }] } };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
   });

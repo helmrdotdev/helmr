@@ -1,3 +1,4 @@
+import { parseInputContract, type AgentInputContract } from "./schema/input"
 import { type ComputerTransport } from "./client-computer"
 import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
@@ -17,14 +18,14 @@ export interface AgentListQuery extends AgentGetQuery {
   readonly limit?: number
 }
 
-export interface AgentListItem {
+export type AgentListItem = AgentInputContract & Readonly<{
   readonly agent: string
   readonly template: string
-}
+}>
 
-export interface AgentInfo extends AgentListItem {
+export type AgentInfo = AgentListItem & Readonly<{
   readonly deploymentId: string
-}
+}>
 
 export interface AgentPage extends CursorPage<AgentListItem> {
   readonly deploymentId: string
@@ -80,6 +81,7 @@ function parseAgentInfo(value: unknown): AgentInfo {
   if (typeof id !== "string") throw new Error("Agent response.agent must be a string")
   validateDefinitionId(id)
   return Object.freeze({
+    ...parseInputContract({ inputKind: input["input_kind"], ...(Object.hasOwn(input, "input_schema") ? { inputSchema: input["input_schema"] } : {}) }),
     agent: id,
     template: parseTemplate(input["template"]),
     deploymentId: resourceID(input["deployment_id"], "Agent response.deployment_id"),
@@ -91,7 +93,7 @@ function parseAgentListItem(value: unknown): AgentListItem {
   const id = input["agent"]
   if (typeof id !== "string") throw new Error("Agent list item.agent must be a string")
   validateDefinitionId(id)
-  return Object.freeze({ agent: id, template: parseTemplate(input["template"]) })
+  return Object.freeze({ ...parseInputContract({ inputKind: input["input_kind"], ...(Object.hasOwn(input, "input_schema") ? { inputSchema: input["input_schema"] } : {}) }), agent: id, template: parseTemplate(input["template"]) })
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {

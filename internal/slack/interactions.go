@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"uuid"
 
@@ -57,6 +58,9 @@ type interactionEnvelope struct {
 		ID    string `json:"id"`
 		IsBot bool   `json:"is_bot"`
 	} `json:"user"`
+	State struct {
+		Values formState `json:"values"`
+	} `json:"state"`
 	Actions []struct {
 		Type           string `json:"type"`
 		ID             string `json:"action_id"`
@@ -131,12 +135,12 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAnswerOpening(w, r, envelope)
 		return
 	}
-	if action.Type != "button" || action.ID != "helmr.stop" {
+	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices") {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	claims, err := decodeControl(h.ControlKey, action.Value, time.Now())
-	if (err != nil && !errors.Is(err, errControlExpired)) || claims.Action != "stop" {
+	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -154,7 +158,11 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); tokenExpiry.Before(expires) {
 		expires = tokenExpiry
 	}
-	normalized, _ := json.Marshal(controlGesture{Control: claims})
+	gesture := controlGesture{Control: claims}
+	if claims.Action == "submit_choices" {
+		gesture.Form = formState{"choice": envelope.State.Values["choice"]}
+	}
+	normalized, _ := json.Marshal(gesture)
 	err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		var installation uuid.UUID
 		var bot string
@@ -167,6 +175,19 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if envelope.User.ID == bot {
 			return errControlInvalid
+		}
+		if claims.Action == "choose" || claims.Action == "submit_choices" {
+			root := envelope.Message.ThreadTimestamp
+			if root == "" {
+				root = envelope.Message.Timestamp
+			}
+			var exact bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads WHERE id=$1 AND slack_channel_id=$2 AND thread_ts=$3)`, claims.Target.Thread, envelope.Channel.ID, root).Scan(&exact); err != nil {
+				return err
+			}
+			if !exact {
+				return errControlInvalid
+			}
 		}
 		// Expired tokens can produce only a terminal rejection or retain an existing
 		// receipt. ACK reveals no historical operation data and never admits core work.

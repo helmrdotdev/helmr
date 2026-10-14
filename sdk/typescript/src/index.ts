@@ -1,12 +1,14 @@
+export { isHelmrError } from "./error"
+export { ContentError } from "./content"
 export { MessageRejected } from "./message-error"
 export { agent, template, triggers } from "./agent"
-export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, TemplateDefinition, TurnOutcome, OutputReceipt, InputSource, InputMessage, Turn, RuntimeMcpConnectionOptions, InitContext, AgentContext, AgentDefinition } from "./agent"
+export type { CronTrigger, Duration, Retention, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, TemplateDefinition, TurnOutcome, OutputReceipt, InputSource, SlackInputSource, MessageSource, Message, Turn, RuntimeMcpConnectionOptions, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
 export { defineConfig } from "./config"
 
-export type { SessionListQuery, ClientSessionRef, ClientSessionsApi } from "./client-session"
+export type { SessionListQuery, ClientSessionsApi } from "./client-session"
 
 export type {
   ClientTemplatesApi,
@@ -20,7 +22,6 @@ export type {
 
 export type {
   ClientComputersApi,
-  ClientComputerRef,
   ComputerListItem,
   ComputerListQuery,
 } from "./client-computer"
@@ -71,7 +72,7 @@ export type {
   TurnListQuery,
   SessionHold,
   AskState,
-  AskResponseReceipt,
+  AskAnswerReceipt,
   AskQuery,
   AskPage,
   TurnAsks,
@@ -117,7 +118,7 @@ export type {
   ComputerResidency,
 } from "./computer"
 
-export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
+export { type CommandCancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
 
 export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 
@@ -126,7 +127,13 @@ export type { ClientAgentsApi, AgentGetQuery, AgentListQuery, AgentListItem, Age
 
 export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"
 
-export type { ChoiceOption, AnswerControl, Question, ChoiceAnswer, AnswerFor, AskResponse } from "./question"
+export { validateQuestion } from "./question"
+
+export type { ChoiceOption, TextQuestion, ChoiceQuestion, NormalizedQuestion, AnswerSubmission, Question, ChoiceAnswer, AnswerFor, AskAnswer } from "./question"
 
 
 export type { TurnWaitOptions, TimedTurnWaitResult } from "./contract"
+
+export type { AgentContract, AgentInput, AgentResult, StandardSchemaV1 } from "./agent"
+
+export type { AgentInputContract, InputSchemaDiscovery } from "./schema/input"

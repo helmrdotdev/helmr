@@ -2153,8 +2153,11 @@ type SessionAttach struct {
 	Secrets            []*SessionSecret       `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	ProtectedEnv       map[string]string      `protobuf:"bytes,5,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	ProxyCa            []byte                 `protobuf:"bytes,6,opt,name=proxy_ca,json=proxyCa,proto3" json:"proxy_ca,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Retire this exact epoch if absent, preventing delayed startup admission.
+	// An existing process is attached and stopped through ordinary controls.
+	RetireAbsent  bool `protobuf:"varint,7,opt,name=retire_absent,json=retireAbsent,proto3" json:"retire_absent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SessionAttach) Reset() {
@@ -2227,6 +2230,13 @@ func (x *SessionAttach) GetProxyCa() []byte {
 		return x.ProxyCa
 	}
 	return nil
+}
+
+func (x *SessionAttach) GetRetireAbsent() bool {
+	if x != nil {
+		return x.RetireAbsent
+	}
+	return false
 }
 
 type HostSessionMessage struct {
@@ -3775,14 +3785,15 @@ const file_agent_proto_rawDesc = "" +
 	"\x03env\x18\x01 \x01(\tH\x00R\x03env\x12\x14\n" +
 	"\x04file\x18\x02 \x01(\tH\x00R\x04file\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\fR\x05valueB\v\n" +
-	"\tplacement\"\x93\x03\n" +
+	"\tplacement\"\xb8\x03\n" +
 	"\rSessionAttach\x122\n" +
 	"\x05grant\x18\x01 \x01(\v2\x1c.helmr.agent.v1.SessionGrantR\x05grant\x12/\n" +
 	"\x13attachment_sequence\x18\x02 \x01(\x04R\x12attachmentSequence\x122\n" +
 	"\x05start\x18\x03 \x01(\v2\x1c.helmr.agent.v1.SessionStartR\x05start\x127\n" +
 	"\asecrets\x18\x04 \x03(\v2\x1d.helmr.agent.v1.SessionSecretR\asecrets\x12T\n" +
 	"\rprotected_env\x18\x05 \x03(\v2/.helmr.agent.v1.SessionAttach.ProtectedEnvEntryR\fprotectedEnv\x12\x19\n" +
-	"\bproxy_ca\x18\x06 \x01(\fR\aproxyCa\x1a?\n" +
+	"\bproxy_ca\x18\x06 \x01(\fR\aproxyCa\x12#\n" +
+	"\rretire_absent\x18\a \x01(\bR\fretireAbsent\x1a?\n" +
 	"\x11ProtectedEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe6\x02\n" +

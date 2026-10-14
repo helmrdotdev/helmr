@@ -29,8 +29,8 @@ codes. A failure record does not prove physical stopping has converged.
 
 Supported writes use `idempotency_key`, including Agent starts, Session input and
 controls, Computer creation/exec/deletion, Secret changes and Deployment promotion.
-SDK requests use `idempotencyKey`. Exact ask responses instead carry `response_id`
-(`responseId` in the SDK), paired with the same answer on retry.
+SDK requests use `idempotencyKey`. Exact ask responses instead carry `answer_id`
+(`answerId` in the SDK), paired with the same answer on retry.
 
 Reuse a key only for retries of the same logical operation. A replay can return
 the accepted result; reusing a key with different canonical input can return a

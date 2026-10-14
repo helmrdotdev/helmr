@@ -3,9 +3,10 @@ import { join } from "node:path"
 import { randomBytes } from "node:crypto"
 import { createInterface } from "node:readline"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
-import type { Turn, Json } from "@helmr/sdk"
+import type { Turn } from "@helmr/sdk"
 import { createOpencodeClient, type Config, type Event, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { answerQuestions } from "./questions"
+import { OpenCodeText } from "./text"
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
@@ -22,6 +23,11 @@ interface Operation {
   jobs: Set<Promise<void>>
   requests: Map<string, AbortController>
   seen: Set<string>
+  text: OpenCodeText
+  outputChain: Promise<void>
+  outputBytes: number
+  hasOutput: boolean
+  error?: unknown
 }
 
 // This application owns the server protocol. The managed runtime separately
@@ -94,7 +100,7 @@ export class OpenCodeHarness {
       const match = /opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(line)
       if (match) listening.resolve(match[1]!)
     })
-    const timeout = setTimeout(() => listening.reject(new Error("OpenCode startup timed out")), 60_000)
+    const timeout = setTimeout(() => listening.reject(new Error("OpenCode startup timed out")), 120_000)
     let baseUrl: string
     try { baseUrl = await listening.promise } finally { clearTimeout(timeout) }
     this.client = createOpencodeClient({ baseUrl, directory: this.cwd, headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })
@@ -110,8 +116,8 @@ export class OpenCodeHarness {
     }
   }
 
-  run(turn: Turn, prompt: string): Promise<Json> {
-    let running: Promise<Json>
+  run(turn: Turn, prompt: string): Promise<{ nativeSessionId: string; response?: string }> {
+    let running: Promise<{ nativeSessionId: string; response?: string }>
     turn.onCancel(async () => {
       if (this.active?.turn === turn) this.active.stop?.()
       await running.catch(() => {})
@@ -122,12 +128,14 @@ export class OpenCodeHarness {
     return running
   }
 
-  private async runTurn(turn: Turn, prompt: string): Promise<Json> {
+  private async runTurn(turn: Turn, prompt: string): Promise<{ nativeSessionId: string; response?: string }> {
     if (!this.reusable || this.active) throw new Error("OpenCode conversation is not ready")
     turn.signal.throwIfAborted()
     const cancel = new AbortController()
     const failure = deferred<never>()
+    const promptID = `msg_${((BigInt(Date.now()) * 4096n) & 0xffffffffffffn).toString(16).padStart(12, "0")}${randomBytes(7).toString("hex")}`
     const operation: Operation = {
+      text: new OpenCodeText(this.sessionID, promptID, text => this.publish(operation, text)), outputChain: Promise.resolve(), outputBytes: 0, hasOutput: false,
       turn, cancel, failure, jobs: new Set(), requests: new Map(), seen: new Set(),
     }
     this.active = operation
@@ -138,6 +146,7 @@ export class OpenCodeHarness {
     let promptJob: Promise<unknown> | undefined
     let stopJob: Promise<void> | undefined
     let terminal = false
+    let nativeFailed = false
     const stop = () => {
       cancel.abort(new Error("OpenCode Turn stopped"))
       failure.reject(new Error("OpenCode Turn stopped"))
@@ -166,7 +175,7 @@ export class OpenCodeHarness {
       await Promise.race([connected.promise, failure.promise])
       turn.signal.throwIfAborted()
       const sending = this.client.session.prompt({
-        sessionID: this.sessionID,
+        sessionID: this.sessionID, messageID: promptID,
         parts: [{ type: "text", text: prompt }],
         system: "Help the user with the requested task. Match their language. When a material detail is missing, use the question tool and wait for their answer. Never request or reveal credentials in conversation. Work inside the workspace. Report the result clearly and briefly.",
       }, { throwOnError: true, signal: this.lifetime.signal })
@@ -175,17 +184,19 @@ export class OpenCodeHarness {
       // The prompt HTTP response and native idle are separate facts.
       await this.assertIdle()
       terminal = true
-      if (response.data.info.error) throw new Error("OpenCode model response failed")
+      if (response.data.info.sessionID !== this.sessionID || response.data.info.parentID !== promptID) throw new Error("OpenCode response does not belong to this prompt")
+      if (response.data.info.error) { nativeFailed = true; throw new Error("OpenCode model response failed") }
       streamCancel.abort()
       await reader
       cancel.abort(new Error("OpenCode prompt completed"))
-      await Promise.all(operation.jobs)
+      operation.text.finish(response.data.info.id)
+      await Promise.all([...operation.jobs, operation.outputChain])
+      if (operation.error !== undefined) throw operation.error
       turn.signal.throwIfAborted()
-      const text = response.data.parts.filter(part => part.type === "text").map(part => part.text).join("\n\n")
-      if (!text.trim()) throw new Error("OpenCode returned no final response")
-      await turn.respond(text)
-      return { nativeSessionId: this.sessionID }
+      const text = response.data.parts.filter(part => part.type === "text" && !part.synthetic && !part.ignored && part.sessionID === this.sessionID && part.messageID === response.data.info.id).map(part => part.type === "text" ? part.text : "").join("\n\n")
+      return { nativeSessionId: this.sessionID, ...(text ? { response: text } : {}) }
     } catch (error) {
+      if (nativeFailed && !turn.signal.aborted) operation.text.flush()
       stop()
       await stopJob
       await Promise.allSettled([...operation.jobs, ...(promptJob ? [promptJob] : [])])
@@ -207,7 +218,11 @@ export class OpenCodeHarness {
 
   private route(operation: Operation, event: Event) {
     if (operation.cancel.signal.aborted || !("sessionID" in event.properties) || event.properties.sessionID !== this.sessionID) return
-    if (event.type === "session.error") { operation.failure.reject(new Error("OpenCode session failed")); return }
+    operation.text.observe(event)
+    if (event.type === "question.v2.asked" || event.type === "permission.v2.asked") {
+      operation.failure.reject(new Error("OpenCode returned an unsupported interactive form"))
+      return
+    }
     if (event.type === "question.replied" || event.type === "question.rejected" || event.type === "permission.replied") {
       operation.requests.get(event.properties.requestID)?.abort()
       return
@@ -233,7 +248,7 @@ export class OpenCodeHarness {
           }
           const reply = await operation.turn.ask({
             prompt: [{ type: "text", text: `Allow this operation once?\n${details}` }],
-            answer: { type: "choice", options: [{ id: "allow", label: "Allow once", value: true }, { id: "deny", label: "Deny", value: false }] },
+             type: "choice", options: [{ id: "allow", label: "Allow once", value: true }, { id: "deny", label: "Deny", value: false }],
           }, { signal })
           signal.throwIfAborted()
           await this.client.permission.reply({ requestID: request.id, reply: reply.answer.selected.length === 1 && reply.answer.selected[0]?.value === true ? "once" : "reject" }, { throwOnError: true, signal })
@@ -242,7 +257,20 @@ export class OpenCodeHarness {
       finally { operation.requests.delete(request.id) }
     })()
     operation.jobs.add(job)
-    void job.catch(error => operation.failure.reject(error))
+    void job.finally(() => operation.jobs.delete(job)).catch(() => {})
+    void job.catch(error => { operation.error ??= error; operation.failure.reject(error) })
+  }
+
+  private publish(operation: Operation, value: string): void {
+    if (!value || operation.turn.signal.aborted) return
+    const text = (operation.hasOutput ? "\n\n" : "") + value
+    operation.hasOutput = true
+    operation.outputBytes += Buffer.byteLength(text)
+    if (operation.outputBytes > 8 * 1024 * 1024) throw new Error("OpenCode output limit exceeded")
+    const job = operation.outputChain = operation.outputChain.then(() => operation.turn.output.write(text).then(() => {}))
+    operation.jobs.add(job)
+    void job.finally(() => operation.jobs.delete(job)).catch(() => {})
+    void job.catch(error => { operation.error ??= error; operation.failure.reject(error) })
   }
 
   close(): Promise<void> {

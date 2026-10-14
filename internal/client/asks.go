@@ -76,7 +76,7 @@ func (c *Client) GetTurnAsk(ctx context.Context, sessionID, turnID, askID string
 	return result, err
 }
 
-func (c *Client) RespondTurnAsk(ctx context.Context, sessionID, turnID, askID string, input api.RespondAgentAskRequest, scope EnvironmentScopeOptions) (api.AgentAsk, error) {
+func (c *Client) AnswerTurnAsk(ctx context.Context, sessionID, turnID, askID string, input api.AnswerAgentAskRequest, scope EnvironmentScopeOptions) (api.AgentAsk, error) {
 	var result api.AgentAsk
 	if err := ids.Validate(askID); err != nil {
 		return result, err
@@ -88,7 +88,7 @@ func (c *Client) RespondTurnAsk(ctx context.Context, sessionID, turnID, askID st
 	if err != nil {
 		return result, err
 	}
-	input.ResponseID = invocationKey(input.ResponseID)
-	err = c.postJSON(ctx, path+"/respond", input, &result)
+	input.AnswerID = invocationKey(input.AnswerID)
+	err = c.postJSON(ctx, path+"/answer", input, &result)
 	return result, err
 }

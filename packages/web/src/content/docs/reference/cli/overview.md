@@ -38,7 +38,7 @@ an Environment require both flags; each accepts the public ID shown in the Conso
 | `helmr deploy` | | Build, upload, finalize and promote a deployment bundle. | [deploy](/docs/reference/cli/deploy) |
 | `helmr deployment` | `list`, `get`, `promote` | Inspect Deployments and promote one to current. | [deployment](/docs/reference/cli/deployment) |
 | `helmr agent` | `list`, `get` | Inspect deployed Agents. | [agent](/docs/reference/cli/agent) |
-| `helmr session` | `create`, `list`, `get`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn interrupt`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
+| `helmr session` | `create`, `list`, `get`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn interrupt`, `turn ask list`, `turn ask get`, `turn ask answer` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
 | `helmr trigger` | `list`, `get` | Inspect Triggers created by triggers. | [trigger](/docs/reference/cli/trigger) |
 | `helmr template` | `list`, `get` | Inspect deployed Templates. | [template](/docs/reference/cli/template) |
 | `helmr computer` | `create`, `list`, `get`, `sessions`, `commands`, `update`, `delete`, `exec` | Work with Computers and their current usage. | [computer](/docs/reference/cli/computer) |

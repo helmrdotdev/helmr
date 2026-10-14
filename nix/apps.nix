@@ -78,6 +78,7 @@ let
           bun run typecheck
           bun run test:ts
           (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
+          (cd examples/pi-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           bun run check:web
         '';
 
@@ -133,6 +134,7 @@ let
           scripts/check-e2e.sh --skip-sdk-build
           (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
+          (cd examples/pi-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           scripts/check-packed-sdk-consumer.sh --sdk-packages "$sdk_packages"
           scripts/build-compiler-entry.sh
           scripts/build-hostconfig-entry.sh

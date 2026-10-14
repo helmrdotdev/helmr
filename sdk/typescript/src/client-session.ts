@@ -1,7 +1,9 @@
-import { retentionMilliseconds, retentionFromMilliseconds, type Duration } from "./duration"
+import { normalizeSubmission } from "./question"
+import type { AgentContract, AgentInput, AgentResult } from "./agent"
+import { retentionMilliseconds, retentionFromMilliseconds, type Retention } from "./duration"
 import { slackStartOption } from "./client-slack"
-import type { InputContent } from "./content"
-import { normalizeInput } from "./content"
+import type { JsonValue } from "./contract"
+import { normalizeInput, normalizeInvocation } from "./content"
 import { waitForTurn } from "./internal/turn-wait"
 import { parseAsk, parseAskPage, parseAskReceipt } from "./internal/asks"
 import { sessionEvents } from "./internal/session-events"
@@ -11,13 +13,9 @@ import type {
   TurnRef,
   Session,
   SessionStatus,
-  TurnListQuery,
-  TurnState,
   TurnWaitOptions,
   TimedTurnWaitResult,
   TurnOutcome,
-  SessionInterruptReceipt,
-  SessionOperationOptions,
 } from "./contract"
 import { validateDefinitionId } from "./schema/definition"
 import { resourceID } from "./internal/id"
@@ -60,41 +58,34 @@ export type SessionListQuery = Readonly<
     })
 >
 
-export interface ClientSessionRef extends SessionRef {
-  interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<SessionInterruptReceipt>
-  readonly turns: Readonly<{
-    ref(id: string): TurnRef
-    list(
-      query?: TurnListQuery,
-      options?: RequestOptions,
-    ): Promise<CursorPage<TurnState>>
-  }>
-}
-export interface SessionCreateRequest {
-  readonly agent: string
+type DynamicAgent = AgentContract<string, JsonValue, JsonValue>
+export interface SessionCreateRequest<A extends AgentContract = DynamicAgent> {
+  readonly agent: A["id"]
   readonly key?: string
-  readonly input?: InputContent
+  readonly input?: AgentInput<A>
   readonly computer?: Readonly<{ id: string }>
-  readonly closeAfterIdle?: Duration
+  readonly closeAfterIdle?: Retention
   readonly slack?: Readonly<{ channelId: string }>
   readonly idempotencyKey?: string
 }
-export interface SessionCreateReceipt<T extends TurnRef | null = TurnRef | null> {
-  readonly session: ClientSessionRef
+export interface SessionCreateReceipt<T extends TurnRef<any> | null = TurnRef | null, I = JsonValue, O = JsonValue> {
+  readonly session: SessionRef<I, O>
   readonly turn: T
-  readonly closeAfterIdle: Duration
+  readonly closeAfterIdle: Retention
 }
 export interface ClientSessionsApi {
-  create(request: SessionCreateRequest & { readonly input: InputContent }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef>>
-  create(request: SessionCreateRequest & { readonly input?: undefined }, options?: RequestOptions): Promise<SessionCreateReceipt<null>>
-  create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
+  create<A extends AgentContract = DynamicAgent>(request: SessionCreateRequest<A> & { readonly input: AgentInput<A> & ({} | null) }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef<AgentResult<A>>, AgentInput<A>, AgentResult<A>>>
+  create<A extends AgentContract = DynamicAgent>(request: SessionCreateRequest<A> & { readonly input?: undefined }, options?: RequestOptions): Promise<SessionCreateReceipt<null, AgentInput<A>, AgentResult<A>>>
+  create<A extends AgentContract = DynamicAgent>(request: SessionCreateRequest<A>, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef<AgentResult<A>> | null, AgentInput<A>, AgentResult<A>>>
+  /** Attach only to the deployment matching the imported contract. */
+  attach<A extends AgentContract>(request: { readonly id: string; readonly agent: A["id"]; readonly deploymentId: string }, options?: RequestOptions): Promise<SessionRef<AgentInput<A>, AgentResult<A>>>
 
   get(id: string, options?: RequestOptions): Promise<Session>
   list(
     query?: SessionListQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<Session>>
-  ref(id: string): ClientSessionRef
+  ref(id: string): SessionRef
 }
 interface SessionTransport {
   request(
@@ -106,14 +97,10 @@ interface SessionTransport {
 export function createClientSessions(
   transport: SessionTransport,
 ): ClientSessionsApi {
-  async function create(request: SessionCreateRequest & { readonly input: InputContent }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef>>
-  async function create(request: SessionCreateRequest & { readonly input?: undefined }, options?: RequestOptions): Promise<SessionCreateReceipt<null>>
-  async function create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
-  async function create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt> {
+  async function create(request: SessionCreateRequest<AgentContract<string, any, any>>, options?: RequestOptions): Promise<SessionCreateReceipt<any, any, any>> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(request.agent)) throw new Error("Invalid Agent key")
     if (request.input !== undefined) {
-      if (request.input.length === 0) throw new Error("Initial input must not be empty")
-      normalizeInput(request.input)
+      normalizeInvocation(request.input)
     }
     const value = objectValue(await transport.request("POST", "/v1/sessions", {
       body: {
@@ -135,6 +122,14 @@ export function createClientSessions(
   }
   return Object.freeze({
     create,
+    async attach<A extends AgentContract>(request: { readonly id: string; readonly agent: A["id"]; readonly deploymentId: string }, options?: RequestOptions): Promise<SessionRef<AgentInput<A>, AgentResult<A>>> {
+      validateDefinitionId(request.agent)
+      const deploymentId = resourceID(request.deploymentId, "Deployment ID")
+      const ref = createSessionRef(request.id, transport)
+      const session = await ref.get(options)
+      if (session.agent !== request.agent || session.deploymentId !== deploymentId) throw new Error("Session does not match the agent contract and deployment")
+      return ref as SessionRef<AgentInput<A>, AgentResult<A>>
+    },
     get(id, options) {
       return createSessionRef(id, transport).get(options)
     },
@@ -152,7 +147,7 @@ export function createClientSessions(
 function createSessionRef(
   id: string,
   transport: SessionTransport,
-): ClientSessionRef {
+): SessionRef {
   const sessionId = resourceID(id, "Session ID"),
     basePath = `/v1/sessions/${encodeURIComponent(sessionId)}`
   const post = (suffix: string, body: unknown, options?: RequestOptions) =>
@@ -169,7 +164,7 @@ function createSessionRef(
   const turn = (id: string): TurnRef => {
     const turnId = resourceID(id, "Turn ID"),
       path = `/turns/${encodeURIComponent(turnId)}`
-    function wait(options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
+    function wait(options: TurnWaitOptions & { readonly timeout: import("./duration").Duration }): Promise<TimedTurnWaitResult>
     function wait(options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
     function wait(options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
     function wait(options: TurnWaitOptions = {}): Promise<TurnOutcome | TimedTurnWaitResult> {
@@ -195,10 +190,10 @@ function createSessionRef(
           return parseAskPage(await get(path + "/asks" + (params.size ? `?${params}` : ""), options))
         },
         async get(askId, options) { return parseAsk(await get(path + "/asks/" + encodeURIComponent(resourceID(askId, "Ask ID")), options)) },
-        async respond(askId, request, options) {
+        async answer(askId, request, options) {
           canonicalizeJsonValue(request.answer)
-          if (!request.responseId || !request.responseId.trim() || new TextEncoder().encode(request.responseId).length > 512 || request.responseId.includes("\0")) throw new Error("Invalid response ID")
-          return parseAskReceipt(await post(path + "/asks/" + encodeURIComponent(resourceID(askId, "Ask ID")) + "/respond", { answer: request.answer, response_id: request.responseId }, options))
+          if (!request.answerId || !request.answerId.trim() || new TextEncoder().encode(request.answerId).length > 512 || request.answerId.includes("\0")) throw new Error("Invalid answer ID")
+          return parseAskReceipt(await post(path + "/asks/" + encodeURIComponent(resourceID(askId, "Ask ID")) + "/answer", { answer: normalizeSubmission(request.answer), answer_id: request.answerId }, options))
         },
       } satisfies import("./contract").TurnAsks),
       async send(data, request, options) {
@@ -223,7 +218,7 @@ function createSessionRef(
   return Object.freeze({
     id: sessionId,
     async enqueue(input, request, options) {
-      normalizeInput(input)
+      normalizeInvocation(input)
       const receipt = parseTurnAdmission(
         await post(
           "/enqueue",
@@ -327,7 +322,7 @@ function createSessionRef(
         ),
       )
     },
-  } satisfies ClientSessionRef)
+  } satisfies SessionRef)
 }
 
 function sessionListQuery(queryInput: SessionListQuery): string {

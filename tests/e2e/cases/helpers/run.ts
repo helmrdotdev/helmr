@@ -30,7 +30,7 @@ await verify("helpers", async ({ client, marker, objects, computer, cleanup, sta
       objects.ask_ids.push(question.id)
       await parent.session.cancel({ idempotencyKey: `stop-parent:${marker}` })
       assertEqual((await child.turns.ref(output.childTurnId).asks.get(question.id)).status, "pending", "Parent cancellation cancelled its independent helper")
-      await child.turns.ref(output.childTurnId).asks.respond(question.id, { answer: "Finish", responseId: `finish-helper:${marker}` })
+      await child.turns.ref(output.childTurnId).asks.answer(question.id, { answer: "Finish", answerId: `finish-helper:${marker}` })
       const result = await completedResult(child.turns.ref(output.childTurnId))
       assert(result !== null && typeof result === "object" && "marker" in result && result.marker === marker)
     }

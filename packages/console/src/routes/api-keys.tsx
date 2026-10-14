@@ -59,7 +59,7 @@ const API_KEY_PERMISSION_GROUPS: { label: string; options: { value: ApiKeyScope;
       { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
       { value: "sessions:close", label: "Close sessions", description: "Drain accepted work and close sessions." },
       { value: "sessions:cancel", label: "Cancel sessions", description: "Cancel queued turns, stop active execution, and close sessions." },
-      { value: "asks:respond", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
+      { value: "asks:answer", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
     ],
   },
   {

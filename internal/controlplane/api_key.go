@@ -202,8 +202,8 @@ func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 	switch strings.TrimSpace(string(scope)) {
-	case string(api.APIKeyScopeAsksRespond):
-		return api.APIKeyScopeAsksRespond, true
+	case string(api.APIKeyScopeAsksAnswer):
+		return api.APIKeyScopeAsksAnswer, true
 	case string(api.APIKeyScopeSessionsRead):
 		return api.APIKeyScopeSessionsRead, true
 	case string(api.APIKeyScopeSessionsCreate):
@@ -237,8 +237,8 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 
 func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 	switch scope {
-	case api.APIKeyScopeAsksRespond:
-		return auth.PermissionAsksRespond, true
+	case api.APIKeyScopeAsksAnswer:
+		return auth.PermissionAsksAnswer, true
 	case api.APIKeyScopeSessionsRead:
 		return auth.PermissionSessionsRead, true
 	case api.APIKeyScopeSessionsCreate:
@@ -274,8 +274,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 
 func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 	switch strings.TrimSpace(permission) {
-	case string(auth.PermissionAsksRespond):
-		return api.APIKeyScopeAsksRespond, true
+	case string(auth.PermissionAsksAnswer):
+		return api.APIKeyScopeAsksAnswer, true
 	case string(auth.PermissionSessionsRead):
 		return api.APIKeyScopeSessionsRead, true
 	case string(auth.PermissionSessionsCreate):

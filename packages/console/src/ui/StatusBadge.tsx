@@ -32,7 +32,7 @@ const TONES = {
   computer_usage: { admitted: "waiting", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
-  question: { pending: "waiting", responded: "succeeded", cancelled: "revoked" },
+  question: { pending: "waiting", answered: "succeeded", cancelled: "revoked" },
   attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_reauthorization: "revoked" },
   device_code: { pending: "waiting", approved: "succeeded", denied: "revoked", consumed: "expired", expired: "expired" },
 } as const satisfies Record<string, Record<string, Tone>>;

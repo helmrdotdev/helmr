@@ -21,7 +21,8 @@ func ReconcileProjection(ctx context.Context, pool db.TxBeginner, config Project
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT p.id FROM slack_thread_sources p
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
- WHERE p.projected_event_seq<s.next_event_seq-1 ORDER BY p.projected_event_seq,p.id LIMIT $1`, limit)
+ WHERE p.projected_event_seq<s.next_event_seq-1 OR EXISTS(SELECT 1 FROM session_processes process WHERE process.environment_id=p.environment_id AND process.session_id=p.session_id AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(p.projected_control_at,'-infinity'::timestamptz))
+ ORDER BY (p.projected_event_seq<s.next_event_seq-1) DESC,p.projected_event_seq,p.id LIMIT $1`, limit)
 		if err != nil {
 			return err
 		}
