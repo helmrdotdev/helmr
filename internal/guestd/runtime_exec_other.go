@@ -11,7 +11,6 @@ import (
 
 type imageCommandOptions struct {
 	SecretRoot      string
-	NativeRoot      string
 	Program         programMounts
 	CgroupNamespace bool
 	CgroupLeaf      string
@@ -20,9 +19,6 @@ type imageCommandOptions struct {
 }
 
 func imageCommand(ctx context.Context, bunPath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts imageCommandOptions) (*exec.Cmd, error) {
-	if opts.NativeRoot != "" {
-		return nil, errors.New("native process containment requires Linux")
-	}
 	cmd := exec.CommandContext(ctx, bunPath, args...)
 	cmd.Dir = launchCwd
 	cmd.Env = env

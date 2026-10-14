@@ -61,6 +61,9 @@ export interface Turn<I extends InputContent = InputContent> {
   readonly input: I
   readonly source: InputSource
   readonly signal: AbortSignal
+  // Runs once on cancellation or handler failure, concurrently with handler
+  // drainage. The runtime joins asynchronous cleanup before settling the Turn.
+  onCancel(handler: (reason: unknown) => MaybePromise<void>): void
   readonly output: {
     write(value: HumanContent): Promise<OutputReceipt>
     pipe(values: AsyncIterable<HumanContent>, options?: { signal?: AbortSignal }): Promise<void>

@@ -54,7 +54,7 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 func TestRuntimeHoldPreservesRecordedSave(t *testing.T) {
 	f := newFixture(t)
 	a, save := f.finalize(t, "prepared")
-	if err := session.RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "native_convergence_failed"); err != nil {
+	if err := session.RuntimeHold(t.Context(), f.pool, *f.host(), f.execution(), "turn_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
 	var turnStatus, saveStatus string

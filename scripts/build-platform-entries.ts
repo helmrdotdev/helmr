@@ -33,8 +33,8 @@ for (const [entryGroup, entries] of selected) for (const [entry, relativeTarget]
   const result = await build({
     entryPoints: [entry], bundle: true, platform: "node", format: "esm", write: false,
     target: entryGroup === "hostconfig" ? hostNodeTarget : nodeTarget,
-    // jiti's bundled CommonJS pieces call require(); an ES module has none.
-    banner: entryGroup !== "runtime" ? { js: 'import { createRequire as helmrCreateRequire } from "node:module"; const require = helmrCreateRequire(import.meta.url);' } : {},
+    // Bundled CommonJS dependencies use Node built-ins through require().
+    banner: { js: 'import { createRequire as helmrCreateRequire } from "node:module"; const require = helmrCreateRequire(import.meta.url);' },
     external: entryGroup === "compiler" ? ["esbuild"] : [],
   })
   const bytes = result.outputFiles[0]!.text

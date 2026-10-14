@@ -192,7 +192,7 @@ const (
 	Operation_METHOD_ENQUEUE            Operation_Method = 8
 	Operation_METHOD_WAIT_TURN          Operation_Method = 9
 	Operation_METHOD_SEND_MESSAGE       Operation_Method = 10
-	Operation_METHOD_CONVERGE_NATIVE    Operation_Method = 11
+	Operation_METHOD_CONFIRM_DRAIN      Operation_Method = 11
 	Operation_METHOD_FINALIZE           Operation_Method = 12
 	Operation_METHOD_FAIL               Operation_Method = 13
 	Operation_METHOD_HOLD               Operation_Method = 14
@@ -219,7 +219,7 @@ var (
 		8:  "METHOD_ENQUEUE",
 		9:  "METHOD_WAIT_TURN",
 		10: "METHOD_SEND_MESSAGE",
-		11: "METHOD_CONVERGE_NATIVE",
+		11: "METHOD_CONFIRM_DRAIN",
 		12: "METHOD_FINALIZE",
 		13: "METHOD_FAIL",
 		14: "METHOD_HOLD",
@@ -243,7 +243,7 @@ var (
 		"METHOD_ENQUEUE":            8,
 		"METHOD_WAIT_TURN":          9,
 		"METHOD_SEND_MESSAGE":       10,
-		"METHOD_CONVERGE_NATIVE":    11,
+		"METHOD_CONFIRM_DRAIN":      11,
 		"METHOD_FINALIZE":           12,
 		"METHOD_FAIL":               13,
 		"METHOD_HOLD":               14,
@@ -1065,7 +1065,7 @@ type SessionCheckpointReady struct {
 	CheckpointId string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
 	// Types that are valid to be assigned to Outcome:
 	//
-	//	*SessionCheckpointReady_ScopesJson
+	//	*SessionCheckpointReady_Ready
 	//	*SessionCheckpointReady_Error
 	Outcome       isSessionCheckpointReady_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
@@ -1116,13 +1116,13 @@ func (x *SessionCheckpointReady) GetOutcome() isSessionCheckpointReady_Outcome {
 	return nil
 }
 
-func (x *SessionCheckpointReady) GetScopesJson() []byte {
+func (x *SessionCheckpointReady) GetReady() bool {
 	if x != nil {
-		if x, ok := x.Outcome.(*SessionCheckpointReady_ScopesJson); ok {
-			return x.ScopesJson
+		if x, ok := x.Outcome.(*SessionCheckpointReady_Ready); ok {
+			return x.Ready
 		}
 	}
-	return nil
+	return false
 }
 
 func (x *SessionCheckpointReady) GetError() *OperationError {
@@ -1138,15 +1138,15 @@ type isSessionCheckpointReady_Outcome interface {
 	isSessionCheckpointReady_Outcome()
 }
 
-type SessionCheckpointReady_ScopesJson struct {
-	ScopesJson []byte `protobuf:"bytes,2,opt,name=scopes_json,json=scopesJson,proto3,oneof"`
+type SessionCheckpointReady_Ready struct {
+	Ready bool `protobuf:"varint,2,opt,name=ready,proto3,oneof"`
 }
 
 type SessionCheckpointReady_Error struct {
 	Error *OperationError `protobuf:"bytes,3,opt,name=error,proto3,oneof"`
 }
 
-func (*SessionCheckpointReady_ScopesJson) isSessionCheckpointReady_Outcome() {}
+func (*SessionCheckpointReady_Ready) isSessionCheckpointReady_Outcome() {}
 
 func (*SessionCheckpointReady_Error) isSessionCheckpointReady_Outcome() {}
 
@@ -3672,11 +3672,10 @@ const file_agent_proto_rawDesc = "" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\"8\n" +
 	"\x11SessionCheckpoint\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\"\xa3\x01\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\"\x98\x01\n" +
 	"\x16SessionCheckpointReady\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12!\n" +
-	"\vscopes_json\x18\x02 \x01(\fH\x00R\n" +
-	"scopesJson\x126\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x16\n" +
+	"\x05ready\x18\x02 \x01(\bH\x00R\x05ready\x126\n" +
 	"\x05error\x18\x03 \x01(\v2\x1e.helmr.agent.v1.OperationErrorH\x00R\x05errorB\t\n" +
 	"\aoutcome\"\x94\x01\n" +
 	"\x0fOperationResult\x12\x1d\n" +
@@ -3704,13 +3703,13 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"checkpoint\x18\x0e \x01(\v2!.helmr.agent.v1.SessionCheckpointH\x00R\n" +
 	"checkpointB\t\n" +
-	"\acommand\"\xb7\x05\n" +
+	"\acommand\"\xb5\x05\n" +
 	"\tOperation\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1c\n" +
 	"\aturn_id\x18\x02 \x01(\tH\x00R\x06turnId\x88\x01\x01\x128\n" +
 	"\x06method\x18\x03 \x01(\x0e2 .helmr.agent.v1.Operation.MethodR\x06method\x12!\n" +
-	"\fpayload_json\x18\x04 \x01(\fR\vpayloadJson\"\x83\x04\n" +
+	"\fpayload_json\x18\x04 \x01(\fR\vpayloadJson\"\x81\x04\n" +
 	"\x06Method\x12\x16\n" +
 	"\x12METHOD_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18METHOD_REGISTER_MESSAGES\x10\x01\x12\x1b\n" +
@@ -3724,8 +3723,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eMETHOD_ENQUEUE\x10\b\x12\x14\n" +
 	"\x10METHOD_WAIT_TURN\x10\t\x12\x17\n" +
 	"\x13METHOD_SEND_MESSAGE\x10\n" +
-	"\x12\x1a\n" +
-	"\x16METHOD_CONVERGE_NATIVE\x10\v\x12\x13\n" +
+	"\x12\x18\n" +
+	"\x14METHOD_CONFIRM_DRAIN\x10\v\x12\x13\n" +
 	"\x0fMETHOD_FINALIZE\x10\f\x12\x0f\n" +
 	"\vMETHOD_FAIL\x10\r\x12\x0f\n" +
 	"\vMETHOD_HOLD\x10\x0e\x12\x13\n" +
@@ -4040,7 +4039,7 @@ func file_agent_proto_init() {
 	file_agent_proto_msgTypes[1].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[7].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[11].OneofWrappers = []any{
-		(*SessionCheckpointReady_ScopesJson)(nil),
+		(*SessionCheckpointReady_Ready)(nil),
 		(*SessionCheckpointReady_Error)(nil),
 	}
 	file_agent_proto_msgTypes[12].OneofWrappers = []any{

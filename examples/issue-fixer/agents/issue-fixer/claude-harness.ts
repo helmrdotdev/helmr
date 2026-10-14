@@ -1,5 +1,4 @@
-import { registerNativeOperation, spawnNative, type NativeResource, type NativeInvocation } from "@helmr/sdk/internal"
-import { openNativeHarness } from "./native-lifecycle"
+import { spawn } from "node:child_process"
 import { MessageRejected } from "@helmr/sdk"
 import { glob, stat } from "node:fs/promises"
 import { join } from "node:path"
@@ -32,14 +31,14 @@ interface Operation {
   sawResult: boolean
   readonly queued: string[]
   failure?: unknown
-  invocation?: NativeInvocation
+  stop?: () => void
   finalText?: string
   terminal: boolean
   readonly boundary: ReturnType<typeof deferred<void>>
 }
 
 // The streaming query and its sole reader live across successful Turns. This
-// adapter accounts for SDK work; descendant exclusion is a separate guest proof.
+// adapter joins SDK work; the platform owns the entire Session process tree.
 export class ClaudeHarness {
   private readonly prompts = new Queue<SDKUserMessage>()
   private readonly lifetime = new AbortController()
@@ -48,15 +47,13 @@ export class ClaudeHarness {
   private active: Operation | undefined
   private readonly messageRegistrations = new WeakMap<Turn, Promise<void>>()
   private closed = false
-  private broken = false
+  private broken: Error | undefined
   private exited: Promise<void> = Promise.resolve()
   private terminate: (() => void) | undefined
   private pid: number | undefined
   private remember: () => Promise<void> = async () => {}
-  private readonly resource: NativeResource
   private readonly started = deferred<void>()
-  private constructor(cwd: string, directory: string, private readonly sessionId: string, resume: boolean, environment: NodeJS.ProcessEnv, resource: NativeResource, mcpServers?: McpServers) {
-    this.resource = resource
+  private constructor(cwd: string, directory: string, private readonly sessionId: string, resume: boolean, environment: NodeJS.ProcessEnv, mcpServers?: McpServers) {
     this.native = query({ prompt: this.prompts, options: {
       cwd, mcpServers, abortController: this.lifetime, permissionMode: "default", settingSources: [], includePartialMessages: true, persistSession: true,
       ...(resume ? { resume: sessionId } : { sessionId }),
@@ -72,10 +69,17 @@ export class ClaudeHarness {
         return {}
       }] }] },
       spawnClaudeCodeProcess: options => {
-        const native = spawnNative(resource, options.command, options.args, { cwd: options.cwd, env: options.env, signal: options.signal })
-        const child = native.child
+        const child = spawn(options.command, options.args, { cwd: options.cwd, env: options.env, signal: options.signal, stdio: "pipe" })
         this.terminate = () => { child.kill("SIGKILL") }
-        void native.ready.then(identity => { this.pid = identity.processId; this.started.resolve() }, error => this.started.reject(error))
+        child.once("spawn", () => { this.pid = child.pid; this.started.resolve() })
+        child.once("error", error => { this.broken = error; this.started.reject(error) })
+        child.once("exit", () => {
+          if (this.closed) return
+          const error = new Error("Claude process exited")
+          this.broken ??= error
+          this.active?.done.reject(error)
+          this.active?.boundary.reject(error)
+        })
         child.stderr.on("data", chunk => process.stderr.write(chunk))
         this.exited = new Promise(resolve => child.once("close", () => resolve()))
         return child
@@ -84,7 +88,7 @@ export class ClaudeHarness {
         // Capture ownership before any await; a late answer cannot bind to a new Turn.
         const operation = this.active
         if (!operation?.accepting) return Promise.resolve({ behavior: "deny" as const, message: "Turn input is closed" })
-        const job = operation.invocation!.run(async (): Promise<PermissionResult> => {
+        const job = (async (): Promise<PermissionResult> => {
         if (toolName === "Agent" || toolName === "Task" || input.run_in_background === true) return { behavior: "deny", message: "Background work is not supported by this application" }
         const signal = AbortSignal.any([operation.turn.signal, operation.abort.signal, options.signal])
         const action = JSON.parse(JSON.stringify({ provider: "claude", toolUseID: options.toolUseID, toolName, input })) as Json
@@ -101,7 +105,7 @@ export class ClaudeHarness {
         const allow = await askNativeApproval(operation.turn, action, signal)
         signal.throwIfAborted()
         return allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: "User denied this operation" }
-        }).catch((error): PermissionResult => {
+        })().catch((error): PermissionResult => {
           if (operation.abort.signal.aborted || operation.turn.signal.aborted || options.signal.aborted) return { behavior: "deny", message: "Native request ended" }
           throw error
         })
@@ -110,10 +114,9 @@ export class ClaudeHarness {
       },
     } })
     this.reader = this.read()
-    void this.reader.catch(error => { this.broken = true; this.active?.done.reject(error); this.active?.boundary.reject(error) })
+    void this.reader.catch(error => { this.broken ??= error instanceof Error ? error : new Error(String(error)); this.active?.done.reject(error); this.active?.boundary.reject(error) })
   }
-  static open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, mcpServers?: McpServers): Promise<ClaudeHarness> {
-    return openNativeHarness(async resource => {
+  static async open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, mcpServers?: McpServers): Promise<ClaudeHarness> {
     const saved = await conversation(cwd, sessionId, "claude")
     const nativeId = z.uuid().parse(saved.candidateId ?? randomUUID())
     let resume = saved.id !== undefined
@@ -125,25 +128,34 @@ export class ClaudeHarness {
       }
     }
     await saved.reserve(nativeId)
-    const harness = new ClaudeHarness(cwd, saved.directory, nativeId, resume, environment, resource, mcpServers)
+    const harness = new ClaudeHarness(cwd, saved.directory, nativeId, resume, environment, mcpServers)
     harness.remember = () => saved.remember(nativeId)
     try { await Promise.all([harness.native.initializationResult(), harness.started.promise]); return harness }
     catch (error) { await harness.close(); throw error }
-    })
   }
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }
   get reusable(): boolean { return !this.closed && !this.broken }
   run(turn: Turn, prompt: HumanContent): Promise<Json> {
-    const running = this.runTurn(turn, prompt)
+    let running: Promise<Json>
+    turn.onCancel(async () => {
+      if (this.active?.turn === turn) this.active.stop?.()
+      await running.catch(() => {})
+      this.assertUsable()
+    })
+    running = this.runTurn(turn, prompt)
     void running.catch(() => {})
     return running
   }
+  private assertUsable(): void {
+    if (this.broken) throw this.broken
+    if (this.closed) throw new Error("Native conversation is closed")
+  }
   private async runTurn(turn: Turn, prompt: HumanContent): Promise<Json> {
-    if (!this.reusable || this.active) throw new Error("Native conversation is not ready")
+    this.assertUsable()
+    if (this.active) throw new Error("Native conversation is not ready")
     turn.signal.throwIfAborted()
     const operation: Operation = { turn, abort: new AbortController(), done: deferred<void>(), jobs: new Set(), tasks: new Set(), accepting: true, running: false, sawResult: false, queued: [], terminal: false, boundary: deferred<void>() }
-    let stopTimer: ReturnType<typeof setTimeout> | undefined
     let stopRequested = false
     const stop = () => {
       if (stopRequested) return
@@ -152,17 +164,10 @@ export class ClaudeHarness {
       operation.queued.length = 0
       operation.abort.abort(turn.signal.reason)
       if (!operation.running && operation.tasks.size === 0) { operation.terminal = true; operation.boundary.resolve(); operation.done.resolve(); return }
-      stopTimer ??= setTimeout(() => { void this.close().catch(error => operation.done.reject(error)) }, this.resource.cooperativeStopMs)
       this.track(operation, this.native.interrupt())
       for (const id of operation.tasks) this.track(operation, this.native.stopTask(id))
     }
-    const joined = deferred<void>()
-    let finished = false
-    operation.invocation = registerNativeOperation(turn, this.resource, {
-      done: joined.promise,
-      stop: async () => { stop(); await joined.promise.catch(() => {}) },
-      state: () => ({ idle: finished, reusable: this.reusable }),
-    })
+    operation.stop = stop
     this.active = operation
     turn.signal.addEventListener("abort", stop, { once: true })
     try {
@@ -201,11 +206,8 @@ export class ClaudeHarness {
     } finally {
       operation.accepting = false
       operation.abort.abort()
-      clearTimeout(stopTimer)
       turn.signal.removeEventListener("abort", stop)
       if (this.active === operation) this.active = undefined
-      finished = true
-      joined.resolve()
     }
   }
   async close(): Promise<void> {

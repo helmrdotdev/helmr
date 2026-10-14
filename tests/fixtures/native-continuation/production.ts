@@ -6,7 +6,8 @@ import assert from "node:assert/strict"
 import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { spawnSync } from "node:child_process"
-import type { NativeProcess, NativeRuntimeHooks } from "../../../sdk/typescript/src/internal/native-runtime"
+import { channel } from "node:diagnostics_channel"
+import type { ChildProcess } from "node:child_process"
 import { codex as nativeCodex, claude as nativeClaude } from "./agent"
 import { startNativeModels } from "./model-server"
 import { checkSessionDiscovery, type DiscoveryState } from "./session-discovery"
@@ -32,23 +33,16 @@ function native(definition: typeof nativeCodex) {
     id: definition.id,
     template: workspace,
     async init(context) {
-      // Observe the ordinary launcher without replacing its authority or process
-      // admission. This fixture kills only the exact proxy handle it receives;
-      // guest PID metadata is never used as a signal target.
-      const key = Symbol.for("helmr.agent.v1.native_runtime")
-      const target = globalThis as typeof globalThis & { [key: symbol]: NativeRuntimeHooks }
-      const original = target[key]!
-      assert(original, "managed native runtime is required")
-      let nativeProcess: NativeProcess | undefined
-      const observed: NativeRuntimeHooks = { ...original, spawn(...args) {
-        assert.equal(nativeProcess, undefined, "expected one native launcher")
-        return nativeProcess = original.spawn(...args)
-      } }
-      target[key] = observed
+      // Observe ordinary Node launches without replacing spawn or runtime state.
+      const children: ChildProcess[] = []
+      const launches = channel("child_process")
+      const observe = (message: unknown) => { children.push((message as { process: ChildProcess }).process) }
+      launches.subscribe(observe)
       let state: Awaited<ReturnType<typeof definition.init>>
       try { state = await definition.init(context) }
-      finally { assert.equal(target[key], observed); target[key] = original }
-      assert(nativeProcess)
+      finally { launches.unsubscribe(observe) }
+      const nativeProcess = children.find(child => child.pid === state.harness.processId)
+      assert(nativeProcess, "expected the native launcher")
       const path = `/workspace/${context.session.id}/setup-count.json`
       let setupCount = 0
       try { setupCount = JSON.parse(await readFile(path, "utf8")) }
@@ -59,22 +53,23 @@ function native(definition: typeof nativeCodex) {
     },
     async turn(turn, context) {
       const input = fixtureValue(turn.input)
-      if (input === "fixture-native-proxy-loss") {
+      if (input === "fixture-native-launcher-loss") {
         let release!: () => void
         const requested = new Promise<void>((resolve, reject) => {
           release = resolve
           turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true })
         })
-        await turn.onMessage(message => { assert.equal(fixtureValue(message), "lose-native-proxy"); release() })
-        await turn.output.write("native proxy loss ready")
+        await turn.onMessage(message => { assert.equal(fixtureValue(message), "lose-native-launcher"); release() })
+        await turn.output.write("native launcher loss ready")
         await requested
-        const child = context.initResult.nativeProcess.child
+        const child = context.initResult.nativeProcess
         assert.equal(child.exitCode, null)
         assert.equal(child.signalCode, null)
-        const exited = new Promise<void>(resolve => child.once("close", () => resolve()))
-        assert(child.kill("SIGKILL"), "owned native proxy was not signalled")
+        const exited = new Promise<void>(resolve => child.once("exit", () => resolve()))
+        assert(child.kill("SIGKILL"), "owned native launcher was not signalled")
         await exited
-        throw new Error("Fixture native launcher proxy was lost")
+        await definition.turn(turn, context)
+        throw new Error("Lost launcher unexpectedly accepted native work")
       }
       const performanceKind = typeof input === "string" && input.startsWith("performance:") ? input.slice("performance:".length) : undefined
       if (performanceKind) {
@@ -91,7 +86,6 @@ function native(definition: typeof nativeCodex) {
       catch (error) {
         if (!stopping) throw error
         assert(turn.signal.aborted, "native control Turn failed without interruption")
-        const identity = await context.initResult.nativeProcess.ready
         let commandLock: string | undefined
         if (definition.id === "codex") {
           const command = `/workspace/${context.session.id}/owned-command-${turn.id}`
@@ -105,7 +99,7 @@ function native(definition: typeof nativeCodex) {
         const gateStartedAt = Date.now()
         const marker = `/workspace/native-stop-settled-${turn.id}.json`
         await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.harness.processId,
-          nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, nativeScopeId: identity.scopeId, commandLock }))
+          nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, commandLock }))
         await rename(`${marker}.tmp`, marker)
         // Authored cleanup deliberately waits for the external fixture to observe
         // pending-stop admission. A bounded failure cannot retain the gate forever.
@@ -122,10 +116,9 @@ function native(definition: typeof nativeCodex) {
       assert(!stopping, "native control Turn completed without interruption")
       const saved = await conversation(`/workspace/${context.session.id}`, context.session.id, definition.id)
       assert(saved.id, "successful native Turn has no established conversation")
-      const identity = await context.initResult.nativeProcess.ready
       const workload = performanceKind ? JSON.parse(await readFile(`/workspace/${context.session.id}/performance-result-${turn.sequence}.json`, "utf8")) : undefined
       if (workload) { assert.equal(workload.kind, performanceKind); assert.equal(workload.sequence, turn.sequence) }
-      const result = { ...nativeResult, setupCount: context.initResult.setupCount, nativeConversationId: saved.id, nativeScopeId: identity.scopeId, ...(workload ? { workload } : {}) }
+      const result = { ...nativeResult, setupCount: context.initResult.setupCount, nativeConversationId: saved.id, ...(workload ? { workload } : {}) }
       await turn.output.write([{ type: "json", value: result }])
       await writeFile(`/workspace/${context.session.id}/result-${turn.sequence}.json`, JSON.stringify(result))
       return result

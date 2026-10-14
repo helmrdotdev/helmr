@@ -2,9 +2,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { randomBytes } from "node:crypto"
 import { createInterface } from "node:readline"
-import type { ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Turn, Json } from "@helmr/sdk"
-import { registerNativeResource, registerNativeOperation, spawnNative, type NativeResource, type NativeInvocation } from "@helmr/sdk/internal"
 import { createOpencodeClient, type Config, type Event, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { answerQuestions } from "./questions"
 
@@ -17,7 +16,7 @@ function deferred<T>() {
 
 interface Operation {
   turn: Turn
-  invocation: NativeInvocation
+  stop?: () => void
   cancel: AbortController
   failure: ReturnType<typeof deferred<never>>
   jobs: Set<Promise<void>>
@@ -36,32 +35,16 @@ export class OpenCodeHarness {
   private closed = false
   private active?: Operation
   private sessionID = ""
-  private constructor(private readonly resource: NativeResource, private readonly cwd: string) {}
+  private constructor(private readonly cwd: string) {}
   get processId() { return this.child?.pid }
   get conversationId() { return this.sessionID }
   get idle() { return this.active === undefined }
   get reusable() { return !this.closed }
 
-  static open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeHarness> {
-    const initialized = deferred<void>()
-    let harness: OpenCodeHarness | undefined
-    let ready = false
-    const resource = registerNativeResource({
-      initialized: initialized.promise,
-      state: () => ({ phase: !ready ? "initializing" : !harness!.reusable ? "closed" : harness!.idle ? "idle" : "active", reusable: ready && harness!.reusable }),
-      stop: async () => { await opening.catch(() => {}); await harness?.close() },
-    })
-    const opening = (async () => {
-      harness = new OpenCodeHarness(resource, cwd)
-      try {
-        await harness.initialize(helmrSessionId, config, environment)
-        ready = true
-        initialized.resolve()
-        return harness
-      } catch (error) { initialized.reject(error); await harness.close(); throw error }
-    })()
-    void opening.catch(() => {})
-    return opening
+  static async open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeHarness> {
+    const harness = new OpenCodeHarness(cwd)
+    try { await harness.initialize(helmrSessionId, config, environment); return harness }
+    catch (error) { await harness.close(); throw error }
   }
 
   private async initialize(helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv) {
@@ -75,8 +58,8 @@ export class OpenCodeHarness {
       saved = value.id
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
     const password = randomBytes(32).toString("hex")
-    const native = spawnNative(this.resource, "opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
-      cwd: this.cwd,
+    this.child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
+      cwd: this.cwd, stdio: "pipe",
       env: {
         ...environment, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"),
         OPENCODE_SERVER_PASSWORD: password,
@@ -92,31 +75,30 @@ export class OpenCodeHarness {
         }),
       },
     })
-    this.child = native.child
     const listening = deferred<string>()
     const lines = createInterface({ input: this.child.stdout })
     // Diagnostics may contain credentials or model data. Drain without publishing.
     this.child.stderr.resume()
     this.child.stdin.on("error", () => {})
     this.child.once("error", () => listening.reject(new Error("OpenCode could not start")))
-    this.exited = new Promise(resolve => this.child.once("close", () => {
+    this.child.once("exit", () => {
       lines.close()
       this.closed = true
       const error = new Error("OpenCode server closed")
       this.lifetime.abort(error)
       listening.reject(error)
       this.active?.failure.reject(error)
-      resolve()
-    }))
+    })
+    this.exited = new Promise(resolve => this.child.once("close", () => resolve()))
     lines.on("line", line => {
       const match = /opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(line)
       if (match) listening.resolve(match[1]!)
     })
     const timeout = setTimeout(() => listening.reject(new Error("OpenCode startup timed out")), 60_000)
     let baseUrl: string
-    try { await native.ready; baseUrl = await listening.promise } finally { clearTimeout(timeout) }
+    try { baseUrl = await listening.promise } finally { clearTimeout(timeout) }
     this.client = createOpencodeClient({ baseUrl, directory: this.cwd, headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })
-    const options = { throwOnError: true as const, signal: AbortSignal.any([this.resource.signal, this.lifetime.signal, AbortSignal.timeout(30_000)]) }
+    const options = { throwOnError: true as const, signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(30_000)]) }
     const response = saved
       ? await this.client.session.get({ sessionID: saved }, options)
       : await this.client.session.create({ title: "Helmr assistant" }, options)
@@ -128,20 +110,25 @@ export class OpenCodeHarness {
     }
   }
 
-  async run(turn: Turn, prompt: string): Promise<Json> {
+  run(turn: Turn, prompt: string): Promise<Json> {
+    let running: Promise<Json>
+    turn.onCancel(async () => {
+      if (this.active?.turn === turn) this.active.stop?.()
+      await running.catch(() => {})
+      if (this.closed) throw this.lifetime.signal.reason ?? new Error("OpenCode server is closed")
+      await this.assertIdle()
+    })
+    running = this.runTurn(turn, prompt)
+    return running
+  }
+
+  private async runTurn(turn: Turn, prompt: string): Promise<Json> {
     if (!this.reusable || this.active) throw new Error("OpenCode conversation is not ready")
     turn.signal.throwIfAborted()
-    const joined = deferred<void>()
-    let finished = false
     const cancel = new AbortController()
     const failure = deferred<never>()
     const operation: Operation = {
       turn, cancel, failure, jobs: new Set(), requests: new Map(), seen: new Set(),
-      invocation: registerNativeOperation(turn, this.resource, {
-        done: joined.promise,
-        stop: async () => { stop(); await joined.promise },
-        state: () => ({ idle: finished, reusable: this.reusable }),
-      }),
     }
     this.active = operation
     const streamCancel = new AbortController()
@@ -156,16 +143,15 @@ export class OpenCodeHarness {
       failure.reject(new Error("OpenCode Turn stopped"))
       if (terminal) return
       stopJob ??= (async () => {
-        const timeout = setTimeout(() => { void this.close() }, this.resource.cooperativeStopMs)
         try {
           await this.client.session.abort({ sessionID: this.sessionID }, { throwOnError: true, signal: this.lifetime.signal })
           await promptJob?.catch(() => {})
           await this.assertIdle()
           terminal = true
         } catch { await this.close() }
-        finally { clearTimeout(timeout) }
       })()
     }
+    operation.stop = stop
     turn.signal.addEventListener("abort", stop, { once: true })
     try {
       const stream = await this.client.event.subscribe({}, { signal, sseMaxRetryAttempts: 1, onSseError: () => { if (!signal.aborted) failure.reject(new Error("OpenCode event connection failed")) } })
@@ -211,8 +197,6 @@ export class OpenCodeHarness {
       await stopJob
       turn.signal.removeEventListener("abort", stop)
       this.active = undefined
-      finished = true
-      joined.resolve()
     }
   }
 
@@ -232,7 +216,7 @@ export class OpenCodeHarness {
     const key = `${event.type}:${event.properties.id}`
     if (operation.seen.has(key)) return
     operation.seen.add(key)
-    const job = operation.invocation.run(async () => {
+    const job = (async () => {
       const request = event.properties
       const requestCancel = new AbortController()
       operation.requests.set(request.id, requestCancel)
@@ -256,7 +240,7 @@ export class OpenCodeHarness {
         }
       } catch (error) { if (!signal.aborted) throw error }
       finally { operation.requests.delete(request.id) }
-    })
+    })()
     operation.jobs.add(job)
     void job.catch(error => operation.failure.reject(error))
   }

@@ -146,7 +146,7 @@ func TestAgentRelayCaptureRequiresReattachmentBeforePhysicalThaw(t *testing.T) {
 	go relay.sendLoop()
 	first := attachAgentRelay(t, relay, 1, session.grant)
 	process.writeHook = func(_ context.Context, command *agentv1.GuestCommand) error {
-		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: command.GetCheckpoint().GetCheckpointId(), Outcome: &agentv1.SessionCheckpointReady_ScopesJson{ScopesJson: []byte("[]")}}}})
+		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: command.GetCheckpoint().GetCheckpointId(), Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
 		return err
 	}
 	if err := relay.prepareCapture(t.Context(), "capture"); err != nil {
@@ -423,7 +423,7 @@ func TestAgentRelayCheckpointSealsAdmissionAndRejectsUnfinishedWork(t *testing.T
 		if command.GetCheckpoint() == nil {
 			t.Fatal("checkpoint was not private")
 		}
-		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: "checkpoint", Outcome: &agentv1.SessionCheckpointReady_ScopesJson{ScopesJson: []byte("[]")}}}})
+		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: "checkpoint", Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
 		return err
 	}
 	if err := relay.prepareCapture(t.Context(), "checkpoint"); err != nil {
@@ -496,7 +496,7 @@ func TestAgentRelayCheckpointVerifiesFrozenMembership(t *testing.T) {
 	session, process := agentSessionFixture(t)
 	relay := newAgentRelay(t.Context(), session, nil)
 	process.writeHook = func(_ context.Context, _ *agentv1.GuestCommand) error {
-		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: "checkpoint", Outcome: &agentv1.SessionCheckpointReady_ScopesJson{ScopesJson: []byte("[]")}}}})
+		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: "checkpoint", Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
 		return err
 	}
 	if err := relay.prepareCapture(t.Context(), "checkpoint"); err != nil {

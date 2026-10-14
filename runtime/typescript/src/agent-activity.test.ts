@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
+import { once } from "node:events"
+import { spawn } from "node:child_process"
 import { createServer } from "node:http"
 import test from "node:test"
+import { randomBytes, randomUUID } from "node:crypto"
 import { SessionActivity } from "./agent-activity"
 
 const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -42,23 +44,28 @@ test("authored DNS lookups and their callback work pin compute", async () => {
   } finally { clearInterval(timer); activity.close() }
 })
 
-test("native handles cannot hide callback-created authored asynchronous work", async () => {
+test("ordinary child stdio can be retained but callback-created work pins compute", async () => {
   const activity = new SessionActivity()
-  const events = new EventEmitter()
   let timer: ReturnType<typeof setInterval> | undefined
-  let received!: () => void
-  const ready = new Promise<void>(resolve => { received = resolve })
+  const child = activity.authored(() => spawn(process.execPath, ["-e", "process.stdin.on('data', () => process.stdout.write('ready'))"], { stdio: "pipe" }))
   try {
-    activity.authored(() => {
-      events.once("data", () => { timer = setInterval(() => {}, 1000); received() })
-      activity.native(() => setImmediate(() => events.emit("data")))
-    })
-    await ready
+    await once(child, "spawn")
+    await nextTurn()
+    activity.assertIdle()
+    const received = once(child.stdout, "data")
+    child.stdout.once("data", () => { timer = setInterval(() => {}, 1000) })
+    child.stdin.write("go")
+    await received
     assert.throws(() => activity.assertIdle(), /Timeout/)
     clearInterval(timer)
     await nextTurn()
     activity.assertIdle()
-  } finally { clearInterval(timer); activity.close() }
+  } finally {
+    clearInterval(timer)
+    child.kill()
+    await once(child, "close")
+    activity.close()
+  }
 })
 
 test("inert bound context does not pin compute but its later work does", async () => {
@@ -69,6 +76,30 @@ test("inert bound context does not pin compute but its later work does", async (
     const callback = activity.authored(() => AsyncResource.bind(() => { timer = setInterval(() => {}, 1000) }))
     activity.assertIdle()
     callback()
+    assert.throws(() => activity.assertIdle(), /Timeout/)
+    clearInterval(timer)
+    await nextTurn()
+    activity.assertIdle()
+  } finally { clearInterval(timer); activity.close() }
+})
+
+
+test("completed synchronous randomness does not hide pending asynchronous randomness", async () => {
+  const activity = new SessionActivity()
+  let timer: ReturnType<typeof setInterval> | undefined
+  try {
+    activity.authored(() => { randomUUID({ disableEntropyCache: true }); randomBytes(32) })
+    activity.assertIdle()
+    const pending = activity.authored(() => new Promise<void>((resolve, reject) => {
+      randomBytes(32, error => {
+        if (error) { reject(error); return }
+        timer = setInterval(() => {}, 1000)
+        resolve()
+      })
+    }))
+    assert.throws(() => activity.assertIdle(), /RANDOMBYTESREQUEST/)
+    await pending
+    await nextTurn()
     assert.throws(() => activity.assertIdle(), /Timeout/)
     clearInterval(timer)
     await nextTurn()

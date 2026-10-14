@@ -83,22 +83,29 @@ func TestAgentNativeComputerContinuation(t *testing.T) {
 	for i, peer := range peers {
 		process := peer.relay.session.process.(*agentProcess)
 		assertNativeFrozen(t, process.group, process.cmd.Process.Pid)
-		func() {
-			process.launcher.mu.Lock()
-			defer process.launcher.mu.Unlock()
-			if len(process.launcher.launches) != 1 {
-				t.Fatalf("want one retained native launch, got %d", len(process.launcher.launches))
+		members, err := os.ReadFile(filepath.Join(process.group.path, "cgroup.procs"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, pid := range strings.Fields(string(members)) {
+			status, err := os.ReadFile(filepath.Join("/proc", pid, "status"))
+			if err != nil {
+				t.Fatal(err)
 			}
-			for _, launch := range process.launcher.launches {
-				if !launch.started || launch.command == nil || launch.command.Process == nil {
-					t.Fatal("native launch not started")
+			for line := range strings.SplitSeq(string(status), "\n") {
+				if !strings.HasPrefix(line, "NSpid:") {
+					continue
 				}
-				assertNativeFrozen(t, launch.group, launch.command.Process.Pid)
-				if launch.command.Process.Pid != first[i].NativePID {
-					t.Fatalf("reported native PID %d does not identify frozen launch %d", first[i].NativePID, launch.command.Process.Pid)
+				ids := strings.Fields(line)
+				if ids[len(ids)-1] == strconv.Itoa(first[i].NativePID) {
+					found = true
 				}
 			}
-		}()
+		}
+		if !found {
+			t.Fatalf("native namespace PID %d is outside the frozen Session", first[i].NativePID)
+		}
 	}
 	// Source-abort keeps physical ownership; VM restore is a separate proof.
 	installation := agentComputerInstallation(registry, capture, true)

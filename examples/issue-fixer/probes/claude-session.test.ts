@@ -1,8 +1,6 @@
 import type { AskResponse } from "../../../sdk/typescript/src/question"
 // Real pinned native SDK/process, local model and in-memory control-plane driver.
 // This exercises warm process identity, not VM or process-containment guarantees.
-import { NativeContinuationLost } from "../../../runtime/typescript/src/agent-native"
-import { localNativeRuntime } from "./native-runtime"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { mkdtemp, rm, stat } from "node:fs/promises"
@@ -13,7 +11,7 @@ import { conversation } from "../agents/issue-fixer/conversation"
 import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
 import { claudeModel } from "./native-model"
 
-for (const scenario of ["answer", "background", "malformed", "handler-failure", "stopped-process", "interrupt"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
+for (const scenario of ["answer", "background", "malformed", "handler-failure", "interrupt"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
   const blocked = scenario === "background"
   const directory = await mkdtemp(join(tmpdir(), "helmr-claude-session-"))
   const requests: any[] = []
@@ -34,7 +32,6 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     return undefined
   } : undefined)
   const cancel = new AbortController()
-  let native: ReturnType<typeof localNativeRuntime> | undefined
   let questionReached!: () => void
   const questionReady = new Promise<void>(resolve => { questionReached = resolve })
   let harness: ClaudeHarness | undefined
@@ -50,16 +47,12 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_TELEMETRY: "1",
     }
     if (scenario === "answer") {
-      const preflight = localNativeRuntime(cancel.signal)
-      try {
-        const unstarted = await preflight.registry.setup(() => ClaudeHarness.open(directory, "same-session", environment))
-        await unstarted.close()
-      } finally { preflight.uninstall() }
+      const unstarted = await ClaudeHarness.open(directory, "same-session", environment)
+      await unstarted.close()
       const reserved = await conversation(directory, "same-session", "claude")
       assert.notEqual(reserved.candidateId, undefined)
       assert.equal(reserved.id, undefined)
     }
-    native = localNativeRuntime(cancel.signal)
     const driver: SessionDriver = {
       registerMessages: async () => {}, closeProcessing: async () => {},
       ask: async (_turn, _id, question) => {
@@ -69,8 +62,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
           questionReached()
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        if ((scenario === "stopped-process" || scenario === "interrupt") && _turn === "first") {
-          if (scenario === "stopped-process") process.kill(harness!.processId!, "SIGSTOP")
+        if (scenario === "interrupt" && _turn === "first") {
           void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
@@ -79,11 +71,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
       },
       output: async () => ({ sequence: ++outputs }),
       respond: async (turnId, _id, value) => { responses.push({ turnId, value }) },
-      convergeNative: async (turnId, disposition, signal) => {
-        await native!.registry.join(turnId, disposition, signal.reason)
-        const evidence = await native!.registry.evidence()
-        if (!evidence.reusable) throw new NativeContinuationLost()
-      },
+      confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
       fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }), hold: async () => { holds++ },
     }
@@ -103,15 +91,8 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
         }
         return running
       },
-    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
+    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
     const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api" } })
-    if (scenario === "stopped-process") {
-      assert.equal((await firstPending).status, "interrupted")
-      assert.equal(holds, 1)
-      assert.equal(runtime.idle, false)
-      assert.throws(() => process.kill(harness!.processId!, 0))
-      return
-    }
     const first = await firstPending
     const processId = harness!.processId
     assert.equal(first.status, scenario === "interrupt" ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
@@ -137,7 +118,6 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     clearTimeout(deadline)
     cancel.abort()
     await harness?.close()
-    native?.uninstall()
     http.closeAllConnections()
     await new Promise<void>(resolve => http.close(() => resolve()))
     await rm(directory, { recursive: true, force: true })

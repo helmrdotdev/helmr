@@ -79,7 +79,7 @@ message SessionCheckpoint { string checkpoint_id = 1; }
 message SessionCheckpointReady {
   string checkpoint_id = 1;
   oneof outcome {
-    bytes scopes_json = 2;
+    bool ready = 2;
     OperationError error = 3;
   }
 }
@@ -126,7 +126,7 @@ message Operation {
     METHOD_ENQUEUE = 8;
     METHOD_WAIT_TURN = 9;
     METHOD_SEND_MESSAGE = 10;
-    METHOD_CONVERGE_NATIVE = 11;
+    METHOD_CONFIRM_DRAIN = 11;
     METHOD_FINALIZE = 12;
     METHOD_FAIL = 13;
     METHOD_HOLD = 14;

@@ -37,7 +37,7 @@ func agentComputerFixture(t *testing.T) (*computerOperationRegistry, *agentv1.Co
 			if command.GetCheckpoint() == nil {
 				return nil
 			}
-			_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: command.GetCheckpoint().GetCheckpointId(), Outcome: &agentv1.SessionCheckpointReady_ScopesJson{ScopesJson: []byte("[]")}}}})
+			_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: command.GetCheckpoint().GetCheckpointId(), Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
 			return err
 		}
 	}
@@ -212,7 +212,7 @@ func TestAgentComputerSourceAbortPreservesLateProbeAndHeldState(t *testing.T) {
 	if !peer.held || peer.terminal || processes[1].physicallyFrozen {
 		t.Fatal("abort lost continuation, hold or thaw")
 	}
-	event := &agentv1.ProgramEvent{Identity: peer.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: request.CheckpointId, Outcome: &agentv1.SessionCheckpointReady_ScopesJson{ScopesJson: []byte("[]")}}}}
+	event := &agentv1.ProgramEvent{Identity: peer.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: request.CheckpointId, Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}}
 	if _, _, err := peer.receive(event); err != nil {
 		t.Fatal("late probe destroyed source continuation", err)
 	}

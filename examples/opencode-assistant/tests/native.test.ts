@@ -6,8 +6,6 @@ import { mkdtemp, rm, mkdir, writeFile, stat, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
-import { NativeContinuationLost } from "../../../runtime/typescript/src/agent-native"
-import { localNativeRuntime } from "../../issue-fixer/probes/native-runtime"
 import { OpenCodeHarness } from "../agents/opencode"
 
 test("native binary matches the application pin", () => {
@@ -36,7 +34,6 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
     res.end("data: [DONE]\n\n")
   })
   const cancel = new AbortController()
-  const native = localNativeRuntime(cancel.signal)
   let harness: OpenCodeHarness | undefined
   try {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
@@ -63,10 +60,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
       },
       output: async () => { outputs++; return { sequence: outputs } },
       respond: async (_turnId, _id, value) => { responses.push(value) },
-      convergeNative: async (id, disposition, signal) => {
-        await native.registry.join(id, disposition, signal.reason)
-        if (!(await native.registry.evidence()).reusable) throw new NativeContinuationLost()
-      },
+      confirmDrain: async () => {},
       finalize: async (_id, result) => ({ status: "completed", result }),
       fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }),
       hold: async () => { holds++ },
@@ -81,7 +75,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
         return harness
       },
       turn: (turn, context) => (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join("")),
-    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
+    }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
     const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api" } })
     const pid = harness!.processId, id = harness!.conversationId
     if (scenario === "interrupt" || scenario === "error") {
@@ -112,7 +106,6 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
   } finally {
     await harness?.close()
     cancel.abort()
-    native.uninstall()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
     await rm(cwd, { recursive: true, force: true })

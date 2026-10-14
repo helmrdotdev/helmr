@@ -86,6 +86,7 @@ interface Turn<I extends InputContent = InputContent> {
   readonly input: I
   readonly source: InputSource
   readonly signal: AbortSignal
+  onCancel(handler: (reason: unknown) => MaybePromise<void>): void
   readonly output: {
     write(value: HumanContent): Promise<OutputReceipt>
     pipe(values: AsyncIterable<HumanContent>, options?: { signal?: AbortSignal }): Promise<void>
@@ -104,7 +105,8 @@ interface Turn<I extends InputContent = InputContent> {
 | `id`, `sequence`, `createdAt` | Turn ID, admission sequence within the Session, and creation time. |
 | `input` | The Turn's input: an array of text parts. |
 | `source` | Where the input came from. See [`InputSource`](#inputsource). |
-| `signal` | Aborts when this Turn's processing is cancelled or interrupted. |
+| `signal` | Aborts when this Turn is cancelled, interrupted, or fails. |
+| `onCancel(handler)` | Registers asynchronous cancellation work that the runtime joins alongside the handler. |
 | `output.write(value)` | Appends Content (or a string) to the Turn's output. Resolves to `{ sequence }`. |
 | `output.pipe(values, { signal? })` | Appends each item of an async iterable in order. Resolves when the iterable is exhausted. |
 | `respond(value)` | Stages the Turn's human-facing response. Call at most once; a second call rejects with `response_already_staged`. |
@@ -163,6 +165,35 @@ Session and Turn that created the input, when another Session did.
 `slack` is present for input that arrived through the native Slack
 integration; see [Slack](/docs/concepts/slack). Each `onMessage` callback
 receives its own `InputMessage` with its own `source`.
+
+### Cancellation and native SDKs
+
+Await initialization in `init` and invocation work in `turn`. Ordinary Node child
+processes, including children created during a Turn, belong to the Session and
+can remain alive between Turns. The handler must join native completion and its
+callbacks on both success and failure; a returned SDK Promise alone may not mean
+that its server has stopped working.
+
+Use `turn.signal` with signal-aware APIs. For an asynchronous interruption API,
+register `turn.onCancel(reason => ...)`. The runtime starts registered callbacks
+concurrently with handler drainage on interruption, deadline, Session shutdown or
+uncaught handler failure, and joins them before acknowledging drainage. Each
+registration runs at most once in that runtime execution. Successful completion
+does not run cancellation callbacks. A callback registered after cancellation
+starts immediately while drainage is still open; registration after closure throws.
+
+The handler and callbacks share a bounded cleanup period. A rejected cancellation
+callback or expired cleanup period prevents Session reuse and requires explicit
+recovery; the platform terminates the entire Session process tree. A fully drained
+ordinary handler failure can preserve a healthy Session. Retain native connection
+errors, register cancellation before checking native health, and reject a new
+invocation before submitting work when that connection is broken.
+
+For local HTTP services, the managed runtime removes default response-header and
+body inactivity timeouts on loopback requests through the global dispatcher.
+Connection establishment remains bounded. Caller AbortSignals and explicitly
+provided dispatchers retain their behavior. In-flight HTTP still prevents idle
+capture; ordinary idle connection expiry allows capture afterwards.
 
 ## `InitContext` and `AgentContext`
 

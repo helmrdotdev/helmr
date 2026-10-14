@@ -1,12 +1,7 @@
-import { agent, template, image, source } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
 const base = image("agent-secrets")
   .from("node:24-bookworm-slim")
-  .workdir("/sandbox")
-  .run(["npm", "install", "-g", "bun@1.3.13"])
-  .copy(source.file("package.json"), "/opt/helmr-agent/package.json")
-  .workdir("/opt/helmr-agent")
-  .run(["bun", "install"])
   .workdir("/sandbox")
 
 export const taskSecretsComputer = template({

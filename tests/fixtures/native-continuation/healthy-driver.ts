@@ -183,7 +183,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const result = state.result as Record<string, unknown>
    assert.equal(result["count"], count); assert.equal(result["setupCount"], 1)
    const previous = native[provider]?.previous
-   if (previous) for (const key of ["pid", "nativePid", "nonce", "nativeConversationId", "nativeScopeId"]) assert.equal(result[key], previous[key], `${provider} lost ${key}`)
+   if (previous) for (const key of ["pid", "nativePid", "nonce", "nativeConversationId"]) assert.equal(result[key], previous[key], `${provider} lost ${key}`)
    if (native[provider]) native[provider]!.previous = result
    turns.push(state); retainedTurns.set(state.id, turn)
    return result

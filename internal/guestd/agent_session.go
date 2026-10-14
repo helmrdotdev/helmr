@@ -23,7 +23,6 @@ type agentTurnProof struct {
 	sequence   int64
 	settled    bool
 	closed     bool
-	scopes     []nativeScopeEvidence
 	evidence   string
 	generation int64
 }
@@ -451,21 +450,13 @@ func (session *agentSession) admitOperationLocked(operation *agentv1.Operation) 
 		return nil, "", errors.New("operation has no current owned Turn")
 	}
 	switch method {
-	case agentv1.Operation_METHOD_CONVERGE_NATIVE:
-		var claim struct {
-			Disposition string                `json:"disposition"`
-			Scopes      []nativeScopeEvidence `json:"scopes"`
+	case agentv1.Operation_METHOD_CONFIRM_DRAIN:
+		if !turn.closed {
+			return nil, "", errors.New("turn processing is not closed")
 		}
-		if err := decodeAgentJSON(operation.GetPayloadJson(), &claim); err != nil {
+		if err := session.process.verifyRunning(); err != nil {
 			return nil, "", err
 		}
-		if claim.Disposition != "returned" && claim.Disposition != "failed" {
-			return nil, "", errors.New("invalid convergence disposition")
-		}
-		if err := session.process.converge(claim.Scopes); err != nil {
-			return nil, "", err
-		}
-		turn.scopes = append([]nativeScopeEvidence(nil), claim.Scopes...)
 		turn.evidence, turn.generation = rand.Text(), session.grant.GetAuthorityGeneration()
 		return &agentv1.GuestCommand{Identity: proto.Clone(session.grant.GetIdentity()).(*agentv1.SessionIdentity), Command: &agentv1.GuestCommand_OperationResult{OperationResult: &agentv1.OperationResult{RequestId: operation.GetRequestId(), Outcome: &agentv1.OperationResult_ValueJson{ValueJson: []byte("null")}}}}, "", nil
 	case agentv1.Operation_METHOD_FINALIZE, agentv1.Operation_METHOD_FAIL:
@@ -477,7 +468,7 @@ func (session *agentSession) admitOperationLocked(operation *agentv1.Operation) 
 				return nil, "", errors.New("turn has unacknowledged mutations")
 			}
 		}
-		if err := session.process.converge(turn.scopes); err != nil {
+		if err := session.process.verifyRunning(); err != nil {
 			return nil, "", err
 		}
 		if turn.generation != session.grant.GetAuthorityGeneration() {
@@ -504,7 +495,7 @@ func (session *agentSession) admitOperationLocked(operation *agentv1.Operation) 
 }
 
 func agentMutation(method agentv1.Operation_Method) bool {
-	return method != agentv1.Operation_METHOD_WAIT_TURN && method != agentv1.Operation_METHOD_WAIT_ASK && method != agentv1.Operation_METHOD_INSPECT_SESSION && method != agentv1.Operation_METHOD_LIST_SESSIONS && method != agentv1.Operation_METHOD_CONVERGE_NATIVE
+	return method != agentv1.Operation_METHOD_WAIT_TURN && method != agentv1.Operation_METHOD_WAIT_ASK && method != agentv1.Operation_METHOD_INSPECT_SESSION && method != agentv1.Operation_METHOD_LIST_SESSIONS && method != agentv1.Operation_METHOD_CONFIRM_DRAIN
 }
 func decodeAgentJSON(body []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))

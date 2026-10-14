@@ -4,7 +4,6 @@ import type { HumanContent } from "../../../sdk/typescript/src/content"
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { AgentDefinition, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
-import { NativeContinuationLost, SessionNativeRegistry } from "./agent-native"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { OperationError } from "./agent-channel"
 import { MessageBusy, SessionRuntime, type SessionDriver, type TurnTiming } from "./agent-session"
@@ -24,7 +23,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     ask: async () => { throw new Error("unused ask") },
     respond: async () => { calls.push("respond") },
     output: async () => { calls.push("output"); return { sequence: 1 } },
-    convergeNative: async (_id, outcome) => { calls.push(`converge:${outcome}`) },
+    confirmDrain: async () => { calls.push("drained") },
     finalize: async (_id, result) => { calls.push("finalize"); return { status: "completed", result } },
     fail: async (_id, error) => { calls.push("fail"); return { status: error.code === "interrupted" ? "interrupted" : "failed", error } },
     hold: async reason => { calls.push(`hold:${reason}`) },
@@ -182,7 +181,7 @@ test("authorized resume admits new input only after interruption settles", async
 })
 
 test("unproved native convergence cannot resume the surviving process", async () => {
-  const { runtime } = fixture({ turn: () => { throw new Error("handler failed") } }, { convergeNative: async () => { throw new Error("native still running") } })
+  const { runtime } = fixture({ turn: () => { throw new Error("handler failed") } }, { confirmDrain: async () => { throw new Error("native still running") } })
   await assert.rejects(runtime.dispatch(request()), /native still running/)
   assert.throws(() => runtime.resume(), /reconstruction/)
   await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
@@ -207,7 +206,7 @@ test("forgotten question is withdrawn and cannot become success", async () => {
   assert.equal((await runtime.dispatch(request())).status, "failed")
   assert.ok(withdrawals >= 1)
   assert.ok(!calls.includes("finalize"))
-  assert.ok(calls.includes("converge:failed"))
+  assert.ok(calls.includes("drained"))
 })
 
 test("already-started callback drains its question and output after return", async () => {
@@ -251,10 +250,10 @@ test("forgotten rejected output fails the turn", async () => {
 })
 
 test("failed native convergence holds the Session instead of dispatching a peer turn", async () => {
-  const { runtime, calls } = fixture({ turn: () => { throw new Error("application failure") } }, { convergeNative: async (_id, _outcome, signal) => { assert.equal(signal.aborted, true); throw new Error("child still running") } })
+  const { runtime, calls } = fixture({ turn: () => { throw new Error("application failure") } }, { confirmDrain: async () => { throw new Error("child still running") } })
   await assert.rejects(runtime.dispatch(request()), /child still running/)
   await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
-  assert.ok(calls.includes("hold:native_convergence_failed"))
+  assert.ok(calls.includes("hold:turn_drain_failed"))
   assert.ok(!calls.includes("fail"))
 })
 
@@ -272,7 +271,7 @@ test("completed callback scope cannot admit detached output during native conver
   const { runtime, calls } = fixture({ turn: async turn => {
     await turn.onMessage(() => { detached = releaseDetached.promise.then(() => turn.output.write("too late")); void detached.catch(() => {}) })
     ready.resolve(); await returnHandler.promise; return 1
-  } }, { convergeNative: async () => { converging.resolve(); await nativeDone.promise } })
+  } }, { confirmDrain: async () => { converging.resolve(); await nativeDone.promise } })
   const result = runtime.dispatch(request())
   await ready.promise
   await runtime.deliverMessage("turn-1", "message-1", textInput("start callback"), { kind: "user" })
@@ -340,7 +339,7 @@ test("lost failure settlement reply reconciles without rerunning processing or c
   assert.ok(!calls.some(call => call.startsWith("hold:")))
   assert.equal((await runtime.reconcileFinalization("turn-1")).status, "failed")
   assert.equal(handlers, 1)
-  assert.equal(calls.filter(call => call === "converge:failed").length, 2)
+  assert.equal(calls.filter(call => call === "drained").length, 1)
   assert.equal(runtime.idle, true)
 })
 
@@ -383,7 +382,7 @@ test("failure convergence holds when a callback ignores interruption", async () 
   const stopRejected = assert.rejects(runtime.interrupt("turn-1", new Error("operator interrupt")), /convergence timed out/)
   await assert.rejects(result, /convergence timed out/)
   await stopRejected
-  assert.ok(calls.includes("hold:native_convergence_failed"))
+  assert.ok(calls.includes("hold:turn_drain_failed"))
   assert.ok(!calls.includes("finalize"))
   await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
   callbackEnd.resolve(); await message
@@ -515,21 +514,19 @@ test("blocked generator cancellation holds instead of hanging or settling", asyn
     return null
   } }, {}, { failureConvergenceMs: 20 })
   await assert.rejects(runtime.dispatch(request()), /convergence timed out/)
-  assert.ok(calls.includes("hold:native_convergence_failed"))
+  assert.ok(calls.includes("hold:turn_drain_failed"))
   assert.ok(!calls.includes("finalize"))
   idle.resolve()
 })
 
 test("interrupt stops native work before waiting for its handler", async () => {
   const entered = deferred<void>(), stopped = deferred<void>()
-  const { runtime, calls } = fixture({ turn: async () => { entered.resolve(); await stopped.promise; return null } }, {
-    convergeNative: async (_id, outcome) => { assert.equal(outcome, "failed"); stopped.resolve() },
-  })
+  const { runtime, calls } = fixture({ turn: async turn => { turn.onCancel(() => { stopped.resolve() }); entered.resolve(); await stopped.promise; return null } })
   const pending = runtime.dispatch(request())
   await entered.promise
   runtime.interrupt("turn-1", new Error("stop"))
   assert.equal((await pending).status, "interrupted")
-  assert.ok(!calls.includes("hold:native_convergence_failed"))
+  assert.ok(!calls.includes("hold:turn_drain_failed"))
 })
 
 test("new deliveries cannot regress the dispatched sequence before acknowledgment", async () => {
@@ -539,22 +536,23 @@ test("new deliveries cannot regress the dispatched sequence before acknowledgmen
 })
 
 
-test("failure convergence verifies again after authored work joins", async () => {
+test("failure attestation follows cancellation and authored drainage", async () => {
   const entered = deferred<void>(), stopped = deferred<void>()
   const order: string[] = []
-  const { runtime } = fixture({ turn: async () => {
+  const { runtime } = fixture({ turn: async turn => {
+    turn.onCancel(() => { order.push("cancel"); stopped.resolve() })
     entered.resolve(); await stopped.promise
     order.push("handler joined")
     return null
   } }, {
-    convergeNative: async () => { order.push("converge"); stopped.resolve() },
+    confirmDrain: async () => { order.push("drained") },
     fail: async (_id, error) => { order.push("settle"); return { status: "interrupted", error } },
   })
   const pending = runtime.dispatch(request())
   await entered.promise
   runtime.interrupt("turn-1", new Error("stop"))
   await pending
-  assert.deepEqual(order, ["converge", "handler joined", "converge", "settle"])
+  assert.deepEqual(order, ["cancel", "handler joined", "drained", "settle"])
 })
 
 
@@ -574,34 +572,22 @@ test("known steering rejection remains visible without failing the Turn", async 
 test("hold receipt failure retains the original setup and convergence diagnosis", async () => {
   const setup = fixture({ init: () => { throw new Error("setup broke") }, turn: () => null }, { hold: async () => { throw new Error("upstream renewing") } })
   await assert.rejects(setup.runtime.initialize(), error => error instanceof AggregateError && error.errors[0].message === "setup broke" && error.errors[1].message === "upstream renewing" && error.message.includes("setup broke"))
-  const native = fixture({ turn: () => { throw new Error("handler broke") } }, { convergeNative: async () => { throw new Error("native still running") }, hold: async () => { throw new Error("hold reply lost") } })
+  const native = fixture({ turn: () => { throw new Error("handler broke") } }, { confirmDrain: async () => { throw new Error("native still running") }, hold: async () => { throw new Error("hold reply lost") } })
   await assert.rejects(native.runtime.dispatch(request()), error => error instanceof AggregateError && error.errors[0].message === "native still running" && error.errors[1].message === "hold reply lost")
   assert.throws(() => native.runtime.resume(), /reconstruction/)
 })
 
 
-test("registered native output remains bound to its Turn while its producer drains", async () => {
-  const native = new SessionNativeRegistry(context.signal)
-  const initialized = Promise.resolve()
-  let resource!: ReturnType<SessionNativeRegistry["resource"]>
-  const done = deferred<void>(), admitted = deferred<void>(), write = deferred<void>()
-  let nativeDone = false
-  const { runtime, calls } = fixture({
-    init: () => { resource = native.resource({ initialized, state: () => ({ phase: "idle", reusable: true }), stop: async () => {} }) },
-    turn: turn => {
-      const scope = native.register(turn, resource, { done: done.promise, state: () => ({ idle: nativeDone, reusable: true }), stop: async () => {} })
-      void write.promise.then(() => scope.run(async () => {
-        await turn.output.write("native output after handler return")
-        nativeDone = true
-        done.resolve()
-      })).catch(done.reject)
-      admitted.resolve()
-      return "returned"
-    },
-  }, { convergeNative: async (id, disposition) => { await native.join(id, disposition) } }, { failureConvergenceMs: 100, native })
+test("the handler joins native callbacks and their output before settlement", async () => {
+  const admitted = deferred<void>(), write = deferred<void>()
+  const { runtime, calls } = fixture({ turn: async turn => {
+    admitted.resolve()
+    await write.promise
+    await turn.output.write("native output before handler return")
+    return "returned"
+  } })
   const pending = runtime.dispatch(request())
   await admitted.promise
-  await new Promise(resolve => setImmediate(resolve))
   assert.equal(calls.includes("finalize"), false)
   write.resolve()
   assert.equal((await pending).status, "completed")
@@ -611,10 +597,11 @@ test("registered native output remains bound to its Turn while its producer drai
 test("lost native continuation still joins authored callbacks before interrupted settlement", async () => {
   const started = deferred<void>(), callbackDone = deferred<void>(), handlerDone = deferred<void>()
   const { runtime, calls } = fixture({ turn: async turn => {
+    turn.onCancel(() => { throw new Error("native continuation lost") })
     await turn.onMessage(async () => { started.resolve(); await callbackDone.promise })
     await handlerDone.promise
     throw new Error("application failure before cleanup loss")
-  } }, { convergeNative: async () => { throw new NativeContinuationLost() } })
+  } })
   const pending = runtime.dispatch(request())
   await new Promise(resolve => setImmediate(resolve))
   const callback = runtime.deliverMessage("turn-1", "message", [], { kind: "user" })
@@ -626,8 +613,8 @@ test("lost native continuation still joins authored callbacks before interrupted
   await callback
   const outcome = await pending
   assert.equal(outcome.status, "interrupted")
-  assert.match(outcome.error?.message ?? "", /application failure/)
-  assert.ok(calls.includes("hold:native_continuation_lost"))
+  assert.match(outcome.error?.message ?? "", /native continuation lost/)
+  assert.ok(calls.includes("hold:session_continuation_lost"))
   assert.equal(runtime.idle, false)
   assert.throws(() => runtime.resume(), /reconstruction/)
 })
@@ -671,3 +658,100 @@ for (const status of ["interrupted", "completed"] as const) {
     assert.equal(calls.some(call => call.startsWith("hold:")), false)
   })
 }
+
+test("cancellation hooks release the handler concurrently and are joined once", async () => {
+  const started = deferred<void>(), releaseHandler = deferred<void>(), releaseHook = deferred<void>()
+  let invoked = 0
+  const { runtime, calls } = fixture({ turn: async turn => {
+    turn.onCancel(async reason => { assert.equal(reason, "stop"); invoked++; releaseHandler.resolve(); await releaseHook.promise })
+    started.resolve()
+    await releaseHandler.promise
+    return null
+  } })
+  const pending = runtime.dispatch(request())
+  await started.promise
+  const stop = runtime.interrupt("turn-1", "stop")
+  await releaseHandler.promise
+  assert.equal(invoked, 1)
+  assert.ok(!calls.includes("fail"))
+  releaseHook.resolve()
+  await stop
+  assert.equal((await pending).status, "interrupted")
+  assert.equal(invoked, 1)
+})
+
+test("a cancellation hook registered during handler drainage also joins", async () => {
+  const started = deferred<void>(), cancelled = deferred<void>(), hookStarted = deferred<void>(), finish = deferred<void>()
+  const { runtime, calls } = fixture({ turn: async turn => {
+    turn.signal.addEventListener("abort", () => cancelled.resolve(), { once: true })
+    started.resolve()
+    await cancelled.promise
+    turn.onCancel(async () => { hookStarted.resolve(); await finish.promise })
+    return null
+  } })
+  const pending = runtime.dispatch(request())
+  await started.promise
+  const stop = runtime.interrupt("turn-1", "stop")
+  await hookStarted.promise
+  assert.ok(!calls.includes("fail"))
+  finish.resolve()
+  await stop
+  assert.equal((await pending).status, "interrupted")
+})
+
+test("handler failure invokes cancellation and rejected cleanup prevents reuse", async () => {
+  let invoked = 0
+  const { runtime, calls } = fixture({ turn: turn => {
+    turn.onCancel(async () => { invoked++; throw new Error("native connection lost") })
+    throw new Error("request failed")
+  } })
+  assert.equal((await runtime.dispatch(request())).status, "interrupted")
+  assert.equal(invoked, 1)
+  assert.ok(calls.includes("hold:session_continuation_lost"))
+  await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
+})
+
+test("successful Turns discard cancellation hooks and reject late registration", async () => {
+  let previous!: Turn, invoked = 0
+  const { runtime } = fixture({ turn: turn => {
+    previous = turn
+    turn.onCancel(() => { invoked++ })
+    return null
+  } })
+  assert.equal((await runtime.dispatch(request())).status, "completed")
+  assert.equal(invoked, 0)
+  assert.throws(() => previous.onCancel(() => {}), /registration is closed/)
+  assert.equal((await runtime.dispatch(request(2))).status, "completed")
+  assert.equal(invoked, 0)
+})
+
+test("a hanging cancellation hook holds without attesting or settling the Turn", async () => {
+  const entered = deferred<void>()
+  const { runtime, calls } = fixture({ turn: turn => {
+    turn.onCancel(() => new Promise<void>(() => {}))
+    entered.resolve()
+    return new Promise<Json>((_resolve, reject) => turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }))
+  } }, {}, { failureConvergenceMs: 20 })
+  const pending = runtime.dispatch(request())
+  await entered.promise
+  const stop = runtime.interrupt("turn-1", new Error("stop"))
+  await Promise.all([assert.rejects(pending, /convergence timed out/), assert.rejects(stop, /convergence timed out/)])
+  assert.deepEqual(calls, ["hold:turn_drain_failed"])
+  assert.throws(() => runtime.resume(), /reconstruction/)
+})
+
+test("an interruption winning finalization joins cancellation before its receipt", async () => {
+  const entered = deferred<void>(), release = deferred<void>()
+  let completed = false
+  const { runtime } = fixture({ turn: turn => {
+    turn.onCancel(async () => { entered.resolve(); await release.promise; completed = true })
+    return "done"
+  } }, { finalize: async () => ({ status: "interrupted" }) })
+  const pending = runtime.dispatch(request())
+  await entered.promise
+  assert.equal(runtime.idle, false)
+  release.resolve()
+  assert.equal((await pending).status, "interrupted")
+  assert.equal(completed, true)
+  assert.equal(runtime.idle, true)
+})

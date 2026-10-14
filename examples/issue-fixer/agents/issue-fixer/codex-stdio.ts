@@ -1,6 +1,5 @@
-import { spawnNative as spawnManagedNative, type NativeResource, type NativeProcess } from "@helmr/sdk/internal"
-import type { ChildProcessWithoutNullStreams } from "node:child_process"
-import { dirname, join, delimiter } from "node:path"
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { dirname, join } from "node:path"
 import { createRequire } from "node:module"
 import { createInterface } from "node:readline"
 import { Queue } from "./queue"
@@ -8,22 +7,12 @@ import { Queue } from "./queue"
 export type NativeMessage = { id?: string | number; method: string; params?: unknown }
 
 // Small app-server wire transport. Provider policy stays in codex-harness.ts.
-export function spawnManagedCodex(resource: NativeResource, home: string, environment: NodeJS.ProcessEnv = process.env): NativeProcess {
-  const options = codexCommand({ ...environment, CODEX_HOME: home })
-  return spawnManagedNative(resource, options.command, options.args, { env: options.env })
-}
-function codexCommand(environment: NodeJS.ProcessEnv) {
-  const architecture = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : undefined
-  const platform = process.platform === "darwin" ? "apple-darwin" : process.platform === "linux" ? "unknown-linux-musl" : undefined
-  if (!architecture || !platform) throw new Error("Unsupported native test platform")
+export function spawnCodex(home: string, environment: NodeJS.ProcessEnv = process.env): ChildProcessWithoutNullStreams {
   const require = createRequire(import.meta.url)
-  const packageRoot = dirname(require.resolve("@openai/codex/package.json"))
-  const nativeRequire = createRequire(join(packageRoot, "package.json"))
-  const root = dirname(nativeRequire.resolve(`@openai/codex-${process.platform}-${process.arch}/package.json`))
-  const vendor = join(root, "vendor", `${architecture}-${platform}`)
-  return { command: join(vendor, "bin", "codex"), args: ["app-server", "--listen", "stdio://"],
-    env: { ...environment, PATH: [join(vendor, "codex-path"), environment.PATH].filter(Boolean).join(delimiter), CODEX_MANAGED_PACKAGE_ROOT: packageRoot },
-  }
+  const launcher = join(dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js")
+  return spawn(process.execPath, [launcher, "app-server", "--listen", "stdio://"], {
+    env: { ...environment, CODEX_HOME: home }, stdio: "pipe",
+  })
 }
 export class CodexRequestRejected extends Error {
   readonly code: number
@@ -53,6 +42,7 @@ export class CodexStdio {
     this.exited = new Promise(resolve => {
       this.child.once("close", () => { lines.close(); fail(new Error("Codex app-server closed")); resolve() })
     })
+    this.child.once("exit", () => fail(new Error("Codex launcher exited")))
     this.child.once("error", fail)
     this.child.stdin.on("error", fail)
     lines.on("line", line => {

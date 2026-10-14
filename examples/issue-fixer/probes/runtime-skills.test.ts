@@ -12,7 +12,6 @@ import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/
 import { CodexHarness } from "../agents/issue-fixer/codex-harness"
 import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
 import { conversation } from "../agents/issue-fixer/conversation"
-import { localNativeRuntime } from "./native-runtime"
 import { claudeModel, codexModel } from "./native-model"
 
 function containsDocument(value: unknown, expected: string): boolean {
@@ -50,7 +49,6 @@ for (const provider of ["codex", "claude"] as const) {
       : claudeModel(requests, false, (_body, index) => index <= 2 ? {
         id: `skill_${index}`, name: "mcp__helmr__skills", input: argumentsFor(index),
       } : undefined)
-    const native = localNativeRuntime(stopped.signal)
     let harness: CodexHarness | ClaudeHarness | undefined
     try {
       const [line] = await once(lines, "line", { signal: stopped.signal })
@@ -71,7 +69,7 @@ for (const provider of ["codex", "claude"] as const) {
         registerMessages: async () => {}, closeProcessing: async () => {},
         output: async () => ({ sequence: 1 }), respond: async () => {},
         ask: async () => ({ answer: Promise.resolve({ answer: { selected: [{ id: "allow", value: true }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }),
-        convergeNative: async (turnId, disposition, signal) => { await native.registry.join(turnId, disposition, signal.reason) },
+        confirmDrain: async () => {},
         finalize: async (_id, result) => ({ status: "completed", result }),
         fail: async (_id, error) => ({ status: "failed", error }),
         hold: async () => {},
@@ -89,7 +87,7 @@ for (const provider of ["codex", "claude"] as const) {
       }, {
         session: { id: "skills-session" }, computer: { id: "computer" }, deployment: { id: "deployment" },
         recovery: { kind: "initial" }, signal: stopped.signal, mcp: { getConnectionOptions: async () => connection },
-      }, driver, { failureConvergenceMs: 5000, native: native.registry })
+      }, driver, { failureConvergenceMs: 5000 })
       const outcome = await runtime.dispatch({ id: "skill-turn", sequence: 1, createdAt: new Date().toISOString(), input: [{ type: "text", text: "Read the Helmr runtime skill." }], source: { kind: "api" } })
       assert.equal(outcome.status, "completed", JSON.stringify(outcome))
       assert.equal(requests.length, 3, "expected list, read and completion model steps")
@@ -98,7 +96,6 @@ for (const provider of ["codex", "claude"] as const) {
       clearTimeout(deadline)
       stopped.abort()
       await harness?.close()
-      native.uninstall()
       model.closeAllConnections()
       await new Promise<void>(resolve => model.close(() => resolve()))
       lines.close()

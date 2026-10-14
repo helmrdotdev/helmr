@@ -373,19 +373,19 @@ try {
     if (options.nativeProcessLoss) {
       assert(previous)
       const completed = turns.filter(turn => turn.sessionId === started.session.id)
-      const lost = await started.session.enqueue(fixtureInput("fixture-native-proxy-loss"), undefined, { signal })
+      const lost = await started.session.enqueue(fixtureInput("fixture-native-launcher-loss"), undefined, { signal })
       const recoveryInput = `${provider} unique after-loss input`
       const recovered = await started.session.enqueue(fixtureInput(recoveryInput), undefined, { signal })
       let after = 0
       for (;;) {
         const page = await started.session.events.list({ after, limit: 100 }, { signal })
-        if (page.records.some(event => event.turnId === lost.id && event.kind === "turn.output" && JSON.stringify(event.data).includes("native proxy loss ready"))) break
+        if (page.records.some(event => event.turnId === lost.id && event.kind === "turn.output" && JSON.stringify(event.data).includes("native launcher loss ready"))) break
         after = page.nextAfter
         if (!page.hasMore) await delay(100, undefined, { signal })
       }
       assert.equal((await recovered.get({ signal })).status, "queued")
       process.stderr.write(JSON.stringify({ nativeProcessLossRequested: { provider, sessionId: started.session.id, lostTurnId: lost.id, recoveredTurnId: recovered.id, before: previous } }) + "\n")
-      await lost.send(fixtureInput("lose-native-proxy"), undefined, { signal })
+      await lost.send(fixtureInput("lose-native-launcher"), undefined, { signal })
       assert.equal((await lost.wait({ signal })).status, "interrupted")
       let holdId: string | undefined
       let holdReason: string | undefined
@@ -395,7 +395,7 @@ try {
           assert.equal(session.holds.length, 1, "native loss added multiple holds")
           const hold = session.holds[0]!
           assert.equal(hold.scope, "local")
-          assert(["native_continuation_lost", "native_convergence_failed"].includes(hold.reason), `unexpected native loss hold: ${hold.reason}`)
+          assert(["session_continuation_lost", "turn_drain_failed"].includes(hold.reason), `unexpected native loss hold: ${hold.reason}`)
           holdId = hold.id; holdReason = hold.reason; break
         }
         await delay(100, undefined, { signal })
@@ -431,7 +431,6 @@ try {
       assert.equal(result["setupCount"], 2)
       assert.notEqual(result["nonce"], previous["nonce"])
       assert.notEqual(result["nativePid"], previous["nativePid"])
-      assert.notEqual(result["nativeScopeId"], previous["nativeScopeId"])
       assert.equal(result["nativeConversationId"], previous["nativeConversationId"])
       assert.equal((await lost.get({ signal })).status, "interrupted", "resume replayed the lost Turn")
       for (const old of completed) {

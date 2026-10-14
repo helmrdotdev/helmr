@@ -21,7 +21,7 @@ type agentSessionProcess interface {
 	read() (*agentv1.ProgramEvent, error)
 	wait(context.Context) error
 	logs() (io.Reader, io.Reader)
-	converge([]nativeScopeEvidence) error
+	verifyRunning() error
 	freeze(context.Context) error
 	verifyFrozen() error
 	thaw(context.Context) error

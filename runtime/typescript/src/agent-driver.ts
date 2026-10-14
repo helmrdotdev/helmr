@@ -4,7 +4,6 @@ import { agentProto } from "@helmr/proto"
 import { normalizeContent, type Content } from "../../../sdk/typescript/src/content"
 import type { Json, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import type { SessionDriver } from "./agent-session"
-import { NativeContinuationLost, type SessionNativeRegistry } from "./agent-native"
 import { AgentChannel, OperationNotSent } from "./agent-channel"
 
 const method = agentProto.Operation_Method
@@ -30,8 +29,7 @@ function outcome(value: Json): TurnOutcome {
 export class GuestSessionDriver implements SessionDriver {
   private readonly channel: AgentChannel
 
-  private readonly native: SessionNativeRegistry | undefined
-  constructor(channel: AgentChannel, native?: SessionNativeRegistry) { this.channel = channel; this.native = native }
+  constructor(channel: AgentChannel) { this.channel = channel }
   private call(operation: agentProto.Operation_Method, turnId: string, payload: Json = null, signal?: AbortSignal): Promise<Json> {
     return this.channel.operation(operation, payload, { turnId, ...(signal === undefined ? {} : { signal }) })
   }
@@ -66,18 +64,14 @@ export class GuestSessionDriver implements SessionDriver {
     return { sequence }
   }
   async respond(turnId: string, responseId: string, value: Content): Promise<void> { await this.call(method.RESPOND, turnId, { responseId, value: value as unknown as Json }) }
-  async convergeNative(turnId: string, disposition: "returned" | "failed", _signal: AbortSignal): Promise<void> {
-    // Failure convergence must execute even when the Turn signal is aborted.
-    await this.native?.join(turnId, disposition, _signal.reason)
-    const evidence = await this.native?.evidence() ?? { scopes: [], reusable: true }
-    await this.call(method.CONVERGE_NATIVE, turnId, { disposition, scopes: evidence.scopes.map(scope => ({ ...scope })) })
-    if (!evidence.reusable) throw new NativeContinuationLost()
+  async confirmDrain(turnId: string): Promise<void> {
+    await this.call(method.CONFIRM_DRAIN, turnId)
   }
   async finalize(turnId: string, result: Json): Promise<TurnOutcome> {
     try { return outcome(await this.call(method.FINALIZE, turnId, { result })) }
     catch (error) {
       if (!(error instanceof OperationNotSent) || error.code !== "request_too_large") throw error
-      // Native work already converged. This deterministic, never-admitted
+      // Authored work already drained. This deterministic, never-admitted
       // result is a contract failure, not uncertain success publication.
       return this.fail(turnId, { code: "result_too_large", message: "Turn result exceeds the transport limit" })
     }

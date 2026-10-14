@@ -1,6 +1,5 @@
 // Isolated transport failure test; real-native probes run in another process.
-import { installNativeTestHooks } from "./native-runtime-fixture"
-const nativeFixture = installNativeTestHooks()
+import { EventEmitter } from "node:events"
 import { expect, mock, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
@@ -16,7 +15,7 @@ let onInterrupt: (() => void) | undefined
 let finishExit!: () => void
 class Rejected extends Error { constructor(readonly code: number, message: string) { super(message) } }
 mock.module("../agents/issue-fixer/codex-stdio", () => ({
-  spawnManagedCodex: () => ({ child: {}, ready: Promise.resolve({ scopeId: "fixture", processId: 123 }) }), CodexRequestRejected: Rejected,
+  spawnCodex: () => { const child = Object.assign(new EventEmitter(), { pid: 123 }); queueMicrotask(() => child.emit("spawn")); return child }, CodexRequestRejected: Rejected,
   CodexStdio: class {
     readonly messages = messages = new Queue()
     constructor() { sent = [] }
@@ -60,7 +59,7 @@ test("native steering rejection can precede the queued completion notification",
   let handler!: (value: unknown) => Promise<void>, registered!: () => void
   const ready = new Promise<void>(resolve => { registered = resolve })
   const turn = { id: "turn", signal: new AbortController().signal,
-    onMessage: async (callback: typeof handler) => { handler = callback; registered() },
+    onCancel: () => {}, onMessage: async (callback: typeof handler) => { handler = callback; registered() },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
@@ -73,14 +72,13 @@ test("native steering rejection can precede the queued completion notification",
 })
 
 
-test("forgotten failed codex open is observed by setup without an unhandled rejection", async () => {
-  void CodexHarness.open("/dev/null/invalid-native-directory", "session", {})
-  await expect(nativeFixture.initializations[0]!).rejects.toThrow()
+test("failed Codex initialization rejects the awaited open", async () => {
+  await expect(CodexHarness.open("/dev/null/invalid-native-directory", "session", {})).rejects.toThrow()
   await new Promise<void>(resolve => setImmediate(resolve))
 })
 
 
-for (const failure of [false, true]) test(`registered native startup drains after handler ${failure ? "failure" : "return"}`, async () => {
+for (const failure of [false, true]) test(`awaited native startup drains after application ${failure ? "failure" : "return"}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-pending-start-"))
   const harness = await CodexHarness.open(directory, "session", {})
   let start!: () => void
@@ -88,7 +86,7 @@ for (const failure of [false, true]) test(`registered native startup drains afte
   const abort = new AbortController()
   let processing = true, registered = false
   const turn = { id: "turn", signal: abort.signal,
-    onMessage: async () => { if (!processing) throw new Error("Turn processing admission is closed"); registered = true },
+    onCancel: () => {}, onMessage: async () => { if (!processing) throw new Error("Turn processing admission is closed"); registered = true },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   onInterrupt = () => messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "interrupted" } } })
@@ -114,7 +112,7 @@ test("a caught native result failure permits an ordinary retry in the same Turn"
   const harness = await CodexHarness.open(directory, "session", {})
   let registrations = 0
   const turn = { id: "turn", signal: new AbortController().signal,
-    onMessage: async () => { if (++registrations > 1) throw new Error("duplicate message handler") },
+    onCancel: () => {}, onMessage: async () => { if (++registrations > 1) throw new Error("duplicate message handler") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
@@ -122,13 +120,11 @@ test("a caught native result failure permits an ordinary retry in the same Turn"
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "failed" } } })
     await expect(first).rejects.toThrow("Native Turn ended")
-    await nativeFixture.operations[0]
     expect(harness.reusable).toBe(true)
     const second = harness.run(turn, "retry")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await second
-    await nativeFixture.operations[1]
     expect(registrations).toBe(1)
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
@@ -137,7 +133,7 @@ test("callback failure interrupts to reusable idle before returning the error", 
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-callback-failure-"))
   const harness = await CodexHarness.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal,
-    onMessage: async () => {}, ask: async () => { throw new Error("ask registration failed") },
+    onCancel: () => {}, onMessage: async () => {}, ask: async () => { throw new Error("ask registration failed") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   onInterrupt = () => messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "interrupted" } } })
@@ -146,7 +142,6 @@ test("callback failure interrupts to reusable idle before returning the error", 
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "native", turnId: "native-turn" } })
     await expect(running).rejects.toThrow("ask registration failed")
-    await nativeFixture.operations[0]
     expect(harness.reusable).toBe(true)
   } finally { onInterrupt = undefined; finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
@@ -156,7 +151,7 @@ test("registration failure before submission preserves the setup resource", asyn
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-registration-failure-"))
   const harness = await CodexHarness.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal,
-    onMessage: () => { throw new Error("registration failed") },
+    onCancel: () => {}, onMessage: () => { throw new Error("registration failed") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
@@ -170,7 +165,7 @@ test("completed snapshots publish commentary once and commit only an exact succe
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-content-"))
   const harness = await CodexHarness.open(directory, "session", {})
   const output: unknown[] = [], responses: unknown[] = []
-  const turn = { id: "turn", signal: new AbortController().signal, onMessage: async () => {},
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
     output: { write: async (value: unknown) => { output.push(value); return { sequence: 1 } } }, respond: async (value: unknown) => { responses.push(value) },
   } as unknown as Turn
   const item = (id: string, phase?: string) => ({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "agentMessage", id, text: id, phase } } })
@@ -193,7 +188,7 @@ test("terminal notification remains live while questions wait and no late native
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-questions-"))
   const harness = await CodexHarness.open(directory, "session", {})
   let asks = 0, withdrawals = 0
-  const turn = { id: "turn", signal: new AbortController().signal, onMessage: async () => {},
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
     ask: (_: unknown, { signal }: { signal: AbortSignal }) => { asks++; return new Promise((_, reject) => signal.addEventListener("abort", () => { withdrawals++; reject(signal.reason) })) },
   } as unknown as Turn
   try {
@@ -212,7 +207,7 @@ test("terminal notification remains live while questions wait and no late native
 for (const status of ["completed", "failed", "declined"]) test(`terminal command ${status} without exit code drains before Turn completion`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-terminal-command-"))
   const harness = await CodexHarness.open(directory, "session", {})
-  const turn = { id: "turn", signal: new AbortController().signal, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   try {
     const pending = harness.run(turn, "inspect")
     await new Promise<void>(resolve => setImmediate(resolve))
@@ -222,4 +217,20 @@ for (const status of ["completed", "failed", "declined"]) test(`terminal command
     await pending
     expect(harness.reusable).toBe(true)
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("a retained protocol failure rejects the next prompt and its cancellation hook", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-native-broken-"))
+  const harness = await CodexHarness.open(directory, "session", {})
+  let cancel!: (reason: unknown) => void | Promise<void>
+  try {
+    const failure = new Error("malformed native frame")
+    messages.end(failure)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    const before = sent.length
+    const turn = { id: "next", signal: new AbortController().signal, onCancel: (hook: typeof cancel) => { cancel = hook } } as unknown as Turn
+    await expect(harness.run(turn, "must not be submitted")).rejects.toBe(failure)
+    await expect(cancel(new Error("handler failed"))).rejects.toBe(failure)
+    expect(sent.length).toBe(before)
+  } finally { finishExit(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })

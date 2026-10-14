@@ -39,25 +39,6 @@ func validateProcessCgroupLeaf(leaf string) error {
 	return nil
 }
 
-// Only the guest constructs a nested assignment. Top-level creation continues
-// to require a single validated leaf; no caller supplies a filesystem path.
-func validateAssignedProcessCgroup(scope string) error {
-	parent, child, nested := strings.Cut(scope, "/")
-	if err := validateProcessCgroupLeaf(parent); err != nil {
-		return err
-	}
-	if !nested {
-		return nil
-	}
-	if !strings.HasPrefix(child, "native-") || len(child) != len("native-")+32 {
-		return errors.New("native cgroup assignment is invalid")
-	}
-	if _, err := hex.DecodeString(strings.TrimPrefix(child, "native-")); err != nil {
-		return errors.New("native cgroup assignment is invalid")
-	}
-	return nil
-}
-
 type processCgroup interface {
 	attach(*exec.Cmd) error
 	freeze(context.Context) error

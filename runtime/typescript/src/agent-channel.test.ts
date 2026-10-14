@@ -110,31 +110,27 @@ test("escaped JSON beyond encoder capacity is never sent and leaves the channel 
   assert.deepEqual(await pending, { status: "failed" })
 })
 
-test("native scope proof is sent and accepted before classifying continuation loss", async () => {
+test("drain attestation waits for the guest and preserves a rejection", async () => {
   const { GuestSessionDriver } = await import("./agent-driver")
-  const { SessionNativeRegistry, NativeContinuationLost } = await import("./agent-native")
   for (const rejected of [false, true]) {
     const { channel, frames } = fixture()
-    const native = new SessionNativeRegistry(new AbortController().signal)
-    native.evidence = async () => ({ scopes: [{ scopeId: "retained", state: "idle" }, { scopeId: "closed", state: "stopped" }], reusable: false })
-    const driver = new GuestSessionDriver(channel, native)
+    const driver = new GuestSessionDriver(channel)
     let finished = false
-    const pending = driver.convergeNative("turn", "failed", AbortSignal.abort(new Error("handler failed")))
+    const pending = driver.confirmDrain("turn")
     void pending.then(() => { finished = true }, () => { finished = true })
     await tick()
     assert.equal(finished, false)
-    assert.equal(frames[0]!.event.case, "operation")
     const operation = frames[0]!.event
     if (operation.case !== "operation") assert.fail("missing operation")
-    assert.equal(operation.value.method, agentProto.Operation_Method.CONVERGE_NATIVE)
+    assert.equal(operation.value.method, agentProto.Operation_Method.CONFIRM_DRAIN)
     assert.equal(operation.value.turnId, "turn")
-    assert.deepEqual(JSON.parse(Buffer.from(operation.value.payloadJson).toString()), { disposition: "failed", scopes: [{ scopeId: "retained", state: "idle" }, { scopeId: "closed", state: "stopped" }] })
+    assert.equal(JSON.parse(Buffer.from(operation.value.payloadJson).toString()), null)
     if (rejected) {
-      channel.receive(identity, create(agentProto.OperationResultSchema, { requestId: operation.value.requestId, outcome: { case: "error", value: { code: "unjoined", message: "Native scope still running" } } }))
-      await assert.rejects(pending, error => error instanceof OperationError && !(error instanceof NativeContinuationLost))
+      channel.receive(identity, create(agentProto.OperationResultSchema, { requestId: operation.value.requestId, outcome: { case: "error", value: { code: "process_lost", message: "Session process is unavailable" } } }))
+      await assert.rejects(pending, error => error instanceof OperationError && error.code === "process_lost")
     } else {
       channel.receive(identity, result(operation.value.requestId, null))
-      await assert.rejects(pending, error => error instanceof NativeContinuationLost)
+      await pending
     }
   }
 })

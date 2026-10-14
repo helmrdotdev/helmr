@@ -5,7 +5,7 @@ import type { AgentDefinition, Json, InitContext, Turn } from "../../../sdk/type
 import { requireJson } from "../../../sdk/typescript/src/agent"
 import { AgentChannel, OperationError, MAX_AGENT_FRAME_BYTES } from "./agent-channel"
 import { SessionActivity } from "./agent-activity"
-import { SessionNativeRegistry } from "./agent-native"
+import { installSessionHttp } from "./agent-http"
 import { createAgentMcp } from "./agent-mcp"
 import { GuestSessionDriver } from "./agent-driver"
 import { MessageBusy, SessionRuntime, type TurnTiming } from "./agent-session"
@@ -57,9 +57,8 @@ export type AgentDefinitionLoader = (agentId: string) => Promise<AgentDefinition
 export async function runAgentProgram(definitionSource: AgentDefinition<InputContent, Json, unknown> | AgentDefinitionLoader, io: AgentProgramIO): Promise<void> {
   const stopped = new AbortController()
   const failureConvergenceMs = 10_000
+  const uninstallHttp = installSessionHttp()
   const activity = new SessionActivity()
-  const native = new SessionNativeRegistry(stopped.signal, failureConvergenceMs, undefined, activity)
-  const uninstallNative = native.install()
   let channel: AgentChannel | undefined
   let runtime: SessionRuntime | undefined
   let initialized = false
@@ -89,7 +88,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
           await channel.event({ case: "failed", value: create(agentProto.SessionFailedSchema, { code, message }) })
           return
         }
-        const driver = new GuestSessionDriver(channel, native)
+        const driver = new GuestSessionDriver(channel)
         const kind = start.recoveryKind === agentProto.SessionStart_RecoveryKind.INITIAL ? "initial" : start.recoveryKind === agentProto.SessionStart_RecoveryKind.RECONSTRUCTED ? "reconstructed" : undefined
         if (!kind) throw new Error("Invalid Session recovery kind")
         const context: InitContext = {
@@ -97,7 +96,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
           session: { id: command.identity.sessionId, ...(start.conversationKey === undefined ? {} : { key: start.conversationKey }), ...(start.parentSessionId === undefined ? {} : { parent: Object.freeze({ id: start.parentSessionId }) }) },
           computer: { id: start.computerId }, deployment: { id: start.deploymentId }, recovery: { kind, ...(start.recoveryReason ? { reason: start.recoveryReason } : {}) }, signal: stopped.signal,
         }
-        runtime = new SessionRuntime(definition, context, driver, { failureConvergenceMs, terminalSequence: safeSequence(start.terminalSequence), native, activity, ...(io.timing ? { onTiming: io.timing } : {}) })
+        runtime = new SessionRuntime(definition, context, driver, { failureConvergenceMs, terminalSequence: safeSequence(start.terminalSequence), activity, ...(io.timing ? { onTiming: io.timing } : {}) })
         const activeChannel = channel
         observe(runtime.initialize().then(async () => {
           initialized = true
@@ -114,8 +113,8 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
       if (command.command.case === "checkpoint") {
         const checkpointId = command.command.value.checkpointId
         // The supervisor has sealed admission and drained earlier local writes.
-        // Inspect native resources without manufacturing a public delivery
-        // receipt. The physical owner fences termination and broken pipes.
+        // Inspect asynchronous work without manufacturing a delivery receipt.
+        // The physical owner fences the entire Session process tree.
         const activeChannel = channel
         observe((async () => {
           let outcome: agentProto.SessionCheckpointReady["outcome"]
@@ -123,10 +122,9 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
             if (!checkpointId || !initialized || !runtime!.canCheckpoint || shutdown) throw new Error("Session is not ready for coherent capture")
             // Handle destruction is reported on the next loop turn.
             await new Promise<void>(resolve => setImmediate(resolve))
-            const evidence = await native.evidence()
-            if (!evidence.reusable || !runtime!.canCheckpoint) throw new Error("Session continuation is not reusable")
+            if (!runtime!.canCheckpoint) throw new Error("Session continuation is not reusable")
             activity.assertIdle()
-            outcome = { case: "scopesJson", value: Buffer.from(JSON.stringify(evidence.scopes)) }
+            outcome = { case: "ready", value: true }
           } catch (error) { outcome = { case: "error", value: failure(error) } }
           await activeChannel.event({ case: "checkpointReady", value: create(agentProto.SessionCheckpointReadySchema, { checkpointId, outcome }) })
         })())
@@ -191,9 +189,8 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
     const error = stopped.signal.reason ?? new Error("Guest pipe closed")
     stopped.abort(error)
     channel?.close(error)
-    uninstallNative()
     activity.close()
-    void native.stop(error).catch(() => {})
+    uninstallHttp()
     // Uncooperative authored tasks are fenced by the guest process owner. Never
     // report a clean shutdown merely because their JavaScript promises hung.
   }

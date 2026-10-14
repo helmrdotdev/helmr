@@ -91,21 +91,21 @@ Per-Turn evidence is also written to the driver log so later failures preserve i
 Set `HELMR_NATIVE_PROCESS_LOSS_PROOF=1` to select
 `TestWorkerAgentNativeProcessLoss`. After two completed native Turns per provider,
 the authored fixture waits for an ordinary message during a third Turn, kills its
-exact owned launcher-proxy handle and observes its exit. The unchanged guest
-launcher must stop and join the actual native process after that connection loss.
-This is proxy loss between native calls, not a VM loss or a failure during a
-provider response. No guest diagnostic PID becomes a signal target and no
-production fault-injection API is added.
+exact owned ordinary launcher handle and observes its exit. The application retains
+that error and refuses another native prompt. Its joined cancellation hook reports
+the loss, and the guest terminates the complete Session process tree.
+This is launcher loss between native calls, not VM loss or a failure during a
+provider response. No diagnostic PID becomes a signal target and no production
+fault-injection API is added.
 
-Proxy exit may precede guest stop/join. The fixture records the actual existing
-hold reason: `native_continuation_lost` when initial convergence succeeds, or
-`native_convergence_failed` when it cannot yet be proved. The latter qualifies
-conservative recovery through whole-process stop, not successful initial native
-convergence. The test does not add a sleep or weaken the guest's physical checks.
+The fixture records `session_continuation_lost` for rejected cleanup or
+`turn_drain_failed` for a cleanup deadline. Both prevent reuse and require explicit
+recovery after whole-Session termination. The test does not add a sleep or weaken
+the guest's physical cleanup checks.
 The successor must remain queued under a visible local recovery hold while the
 shared peer continues producing new output and setup remains at one. The driver
 then explicitly resumes that exact hold. The next Turn must use a new logical
-process/native scope and setup invocation, retain the native conversation ID and
+Session process tree and setup invocation, retain the native conversation ID and
 both earlier input markers in model-request history, and complete with its own
 published Save. Earlier completed results/Saves and the interrupted Turn remain
 unchanged. SQL checks confirm the exact recorded hold, new process epoch and

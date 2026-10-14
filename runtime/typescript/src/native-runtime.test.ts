@@ -54,7 +54,7 @@ for (const agentId of ["deploy", "worker"]) {
         f.send({ case: "dispatch", value: create(p.TurnDispatchSchema, { turnId: "turn", sequence: 1n, createdAt: "2026-10-09T00:00:00Z", inputJson: json(null), sourceJson: json({ kind: "api" }) }) }, "dispatch")
       } else if (event.case === "operation") {
         const operation = event.value
-        assert.ok(new Set<p.Operation_Method>([p.Operation_Method.CLOSE_PROCESSING, p.Operation_Method.CONVERGE_NATIVE, p.Operation_Method.FINALIZE]).has(operation.method), `unexpected operation ${operation.method}`)
+        assert.ok(new Set<p.Operation_Method>([p.Operation_Method.CLOSE_PROCESSING, p.Operation_Method.CONFIRM_DRAIN, p.Operation_Method.FINALIZE]).has(operation.method), `unexpected operation ${operation.method}`)
         // The protocol fixture acknowledges finalization; it does not prove a
         // control-plane save or publication of the Computer's disk.
         const payload = JSON.parse(Buffer.from(operation.payloadJson).toString())
