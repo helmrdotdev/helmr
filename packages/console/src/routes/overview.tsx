@@ -82,7 +82,7 @@ export function Overview() {
                 <DataTable columns={["Session", "Agent", "Status", "Holds", "Created"]}>
                   <For each={sessions.data?.sessions}>{session => (
                     <tr>
-                      <td><IDText value={session.id} mode="link" href={sessionConsolePath(session.id, projectID(), environmentID())} /></td>
+                      <td><IDText value={session.id} mode="link" href={sessionConsolePath(session.id)} /></td>
                       <td><code>{session.agent}</code></td>
                       <td><StatusBadge resource="session" status={session.status} /></td>
                       <td>{session.holds.length ? `${session.holds.length} active` : "None"}</td>

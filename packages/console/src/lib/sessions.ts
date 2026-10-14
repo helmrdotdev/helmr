@@ -134,16 +134,8 @@ export function interruptSession(
   );
 }
 
-export function sessionConsolePath(
-  sessionID: string,
-  projectID: string,
-  environmentID: string,
-): string {
-  const params = new URLSearchParams({
-    project: projectID,
-    environment: environmentID,
-  });
-  return `/sessions/${encodeURIComponent(sessionID)}?${params.toString()}`;
+export function sessionConsolePath(sessionID: string): string {
+  return `/sessions/${encodeURIComponent(sessionID)}`;
 }
 
 function eventPageQuery(options: SessionEventPageOptions): string {
@@ -192,9 +184,8 @@ export function questionCLICommands(address: AskAddress, origin: string) {
   };
 }
 
-export function askConsolePath(address: AskAddress): string {
-  const query = new URLSearchParams({ project: address.projectID, environment: address.environmentID });
-  return `/sessions/${encodeURIComponent(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}?${query}`;
+export function askConsolePath(address: Pick<AskAddress, "sessionID" | "turnID" | "askID">): string {
+  return `${sessionConsolePath(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}`;
 }
 
 export async function getAsk(address: AskAddress) {

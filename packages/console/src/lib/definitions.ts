@@ -64,16 +64,13 @@ function definitionItemPath(kind: "agents" | "templates", id: string, options: D
   return `${base}/${encodeURIComponent(id)}${query}`;
 }
 export type DefinitionKind = "agents" | "templates";
-export function definitionHref(kind: DefinitionKind, id: string, options: DefinitionScope & { deploymentID: string }): string {
-  return scopedConsoleHref(`/deployments/${encodeURIComponent(options.deploymentID)}/${kind}/${encodeURIComponent(id)}`, options);
-}
-export function scopedConsoleHref(path: string, options: DefinitionScope): string {
-  return `${path}?${new URLSearchParams({ project: options.projectID, environment: options.environmentID })}`;
+export function definitionHref(kind: DefinitionKind, id: string, deploymentID: string): string {
+  return `/deployments/${encodeURIComponent(deploymentID)}/${kind}/${encodeURIComponent(id)}`;
 }
 
 type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
-export function agentHref(agent: string, scope: DefinitionScope): string {
-  return scopedConsoleHref(`/agents/${encodeURIComponent(agent)}`, scope);
+export function agentHref(agent: string): string {
+  return `/agents/${encodeURIComponent(agent)}`;
 }
 export function listRetainedAgents(scope: DefinitionScope, cursor?: string): Promise<{ agents: RetainedAgent[]; next_cursor?: string }> {
   const query = new URLSearchParams({ view: "all", limit: "100" });

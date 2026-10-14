@@ -32,11 +32,11 @@ test("missing scope fails before sending a request", async () => {
   expect(calls).toHaveLength(0);
 });
 
-test("definition detail links preserve the Session's exact scope and Deployment", async () => {
+test("definition detail links pin the exact Deployment without scope params", async () => {
   const calls = capture({ id: "worker", deployment_id: "old/version" });
   const options = { ...scope, deploymentID: "old/version" };
-  const href = definitionHref("agents", "worker/key", options);
-  expect(href).toBe("/deployments/old%2Fversion/agents/worker%2Fkey?project=project%2F1&environment=env%2F1");
+  const href = definitionHref("agents", "worker/key", options.deploymentID);
+  expect(href).toBe("/deployments/old%2Fversion/agents/worker%2Fkey");
   await getAgentDefinition("worker/key", options);
   await getTemplateDefinition("image/key", options);
   expect(calls.map(call => call.url)).toEqual([

@@ -44,7 +44,7 @@ test("current Agent navigation owns connections and filters triggers and Session
   await page.goto(`/agents?${scope}`);
   await expect(page.getByRole("combobox", { name: "Show Agents" })).toHaveValue("current");
   await page.getByRole("link", { name: "support", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/agents/support\\?`));
+  await expect(page).toHaveURL("/agents/support");
   await expect(page.getByRole("heading", { name: "Triggers", exact: true })).toBeVisible();
   await expect(page.getByText("daily", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Load more triggers" }).click();
@@ -57,9 +57,9 @@ test("current Agent navigation owns connections and filters triggers and Session
   await page.getByRole("button", { name: "Close modal", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const definition = page.getByRole("link", { name: "View current definition" });
-  await expect(definition).toHaveAttribute("href", `/deployments/${deployment}/agents/support?${scope}`);
+  await expect(definition).toHaveAttribute("href", `/deployments/${deployment}/agents/support`);
   await page.getByRole("link", { name: "View Sessions for this Agent" }).click();
-  await expect(page).toHaveURL(new RegExp("/sessions\\?.*agent=support"));
+  await expect(page).toHaveURL("/sessions?agent=support");
   await expect.poll(() => paths.some(path => path.includes("/sessions?agent=support"))).toBe(true);
   expect(paths.some(path => path.includes("agent_id="))).toBe(false);
 });
@@ -94,11 +94,11 @@ test("Deployment details are read-only and historical definition links keep exac
   const paths = await catalog(page);
   await page.goto(`/deployments/${historical}?${scope}`);
   await page.getByRole("link", { name: "support", exact: true }).click();
-  await expect(page).toHaveURL(`/deployments/${historical}/agents/support?${scope}`);
+  await expect(page).toHaveURL(`/deployments/${historical}/agents/support`);
   await expect(page.getByText("This definition belongs to an earlier or unpromoted Deployment.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Manage Slack connection" })).toHaveCount(0);
   await page.getByRole("link", { name: "browser", exact: true }).click();
-  await expect(page).toHaveURL(`/deployments/${historical}/templates/browser?${scope}`);
+  await expect(page).toHaveURL(`/deployments/${historical}/templates/browser`);
   await expect(page.getByText("1 vCPU", { exact: false })).toBeVisible();
   expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${historical}`))).toBe(true);
   expect(paths.some(path => path.endsWith(`/templates/browser?deployment_id=${historical}`))).toBe(true);

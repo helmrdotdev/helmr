@@ -1,10 +1,11 @@
-import { definitionHref, scopedConsoleHref } from "../lib/definitions";
+import { definitionHref } from "../lib/definitions";
+import { CopyLinkButton } from "../components/CopyLinkButton";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
-import { useRouteScope } from "../lib/scope";
+import { useScopeIDs } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
   getComputer,
@@ -62,7 +63,7 @@ function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; k
         <DataTable columns={["ID", "Usage"]} minWidth="min-w-0">
           <For each={items()}>{item => <tr>
             <td><Show when={props.kind === "sessions"} fallback={<IDText value={item.id} />}>
-              <IDText value={item.id} mode="link" href={sessionConsolePath(item.id, props.scope.projectID, props.scope.environmentID)} />
+              <IDText value={item.id} mode="link" href={sessionConsolePath(item.id)} />
             </Show></td>
             <td>{item.usage_state}</td>
           </tr>}</For>
@@ -75,7 +76,7 @@ function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; k
 
 export function ComputerDetail() {
   const params = useParams();
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const computerID = createMemo(() => params["computer_id"]?.trim() ?? "");
   const projectID = createMemo(() => scope().projectID);
   const environmentID = createMemo(() => scope().environmentID);
@@ -92,7 +93,8 @@ export function ComputerDetail() {
     <section class={ui.page}>
       <PageHeader
         title="Computer"
-        back={{ href: scopedConsoleHref("/computers", resourceScope()), label: "Computers" }}
+        back={{ href: "/computers", label: "Computers" }}
+        actions={<CopyLinkButton />}
         badge={<Show when={computer.data}>{(current) => <StatusBadge resource="computer" status={current().status} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
@@ -142,9 +144,9 @@ export function ComputerDetail() {
                     <DetailItem label="Key">
                       <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
                     </DetailItem>
-                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template}</a></DetailItem>
+                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></DetailItem>
                     <DetailItem label="Deployment">
-                      <IDText value={current().deployment_id} mode="link" href={scopedConsoleHref(deploymentHref(current().deployment_id), resourceScope())} />
+                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                     </DetailItem>
                     <DetailItem label="Last activity"><RelativeTime value={current().last_activity_at} /></DetailItem>
                     <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>

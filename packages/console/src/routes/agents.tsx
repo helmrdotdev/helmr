@@ -4,10 +4,12 @@ import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js"
 import { AgentConnectionModal } from "../features/slack/AgentConnectionModal";
 import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
-import { agentHref, definitionHref, getAgentStatus, listAgentDefinitions, listRetainedAgents, scopedConsoleHref } from "../lib/definitions";
+import { agentHref, definitionHref, getAgentStatus, listAgentDefinitions, listRetainedAgents } from "../lib/definitions";
 import { getCurrentDeployment } from "../lib/deployments";
+import { deploymentHref } from "../features/deployments/navigation";
 import { listTriggers } from "../lib/triggers";
-import { useRouteScope } from "../lib/scope";
+import { useScopeIDs } from "../lib/scope";
+import { CopyLinkButton } from "../components/CopyLinkButton";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -19,7 +21,7 @@ import { ui } from "../ui/styles";
 function failure(error: unknown): string { return error instanceof ApiError ? error.message : "Could not load Agents."; }
 
 export function Agents() {
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const enabled = () => !!scope().projectID && !!scope().environmentID;
   const [all, setAll] = createSignal(false);
   const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: enabled() && !all(), retry: false, refetchInterval: 15_000 }));
@@ -46,7 +48,7 @@ export function Agents() {
         <Show when={!agents.isPending} fallback={<StatePanel loading="Loading Agents..." />}>
           <Show when={items().length} fallback={!agents.isError ? <StatePanel empty={all() ? "No Agents registered in this environment." : "No Agents in the current Deployment."} hint={all() ? "Define Agents in code and deploy them." : "Choose All Agents to manage retained connections and history."} /> : undefined}>
             <DataTable columns={["Agent", "Current definition"]}><For each={items()}>{item => <tr>
-              <td><A class="text-console-accent hover:text-console-accent-hover" href={agentHref(item.agent, scope())}><code>{item.agent}</code></A></td>
+              <td><A class="text-console-accent hover:text-console-accent-hover" href={agentHref(item.agent)}><code>{item.agent}</code></A></td>
               <td>{item.defined_in_current ? "In current Deployment" : "Not in current Deployment"}</td>
             </tr>}</For></DataTable>
           </Show>
@@ -58,7 +60,7 @@ export function Agents() {
 }
 
 export function AgentDetail() {
-  const scope = useRouteScope();
+  const scope = useScopeIDs();
   const params = useParams();
   const name = () => params["agent"] ?? "";
   const enabled = () => !!name() && !!scope().projectID && !!scope().environmentID;
@@ -74,14 +76,14 @@ export function AgentDetail() {
   }));
   const items = createMemo(() => triggers.data?.pages.flatMap(page => page.triggers) ?? []);
   return <section class={ui.page}>
-    <PageHeader title={name()} subtitle="Agent operations across Deployments." back={{ href: scopedConsoleHref("/agents", scope()), label: "Agents" }} />
-    <Show when={agent.isError}><StatePanel error={failure(agent.error)} /></Show>
+    <PageHeader title={name()} subtitle="Agent operations across Deployments." back={{ href: "/agents", label: "Agents" }} actions={<CopyLinkButton />} />
+    <Show when={agent.isError}><Show when={agent.error instanceof ApiError && agent.error.status === 404} fallback={<StatePanel error={failure(agent.error)} />}><StatePanel empty="This environment has no Agent with this name." hint="Agents appear once a Deployment in this environment defines them." /></Show></Show>
     <Show when={enabled()} fallback={<StatePanel empty="Select an environment to view this Agent." />}>
       <Show when={!agent.isPending} fallback={<StatePanel loading="Loading Agent..." />}>
         <Show when={agent.data}>{record => <>
           <Panel title="Agent">
-            <Show when={record().defined_in_current && record().current_deployment_id} fallback={<p class={ui.muted}>{record().current_deployment_id ? "This Agent is not defined in the current Deployment." : "This environment has no current Deployment."} New independent Sessions cannot start. Existing Sessions, trigger history and connections remain available for inspection and management.</p>}>{deployment => <p><A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", name(), { ...scope(), deploymentID: deployment() })}>View current definition</A></p>}</Show>
-            <p><A class="text-console-accent hover:text-console-accent-hover" href={`${scopedConsoleHref("/sessions", scope())}&agent=${encodeURIComponent(name())}`}>View Sessions for this Agent</A></p>
+            <Show when={record().defined_in_current && record().current_deployment_id} fallback={<p class={ui.muted}>{record().current_deployment_id ? "This Agent is not defined in the current Deployment." : "This environment has no current Deployment."} New independent Sessions cannot start. Existing Sessions, trigger history and connections remain available for inspection and management.</p>}>{deployment => <p><A class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", name(), deployment())}>View current definition</A></p>}</Show>
+            <p><A class="text-console-accent hover:text-console-accent-hover" href={`/sessions?${new URLSearchParams({ agent: name() })}`}>View Sessions for this Agent</A></p>
           </Panel>
           <Panel title="Slack Connection">
             <p class={ui.muted}>The connection belongs to this Agent in this environment and persists across Deployments.</p>
@@ -96,7 +98,7 @@ export function AgentDetail() {
                   <For each={items()}>{trigger => <tr>
                     <td>{trigger.trigger_key}</td><td><code>{trigger.cron.pattern}</code></td><td>{trigger.cron.timezone}</td>
                     <td><RelativeTime value={trigger.next_fire_at} /></td><td><RelativeTime value={trigger.active_from} /></td><td><RelativeTime value={trigger.active_until} /></td>
-                    <td><IDText value={trigger.deployment_id} mode="link" href={scopedConsoleHref(`/deployments/${encodeURIComponent(trigger.deployment_id)}`, scope())} /></td><td><IDText value={trigger.id} /></td>
+                    <td><IDText value={trigger.deployment_id} mode="link" href={deploymentHref(trigger.deployment_id)} /></td><td><IDText value={trigger.id} /></td>
                   </tr>}</For>
                 </DataTable>
               </Show>

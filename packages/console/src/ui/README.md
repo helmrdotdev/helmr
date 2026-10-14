@@ -31,6 +31,7 @@ This table sets where IDs and actions live. Apply it to every page instead of ch
 ## Page and section structure
 
 - `PageHeader` — title, optional badge, subtitle, back link, and right-aligned actions. Every route page starts with it.
+- `CopyLinkButton` (`src/components`) — the first `PageHeader` action on Session, Computer, Deployment and Agent detail pages. Project and Environment are tab state, never part of in-app links; this button copies the one link that carries them, and opening it switches the tab to that scope.
 - `SectionHeader` — an `h2` with optional count, subtitle, and "view all" style actions for sections inside a page.
 - `Panel`, `DetailList`, `DetailItem` — detail pages: a bordered panel with a heading, and the right-hand rail of label/value pairs.
 - `StatePanel` — the only loading, empty, and error rendering: `<StatePanel loading="…" />`, `<StatePanel error="…" />`, `<StatePanel empty="…" hint="…">optional action</StatePanel>`.
