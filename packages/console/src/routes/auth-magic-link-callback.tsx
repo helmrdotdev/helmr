@@ -3,8 +3,8 @@ import { useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { finishMagicLink } from "../lib/auth";
-import { errorMessage } from "../lib/error";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { authErrorMessage } from "../lib/error";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 function readParam(value: string | string[] | undefined): string | undefined {
@@ -21,7 +21,7 @@ export function AuthMagicLinkCallback() {
     history.replaceState({}, "", "/auth/magic-link/callback");
 
     if (!token) {
-      setError(errorMessage("magic_link_token_missing", "This sign-in link is missing its token."));
+      setError(authErrorMessage("magic_link_token_missing", "This sign-in link is missing its token."));
       return;
     }
 
@@ -30,18 +30,18 @@ export function AuthMagicLinkCallback() {
       navigate(returnPath(result.redirect_after), { replace: true });
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
+      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
     }
   });
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <Show when={error()} fallback={<AuthCopy>Signing you in...</AuthCopy>}>
         <AuthTitle>Sign in failed</AuthTitle>
         <p class={ui.error}>{error()}</p>
         <AuthCopy>If you started from the CLI, run helmr login again in your terminal.</AuthCopy>
         <a href="/login">Sign in to the console</a>
       </Show>
-    </AuthScreen>
+    </AuthWindow>
   );
 }

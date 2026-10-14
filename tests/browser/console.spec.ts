@@ -58,7 +58,7 @@ test("the Sessions page filters by status and shows the empty state", async ({ p
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
   await expect(page.getByText("No Sessions yet.")).toBeVisible();
 
-  const statusSelect = page.getByRole("button", { name: "Filter sessions" });
+  const statusSelect = page.getByRole("combobox", { name: "Filter sessions" });
   const cancelledRequest = page.waitForRequest((request) =>
     request.url().includes("/sessions?") && new URL(request.url()).searchParams.get("status") === "cancelled",
   );

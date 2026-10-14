@@ -1,7 +1,8 @@
+import { useMe } from "../lib/me";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe, hasPermission } from "../lib/auth";
+import { errorMessage } from "../lib/error";
+import { hasPermission } from "../lib/auth";
 import { getProjectSettings, updateProjectSettings, updateProject } from "../lib/projects";
 import { useScope } from "../lib/scope";
 import { HistoryRetentionFields, historyRetentionDraft, historyRetentionPolicy, historyRetentionSeconds, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
@@ -10,10 +11,6 @@ import { PageHeader } from "../ui/PageHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
-function formErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
 
 export function Projects() {
   const scope = useScope();
@@ -51,7 +48,7 @@ export function Projects() {
       await updateProject(current.project, { name: nextName });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
     } catch (error) {
-      setSaveError(formErrorMessage(error));
+      setSaveError(errorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -101,7 +98,7 @@ export function Projects() {
 
 function ProjectHistorySettings(props: { project: string }) {
   const queryClient = useQueryClient();
-  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const me = useMe();
   const settings = createQuery(() => ({
     queryKey: ["project-settings", props.project],
     queryFn: () => getProjectSettings(props.project),

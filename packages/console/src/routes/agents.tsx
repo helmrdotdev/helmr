@@ -1,9 +1,10 @@
+import { usePermission } from "../lib/me";
 import { A, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { AgentConnectionModal } from "../features/slack/AgentConnectionModal";
 import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
+import { errorMessage } from "../lib/error";
 import { agentHref, definitionHref, getAgentStatus, listAgentDefinitions, listRetainedAgents } from "../lib/definitions";
 import { getCurrentDeployment } from "../lib/deployments";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -12,13 +13,20 @@ import { useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Segmented } from "../ui/Field";
+import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
-function failure(error: unknown): string { return error instanceof ApiError ? error.message : "Could not load Agents."; }
+const SHOW_OPTIONS = [
+  { value: "current", label: "Current Agents" },
+  { value: "all", label: "All Agents" },
+] as const;
+
+const failure = (error: unknown) => errorMessage(error, "Could not load Agents.");
 
 export function Agents() {
   const scope = useScopeIDs();
@@ -38,7 +46,7 @@ export function Agents() {
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
   return <section class={ui.page}>
     <PageHeader title="Agents" subtitle="Manage Agent connections, Sessions and triggers across Deployments." />
-    <label class={ui.muted}>Show <select aria-label="Show Agents" class={ui.input} value={all() ? "all" : "current"} onChange={event => setAll(event.currentTarget.value === "all")}><option value="current">Current Agents</option><option value="all">All Agents</option></select></label>
+    <Toolbar start={<Segmented label="Show Agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />} />
     <Show when={enabled()} fallback={<StatePanel empty="Select an environment to view Agents." />}>
       <Show when={!all() && current.isPending}><StatePanel loading="Loading current Agents..." /></Show>
       <Show when={!all() && current.isError}><StatePanel error={failure(current.error)} /></Show>
@@ -66,7 +74,7 @@ export function AgentDetail() {
   const enabled = () => !!name() && !!scope().projectID && !!scope().environmentID;
   const [slack, setSlack] = createSignal(false);
   createEffect(on(() => JSON.stringify([scope().projectID, scope().environmentID, name()]), () => setSlack(false), { defer: true }));
-  const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
+  const permission = usePermission();
   const agent = createQuery(() => ({ queryKey: ["agents", "status", scope().projectID, scope().environmentID, name()], queryFn: () => getAgentStatus(name(), scope()), enabled: enabled(), retry: false, refetchInterval: 15_000 }));
   const triggers = createInfiniteQuery(() => ({
     queryKey: ["triggers", scope().projectID, scope().environmentID, name()],
@@ -76,7 +84,7 @@ export function AgentDetail() {
   }));
   const items = createMemo(() => triggers.data?.pages.flatMap(page => page.triggers) ?? []);
   return <section class={ui.page}>
-    <PageHeader title={name()} subtitle="Agent operations across Deployments." back={{ href: "/agents", label: "Agents" }} actions={<CopyLinkButton />} />
+    <PageHeader title={name()} subtitle="Agent operations across Deployments." breadcrumb={[{ href: "/agents", label: "Agents" }]} actions={<CopyLinkButton />} />
     <Show when={agent.isError}><Show when={agent.error instanceof ApiError && agent.error.status === 404} fallback={<StatePanel error={failure(agent.error)} />}><StatePanel empty="This environment has no Agent with this name." hint="Agents appear once a Deployment in this environment defines them." /></Show></Show>
     <Show when={enabled()} fallback={<StatePanel empty="Select an environment to view this Agent." />}>
       <Show when={!agent.isPending} fallback={<StatePanel loading="Loading Agent..." />}>
@@ -87,7 +95,7 @@ export function AgentDetail() {
           </Panel>
           <Panel title="Slack Connection">
             <p class={ui.muted}>The connection belongs to this Agent in this environment and persists across Deployments.</p>
-            <Show when={me.data?.role === "owner" || me.data?.role === "admin"} fallback={<p class={ui.muted}>An organization owner or admin can manage this connection.</p>}><button class={ui.secondaryButton} onClick={() => setSlack(true)}>Manage Slack connection</button></Show>
+            <Show when={permission.isOrganizationAdmin()} fallback={<p class={ui.muted}>An organization owner or admin can manage this connection.</p>}><button class={ui.secondaryButton} onClick={() => setSlack(true)}>Manage Slack connection</button></Show>
           </Panel>
           <Panel title="Triggers">
             <p class={ui.muted}>Trigger activations across Deployments. Change triggers in code and promote a Deployment to activate them.</p>

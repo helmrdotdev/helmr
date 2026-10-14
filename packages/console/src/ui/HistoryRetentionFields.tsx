@@ -1,4 +1,6 @@
-import { For, Show } from "solid-js";
+import { Show } from "solid-js";
+import { Field } from "./Field";
+import { Select } from "./Select";
 import { ui } from "./styles";
 
 const units = [
@@ -8,6 +10,11 @@ const units = [
   { seconds: 1, suffix: "s", label: "Seconds" },
 ];
 const maxSeconds = 9223372036854775807n;
+
+const MODES = [
+  { value: "never", label: "Never expire" },
+  { value: "duration", label: "Keep for a duration" },
+];
 
 export type HistoryRetentionDraft = { mode: string; amount: string; unit: number };
 
@@ -40,13 +47,14 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
     <fieldset>
       <legend>Session history retention</legend>
       <p class={ui.muted}>Applies to all remaining Session history in every Environment of this Project.</p>
-      <label class={ui.field}>
-        <span>History retention</span>
-        <select class={ui.input} value={props.value.mode} onChange={event => props.onChange({ ...props.value, mode: event.currentTarget.value })}>
-          <option value="never">Never expire</option>
-          <option value="duration">Keep for a duration</option>
-        </select>
-      </label>
+      <Field label="History retention">
+        <Select
+          value={props.value.mode}
+          options={MODES}
+          onChange={mode => props.onChange({ ...props.value, mode })}
+          minWidth="100%"
+        />
+      </Field>
       <Show when={props.value.mode === "duration"} fallback={<p class={ui.muted}>Automatic expiry is disabled. Previously expired content cannot be restored.</p>}>
         <div class="flex gap-2">
           <label class={ui.field}>
@@ -62,12 +70,14 @@ export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; on
               onInput={event => props.onChange({ ...props.value, amount: event.currentTarget.value })}
             />
           </label>
-          <label class={ui.field}>
-            <span>Unit</span>
-            <select class={ui.input} value={props.value.unit} onChange={event => props.onChange({ ...props.value, unit: Number(event.currentTarget.value) })}>
-              <For each={units}>{unit => <option value={unit.seconds}>{unit.label}</option>}</For>
-            </select>
-          </label>
+          <Field label="Unit">
+            <Select
+              value={String(props.value.unit)}
+              options={units.map(unit => ({ value: String(unit.seconds), label: unit.label }))}
+              onChange={unit => props.onChange({ ...props.value, unit: Number(unit) })}
+              minWidth="100%"
+            />
+          </Field>
         </div>
         <p class={ui.muted}>The period starts after a Session ends and its pending work finishes. Expiry deletes inputs, results, messages, questions, answers and event content. Open Sessions keep their history.</p>
         <p class={ui.muted}>Session identities and statuses, Computer files, and administrative audit records are separate. Very short periods can expire content before a delayed reader fetches it.</p>

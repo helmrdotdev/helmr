@@ -3,8 +3,8 @@ import { locationDestination } from "../lib/continuation";
 import { createSignal, Show } from "solid-js";
 import { ApiError } from "../lib/api";
 import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
-import { errorMessage } from "../lib/error";
-import { AuthCopy, AuthDivider, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { authErrorMessage } from "../lib/error";
+import { AuthCopy, AuthDivider, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function Login() {
@@ -42,7 +42,7 @@ export function Login() {
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
+      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
     } finally {
       setBusy(false);
     }
@@ -56,13 +56,13 @@ export function Login() {
       window.location.href = redirect_url;
     } catch (e) {
       const kind = e instanceof ApiError ? e.code : null;
-      setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
+      setError(authErrorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
       setGitHubBusy(false);
     }
   }
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <Show
         when={!sentEmail()}
         fallback={
@@ -119,6 +119,6 @@ export function Login() {
         </form>
       </Show>
       {error() && <p class={ui.error}>{error()}</p>}
-    </AuthScreen>
+    </AuthWindow>
   );
 }

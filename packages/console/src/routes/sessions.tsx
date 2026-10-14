@@ -3,7 +3,7 @@ import { definitionHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import {
   listSessions,
@@ -30,13 +30,8 @@ const FILTERS: SelectOption<SessionFilter>[] = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
-function sessionsErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "forbidden") {
-    return "You do not have permission to view Sessions.";
-  }
-  if (error instanceof ApiError) return error.message;
-  return "Could not load Sessions.";
-}
+const sessionsErrorMessage = (error: unknown) =>
+  errorMessage(error, "Could not load Sessions.", { forbidden: "You do not have permission to view Sessions." });
 
 function SessionRow(props: { session: Session }) {
   return (
@@ -59,7 +54,7 @@ function SessionRow(props: { session: Session }) {
       </td>
       <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
       <td>
-        <Show when={props.session.computer_id} fallback={<span class="text-console-faint">No Computer assigned</span>}>
+        <Show when={props.session.computer_id} fallback={<span class="text-console-subtle">No Computer assigned</span>}>
           {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
         </Show>
       </td>

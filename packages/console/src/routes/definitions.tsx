@@ -9,7 +9,7 @@ import { useScopeIDs } from "../lib/scope";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
-import { DetailItem, DetailList, Panel } from "../ui/Panel";
+import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
 import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
@@ -79,7 +79,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
   }));
   const title = () => props.kind === "agents" ? "Agent" : "Template";
   return <section class={ui.page}>
-    <PageHeader title={id()} subtitle={`${title()} in the selected Deployment.`} back={selected() ? { href: deploymentHref(selected()), label: "Deployment" } : { href: `/${props.kind}`, label: props.kind === "agents" ? "Agents" : "Templates" }} />
+    <PageHeader title={id()} subtitle={`${title()} in the selected Deployment.`} breadcrumb={[selected() ? { href: deploymentHref(selected()), label: "Deployment" } : { href: `/${props.kind}`, label: props.kind === "agents" ? "Agents" : "Templates" }]} />
     <Show when={current.isError}><StatePanel error={failure(current.error)} /></Show>
     <Show when={definition.isError}><StatePanel error={failure(definition.error)} /></Show>
     <Show when={enabled() && (selected() || !current.isPending)} fallback={enabled() ? <StatePanel loading="Loading definition..." /> : <StatePanel empty="Select an environment to view this definition." />}>
@@ -89,7 +89,12 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
             <Show when={current.isSuccess} fallback={<p class={ui.muted}>Current Deployment status is unavailable.</p>}>
               <p class={ui.muted}>{current.data?.id === item().deployment_id ? "This definition belongs to the current Deployment." : "This definition belongs to an earlier or unpromoted Deployment. Existing Sessions and Computers retain their original definitions; new independent work uses the current Deployment."}</p>
             </Show>
-            <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
+            <DetailLayout rail={
+              <KeyValueList title={`${title()} details`}>
+                <KeyValue label="Name"><code>{definitionName(item())}</code></KeyValue>
+                <KeyValue label="Deployment"><IDText value={item().deployment_id} mode="link" href={deploymentHref(item().deployment_id)} /></KeyValue>
+              </KeyValueList>
+            }>
               <Panel title="Configuration">
                 <p class={ui.muted}>Managed in code. Deploy a new version to change this definition.</p>
                 <Show when={"agent" in item() ? item() as AgentDefinition : undefined}>{agent => <>
@@ -102,11 +107,7 @@ function DefinitionDetail(props: { kind: DefinitionKind }) {
                   <A class="text-console-accent hover:text-console-accent-hover" href="/computers">View Computers</A>
                 </>}</Show>
               </Panel>
-              <DetailList title={`${title()} details`}>
-                <DetailItem label="Name"><code>{definitionName(item())}</code></DetailItem>
-                <DetailItem label="Deployment"><IDText value={item().deployment_id} mode="link" href={deploymentHref(item().deployment_id)} /></DetailItem>
-              </DetailList>
-            </div>
+            </DetailLayout>
           </>}</Show>
         </Show>
       </Show>

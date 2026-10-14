@@ -2,7 +2,7 @@ import { definitionHref } from "../lib/definitions";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { computerHref } from "../features/computers/navigation";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
 import { DataTable } from "../ui/DataTable";
@@ -13,13 +13,8 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function computersErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "forbidden") {
-    return "You do not have permission to view Computers.";
-  }
-  if (error instanceof ApiError) return error.message;
-  return "Could not load Computers.";
-}
+const computersErrorMessage = (error: unknown) =>
+  errorMessage(error, "Could not load Computers.", { forbidden: "You do not have permission to view Computers." });
 
 function ComputerRow(props: { computer: ComputerListItem }) {
   return (

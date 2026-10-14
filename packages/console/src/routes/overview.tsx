@@ -2,23 +2,21 @@ import { A } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
 import { For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { getCurrentDeployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
 import { listSessions, sessionConsolePath } from "../lib/sessions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
+import { Section } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
-import { SectionHeader } from "../ui/SectionHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Could not load the environment overview.";
-}
+const overviewError = (error: unknown) => errorMessage(error, "Could not load the environment overview.");
 
 function CliOnboarding() {
   return (
@@ -56,8 +54,8 @@ export function Overview() {
     <section class={ui.page}>
       <PageHeader title="Overview" subtitle="Agents and retained work in the selected environment." />
       <Show when={enabled()} fallback={<StatePanel empty="Select a project and environment." />}>
-        <div class="flex flex-col gap-6">
-          <Show when={current.isError}><StatePanel error={errorMessage(current.error)} /></Show>
+        <div class={ui.sectionStack}>
+          <Show when={current.isError}><StatePanel error={overviewError(current.error)} /></Show>
           <Show when={current.isPending}><StatePanel loading="Loading Deployment..." /></Show>
           <Show when={current.isSuccess}>
             <Show when={current.data} fallback={<CliOnboarding />}>
@@ -72,10 +70,9 @@ export function Overview() {
               )}
             </Show>
           </Show>
-          <section>
-            <SectionHeader title="Recent Sessions" subtitle="Open a Session to inspect its Turns, answer questions or manage held work."
-              actions={<A class={ui.secondaryButton} href="/sessions">All Sessions</A>} />
-            <Show when={sessions.isError}><StatePanel error={errorMessage(sessions.error)} /></Show>
+          <Section title="Recent Sessions" description="Open a Session to inspect its Turns, answer questions or manage held work."
+            actions={<A class={ui.secondaryButton} href="/sessions">All Sessions</A>}>
+            <Show when={sessions.isError}><StatePanel error={overviewError(sessions.error)} /></Show>
             <Show when={sessions.isPending}><StatePanel loading="Loading Sessions..." /></Show>
             <Show when={sessions.isSuccess}>
               <Show when={sessions.data?.sessions.length} fallback={<StatePanel empty="No Sessions yet." hint="Create a Session through the CLI or a connected Slack app." />}>
@@ -92,7 +89,7 @@ export function Overview() {
                 </DataTable>
               </Show>
             </Show>
-          </section>
+          </Section>
         </div>
       </Show>
     </section>

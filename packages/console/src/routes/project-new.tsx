@@ -1,31 +1,18 @@
 import { returnPath } from "../lib/continuation";
 import { A, useNavigate, useLocation } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
+import { createEffect, createMemo, createSignal, Show, type JSX } from "solid-js";
+import { errorMessage } from "../lib/error";
+import { ME_QUERY_KEY, useMe } from "../lib/me";
+import { slugify } from "../lib/slug";
 import { createProject, listRegions } from "../lib/projects";
 import { rememberProjectScope } from "../lib/scope";
-import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthWorking, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { Field } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
+import { Select } from "../ui/Select";
 import { ui } from "../ui/styles";
 
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
-
-function createErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
 
 export function ProjectNew() {
   const navigate = useNavigate();
@@ -37,12 +24,7 @@ export function ProjectNew() {
   const [selectedRegionID, setSelectedRegionID] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
   const regions = createQuery(() => ({
     queryKey: ["regions"],
     queryFn: listRegions,
@@ -78,10 +60,10 @@ export function ProjectNew() {
       });
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
       navigate(returnPath(new URLSearchParams(location.search).get("next")), { replace: wasFirstProject });
     } catch (e) {
-      setError(createErrorMessage(e));
+      setError(errorMessage(e));
     } finally {
       setSubmitting(false);
     }
@@ -125,23 +107,15 @@ export function ProjectNew() {
           spellcheck={false}
         />
       </label>
-      <label class={ui.field}>
-        <span>Region</span>
-        <select
-          class={ui.input}
+      <Field label="Region">
+        <Select
           value={selectedRegionID()}
-          onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
+          options={regionOptions().map((region) => ({ value: region.id, label: region.display_name || region.id }))}
+          onChange={setSelectedRegionID}
           disabled={regions.isPending || regionOptions().length === 0}
-        >
-          <For each={regionOptions()}>
-            {(region) => (
-              <option value={region.id}>
-                {region.display_name || region.id}
-              </option>
-            )}
-          </For>
-        </select>
-      </label>
+          minWidth="100%"
+        />
+      </Field>
       <Show when={error()}>
         <p class={ui.fieldError} role="alert">{error()}</p>
       </Show>
@@ -154,7 +128,7 @@ export function ProjectNew() {
   );
 
   return (
-    <Show when={!me.isPending && !regions.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
+    <Show when={!me.isPending && !regions.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
       <Show
         when={firstProject()}
         fallback={
@@ -165,10 +139,10 @@ export function ProjectNew() {
     </div>
         }
       >
-        <AuthScreen>
+        <AuthWindow>
           <AuthTitle>Create your first project</AuthTitle>
           {form()}
-        </AuthScreen>
+        </AuthWindow>
       </Show>
     </Show>
   );

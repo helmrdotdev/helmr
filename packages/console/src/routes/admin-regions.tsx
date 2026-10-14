@@ -1,17 +1,14 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { createAdminRegion, listAdminRegions, updateAdminRegion, type AdminRegion } from "../lib/admin";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { Dialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { StatePanel } from "../ui/StatePanel";
 import { ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Something went wrong.";
-}
 
 export function AdminRegions() {
   const queryClient = useQueryClient();
@@ -98,7 +95,7 @@ export function AdminRegions() {
       </Show>
 
       <Show when={creating()}>
-        <Modal title="New Region" onClose={() => setCreating(false)} closeDisabled={submitting()}>
+        <Dialog title="New Region" onClose={() => setCreating(false)} closeDisabled={submitting()}>
           <form onSubmit={submitCreate}>
             <RegionField name="id" label="ID" placeholder="us-east-1" autofocus />
             <RegionField name="display_name" label="Display name" placeholder="US East" />
@@ -106,18 +103,18 @@ export function AdminRegions() {
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
           </form>
-        </Modal>
+        </Dialog>
       </Show>
 
       <Show when={editing()}>{(region) => (
-        <Modal title={`Edit ${region().id}`} onClose={() => setEditing(null)} closeDisabled={submitting()}>
+        <Dialog title={`Edit ${region().id}`} onClose={() => setEditing(null)} closeDisabled={submitting()}>
           <form onSubmit={submitEdit}>
             <RegionField name="display_name" label="Display name" value={region().display_name} autofocus />
             <RegionField name="location" label="Location" value={region().location} />
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Saving..." : "Save"}</button></div>
           </form>
-        </Modal>
+        </Dialog>
       )}</Show>
     </div>
   );

@@ -1,4 +1,5 @@
-import { Show, type JSX } from "solid-js";
+import type { JSX } from "solid-js";
+import { EmptyState, PendingState } from "./QueryState";
 import { ui } from "./styles";
 
 type Props =
@@ -6,14 +7,10 @@ type Props =
   | { error: string }
   | { empty: string; hint?: JSX.Element; children?: JSX.Element };
 
+// A single loading, error or empty line for states a page computes itself. Query
+// results use QueryState instead.
 export function StatePanel(props: Props) {
-  if ("loading" in props) return <p class={ui.muted}>{props.loading}</p>;
+  if ("loading" in props) return <PendingState>{props.loading}</PendingState>;
   if ("error" in props) return <p class={ui.error} role="alert">{props.error}</p>;
-  return (
-    <div class={ui.emptyState}>
-      <strong class="text-console-text">{props.empty}</strong>
-      <Show when={props.hint}><span>{props.hint}</span></Show>
-      {props.children}
-    </div>
-  );
+  return <EmptyState title={props.empty} hint={props.hint}>{props.children}</EmptyState>;
 }

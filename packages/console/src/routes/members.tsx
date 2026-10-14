@@ -1,7 +1,7 @@
+import { isOrganizationAdmin, useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
+import { errorMessage } from "../lib/error";
 import {
   createInvitation,
   invitationResourceID,
@@ -18,14 +18,17 @@ import {
 import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Modal } from "../ui/Modal";
+import { Dialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
-import { SectionHeader } from "../ui/SectionHeader";
+import { Notice } from "../ui/Notice";
+import { Section } from "../ui/Page";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { useClipboard } from "../ui/useClipboard";
+import { createRowActions } from "../ui/rowActions";
+import { ui } from "../ui/styles";
 
 const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
 
@@ -45,12 +48,7 @@ const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
-function membersErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return MEMBERS_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
-  }
-  return INTERNAL_ERROR_MESSAGE;
-}
+const membersErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, MEMBERS_ERROR_MESSAGES);
 
 function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
@@ -61,7 +59,7 @@ function memberEmail(member: OrganizationMember): string {
 }
 
 function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
-  if (role === "owner" || role === "admin") return true;
+  if (isOrganizationAdmin(role)) return true;
   return (permissions ?? []).some((permission) =>
     [
       "members:write",
@@ -88,13 +86,12 @@ function CreateInviteModal(props: {
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [inviteURL, setInviteURL] = createSignal<string | null>(null);
-  const [copyState, setCopyState] = createSignal<string | null>(null);
+  const clipboard = useClipboard();
 
   const closeAndClear = () => {
     setEmail("");
     setRole("developer");
     setInviteURL(null);
-    setCopyState(null);
     setError(null);
     props.onClose();
   };
@@ -106,7 +103,6 @@ function CreateInviteModal(props: {
   const submit = async (event: Event) => {
     event.preventDefault();
     setError(null);
-    setCopyState(null);
     if (!validInviteEmail(email())) {
       setError(MEMBERS_ERROR_MESSAGES["invalid_email"] ?? INTERNAL_ERROR_MESSAGE);
       return;
@@ -128,17 +124,11 @@ function CreateInviteModal(props: {
 
   const copyInviteURL = async () => {
     const url = inviteURL();
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopyState("Copied");
-    } catch {
-      setCopyState("Copy failed");
-    }
+    if (url) await clipboard.copy(url);
   };
 
   return (
-    <Modal
+    <Dialog
       title={inviteURL() ? "Invite created" : "Invite member"}
       onClose={closeAndClear}
       closeDisabled={submitting()}
@@ -188,13 +178,13 @@ function CreateInviteModal(props: {
               <button type="button" class={ui.secondaryButton} onClick={closeAndClear}>Done</button>
               <button class={ui.button} type="button" onClick={copyInviteURL}>Copy link</button>
             </div>
-            <Show when={copyState()}>
-              <p class={ui.inlineState} role="status">{copyState()}</p>
+            <Show when={clipboard.state() !== "idle"}>
+              <p class={ui.inlineState} role="status">{clipboard.state() === "copied" ? "Copied" : "Copy failed"}</p>
             </Show>
           </>
         )}
       </Show>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -203,7 +193,7 @@ function MemberRow(props: {
   canManage: boolean;
   isCurrentUser: boolean;
   currentUserRole: string | null | undefined;
-  action: { id: string; action: "role" | "remove" } | null;
+  busy: (action: "role" | "remove") => boolean;
   error: string | null;
   onRoleChange: (member: OrganizationMember, role: MemberRole) => void;
   onRemove: (member: OrganizationMember) => void;
@@ -222,7 +212,7 @@ function MemberRow(props: {
   });
   const canChangeRole = () => isActive() && props.canManage && id() !== "" && roleOptions().length > 1 && (!isOwner() || props.currentUserRole === "owner");
   const canRemove = () => isActive() && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
-  const busy = (action: "role" | "remove") => props.action?.id === id() && props.action.action === action;
+  const busy = (action: "role" | "remove") => props.busy(action);
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
@@ -266,12 +256,12 @@ function MemberRow(props: {
 function InvitationRow(props: {
   invitation: OrganizationInvitation;
   canManage: boolean;
-  action: { id: string; action: "revoke" } | null;
+  busy: boolean;
   error: string | null;
   onRevoke: (invitation: OrganizationInvitation) => void;
 }) {
   const id = () => invitationResourceID(props.invitation);
-  const busy = () => props.action?.id === id() && props.action.action === "revoke";
+  const busy = () => props.busy;
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
@@ -302,17 +292,10 @@ function InvitationRow(props: {
 export function Members() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = createSignal(false);
-  const [memberAction, setMemberAction] = createSignal<{ id: string; action: "role" | "remove" } | null>(null);
-  const [memberError, setMemberError] = createSignal<{ id: string; message: string } | null>(null);
-  const [invitationAction, setInvitationAction] = createSignal<{ id: string; action: "revoke" } | null>(null);
-  const [invitationError, setInvitationError] = createSignal<{ id: string; message: string } | null>(null);
+  const memberRows = createRowActions<"role" | "remove">();
+  const invitationRows = createRowActions<"revoke">();
 
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
   const members = createQuery(() => ({
     queryKey: ["members"],
     queryFn: listMembers,
@@ -341,48 +324,30 @@ export function Members() {
   const changeMemberRole = async (member: OrganizationMember, role: MemberRole) => {
     const id = memberResourceID(member);
     if (!id || role === member.role) return;
-    setMemberError(null);
-    setMemberAction({ id, action: "role" });
-    try {
+    await memberRows.run(id, "role", async () => {
       await updateMemberRole(id, role, member.role);
       await queryClient.invalidateQueries({ queryKey: ["members"] });
-    } catch (error) {
-      setMemberError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setMemberAction(null);
-    }
+    }, membersErrorMessage);
   };
 
   const remove = async (member: OrganizationMember) => {
     const id = memberResourceID(member);
     if (!id) return;
     if (!window.confirm(`Remove ${memberName(member)} from this organization?`)) return;
-    setMemberError(null);
-    setMemberAction({ id, action: "remove" });
-    try {
+    await memberRows.run(id, "remove", async () => {
       await removeMember(id);
       await queryClient.invalidateQueries({ queryKey: ["members"] });
-    } catch (error) {
-      setMemberError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setMemberAction(null);
-    }
+    }, membersErrorMessage);
   };
 
   const revoke = async (invitation: OrganizationInvitation) => {
     const id = invitationResourceID(invitation);
     if (!id) return;
     if (!window.confirm(`Revoke invitation for ${invitation.email}?`)) return;
-    setInvitationError(null);
-    setInvitationAction({ id, action: "revoke" });
-    try {
+    await invitationRows.run(id, "revoke", async () => {
       await revokeInvitation(id);
       await queryClient.invalidateQueries({ queryKey: ["invitations"] });
-    } catch (error) {
-      setInvitationError({ id, message: membersErrorMessage(error) });
-    } finally {
-      setInvitationAction(null);
-    }
+    }, membersErrorMessage);
   };
 
   const isCurrentUser = (member: OrganizationMember) =>
@@ -403,52 +368,46 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <p class={cx(ui.hasMoreBanner, "border-[#9bb9e8] bg-[#eef4ff] text-console-info")} role="status">
-          Member settings require admin access.
-        </p>
+        <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
       </Show>
 
       <Show when={members.isError}>
         <StatePanel error={membersErrorMessage(members.error)} />
       </Show>
 
-      <section class={"mb-7"}>
-        <SectionHeader
-          title="Current members"
-          count={members.data?.members.length}
-          subtitle="Active and disabled accounts currently associated with this organization."
-        />
+      <div class={ui.sectionStack}>
+      <Section
+        title="Current members"
+        count={members.data?.members.length}
+        description="Active and disabled accounts currently associated with this organization."
+      >
         <Show when={!members.isPending} fallback={<StatePanel loading="Loading members..." />}>
           <Show when={(members.data?.members.length ?? 0) > 0} fallback={<StatePanel empty="No members found." />}>
             <DataTable columns={["Member", "User ID", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }]} minWidth="min-w-245">
               <For each={members.data?.members ?? []}>
-                {(member) => {
-                  const id = memberResourceID(member);
-                  return (
-                    <MemberRow
-                      member={member}
-                      canManage={canManage()}
-                      isCurrentUser={isCurrentUser(member)}
-                      currentUserRole={me.data?.role}
-                      action={memberAction()}
-                      error={memberError()?.id === id ? memberError()?.message ?? null : null}
-                      onRoleChange={changeMemberRole}
-                      onRemove={remove}
-                    />
-                  );
-                }}
+                {(member) => (
+                  <MemberRow
+                    member={member}
+                    canManage={canManage()}
+                    isCurrentUser={isCurrentUser(member)}
+                    currentUserRole={me.data?.role}
+                    busy={(action) => memberRows.busy(memberResourceID(member), action)}
+                    error={memberRows.error(memberResourceID(member))}
+                    onRoleChange={changeMemberRole}
+                    onRemove={remove}
+                  />
+                )}
               </For>
             </DataTable>
           </Show>
         </Show>
-      </section>
+      </Section>
 
-      <section>
-        <SectionHeader
-          title="Pending invitations"
-          count={pendingInvitations().length}
-          subtitle="Email invitations that have not been accepted yet."
-        />
+      <Section
+        title="Pending invitations"
+        count={pendingInvitations().length}
+        description="Email invitations that have not been accepted yet."
+      >
 
         <Show when={invitations.isError}>
           <StatePanel error={membersErrorMessage(invitations.error)} />
@@ -458,18 +417,15 @@ export function Members() {
           <Show when={pendingInvitations().length > 0} fallback={<StatePanel empty="No pending invitations." />}>
             <DataTable columns={["Email", "Role", "Status", "Expires", { label: "Actions", srOnly: true }]} minWidth="min-w-225">
               <For each={pendingInvitations()}>
-                {(invitation) => {
-                  const id = invitationResourceID(invitation);
-                  return (
-                    <InvitationRow
-                      invitation={invitation}
-                      canManage={canManage()}
-                      action={invitationAction()}
-                      error={invitationError()?.id === id ? invitationError()?.message ?? null : null}
-                      onRevoke={revoke}
-                    />
-                  );
-                }}
+                {(invitation) => (
+                  <InvitationRow
+                    invitation={invitation}
+                    canManage={canManage()}
+                    busy={invitationRows.busy(invitationResourceID(invitation))}
+                    error={invitationRows.error(invitationResourceID(invitation))}
+                    onRevoke={revoke}
+                  />
+                )}
               </For>
             </DataTable>
             <Show when={invitations.hasNextPage}>
@@ -486,7 +442,8 @@ export function Members() {
             </Show>
           </Show>
         </Show>
-      </section>
+      </Section>
+      </div>
 
       <Show when={modalOpen()}>
         <CreateInviteModal

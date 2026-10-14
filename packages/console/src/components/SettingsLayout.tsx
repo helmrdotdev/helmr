@@ -31,7 +31,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
       <aside class={"sticky top-13 flex flex-col gap-3.5 max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:border max-[960px]:border-console-border max-[960px]:bg-console-surface max-[960px]:p-1.5"} aria-label="Settings sections">
         {SETTINGS_NAV.map((group) => (
           <div class={"flex flex-col gap-px max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-1"}>
-            <span class={"px-2 pb-1.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-console-subtle max-[960px]:px-1.5 max-[960px]:pb-0"}>{group.label}</span>
+            <span class={cx("px-2 pb-1.5 max-[960px]:px-1.5 max-[960px]:pb-0", ui.microLabel)}>{group.label}</span>
             {group.links.map((link) => (
               <A
                 href={link.href}

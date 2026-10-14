@@ -1,7 +1,7 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { finishSlackAuthorization } from "../lib/slack";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function AuthSlackCallback() {
@@ -24,12 +24,12 @@ export function AuthSlackCallback() {
       if (mounted) setError(e instanceof Error ? e.message : "Slack authorization could not be completed.");
     }
   });
-  return <AuthScreen>
+  return <AuthWindow>
     <Show when={error()} fallback={<AuthCopy>Connecting Slack...</AuthCopy>}>
       <AuthTitle>Slack connection needs attention</AuthTitle>
       <p class={ui.error}>{error()}</p>
       <AuthCopy>Sign in with the account and organization that started this connection, then start authorization again.</AuthCopy>
       <A href="/deployments">Return to Agents</A>
     </Show>
-  </AuthScreen>;
+  </AuthWindow>;
 }

@@ -1,29 +1,14 @@
+import { slugify } from "../lib/slug";
+import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { useNavigate, useLocation } from "@solidjs/router";
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
+import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
-import { ApiError } from "../lib/api";
-import { getMe } from "../lib/auth";
+import { errorMessage } from "../lib/error";
 import { createOrganization } from "../lib/organizations";
-import { AuthCopy, AuthScreen, AuthTitle } from "../ui/AuthScreen";
+import { AuthCopy, AuthWindow, AuthTitle } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
-
-function createErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
 
 export function OrganizationNew() {
   const navigate = useNavigate();
@@ -35,12 +20,7 @@ export function OrganizationNew() {
   const [slugTouched, setSlugTouched] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
   const setupTokenRequired = createMemo(() => !!me.data?.setup_token_required);
 
 
@@ -65,18 +45,18 @@ export function OrganizationNew() {
         slug: nextSlug,
         ...(nextSetupToken ? { setup_token: nextSetupToken } : {}),
       });
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       navigate(locationDestination(location), { replace: true });
     } catch (e) {
-      setError(createErrorMessage(e));
+      setError(errorMessage(e));
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <AuthScreen>
+    <AuthWindow>
       <AuthTitle>Create your organization</AuthTitle>
       <AuthCopy>
         Organizations own members, projects, environments, credentials, and Sessions.
@@ -136,6 +116,6 @@ export function OrganizationNew() {
           {submitting() ? "Creating..." : "Create organization"}
         </button>
       </form>
-    </AuthScreen>
+    </AuthWindow>
   );
 }

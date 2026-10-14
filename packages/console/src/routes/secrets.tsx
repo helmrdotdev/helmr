@@ -2,17 +2,19 @@ import { IDText } from "../ui/IDText";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
-import { formatID } from "../ui/id";
-import { Modal } from "../ui/Modal";
+import { Dialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { envDotStyle, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
+import { createRowActions } from "../ui/rowActions";
+import { EnvironmentTarget } from "../ui/EnvChip";
 
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage secrets.",
@@ -20,10 +22,7 @@ const SECRET_ERROR_MESSAGES: Record<string, string> = {
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
-function secretErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return SECRET_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
-  return INTERNAL_ERROR_MESSAGE;
-}
+const secretErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, SECRET_ERROR_MESSAGES);
 
 function SecretModal(props: {
   secret: Secret | null;
@@ -61,19 +60,16 @@ function SecretModal(props: {
   };
 
   return (
-    <Modal title={editing() ? "Update secret" : "Set secret"} onClose={props.onClose} closeDisabled={saving()}>
+    <Dialog title={editing() ? "Update secret" : "Set secret"} onClose={props.onClose} closeDisabled={saving()}>
       <form onSubmit={save}>
-        <div class={ui.scopeTarget} aria-label="Secret target environment">
-          <span>Target environment</span>
-          <strong>{props.environmentName}</strong>
-          <div>
-            <Show when={props.environmentColorHex}>
-              <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
-            </Show>
-            <span>{props.projectName}</span>
-            <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
-          </div>
-        </div>
+        <EnvironmentTarget
+          label="Secret target environment"
+          environmentName={props.environmentName}
+          environmentColorHex={props.environmentColorHex}
+          projectName={props.projectName}
+          projectID={props.projectID}
+          environmentID={props.environmentID}
+        />
         <label class={ui.field}>
           <span>Secret ID</span>
           <input
@@ -106,7 +102,7 @@ function SecretModal(props: {
           </button>
         </div>
       </form>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -153,8 +149,7 @@ export function Secrets() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const [modalSecret, setModalSecret] = createSignal<Secret | null | undefined>(undefined);
-  const [revokingID, setRevokingID] = createSignal<string | null>(null);
-  const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
+  const rows = createRowActions<"revoke">();
   const secrets = createQuery(() => ({
     queryKey: ["secrets", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () => listSecrets(scope.selectedProjectID(), scope.selectedEnvironmentID()),
@@ -166,16 +161,10 @@ export function Secrets() {
 
   const revoke = async (secret: Secret) => {
     if (!window.confirm(`Revoke secret "${secret.secret}"?\n\nAffected running Turns may be interrupted and fail to complete. Pending inputs are retained but cannot run on affected Computers.`)) return;
-    setRevokeError(null);
-    setRevokingID(secret.secret);
-    try {
+    await rows.run(secret.secret, "revoke", async () => {
       await revokeSecret(secret.secret, scope.selectedProjectID(), scope.selectedEnvironmentID());
       await invalidateSecrets();
-    } catch (error) {
-      setRevokeError({ id: secret.secret, message: secretErrorMessage(error) });
-    } finally {
-      setRevokingID(null);
-    }
+    }, secretErrorMessage);
   };
 
   return (
@@ -197,8 +186,8 @@ export function Secrets() {
               {(secret) => (
                 <SecretRow
                   secret={secret}
-                  revoking={revokingID() === secret.secret}
-                  error={revokeError()?.id === secret.secret ? revokeError()?.message ?? null : null}
+                  revoking={rows.busy(secret.secret)}
+                  error={rows.error(secret.secret)}
                   onUpdate={setModalSecret}
                   onRevoke={revoke}
                 />

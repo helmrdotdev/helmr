@@ -1,32 +1,29 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { scopeSwitchPath } from "../lib/scope-navigation";
-import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
-import { ApiError } from "../lib/api";
+import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS } from "../features/projects/display";
+import { errorMessage } from "../lib/error";
 import { createEnvironment, createProject, listRegions } from "../lib/projects";
 import { rememberProjectScope, useScope } from "../lib/scope";
-import { Modal } from "../ui/Modal";
-import { cx, envDotClass, envDotStyle, ui } from "../ui/styles";
+import { FormDialog } from "../ui/Dialog";
+import { EnvDot } from "../ui/EnvChip";
+import { ColorField, createDerivedSlug, Field, SearchInput, SlugInput, TextInput } from "../ui/Field";
+import { Popover } from "../ui/Popover";
+import { Select } from "../ui/Select";
+import { cx, toneClass, ui } from "../ui/styles";
 
 type CreateMode = "project" | "environment" | null;
 
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48)
-    .replace(/^-|-$/g, "");
-}
-
-function createErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "Something went wrong.";
-}
+const SEARCH = "h-6 min-h-6 px-2 font-mono text-badge";
+const CREATE_ACTION =
+  "flex h-7 w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-2 text-left font-mono text-badge font-medium text-console-muted transition-colors hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
+const CREATE_ICON =
+  "grid size-4 flex-shrink-0 place-items-center border border-console-border bg-console-surface text-control font-medium leading-none text-console-muted";
+const COLUMN =
+  "flex min-h-47 min-w-0 flex-col border-console-border even:border-l max-[720px]:even:border-l-0 max-[720px]:even:border-t";
+const COLUMN_HEAD = "flex flex-col gap-1.5 border-b border-console-border bg-console-bg-panel p-1.5";
+const NO_MATCH = "grid flex-1 place-items-center px-3 py-5 text-control text-console-subtle";
 
 export function ScopeSwitcher() {
   const scope = useScope();
@@ -34,22 +31,19 @@ export function ScopeSwitcher() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [open, setOpen] = createSignal(false);
-  const [mobileMenuStyle, setMobileMenuStyle] = createSignal<Record<string, string> | undefined>();
+  const [trigger, setTrigger] = createSignal<HTMLButtonElement>();
   const [projectQuery, setProjectQuery] = createSignal("");
   const [envQuery, setEnvQuery] = createSignal("");
   const [creating, setCreating] = createSignal<CreateMode>(null);
   const [formName, setFormName] = createSignal("");
-  const [formSlug, setFormSlug] = createSignal("");
-  const [slugTouched, setSlugTouched] = createSignal(false);
+  const slug = createDerivedSlug(formName);
   const [selectedRegionID, setSelectedRegionID] = createSignal("");
-  const [formColorHex, setFormColorHex] = createSignal(defaultEnvironmentColor(""));
-  const [colorTouched, setColorTouched] = createSignal(false);
+  const [chosenColor, setChosenColor] = createSignal<string | null>(null);
+  const formColorHex = () => chosenColor() ?? defaultEnvironmentColor(slug.value());
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
-  let wrapperRef: HTMLDivElement | undefined;
   let projectSearchRef: HTMLInputElement | undefined;
-  let formNameRef: HTMLInputElement | undefined;
 
   const activeProject = createMemo(() => scope.selectedProject());
   const regions = createQuery(() => ({
@@ -77,88 +71,25 @@ export function ScopeSwitcher() {
     );
   });
 
-  onMount(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      if (creating()) return;
-      if (!wrapperRef) return;
-      if (!wrapperRef.contains(event.target as Node)) closeAll();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (creating()) {
-        cancelForm();
-        event.stopPropagation();
-        return;
-      }
-      if (open()) {
-        setOpen(false);
-      }
-    };
-    const onViewportChange = () => {
-      if (open()) updateMenuPosition();
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onViewportChange);
-    window.addEventListener("scroll", onViewportChange, true);
-    onCleanup(() => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onViewportChange);
-      window.removeEventListener("scroll", onViewportChange, true);
-    });
-  });
-
-  createEffect(() => {
-    if (open()) {
-      updateMenuPosition();
-    } else {
-      setMobileMenuStyle(undefined);
-    }
-  });
-
-  createEffect(() => {
-    if (!slugTouched()) {
-      const nextSlug = slugify(formName());
-      setFormSlug(nextSlug);
-      if (creating() === "environment" && !colorTouched()) setFormColorHex(defaultEnvironmentColor(nextSlug));
-    }
-  });
-
   createEffect(() => {
     if (creating() !== "project") return;
     if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
   });
 
-  function closeAll() {
-    setOpen(false);
-    setCreating(null);
-  }
-
   function resetForm() {
     setFormName("");
-    setFormSlug("");
-    setSlugTouched(false);
+    slug.reset();
     setSelectedRegionID("");
-    setFormColorHex(defaultEnvironmentColor(""));
-    setColorTouched(false);
+    setChosenColor(null);
     setFormError(null);
     setSubmitting(false);
   }
 
-  function startCreateProject() {
+  function startCreate(mode: Exclude<CreateMode, null>) {
+    if (mode === "environment" && !activeProject()) return;
     resetForm();
     setOpen(false);
-    setCreating("project");
-    queueMicrotask(() => formNameRef?.focus());
-  }
-
-  function startCreateEnvironment() {
-    if (!activeProject()) return;
-    resetForm();
-    setOpen(false);
-    setCreating("environment");
-    queueMicrotask(() => formNameRef?.focus());
+    setCreating(mode);
   }
 
   function cancelForm() {
@@ -167,64 +98,37 @@ export function ScopeSwitcher() {
     resetForm();
   }
 
-  function updateMenuPosition() {
-    if (!wrapperRef || window.innerWidth > 720) {
-      setMobileMenuStyle(undefined);
-      return;
-    }
-    const rect = wrapperRef.getBoundingClientRect();
-    const top = Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 80));
-    setMobileMenuStyle({
-      position: "fixed",
-      top: `${top}px`,
-      left: "10px",
-      right: "10px",
-      width: "auto",
-      "max-height": `calc(100dvh - ${top + 10}px)`,
-      "overflow-y": "auto",
-    });
-  }
-
   const toggle = () => {
     if (scope.isLoading()) return;
-    const next = !open();
-    if (next) {
-      setProjectQuery("");
-      setEnvQuery("");
-      setCreating(null);
-      setOpen(true);
-      queueMicrotask(() => projectSearchRef?.focus());
-    } else {
-      closeAll();
+    if (open()) {
+      setOpen(false);
+      return;
     }
+    setProjectQuery("");
+    setEnvQuery("");
+    setCreating(null);
+    setOpen(true);
+    queueMicrotask(() => projectSearchRef?.focus());
   };
 
-  const pickProject = (id: string) => {
-    scope.setSelectedProjectID(id);
+  const pick = (apply: () => void) => {
+    apply();
     navigate(scopeSwitchPath(location.pathname));
-    closeAll();
+    setOpen(false);
   };
 
-  const pickEnv = (envID: string) => {
-    scope.setSelectedEnvironmentID(envID);
-    navigate(scopeSwitchPath(location.pathname));
-    closeAll();
-  };
-
-  async function submitCreateProject(event: Event) {
-    event.preventDefault();
+  async function submitCreateProject() {
     const name = formName().trim();
-    const slug = formSlug().trim();
+    const projectID = slug.value().trim();
     const regionID = selectedRegionID().trim();
-    if (!name || !slug || !regionID) {
+    if (!name || !projectID || !regionID) {
       setFormError("Name, Project ID, and region are required.");
       return;
     }
     setFormError(null);
     setSubmitting(true);
     try {
-      const project = await createProject({
-          name, project: slug, default_region_id: regionID });
+      const project = await createProject({ name, project: projectID, default_region_id: regionID });
       const environment = project.environments?.find((candidate) => candidate.is_default) ?? project.environments?.[0];
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -234,57 +138,51 @@ export function ScopeSwitcher() {
       setCreating(null);
       resetForm();
     } catch (error) {
-      setFormError(createErrorMessage(error));
+      setFormError(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function submitCreateEnvironment(event: Event) {
-    event.preventDefault();
+  async function submitCreateEnvironment() {
     const projectID = scope.selectedProjectID();
     if (!projectID) {
       setFormError("Pick a project first.");
       return;
     }
     const name = formName().trim();
-    const slug = formSlug().trim();
-    if (!name || !slug) {
+    const environmentID = slug.value().trim();
+    if (!name || !environmentID) {
       setFormError("Name and Environment ID are required.");
       return;
     }
     setFormError(null);
     setSubmitting(true);
     try {
-      const env = await createEnvironment(projectID, { name, environment: slug, color_hex: formColorHex() });
+      const env = await createEnvironment(projectID, { name, environment: environmentID, color_hex: formColorHex() });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.environment);
       navigate(scopeSwitchPath(location.pathname));
       setCreating(null);
       resetForm();
     } catch (error) {
-      setFormError(createErrorMessage(error));
+      setFormError(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
   }
 
   const selectedEnvironment = createMemo(() => scope.selectedEnvironment());
-  const switcherDisabled = createMemo(() => scope.isLoading());
   const hasNoProjects = createMemo(() => !scope.isLoading() && scope.projects().length === 0);
-  const searchInputClass =
-    "h-6 w-full border border-console-border bg-white px-2 py-0 font-mono text-[11px] text-console-text outline-none transition placeholder:text-console-faint focus:border-console-accent focus:shadow-[0_0_0_2px_rgb(49_95_206/0.12)]";
-  const createActionClass =
-    "flex h-7 w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-2 text-left font-mono text-[11px] font-medium text-console-muted transition-colors hover:bg-white hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45";
-  const createIconClass =
-    "grid size-4 flex-shrink-0 place-items-center border border-console-border bg-white text-[13px] font-medium leading-none text-console-muted";
+
   return (
-    <div class={"relative min-w-0"} ref={wrapperRef}>
+    <div class={"relative min-w-0"}>
       <button
+        ref={setTrigger}
         type="button"
         class={ui.scopeTrigger}
         data-open={open() ? "true" : "false"}
-        disabled={switcherDisabled()}
+        disabled={scope.isLoading()}
         aria-haspopup="dialog"
         aria-expanded={open()}
         onClick={toggle}
@@ -298,326 +196,184 @@ export function ScopeSwitcher() {
           <span class={"text-console-faint"}>/</span>
           <span class={"text-console-muted"}>Env</span>
           <span class={"flex max-w-32.5 items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-console-text max-sm:max-w-23"}>
-            <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(selectedEnvironment()?.color_hex ?? defaultEnvironmentColor(""))} />
+            <EnvDot colorHex={selectedEnvironment()?.color_hex ?? defaultEnvironmentColor("")} />
             {selectedEnvironment()?.name ?? "—"}
           </span>
         </Show>
-        <span
-          class={cx(
-            "ml-0.5 grid size-4 place-items-center transition-transform",
-            open() && "rotate-180",
-          )}
-          aria-hidden="true"
-        >
+        <span class={cx("ml-0.5 grid size-4 place-items-center transition-transform", open() && "rotate-180")} aria-hidden="true">
           <span class={"block size-1.5 -translate-y-px rotate-45 border-b border-r border-console-muted"} />
         </span>
         <Show when={scope.isLoading()}>
-          <span class={"ml-1.5 border border-[#e5c26e] bg-[#fff7df] px-1.5 py-0.5 text-[10px] font-medium text-console-warning"}>Loading…</span>
+          <span class={cx("ml-1.5 border px-1.5 py-0.5 text-micro font-medium", toneClass.warning)}>Loading…</span>
         </Show>
       </button>
 
-      <Show when={open()}>
-        <div
-          class={"absolute left-0 top-[calc(100%+7px)] z-50 w-110 overflow-hidden border border-console-border-strong bg-console-surface shadow-[2px_2px_0_rgb(15_23_42/0.12)] max-[720px]:w-auto"}
-          style={mobileMenuStyle()}
-          role="dialog"
-          aria-label="Choose project"
-        >
-          <div class={"flex h-5.5 items-center border-b border-console-border bg-[linear-gradient(to_bottom,#f8f8f8,#eceff2)] px-2 font-mono text-[10.5px] text-console-text"}>
-            <span>Switch project</span>
-          </div>
-          <div class={"grid grid-cols-2 max-[720px]:grid-cols-1"}>
-            <div class={"flex min-h-47 min-w-0 flex-col border-console-border even:border-l max-[720px]:even:border-l-0 max-[720px]:even:border-t"}>
-              <div class={"flex flex-col gap-1.5 border-b border-console-border bg-console-bg-panel p-1.5"}>
-                <span class={"font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>Projects</span>
-                <input
-                  ref={projectSearchRef}
-                  class={searchInputClass}
-                  type="text"
-                  placeholder="Find loaded projects…"
-                  value={projectQuery()}
-                  onInput={(event) => setProjectQuery(event.currentTarget.value)}
-                  autocomplete="off"
-                  spellcheck={false}
-                />
-              </div>
-              <div class={"flex max-h-54 flex-1 flex-col gap-0.5 overflow-y-auto p-1"}>
-                <Show
-                  when={filteredProjects().length > 0}
-                  fallback={<div class={"grid flex-1 place-items-center px-3 py-5 text-[12px] text-console-subtle"}>No matches</div>}
-                >
-                  <For each={filteredProjects()}>
-                    {(project) => (
-                      <button
-                        type="button"
-                        class={cx(
-                          ui.scopeItem,
-                          project.project === scope.selectedProjectID() && ui.scopeItemSelected,
-                        )}
-                        onClick={() => pickProject(project.project)}
-                      >
-                        <span class={cx(envDotClass("neutral"), "invisible")} />
-                        <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{project.name}</span>
-                        <Show
-                          when={project.project === scope.selectedProjectID()}
-                          fallback={<span />}
-                        >
-                          <span class={"text-[12px] font-medium leading-none text-console-accent"} aria-label="current">✓</span>
-                        </Show>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-              <div class={"border-t border-console-border bg-console-bg-panel p-1"}>
-                <Show when={scope.hasMoreProjects()}>
-                  <button
-                    type="button"
-                    class={createActionClass}
-                    disabled={scope.isLoadingMoreProjects()}
-                    onClick={() => scope.loadMoreProjects()}
-                  >
-                    <span class={createIconClass} aria-hidden="true">↓</span>
-                    <span class={"truncate"}>{scope.isLoadingMoreProjects() ? "Loading…" : "Load more projects"}</span>
-                  </button>
-                </Show>
-                <button type="button" class={createActionClass} onClick={startCreateProject}>
-                  <span class={createIconClass} aria-hidden="true">+</span>
-                  <span class={"truncate"}>New project</span>
-                </button>
-              </div>
+      <Popover
+        open={open()}
+        anchor={trigger()}
+        onDismiss={() => setOpen(false)}
+        role="dialog"
+        label="Choose project"
+        title="Switch project"
+        width={440}
+        maxHeight={600}
+        fullWidthOnPhones
+      >
+        <div class={"grid grid-cols-2 max-[720px]:grid-cols-1"}>
+          <div class={COLUMN}>
+            <div class={COLUMN_HEAD}>
+              <span class={ui.microLabel}>Projects</span>
+              <SearchInput
+                ref={projectSearchRef}
+                class={SEARCH}
+                aria-label="Find loaded projects"
+                placeholder="Find loaded projects…"
+                value={projectQuery()}
+                onInput={(event) => setProjectQuery(event.currentTarget.value)}
+              />
             </div>
-
-            <div class={"flex min-h-47 min-w-0 flex-col border-console-border even:border-l max-[720px]:even:border-l-0 max-[720px]:even:border-t"}>
-              <div class={"flex flex-col gap-1.5 border-b border-console-border bg-console-bg-panel p-1.5"}>
-                <span class={"font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>
-                  Environments
-                  <Show when={activeProject()}>
-                    <span class={"ml-1.5 normal-case tracking-normal text-console-subtle"}>
-                      in {activeProject()!.name}
-                    </span>
-                  </Show>
-                </span>
-                <input
-                  class={searchInputClass}
-                  type="text"
-                  placeholder="Find an environment…"
-                  value={envQuery()}
-                  onInput={(event) => setEnvQuery(event.currentTarget.value)}
-                  autocomplete="off"
-                  spellcheck={false}
-                />
-              </div>
-              <div class={"flex max-h-54 flex-1 flex-col gap-0.5 overflow-y-auto p-1"}>
-                <Show
-                  when={filteredEnvs().length > 0}
-                  fallback={
-                    <div class={"grid flex-1 place-items-center px-3 py-5 text-[12px] text-console-subtle"}>
-                      <Show when={activeProject()} fallback="No project selected">
-                        No environments yet
+            <div class={"flex max-h-54 flex-1 flex-col gap-0.5 overflow-y-auto p-1"}>
+              <Show when={filteredProjects().length > 0} fallback={<div class={NO_MATCH}>No matches</div>}>
+                <For each={filteredProjects()}>
+                  {(project) => (
+                    <button
+                      type="button"
+                      class={cx(ui.scopeItem, project.project === scope.selectedProjectID() && ui.scopeItemSelected)}
+                      onClick={() => pick(() => scope.setSelectedProjectID(project.project))}
+                    >
+                      <span />
+                      <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{project.name}</span>
+                      <Show when={project.project === scope.selectedProjectID()} fallback={<span />}>
+                        <span class={"text-control font-medium leading-none text-console-accent"} aria-label="current">✓</span>
                       </Show>
-                    </div>
-                  }
-                >
-                  <For each={filteredEnvs()}>
-                    {(env) => (
-                      <button
-                        type="button"
-                        class={cx(
-                          ui.scopeItem,
-                          env.environment === scope.selectedEnvironmentID() && ui.scopeItemSelected,
-                        )}
-                        onClick={() => pickEnv(env.environment)}
-                      >
-                        <span class="inline-block size-1.5 shrink-0 rounded-full" style={envDotStyle(env.color_hex)} />
-                        <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{env.name}</span>
-                        <Show
-                          when={
-                            env.environment === scope.selectedEnvironmentID()
-                          }
-                          fallback={<span />}
-                        >
-                          <span class={"text-[12px] font-medium leading-none text-console-accent"} aria-label="current">✓</span>
-                        </Show>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-              <div class={"border-t border-console-border bg-console-bg-panel p-1"}>
-                <button
-                  type="button"
-                  class={createActionClass}
-                  disabled={!activeProject()}
-                  onClick={startCreateEnvironment}
-                >
-                  <span class={createIconClass} aria-hidden="true">+</span>
-                  <span class={"truncate"}>New environment</span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class={"flex items-center justify-end border-t border-console-border bg-console-bg-panel px-2 py-1 font-mono text-[10px] text-console-subtle"}>
-            <A
-              href="/settings/projects"
-              class={"font-mono text-[10.5px] font-medium text-console-accent hover:text-console-accent-hover"}
-              onClick={closeAll}
-            >
-              Project settings
-            </A>
-          </div>
-        </div>
-      </Show>
-
-      <Show when={creating() === "project"}>
-        <Modal title="New project" onClose={cancelForm} closeDisabled={submitting()}>
-          <form onSubmit={submitCreateProject}>
-            <label class={ui.field}>
-              <span>Name</span>
-              <input
-                ref={formNameRef}
-                type="text"
-                class={ui.input}
-                value={formName()}
-                onInput={(event) => setFormName(event.currentTarget.value)}
-                placeholder="My app"
-                autocomplete="off"
-                autofocus
-              />
-            </label>
-            <label class={ui.field}>
-              <span>{creating() === "project" ? "Project ID" : "Environment ID"}</span>
-              <input
-                type="text"
-                class={ui.input}
-                value={formSlug()}
-                onInput={(event) => {
-                  setSlugTouched(true);
-                  setFormSlug(event.currentTarget.value);
-                }}
-                placeholder="my-app"
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </label>
-            <label class={ui.field}>
-              <span>Region</span>
-              <select
-                class={ui.input}
-                value={selectedRegionID()}
-                onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
-                disabled={regions.isPending || regionOptions().length === 0}
-              >
-                <For each={regionOptions()}>
-                  {(region) => (
-                    <option value={region.id}>
-                      {region.display_name || region.id}
-                    </option>
+                    </button>
                   )}
                 </For>
-              </select>
-            </label>
-            <Show when={formError()}>
-              <p class={ui.fieldError} role="alert">{formError()}</p>
-            </Show>
-            <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>
-                Cancel
-              </button>
-              <button class={ui.button} type="submit" disabled={submitting() || !formName().trim() || !formSlug().trim() || !selectedRegionID().trim()}>
-                {submitting() ? "Creating..." : "Create"}
+              </Show>
+            </div>
+            <div class={"border-t border-console-border bg-console-bg-panel p-1"}>
+              <Show when={scope.hasMoreProjects()}>
+                <button type="button" class={CREATE_ACTION} disabled={scope.isLoadingMoreProjects()} onClick={() => scope.loadMoreProjects()}>
+                  <span class={CREATE_ICON} aria-hidden="true">↓</span>
+                  <span class={"truncate"}>{scope.isLoadingMoreProjects() ? "Loading…" : "Load more projects"}</span>
+                </button>
+              </Show>
+              <button type="button" class={CREATE_ACTION} onClick={() => startCreate("project")}>
+                <span class={CREATE_ICON} aria-hidden="true">+</span>
+                <span class={"truncate"}>New project</span>
               </button>
             </div>
-          </form>
-        </Modal>
+          </div>
+
+          <div class={COLUMN}>
+            <div class={COLUMN_HEAD}>
+              <span class={ui.microLabel}>
+                Environments
+                <Show when={activeProject()}>
+                  {(project) => <span class={"ml-1.5 normal-case tracking-normal"}>in {project().name}</span>}
+                </Show>
+              </span>
+              <SearchInput
+                class={SEARCH}
+                aria-label="Find an environment"
+                placeholder="Find an environment…"
+                value={envQuery()}
+                onInput={(event) => setEnvQuery(event.currentTarget.value)}
+              />
+            </div>
+            <div class={"flex max-h-54 flex-1 flex-col gap-0.5 overflow-y-auto p-1"}>
+              <Show
+                when={filteredEnvs().length > 0}
+                fallback={
+                  <div class={NO_MATCH}>
+                    <Show when={activeProject()} fallback="No project selected">No environments yet</Show>
+                  </div>
+                }
+              >
+                <For each={filteredEnvs()}>
+                  {(env) => (
+                    <button
+                      type="button"
+                      class={cx(ui.scopeItem, env.environment === scope.selectedEnvironmentID() && ui.scopeItemSelected)}
+                      onClick={() => pick(() => scope.setSelectedEnvironmentID(env.environment))}
+                    >
+                      <EnvDot colorHex={env.color_hex} />
+                      <span class={"overflow-hidden text-ellipsis whitespace-nowrap font-medium"}>{env.name}</span>
+                      <Show when={env.environment === scope.selectedEnvironmentID()} fallback={<span />}>
+                        <span class={"text-control font-medium leading-none text-console-accent"} aria-label="current">✓</span>
+                      </Show>
+                    </button>
+                  )}
+                </For>
+              </Show>
+            </div>
+            <div class={"border-t border-console-border bg-console-bg-panel p-1"}>
+              <button type="button" class={CREATE_ACTION} disabled={!activeProject()} onClick={() => startCreate("environment")}>
+                <span class={CREATE_ICON} aria-hidden="true">+</span>
+                <span class={"truncate"}>New environment</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class={"flex items-center justify-end border-t border-console-border bg-console-bg-panel px-2 py-1"}>
+          <A
+            href="/settings/projects"
+            class={"font-mono text-micro font-medium text-console-accent hover:text-console-accent-hover"}
+            onClick={() => setOpen(false)}
+          >
+            Project settings
+          </A>
+        </div>
+      </Popover>
+
+      <Show when={creating() === "project"}>
+        <FormDialog
+          title="New project"
+          submitLabel="Create"
+          busyLabel="Creating..."
+          busy={submitting()}
+          disabled={!formName().trim() || !slug.value().trim() || !selectedRegionID().trim()}
+          error={formError()}
+          onSubmit={() => void submitCreateProject()}
+          onClose={cancelForm}
+        >
+          <Field label="Name">
+            <TextInput value={formName()} onInput={(event) => setFormName(event.currentTarget.value)} placeholder="My app" autocomplete="off" autofocus />
+          </Field>
+          <Field label="Project ID">
+            <SlugInput slug={slug} placeholder="my-app" />
+          </Field>
+          <Field label="Region">
+            <Select
+              value={selectedRegionID()}
+              options={regionOptions().map((region) => ({ value: region.id, label: region.display_name || region.id }))}
+              onChange={setSelectedRegionID}
+              disabled={regions.isPending || regionOptions().length === 0}
+              minWidth="100%"
+            />
+          </Field>
+        </FormDialog>
       </Show>
 
       <Show when={creating() === "environment"}>
-        <Modal
+        <FormDialog
           title={activeProject() ? `New environment in ${activeProject()!.name}` : "New environment"}
+          submitLabel="Create"
+          busyLabel="Creating..."
+          busy={submitting()}
+          disabled={!formName().trim() || !slug.value().trim()}
+          error={formError()}
+          onSubmit={() => void submitCreateEnvironment()}
           onClose={cancelForm}
-          closeDisabled={submitting()}
         >
-          <form onSubmit={submitCreateEnvironment}>
-            <label class={ui.field}>
-              <span>Name</span>
-              <input
-                ref={formNameRef}
-                type="text"
-                class={ui.input}
-                value={formName()}
-                onInput={(event) => setFormName(event.currentTarget.value)}
-                placeholder="Preview"
-                autocomplete="off"
-                autofocus
-              />
-            </label>
-            <label class={ui.field}>
-              <span>{creating() === "project" ? "Project ID" : "Environment ID"}</span>
-              <input
-                type="text"
-                class={ui.input}
-                value={formSlug()}
-                onInput={(event) => {
-                  setSlugTouched(true);
-                  const nextSlug = event.currentTarget.value;
-                  setFormSlug(nextSlug);
-                  if (!colorTouched()) setFormColorHex(defaultEnvironmentColor(nextSlug));
-                }}
-                placeholder="preview"
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </label>
-            <label class={ui.field}>
-              <span>Color</span>
-              <div class="flex items-center gap-2">
-                <input
-                  type="color"
-                  class="size-8 cursor-pointer border border-console-border bg-white p-0.5"
-                  value={formColorHex()}
-                  onInput={(event) => {
-                    setColorTouched(true);
-                    setFormColorHex(normalizeEnvironmentColor(event.currentTarget.value));
-                  }}
-                  aria-label="Environment color"
-                />
-                <div class="flex flex-wrap gap-1.5">
-                  <For each={ENVIRONMENT_COLOR_PRESETS}>
-                    {(preset) => (
-                      <button
-                        type="button"
-                        class="size-6 cursor-pointer border border-console-border bg-white p-0.5"
-                        aria-label={`Use ${preset}`}
-                        onClick={() => {
-                          setColorTouched(true);
-                          setFormColorHex(preset);
-                        }}
-                      >
-                        <span class="block size-full" style={{ "background-color": preset }} />
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </div>
-            </label>
-            <Show when={formError()}>
-              <p class={ui.fieldError} role="alert">{formError()}</p>
-            </Show>
-            <div class={ui.modalActions}>
-              <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={cancelForm}>
-                Cancel
-              </button>
-              <button
-                class={ui.button}
-                type="submit"
-                disabled={submitting() || !formName().trim() || !formSlug().trim()}
-              >
-                {submitting() ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          <Field label="Name">
+            <TextInput value={formName()} onInput={(event) => setFormName(event.currentTarget.value)} placeholder="Preview" autocomplete="off" autofocus />
+          </Field>
+          <Field label="Environment ID">
+            <SlugInput slug={slug} placeholder="preview" />
+          </Field>
+          <ColorField value={formColorHex()} onChange={setChosenColor} presets={ENVIRONMENT_COLOR_PRESETS} ariaLabel="Environment color" />
+        </FormDialog>
       </Show>
     </div>
   );

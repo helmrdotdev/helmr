@@ -1,3 +1,4 @@
+import { isOrganizationAdmin, useMe } from "../lib/me";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
 import { SessionProgress } from "../features/asks/SessionProgress";
 import { ContentView } from "../features/asks/Question";
@@ -20,8 +21,8 @@ import { definitionHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { deploymentHref } from "../features/deployments/navigation";
-import { ApiError } from "../lib/api";
-import { getMe, hasPermission } from "../lib/auth";
+import { errorMessage } from "../lib/error";
+import { hasPermission } from "../lib/auth";
 import { useScope } from "../lib/scope";
 import {
   cancelSession,
@@ -33,20 +34,16 @@ import {
   type SessionAddress,
   type SessionReceipt,
 } from "../lib/sessions";
-import { ConfirmModal } from "../ui/ConfirmModal";
+import { ConfirmDialog } from "../ui/Dialog";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
-import { DetailItem, DetailList, Panel } from "../ui/Panel";
+import { DetailLayout, KeyValue, KeyValueList, Panel } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "The operation could not be completed.";
-}
+const sessionError = (error: unknown) => errorMessage(error, "The operation could not be completed.");
 
 export function SessionDetail() {
   const params = useParams();
@@ -77,12 +74,7 @@ function SessionDetailContent() {
     environmentID: environmentID(),
   });
   const enabled = () => !!sessionID() && !!projectID() && !!environmentID();
-  const me = createQuery(() => ({
-    queryKey: ["me"],
-    queryFn: getMe,
-    retry: false,
-    staleTime: 60_000,
-  }));
+  const me = useMe();
   const can = (permission: string) => hasPermission(me.data, permission);
   const session = createQuery(() => ({
     queryKey: ["session", sessionID(), projectID(), environmentID()],
@@ -150,7 +142,7 @@ function SessionDetailContent() {
     <section class={ui.page}>
       <PageHeader
         title="Session"
-        back={{ href: "/sessions", label: "Sessions" }}
+        breadcrumb={[{ href: "/sessions", label: "Sessions" }]}
         subtitle={<IDText value={sessionID()} mode="full" />}
         badge={
           <Show when={session.data}>
@@ -172,7 +164,7 @@ function SessionDetailContent() {
         }
       />
       <Show when={session.isError}>
-        <StatePanel error={errorMessage(session.error)} />
+        <StatePanel error={sessionError(session.error)} />
       </Show>
       <Show
         when={enabled()}
@@ -186,8 +178,73 @@ function SessionDetailContent() {
         >
           <Show when={session.data}>
             {(current) => (
-              <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-3.5 max-[960px]:grid-cols-1">
-                <div class="flex min-w-0 flex-col gap-6">
+              <DetailLayout
+                rail={
+                <KeyValueList title="Session details">
+                  <Show when={current().activity.process}>{process => <KeyValue label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></KeyValue>}</Show>
+                  <KeyValue label="Agent">
+                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</a>
+                  </KeyValue>
+                  <Show when={current().initial_turn} fallback={<KeyValue label="Work">No input yet</KeyValue>}>
+                    {turn => <KeyValue label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></KeyValue>}
+                  </Show>
+                  <Show when={current().parent_session_id}>
+                    {id => <KeyValue label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
+                  </Show>
+                  <Show when={current().requester_session_id}>
+                    {id => <KeyValue label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></KeyValue>}
+                  </Show>
+                  <Show when={current().key}>
+                    {(key) => (
+                      <KeyValue label="Key">
+                        <code>{key()}</code>
+                      </KeyValue>
+                    )}
+                  </Show>
+                  <KeyValue label="Status">
+                    <StatusBadge resource="session" status={current().status} />
+                  </KeyValue>
+                  <KeyValue label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></KeyValue>
+                  <KeyValue label="Deployment">
+                    <IDText
+                      value={current().deployment_id}
+                      mode="link"
+                      href={deploymentHref(current().deployment_id)}
+                    />
+                  </KeyValue>
+                  <KeyValue label="Computer">
+                    <Show when={current().computer_id} fallback={<span>No Computer assigned</span>}>
+                      {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
+                    </Show>
+                  </KeyValue>
+                  <KeyValue label="Created">
+                    <RelativeTime value={current().created_at} />
+                  </KeyValue>
+                  <KeyValue label="Holds">
+                    <Show
+                      when={current().holds.length}
+                      fallback={<span>None</span>}
+                    >
+                      <ul class="space-y-3">
+                        <For each={current().holds}>
+                          {(hold) => (
+                            <li class="flex flex-col items-start gap-1">
+                              <span>
+                                {hold.reason || "Paused"} ({hold.scope})
+                              </span>
+                              <IDText value={hold.id} />
+                              <Show when={hold.session_id !== sessionID()}>
+                                <span class="block">Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} /></span>
+                              </Show>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </Show>
+                  </KeyValue>
+                </KeyValueList>
+                }
+              >
                   <Show when={receipt()}>
                     {(value) => (
                       <Panel title="Operation receipt">
@@ -203,14 +260,14 @@ function SessionDetailContent() {
                     )}
                   </Show>
                   <SessionProgress address={address()} polling={polling()} />
-                  <Show when={current().slack_channel_id}><SessionDelivery address={address()} canManage={me.data?.role === "owner" || me.data?.role === "admin"} /></Show>
+                  <Show when={current().slack_channel_id}><SessionDelivery address={address()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
                   <Panel title="Turns">
                     <p class={ui.muted}>
                       Inputs are shown in admission order. Queued work remains
                       available for inspection when execution is blocked.
                     </p>
                     <Show when={turns.isError}>
-                      <StatePanel error={errorMessage(turns.error)} />
+                      <StatePanel error={sessionError(turns.error)} />
                     </Show>
                     <Show
                       when={!turns.isPending}
@@ -282,84 +339,21 @@ function SessionDetailContent() {
                     </Show>
                   </Panel>
                   <p class={ui.muted}>Send work through the CLI or the connected Slack conversation. Use the CLI to close this Session or release a hold.</p>
-                </div>
-                <DetailList title="Session details">
-                  <Show when={current().activity.process}>{process => <DetailItem label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></DetailItem>}</Show>
-                  <DetailItem label="Agent">
-                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent, current().deployment_id)}>{current().agent}</a>
-                  </DetailItem>
-                  <Show when={current().initial_turn} fallback={<DetailItem label="Work">No input yet</DetailItem>}>
-                    {turn => <DetailItem label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></DetailItem>}
-                  </Show>
-                  <Show when={current().parent_session_id}>
-                    {id => <DetailItem label="Owner Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></DetailItem>}
-                  </Show>
-                  <Show when={current().requester_session_id}>
-                    {id => <DetailItem label="Requester Session"><IDText value={id()} mode="link" href={sessionConsolePath(id())} /></DetailItem>}
-                  </Show>
-                  <Show when={current().key}>
-                    {(key) => (
-                      <DetailItem label="Key">
-                        <code>{key()}</code>
-                      </DetailItem>
-                    )}
-                  </Show>
-                  <DetailItem label="Status">
-                    <StatusBadge resource="session" status={current().status} />
-                  </DetailItem>
-                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, current().deployment_id)}>{current().template}</a></DetailItem>
-                  <DetailItem label="Deployment">
-                    <IDText
-                      value={current().deployment_id}
-                      mode="link"
-                      href={deploymentHref(current().deployment_id)}
-                    />
-                  </DetailItem>
-                  <DetailItem label="Computer">
-                    <Show when={current().computer_id} fallback={<span>No Computer assigned</span>}>
-                      {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
-                    </Show>
-                  </DetailItem>
-                  <DetailItem label="Created">
-                    <RelativeTime value={current().created_at} />
-                  </DetailItem>
-                  <DetailItem label="Holds">
-                    <Show
-                      when={current().holds.length}
-                      fallback={<span>None</span>}
-                    >
-                      <ul class="space-y-3">
-                        <For each={current().holds}>
-                          {(hold) => (
-                            <li class="flex flex-col items-start gap-1">
-                              <span>
-                                {hold.reason || "Paused"} ({hold.scope})
-                              </span>
-                              <IDText value={hold.id} />
-                              <Show when={hold.session_id !== sessionID()}>
-                                <span class="block">Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} /></span>
-                              </Show>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
-                    </Show>
-                  </DetailItem>
-                </DetailList>
-              </div>
+              </DetailLayout>
             )}
           </Show>
         </Show>
       </Show>
       <Show when={control()} keyed>
         {operation => (
-          <ConfirmModal
+          <ConfirmDialog
+            cancelLabel="Keep"
             title={controlLabels[operation.kind]}
             confirmLabel={controlLabels[operation.kind]}
             busyLabel="Requesting..."
             tone={operation.kind === "cancel" ? "danger" : "default"}
             onClose={() => setControl(undefined)}
-            errorMessage={errorMessage}
+            errorMessage={sessionError}
             onConfirm={() => performControl(operation)}
           >
             <Show when={operation.kind === "interrupt"}>
@@ -371,7 +365,7 @@ function SessionDetailContent() {
             <Show when={operation.kind === "cancel"}>
               Cancel queued Turns and request that active work in this Session and its owned children stop. Retained inputs remain available for inspection. Other Sessions sharing the Computer are not cancelled.
             </Show>
-          </ConfirmModal>
+          </ConfirmDialog>
         )}
       </Show>
     </section>

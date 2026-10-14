@@ -1,7 +1,7 @@
 import { createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
-import { ApiError } from "../lib/api";
+import { errorMessage } from "../lib/error";
 import {
   issueApiKey,
   listApiKeys,
@@ -15,12 +15,15 @@ import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { DataTable } from "../ui/DataTable";
 import { formatID } from "../ui/id";
-import { Modal } from "../ui/Modal";
+import { Dialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
-import { envDotStyle, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
+import { createRowActions } from "../ui/rowActions";
+import { useClipboard } from "../ui/useClipboard";
+import { EnvironmentTarget } from "../ui/EnvChip";
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -118,12 +121,7 @@ const API_KEY_SCOPE_OPTIONS: {
 
 const DEFAULT_SCOPES: ApiKeyScope[] = ["sessions:create", "sessions:read"];
 
-function apiKeyErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return API_KEY_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
-  }
-  return INTERNAL_ERROR_MESSAGE;
-}
+const apiKeyErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, API_KEY_ERROR_MESSAGES);
 
 function validateLabel(value: string): string | null {
   const label = value.trim();
@@ -196,7 +194,7 @@ function IssueApiKeyModal(props: {
   const [issued, setIssued] = createSignal<ApiKeyIssued | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [copyState, setCopyState] = createSignal<string | null>(null);
+  const clipboard = useClipboard();
 
   const expiryDays = createMemo(() => {
     const value = expiry();
@@ -208,7 +206,6 @@ function IssueApiKeyModal(props: {
     setLabel("");
     setSelectedScopes([...DEFAULT_SCOPES]);
     setError(null);
-    setCopyState(null);
     props.onClose();
   };
 
@@ -242,7 +239,6 @@ function IssueApiKeyModal(props: {
         }],
       });
       setIssued(result);
-      setCopyState(null);
       await props.onIssued();
     } catch (issueError) {
       setError(apiKeyErrorMessage(issueError));
@@ -253,17 +249,11 @@ function IssueApiKeyModal(props: {
 
   const copyIssuedKey = async () => {
     const current = issued();
-    if (!current) return;
-    try {
-      await navigator.clipboard.writeText(current.raw_key);
-      setCopyState("Copied");
-    } catch {
-      setCopyState("Copy failed");
-    }
+    if (current) await clipboard.copy(current.raw_key);
   };
 
   return (
-    <Modal
+    <Dialog
       title={issued() ? "API key generated" : "Generate API key"}
       onClose={closeAndClear}
       closeDisabled={submitting()}
@@ -271,17 +261,14 @@ function IssueApiKeyModal(props: {
       <Show when={issued()} keyed fallback={
         <form onSubmit={submit}>
           <p class={ui.modalIntro}>Create a machine credential for automation. Limit it to the permissions this workflow needs.</p>
-          <div class={ui.scopeTarget} aria-label="API key target environment">
-            <span>Target environment</span>
-            <strong>{props.environmentName}</strong>
-            <div>
-              <Show when={props.environmentColorHex}>
-                <span class={ui.scopeTargetDot} style={envDotStyle(props.environmentColorHex)} aria-hidden="true" />
-              </Show>
-              <span>{props.projectName}</span>
-              <code>{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
-            </div>
-          </div>
+          <EnvironmentTarget
+            label="API key target environment"
+            environmentName={props.environmentName}
+            environmentColorHex={props.environmentColorHex}
+            projectName={props.projectName}
+            projectID={props.projectID}
+            environmentID={props.environmentID}
+          />
           <label class={ui.field}>
             <span>Name</span>
             <input
@@ -345,13 +332,13 @@ function IssueApiKeyModal(props: {
               <button type="button" class={ui.secondaryButton} onClick={closeAndClear}>Done</button>
               <button class={ui.button} type="button" onClick={copyIssuedKey}>Copy</button>
             </div>
-            <Show when={copyState()}>
-              <p class={ui.inlineState} role="status">{copyState()}</p>
+            <Show when={clipboard.state() !== "idle"}>
+              <p class={ui.inlineState} role="status">{clipboard.state() === "copied" ? "Copied" : "Copy failed"}</p>
             </Show>
           </>
         )}
       </Show>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -360,8 +347,7 @@ export function ApiKeys() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = createSignal<ListFilter>("active");
   const [modalOpen, setModalOpen] = createSignal(false);
-  const [revokingId, setRevokingId] = createSignal<string | null>(null);
-  const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
+  const rows = createRowActions<"revoke">();
 
   const keys = createInfiniteQuery(() => ({
     queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
@@ -381,16 +367,10 @@ export function ApiKeys() {
 
   const revoke = async (keyItem: ApiKeySummary) => {
     if (!window.confirm(`Revoke API key "${keyItem.name}"?`)) return;
-    setRevokeError(null);
-    setRevokingId(keyItem.id);
-    try {
+    await rows.run(keyItem.id, "revoke", async () => {
       await revokeApiKey(scope.selectedProjectID(), scope.selectedEnvironmentID(), keyItem.id);
       await invalidateApiKeys();
-    } catch (error) {
-      setRevokeError({ id: keyItem.id, message: apiKeyErrorMessage(error) });
-    } finally {
-      setRevokingId(null);
-    }
+    }, apiKeyErrorMessage);
   };
 
   return (
@@ -440,8 +420,8 @@ export function ApiKeys() {
               {(keyItem) => (
                 <ApiKeyRow
                   keyItem={keyItem}
-                  revoking={revokingId() === keyItem.id}
-                  error={revokeError()?.id === keyItem.id ? revokeError()?.message ?? null : null}
+                  revoking={rows.busy(keyItem.id)}
+                  error={rows.error(keyItem.id)}
                   onRevoke={revoke}
                 />
               )}

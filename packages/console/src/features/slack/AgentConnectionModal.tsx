@@ -1,7 +1,7 @@
 import { createQuery } from "@tanstack/solid-query";
 import { createSignal, onCleanup, Show } from "solid-js";
 import { authorizeAgentSlackConnection, beginAgentSlackConnection, disconnectAgentSlackConnection, getAgentSlackConnection, saveSlackAppCredentials, type AgentSlackAddress, type AgentSlackConnection } from "../../lib/slack";
-import { Modal } from "../../ui/Modal";
+import { Dialog } from "../../ui/Dialog";
 import { AppIconPicker } from "./AppIconPicker";
 import { ui } from "../../ui/styles";
 
@@ -24,7 +24,7 @@ export function AgentConnectionModal(props: AgentSlackAddress & { onClose: () =>
     const result = await authorizeAgentSlackConnection(address, id, window.location.pathname + window.location.search);
     if (mounted) window.location.assign(result.redirect_url);
   });
-  return <Modal title={`Slack · ${props.agentName}`} onClose={props.onClose} closeDisabled={busy()}>
+  return <Dialog title={`Slack · ${props.agentName}`} onClose={props.onClose} closeDisabled={busy()}>
     <Show when={state.isPending}><p class={ui.muted}>Loading connection...</p></Show>
     <Show when={state.error}><p class={ui.error}>The connection could not be loaded. An organization owner or admin can manage it.</p></Show>
     <Show when={error()}><p class={ui.error} role="alert">{error()}</p></Show>
@@ -60,7 +60,7 @@ export function AgentConnectionModal(props: AgentSlackAddress & { onClose: () =>
         </Show>
       </>}</Show>
     </Show>
-  </Modal>;
+  </Dialog>;
 }
 
 function CredentialForm(props: { connection: AgentSlackConnection; busy: boolean; save: (credentials: { client_id: string; client_secret: string; signing_secret: string }) => Promise<void> }) {
