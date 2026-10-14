@@ -44,7 +44,7 @@ silently change nested controls.
 - **ScopeSwitcher** and **ProfileMenu** (`components/`). Both open in a `Popover`.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
-  Account, Project (with the tab's Project name) and Organization (with its name).
+  Account, Project and Organization.
 - **EnvironmentSelectorLayout** and `useEditedEnvironment` (`components/`). An
   Environment-specific settings page (Secrets, API keys) edits one Environment of
   the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the

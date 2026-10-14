@@ -1,25 +1,20 @@
 import { A, useLocation } from "@solidjs/router";
-import { createUniqueId, For, Show, type JSX } from "solid-js";
-import { useMe } from "../lib/me";
-import { useScope } from "../lib/scope";
+import { createUniqueId, For, type JSX } from "solid-js";
 import { Page } from "../ui/Page";
 import { cx, ui } from "../ui/styles";
 
 type NavLink = { href: string; label: string };
-type NavGroup = { label: string; name?: () => string | undefined; links: NavLink[] };
+type NavGroup = { label: string; links: NavLink[] };
 
 // Settings pages have flat topic paths; the group a page sits in names the level
 // it applies to: the signed-in account, the tab's Project, or the organization.
 export function SettingsLayout(props: { children: JSX.Element }) {
   const location = useLocation();
-  const scope = useScope();
-  const me = useMe();
 
   const groups: NavGroup[] = [
     { label: "Account", links: [{ href: "/settings/account", label: "My account" }] },
     {
       label: "Project",
-      name: () => scope.selectedProject()?.name,
       links: [
         { href: "/settings/project", label: "General" },
         { href: "/settings/environments", label: "Environments" },
@@ -29,7 +24,6 @@ export function SettingsLayout(props: { children: JSX.Element }) {
     },
     {
       label: "Organization",
-      name: () => me.data?.org_name || undefined,
       links: [{ href: "/settings/members", label: "Members" }],
     },
   ];
@@ -42,12 +36,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
             const labelID = createUniqueId();
             return (
               <div role="group" aria-labelledby={labelID} class={"flex flex-col gap-px max-[960px]:flex-row max-[960px]:flex-wrap max-[960px]:items-center max-[960px]:gap-1"}>
-                <div class={"flex min-w-0 flex-col gap-0.5 px-2 pb-1.5 max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-baseline max-[960px]:gap-1.5 max-[960px]:px-1.5 max-[960px]:pb-0"}>
-                  <span id={labelID} class={ui.microLabel}>{group.label}</span>
-                  <Show when={group.name?.()}>
-                    {(name) => <span class={"truncate font-mono text-badge text-console-muted"} title={name()}>{name()}</span>}
-                  </Show>
-                </div>
+                <span id={labelID} class={cx(ui.microLabel, "px-2 pb-1.5 max-[960px]:w-full max-[960px]:px-1.5 max-[960px]:pb-0")}>{group.label}</span>
                 <For each={group.links}>
                   {(link) => (
                     <A

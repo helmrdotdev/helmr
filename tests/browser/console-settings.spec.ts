@@ -51,7 +51,7 @@ const subtitle = (page: Page) => page.locator("h1").locator("xpath=../following-
 const rail = (page: Page) => page.getByRole("region", { name: "Environment" });
 const radio = (page: Page, name: string) => rail(page).getByRole("radio", { name: new RegExp(`^${name}\\b`) });
 
-test("settings navigation groups pages by Account, Project and Organization with their names", async ({ page }) => {
+test("settings navigation groups pages by Account, Project and Organization", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings?${scope}`);
   await expect(page).toHaveURL("/settings/project");
@@ -65,9 +65,9 @@ test("settings navigation groups pages by Account, Project and Organization with
   const projectGroup = navigation.getByRole("group", { name: "Project", exact: true });
   const organization = navigation.getByRole("group", { name: "Organization", exact: true });
   await expect(account.getByRole("link")).toHaveText(["My account"]);
-  await expect(projectGroup).toContainText("Settings Demo");
+  await expect(projectGroup).not.toContainText("Settings Demo");
   await expect(projectGroup.getByRole("link")).toHaveText(["General", "Environments", "Secrets", "API keys"]);
-  await expect(organization).toContainText("Research Org");
+  await expect(organization).not.toContainText("Research Org");
   await expect(organization.getByRole("link")).toHaveText(["Members"]);
   await expect(projectGroup.getByRole("link", { name: "General", exact: true })).toHaveAttribute("aria-current", "page");
 
