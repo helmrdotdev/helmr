@@ -304,8 +304,12 @@ func Answer(question, raw json.RawMessage) (json.RawMessage, error) {
 		}
 	}
 	encoded, _ := json.Marshal(resolved)
-	if len(encoded) > AnswerBytes {
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, err
+	}
+	if len(canonical) > AnswerBytes {
 		return nil, ErrLimit
 	}
-	return jsoncanon.Transform(encoded)
+	return canonical, nil
 }

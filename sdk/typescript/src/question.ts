@@ -11,8 +11,8 @@ export type Question = TextQuestion | ChoiceQuestion
 export type NormalizedQuestion = Question & Readonly<{ prompt: Content }>
 type Selection<O> = O extends ChoiceOption ? Readonly<{ id: O["id"]; value: O["value"] }> : never
 export type ChoiceAnswer<Q extends ChoiceQuestion = ChoiceQuestion> = Readonly<{ selected: readonly Selection<Q["options"][number]>[] }>
-  & (true extends Q["allowCustom"] ? Readonly<{ custom?: string }> : Readonly<{ custom?: never }>)
-  & (true extends Q["allowNotes"] ? Readonly<{ notes?: string }> : Readonly<{ notes?: never }>)
+  & (true extends ("allowCustom" extends keyof Q ? Q["allowCustom"] : false) ? Readonly<{ custom?: string }> : Readonly<{ custom?: never }>)
+  & (true extends ("allowNotes" extends keyof Q ? Q["allowNotes"] : false) ? Readonly<{ notes?: string }> : Readonly<{ notes?: never }>)
 export type AnswerFor<Q extends Question> = Q extends TextQuestion ? string : Q extends ChoiceQuestion ? ChoiceAnswer<Q> : never
 export type AskAnswer<T = JsonValue> = Readonly<{ answer: T; answeredBy: Readonly<{ kind: "user" | "api_key"; id: string }> }>
 export type AnswerSubmission = string | Readonly<{ selectedIds: readonly string[]; custom?: string; notes?: string }>

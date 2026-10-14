@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { readFile, writeFile, rename } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { HelmrClient } from "../../../sdk/typescript/src/client"
-import type { SessionRef } from "../../../sdk/typescript/src/client-session"
+import type { SessionRef } from "../../../sdk/typescript/src/contract"
 import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/src/contract"
 
 // PostgreSQL observations are written by the surrounding qualification process.
@@ -141,7 +141,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     for (const summary of page.items) {
      if (summary.status !== "pending" || answered.has(summary.id)) continue
      const ask = await turn.asks.get(summary.id, { signal })
-     const part = ask.prompt?.find(item => item.type === "json")
+     const part = ask.question?.prompt.find(item => item.type === "json")
      assert.equal(provider, "claude"); assert(part?.type === "json")
      const value = part.value as Record<string, unknown>
      assert.equal(value["provider"], "claude")
@@ -157,7 +157,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       assert.equal(value["toolName"], "mcp__helmr__enqueue")
       assert.deepEqual(value["input"], { sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}` })
      }
-     await turn.asks.answer(ask.id, { answer: { selected: [{ id: "allow", value: true }] }, responseId: `healthy-${ask.id}` }, { signal })
+     await turn.asks.answer(ask.id, { answer: { selectedIds: ["allow"] }, answerId: `healthy-${ask.id}` }, { signal })
      answered.add(ask.id)
     }
     cursor = page.nextCursor

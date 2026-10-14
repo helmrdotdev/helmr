@@ -193,6 +193,10 @@ func renderQuestion(sequence int64, raw json.RawMessage) ([]ContentPost, error) 
 	if err = json.Unmarshal(q.Prompt, &parts); err != nil {
 		return nil, err
 	}
+	if q.Title != "" {
+		title, _ := json.Marshal(map[string]string{"type": "text", "text": q.Title})
+		parts = append([]json.RawMessage{title}, parts...)
+	}
 	var choices strings.Builder
 	if len(q.Options) > 0 {
 		choices.WriteString("\nChoices:")

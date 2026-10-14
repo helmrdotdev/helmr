@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import type { HelmrClient } from "../../../sdk/typescript/src/client"
-import type { SessionRef } from "../../../sdk/typescript/src/client-session"
+import type { SessionRef } from "../../../sdk/typescript/src/contract"
 import type { TurnRef } from "../../../sdk/typescript/src/contract"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 

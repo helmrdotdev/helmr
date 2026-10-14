@@ -104,3 +104,20 @@ func TestSubmissionIdentityIgnoresChoiceOrder(t *testing.T) {
 		t.Fatal(string(a), string(b), err)
 	}
 }
+
+func TestQuestionResolvedAnswerUsesCanonicalSize(t *testing.T) {
+	value := strings.Repeat("<", 12000)
+	encoded, _ := json.Marshal(value)
+	q := choiceQuestion(true, true, string(encoded))
+	if _, err := Question(q); err != nil {
+		t.Fatal(err)
+	}
+	custom := strings.Repeat("<", ChoiceTextBytes-2)
+	notes := strings.Repeat("&", ChoiceTextBytes-2)
+	submitted, _ := json.Marshal(map[string]any{"selectedIds": []string{"one"}, "custom": custom, "notes": notes})
+	got, err := Answer(q, submitted)
+	want := `{"custom":"` + custom + `","notes":"` + notes + `","selected":[{"id":"one","value":"` + value + `"}]}`
+	if err != nil || string(got) != want {
+		t.Fatalf("canonical answer size %d: %v", len(got), err)
+	}
+}

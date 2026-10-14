@@ -10,8 +10,9 @@ interpretation of answers.
   and converts native questions and one-time command/file approvals to Turn asks.
 - `claude-harness.ts` retains a streaming query, serializes follow-ups, converts
   native questions/permissions to Turn asks, and rejects background work.
-- `native-lifecycle.ts` registers setup and operation lifetimes with the managed
-  Runtime. Native terminal text alone does not establish physical convergence.
+- Both harnesses launch ordinary Node child processes and register `turn.onCancel`
+  to stop and join native work. The managed Runtime owns the whole Session process
+  tree; native terminal text alone does not establish physical convergence.
 - `native-content.ts` and `native-questions.ts` translate supported text/JSON and
   question controls. Secret questions and unsupported semantics fail visibly.
 
@@ -62,7 +63,7 @@ pinned Codex and Claude processes, and synthetic model responses to verify
 that the complete skill reaches the model through each harness. Run it from
 `examples/issue-fixer` in the repository's Nix development shell.
 
-Questions use the ordinary exact-Turn ask list/get/respond workflow. They carry
+Questions use the ordinary exact-Turn ask list/get/answer workflow. They carry
 question controls and authenticated responder attribution. This application maps
 an approval answer to one displayed native operation; an answer never grants
 Session-wide permission. Helmr validates answer authority and lifecycle while

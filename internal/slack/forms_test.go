@@ -126,3 +126,19 @@ func TestInlineAnswerValidatesSelectionAndDoesNotImportPrivateFields(t *testing.
 		t.Fatal(string(answer), err)
 	}
 }
+
+func TestSlackQuestionPreservesTitleInMessageAndModal(t *testing.T) {
+	q := json.RawMessage(`{"title":"Delete archived workspace?","prompt":[{"type":"text","text":"This cannot be undone"}],"type":"choice","options":[{"id":"yes","label":"Yes","value":true},{"id":"no","label":"No","value":false}]}`)
+	posts, err := renderQuestion(1, q)
+	if err != nil || len(posts) != 1 {
+		t.Fatalf("question rendering: %v", err)
+	}
+	blocks, _ := json.Marshal(posts[0].Body.Blocks)
+	if !strings.Contains(string(blocks), "Delete archived workspace?") || !strings.Contains(posts[0].Body.Text, "Delete archived workspace?") {
+		t.Fatalf("missing confirmation subject: %+v", posts[0])
+	}
+	view, err := answerModal(q, "signed-form")
+	if err != nil || !strings.Contains(string(view), "Delete archived workspace?") || !strings.Contains(string(view), "This cannot be undone") {
+		t.Fatalf("incomplete confirmation: %s %v", view, err)
+	}
+}

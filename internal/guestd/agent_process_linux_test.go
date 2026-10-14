@@ -392,7 +392,10 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 	if first.GetLog() == nil {
 		t.Fatalf("missing customer log: %v", &first)
 	}
-	logs := append([]byte(nil), first.GetLog().GetData()...)
+	var logs []byte
+	if first.GetLog().GetStream() == agentv1.SessionLog_STREAM_STDOUT {
+		logs = append(logs, first.GetLog().GetData()...)
+	}
 	ackLog := func(log *agentv1.SessionLog) {
 		t.Helper()
 		if err := writeAgentTransportFrame(host, &agentv1.HostSessionMessage{AttachmentSequence: 1, Message: &agentv1.HostSessionMessage_LogAcknowledged{LogAcknowledged: &agentv1.SessionLogAcknowledged{Stream: log.GetStream(), ThroughSequence: log.GetThroughSequence()}}}); err != nil {
@@ -411,7 +414,9 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 			t.Fatal(err)
 		}
 		if log := message.GetLog(); log != nil {
-			logs = append(logs, log.GetData()...)
+			if log.GetStream() == agentv1.SessionLog_STREAM_STDOUT {
+				logs = append(logs, log.GetData()...)
+			}
 			if log.GetKind() == agentv1.SessionLog_KIND_END {
 				ended[int(log.GetStream())-1] = true
 			}
@@ -429,7 +434,7 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 		}
 	}
 	if string(logs) != "setup-log:"+strings.Repeat("x", 70*1024)+"\n" {
-		t.Fatalf("final logs truncated: %d bytes", len(logs))
+		t.Fatalf("final stdout logs truncated: %d bytes", len(logs))
 	}
 	if !process.closed {
 		t.Fatal("physical owner remained open")

@@ -1,7 +1,7 @@
 import { fixtureValue } from "../../e2e/support/runtime-mcp"
 // Authored application for the integrated worker qualification. The driver
 // starts the local model through an ordinary Computer command before native setup.
-import { agent, template, image, source, type Json, type InputContent } from "../../../sdk/typescript/src/index"
+import { agent, template, image, source, type Json } from "../../../sdk/typescript/src/index"
 import assert from "node:assert/strict"
 import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
@@ -129,7 +129,7 @@ function native(definition: typeof nativeCodex) {
 export const codex = native(nativeCodex)
 export const claude = native(nativeClaude)
 
-export const receipt = agent<InputContent, Json, unknown>({
+export const receipt = agent({
   id: "receipt", template: workspace,
   async turn(turn, { session }) {
     const input = fixtureValue(turn.input)

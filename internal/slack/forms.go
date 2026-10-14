@@ -53,6 +53,9 @@ func answerModal(raw json.RawMessage, signedForm string) (json.RawMessage, error
 		return nil, err
 	}
 	blocks := []any{}
+	if q.Title != "" {
+		blocks = append(blocks, map[string]any{"type": "section", "text": plainText(q.Title)})
+	}
 	for _, post := range posts {
 		for _, block := range post.Body.Blocks {
 			blocks = append(blocks, block)
