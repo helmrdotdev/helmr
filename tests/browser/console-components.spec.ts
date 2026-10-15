@@ -462,6 +462,7 @@ test("a denied read is a neutral notice without Retry", async ({ page }) => {
   await expect(page.getByRole("status").filter({ hasText: "You do not have permission to manage secrets." })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Set secret/ })).toHaveCount(0);
 });
 
 test("an unknown computer is not found in the environment, with the way back", async ({ page }) => {

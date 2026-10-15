@@ -16,7 +16,7 @@ function devStates(): Plugin {
     const target = next ?? "/";
     res.statusCode = 302;
     res.setHeader("Set-Cookie", cookies);
-    res.setHeader("Location", target.startsWith("/") && !target.startsWith("//") ? target : "/");
+    res.setHeader("Location", /^\/(?![/\\])/.test(target) ? target : "/");
     res.end();
   };
   const set = (name: string, value: string) => `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax${value === "" ? "; Max-Age=0" : ""}`;

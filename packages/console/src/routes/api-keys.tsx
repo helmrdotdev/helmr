@@ -18,7 +18,7 @@ import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { CheckboxGroup, Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -225,14 +225,16 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Limited to the permissions chosen when generated."
         actions={
-          <button
-            class={ui.button}
-            type="button"
-            disabled={!edited.projectID() || !edited.environment()}
-            onClick={() => setIssuing(edited.target())}
-          >
-            {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
-          </button>
+          <Show when={!isDenied(keys.error)}>
+            <button
+              class={ui.button}
+              type="button"
+              disabled={!edited.projectID() || !edited.environment()}
+              onClick={() => setIssuing(edited.target())}
+            >
+              {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
+            </button>
+          </Show>
         }
       />
 

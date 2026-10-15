@@ -36,7 +36,7 @@ export function ErrorState(props: { message: string; details?: string | undefine
 }
 
 // The server's code and message for support, collapsed behind a text toggle.
-export function TechnicalDetails(props: { details: string | undefined }) {
+function TechnicalDetails(props: { details: string | undefined }) {
   return (
     <Show when={props.details}>
       <details class="text-chrome text-console-muted">
@@ -73,6 +73,13 @@ export function NotFoundState(props: { noun: string; id?: string | undefined; en
 // Whether a failed read means the resource is not there.
 export function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
+}
+
+// Session reads (and the Turns and questions inside them) answer 403 for what
+// they cannot find in the Environment. To an account allowed to read Sessions,
+// that is a missing resource, not a permission problem.
+export function isMissingSessionRead(error: unknown, canReadSessions: boolean): boolean {
+  return isNotFound(error) || (canReadSessions && isDenied(error));
 }
 
 // Whether a failed read was refused for this account.
@@ -130,7 +137,7 @@ export function QueryState<T>(props: {
         </Notice>
       </Show>
       <Switch>
-        <Match when={!loaded() && props.query.isError && props.notFound && (props.missing ?? isNotFound)(props.query.error)}>
+        <Match when={!loaded() && props.query.isError && "notFound" in props && (props.missing ?? isNotFound)(props.query.error)}>
           {props.notFound}
         </Match>
         <Match when={!loaded() && props.query.isError && isDenied(props.query.error)}>

@@ -9,7 +9,7 @@ import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { EnvironmentTarget } from "../ui/EnvChip";
 import { Field, SecretTextArea, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -142,9 +142,11 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
-            {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
-          </button>
+          <Show when={!isDenied(secrets.error)}>
+            <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
+              {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
+            </button>
+          </Show>
         }
       />
 

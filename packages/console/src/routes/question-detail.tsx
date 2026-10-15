@@ -2,13 +2,15 @@ import { useParams } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
 import { Show } from "solid-js";
 import { Question } from "../features/asks/Question";
+import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
+import { useMe } from "../lib/me";
 import { useScope } from "../lib/scope";
 import { agentHref } from "../lib/definitions";
 import { getAsk, getSession, sessionConsolePath, type AskAddress } from "../lib/sessions";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 
 export function QuestionDetail() {
@@ -25,7 +27,9 @@ function QuestionDetailContent(props: { address: AskAddress }) {
   // The Session names the Agent for the breadcrumb; the Session page shares this query.
   const session = createQuery(() => ({ queryKey: ["session", props.address.sessionID, props.address.projectID, props.address.environmentID], queryFn: () => getSession(props.address), enabled: enabled(), retry: false }));
   const ask = createQuery(() => ({ queryKey: ["ask", props.address], queryFn: () => getAsk(props.address), enabled: enabled(), retry: false, refetchInterval: 5_000 }));
-  const notFound = () => !ask.data && isNotFound(ask.error);
+  const me = useMe();
+  const missing = (error: unknown) => isMissingSessionRead(error, hasPermission(me.data, "sessions.read"));
+  const notFound = () => !ask.data && ask.isError && missing(ask.error);
   return <Page>
     <PageHeader title={notFound() ? "Question not found" : "Question"} breadcrumb={[
       { href: "/agents", label: "Agents" },
@@ -34,6 +38,7 @@ function QuestionDetailContent(props: { address: AskAddress }) {
     ]} />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
       <QueryState query={ask} pending={<PageSkeleton label="Loading question" sections={["Question"]} rail="Question details" />} error={(error) => loadError(error, "The question could not be loaded.", { forbidden: "You do not have permission to view this question." })}
+        missing={missing}
         notFound={<NotFoundState noun="question" environment={scope.selectedEnvironment()?.name} back={{ href: sessionConsolePath(props.address.sessionID), label: "Go to session" }} />}
       >
         {value => <Question ask={value()} address={props.address} />}

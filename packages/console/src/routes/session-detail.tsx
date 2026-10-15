@@ -8,7 +8,6 @@ import { environmentChip } from "../features/projects/display";
 import { createSessionLog, type SessionLog } from "../features/sessions/sessionLog";
 import { SessionLogView } from "../features/sessions/SessionLogView";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
-import { ApiError } from "../lib/api";
 import { hasPermission } from "../lib/auth";
 import { agentHref } from "../lib/definitions";
 import { errorMessage, loadError } from "../lib/error";
@@ -32,7 +31,7 @@ import { Notice } from "../ui/Notice";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DangerZone } from "../ui/Panel";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -82,9 +81,7 @@ function SessionDetailContent() {
         : false,
   }));
   const live = () => ["open", "closing"].includes(session.data?.status ?? "");
-  // The API denies a Session it cannot find in this Environment; to an account
-  // that may read Sessions that is a missing Session, not a permission problem.
-  const missing = (error: unknown) => isNotFound(error) || (error instanceof ApiError && error.status === 403 && can("sessions.read"));
+  const missing = (error: unknown) => isMissingSessionRead(error, can("sessions.read"));
   const notFound = () => !session.data && session.isError && missing(session.error);
   const log = createSessionLog({ address, session: () => session.data });
   const [receipt, setReceipt] = createSignal<string>();
