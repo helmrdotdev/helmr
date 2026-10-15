@@ -13,6 +13,9 @@ import type { Plugin } from "vite";
 //   `connected`, `reauth`, `disconnected`, `unconfigured`), a linked identity,
 //   and delivery issues on every Session. `&role=developer` views it as a
 //   member who does not manage Slack. `/__dev/slack` off.
+// - `/__dev/go?delay=1500&fail=500:sessions&slack=connected&role=developer&to=/sessions?…`
+//   sets exactly these states (anything omitted is turned off) and opens `to`,
+//   which comes last and is taken as written, query string included.
 export function devStates(backendURL: string): Plugin {
   return {
     name: "helmr-dev-states",
@@ -33,6 +36,19 @@ export function devStates(backendURL: string): Plugin {
         }
         if (url.pathname === "/__dev/slack") {
           redirect(res, back, [setCookie("helmr_dev_slack", url.searchParams.get("state") ?? ""), setCookie("helmr_dev_role", url.searchParams.get("role") ?? "")]);
+          return;
+        }
+        if (url.pathname === "/__dev/go") {
+          const raw = req.url ?? "";
+          const toAt = raw.indexOf("to=");
+          const to = toAt >= 0 ? decodeURIComponent(raw.slice(toAt + 3)) : "/";
+          const ms = Math.min(60_000, Math.max(0, Number.parseInt(url.searchParams.get("delay") ?? "0", 10) || 0));
+          redirect(res, to, [
+            setCookie("helmr_dev_delay", ms === 0 ? "" : String(ms)),
+            setCookie("helmr_dev_fail", url.searchParams.get("fail") ?? ""),
+            setCookie("helmr_dev_slack", url.searchParams.get("slack") ?? ""),
+            setCookie("helmr_dev_role", url.searchParams.get("role") ?? ""),
+          ]);
           return;
         }
         if (url.pathname === "/__dev/device") {
