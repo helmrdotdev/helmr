@@ -51,6 +51,22 @@ const subtitle = (page: Page) => page.locator("h1").locator("xpath=../following-
 const rail = (page: Page) => page.getByRole("region", { name: "Environment" });
 const radio = (page: Page, name: string) => rail(page).getByRole("radio", { name: new RegExp(`^${name}\\b`) });
 
+test("on a phone settings navigation is one control that opens the grouped pages", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await fixture(page);
+  await page.goto(`/settings/secrets?${scope}`);
+  const control = page.getByText("Settings · Secrets", { exact: true });
+  await expect(control).toBeVisible();
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(sections).toBeHidden();
+  await control.click();
+  await sections.getByRole("link", { name: "API keys", exact: true }).click();
+  await expect(page).toHaveURL("/settings/api-keys");
+  await expect(page.getByText("Settings · API keys", { exact: true })).toBeVisible();
+  await expect(sections).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test("settings navigation groups pages by Account, Project and Organization", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings?${scope}`);

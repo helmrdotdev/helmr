@@ -169,7 +169,7 @@ export const ui = {
   // code in cells is body text colour. Horizontal overflow fades at the right
   // edge (`scroll-fade-x`).
   tableWrap:
-    "scroll-fade-x overflow-x-auto [scrollbar-color:var(--console-scrollbar)_var(--console-surface)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-console-surface [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-console-surface [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border-strong [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-micro [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-muted [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-body [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-chrome [&_tbody_td_code]:text-console-text",
+    "scroll-fade-x relative overflow-x-auto [scrollbar-color:var(--console-scrollbar)_var(--console-surface)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-console-surface [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-console-surface [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb:hover]:bg-slate-400 [&_table]:w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:h-8 [&_thead_th]:border-b [&_thead_th]:border-console-border-strong [&_thead_th]:bg-console-bg-panel [&_thead_th]:px-3 [&_thead_th]:py-0 [&_thead_th]:text-left [&_thead_th]:font-mono [&_thead_th]:text-micro [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_thead_th]:text-console-muted [&_tbody_tr]:h-9 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-console-bg-panel [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_td]:h-9 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:border-b [&_tbody_td]:border-console-border-soft [&_tbody_td]:px-3 [&_tbody_td]:py-0 [&_tbody_td]:align-middle [&_tbody_td]:text-body [&_tbody_td]:text-console-text [&_tbody_td_code]:font-mono [&_tbody_td_code]:text-chrome [&_tbody_td_code]:text-console-text max-sm:[&_td:first-child]:sticky max-sm:[&_td:first-child]:left-0 max-sm:[&_td:first-child]:z-[1] max-sm:[&_td:first-child]:bg-console-surface max-sm:[&_th:first-child]:left-0 max-sm:[&_th:first-child]:z-20",
   tableFooter:
     "flex h-9 items-center gap-3 border-t border-console-border bg-console-surface px-3 font-mono text-chrome text-console-muted",
   actionsCell: "w-px whitespace-nowrap",
@@ -196,9 +196,9 @@ export const ui = {
 
   // A row of label/value cells under a detail page's header (Session properties).
   propertyBar:
-    "m-0 flex min-h-11.5 flex-wrap items-stretch border border-console-border-strong bg-console-surface",
+    "m-0 flex min-h-11.5 flex-wrap items-stretch border border-console-border-strong bg-console-surface max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:p-3",
   propertyCell:
-    "flex min-w-0 max-w-full flex-col justify-center gap-px border-r border-console-border-soft px-3.5 py-1.5 last:border-r-0",
+    "flex min-w-0 max-w-full flex-col justify-center gap-px border-r border-console-border-soft px-3.5 py-1.5 last:border-r-0 max-sm:border-r-0 max-sm:p-0",
 
   // Session log (SessionLogView): 28px event lines and 36px Turn headers share
   // columns; the row's toggle spans the leading columns as a subgrid so the whole
@@ -206,7 +206,7 @@ export const ui = {
   logLine:
     "group/line grid min-h-7 grid-cols-[96px_46px_188px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border-soft pr-3 text-body max-[720px]:flex max-[720px]:py-1",
   logTurnHeader:
-    "grid h-9 grid-cols-[14px_44px_96px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border bg-console-bg-panel px-3 text-body max-[720px]:grid-cols-[14px_auto_auto_minmax(0,1fr)_auto] max-[720px]:gap-x-2",
+    "grid h-9 grid-cols-[14px_44px_96px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border bg-console-bg-panel px-3 text-body max-[720px]:h-auto max-[720px]:min-h-9 max-[720px]:grid-cols-[14px_28px_auto_minmax(0,1fr)_auto] max-[720px]:gap-x-2 max-[720px]:py-1",
   logRowButton:
     "col-span-4 grid min-h-7 cursor-pointer grid-cols-subgrid items-center border-0 bg-transparent p-0 text-left text-inherit max-[720px]:flex max-[720px]:min-w-0 max-[720px]:flex-1 max-[720px]:flex-wrap max-[720px]:gap-x-2 max-[720px]:gap-y-0.5",
   logTurnButton: "col-span-4 grid min-h-9 cursor-pointer grid-cols-subgrid items-center border-0 bg-transparent p-0 text-left text-inherit",

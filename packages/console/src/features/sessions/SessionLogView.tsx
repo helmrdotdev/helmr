@@ -356,7 +356,8 @@ function TurnStatus(props: { status: SessionTurn["status"] | undefined }) {
   return (
     <span class="inline-flex items-center gap-1.5 font-mono text-badge text-console-muted">
       <span aria-hidden="true" class={cx("size-1.75 rounded-full", props.status ? turnStatusColor[props.status] : "bg-console-faint")} />
-      {props.status ?? "unknown"}
+      {/* On a phone the dot carries the status; the word stays for screen readers. */}
+      <span class="max-[720px]:sr-only">{props.status ?? "unknown"}</span>
     </span>
   );
 }
@@ -389,9 +390,9 @@ function TurnGroup(props: {
       <div data-log-line data-turn-header data-problem={problems() && !props.open ? "" : undefined} class={cx(ui.logTurnHeader, tint())}>
         <button type="button" aria-expanded={props.open} class={ui.logTurnButton} onClick={() => props.onToggle()}>
           <span aria-hidden="true" class="font-mono text-micro text-console-subtle">{props.open ? "▾" : "▸"}</span>
-          <span class="font-mono text-chrome font-medium">{props.block.sequence === undefined ? "Turn" : `#${props.block.sequence}`}</span>
+          <span class="font-mono text-chrome font-medium max-[720px]:text-right">{props.block.sequence === undefined ? "Turn" : `#${props.block.sequence}`}</span>
           <TurnStatus status={status()} />
-          <span class="min-w-0 truncate">{inputSummary(props.record)}</span>
+          <span class="min-w-0 truncate max-[720px]:line-clamp-2 max-[720px]:whitespace-normal">{inputSummary(props.record)}</span>
         </button>
         <span class="flex shrink-0 items-center gap-2 font-mono text-micro text-console-subtle">
           <span class="max-[720px]:hidden">{counts()}</span>
