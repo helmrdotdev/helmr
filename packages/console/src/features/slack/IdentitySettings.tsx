@@ -11,6 +11,7 @@ import { IDText } from "../../ui/IDText";
 import { List, ListItem } from "../../ui/List";
 import { Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
+import { LinesSkeleton } from "../../ui/Skeleton";
 import { Select } from "../../ui/Select";
 import { ui } from "../../ui/styles";
 
@@ -45,7 +46,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <QueryState
       query={links}
-      pending="Loading linked identities..."
+      pending={<LinesSkeleton label="Loading linked identities" />}
       error={(e) => slackFailure(e, "Your Slack identity settings could not be loaded.").message}
       empty={{ when: (data) => data.pages.every((page) => page.links.length === 0), title: "No Slack identities linked." }}
     >

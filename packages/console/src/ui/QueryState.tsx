@@ -15,10 +15,6 @@ export function EmptyState(props: { title: string; hint?: JSX.Element; children?
   );
 }
 
-export function PendingState(props: { children: JSX.Element }) {
-  return <p class={ui.muted}>{props.children}</p>;
-}
-
 export function ErrorState(props: { message: string; onRetry?: () => void }) {
   return (
     <div class="flex flex-wrap items-center gap-2" role="alert">
@@ -45,11 +41,12 @@ type QueryLike<T> = {
 // not nest them by hand. `empty` decides when loaded data counts as empty. The
 // content receives the data as an accessor, so a refetch updates it in place
 // instead of rebuilding it. Once data has loaded, a failed refetch keeps the
-// content and shows a notice with Retry above it; without `pending` nothing
-// renders while the first load runs.
+// content and shows a notice with Retry above it, and a refetch never blanks
+// it. `pending` is the content's skeleton (ui/Skeleton) for the first load;
+// without it nothing renders.
 export function QueryState<T>(props: {
   query: QueryLike<T>;
-  pending?: string;
+  pending?: JSX.Element;
   error: (error: unknown) => string;
   empty?: { when: (data: T) => boolean; title: string; hint?: JSX.Element; action?: JSX.Element };
   children: (data: Accessor<T>) => JSX.Element;
@@ -78,7 +75,7 @@ export function QueryState<T>(props: {
           <ErrorState message={props.error(props.query.error)} onRetry={retry} />
         </Match>
         <Match when={!loaded()}>
-          <Show when={props.pending}>{(pending) => <PendingState>{pending()}</PendingState>}</Show>
+          {props.pending}
         </Match>
         <Match when={props.empty && props.query.data !== undefined && props.empty.when(props.query.data)}>
           <EmptyState title={props.empty!.title} hint={props.empty!.hint}>{props.empty!.action}</EmptyState>

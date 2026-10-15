@@ -4,13 +4,14 @@ import { statusLabel } from "../ui/label";
 import { PageHeader } from "../ui/PageHeader";
 import { KeyValue, Panel } from "../ui/Panel";
 import { QueryState } from "../ui/QueryState";
+import { PageSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
 export function AccountSettings() {
   const me = useMe();
   return <>
     <PageHeader title="My account" />
-    <QueryState query={me} pending="Loading your account..." error={() => "Your account could not be loaded."}>
+    <QueryState query={me} pending={<PageSkeleton label="Loading your account" sections={["Profile", "Your Slack identity"]} />} error={() => "Your account could not be loaded."}>
       {(account) => (
         <div class={ui.sectionStack}>
           <Panel title="Profile">

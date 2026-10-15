@@ -13,6 +13,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { List, ListItem } from "../../ui/List";
 import { Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
+import { LinesSkeleton } from "../../ui/Skeleton";
 import { RelativeTime } from "../../ui/RelativeTime";
 import { ui } from "../../ui/styles";
 
@@ -50,7 +51,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <QueryState
       query={posts}
-      pending="Loading Slack delivery..."
+      pending={<LinesSkeleton label="Loading Slack delivery" />}
       error={(e) => slackFailure(e, "Slack delivery could not be loaded.").message}
       empty={{ when: (data) => data.pages.every((page) => page.posts.length === 0), title: "No Slack delivery issues reported." }}
     >

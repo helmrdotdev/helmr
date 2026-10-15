@@ -17,7 +17,6 @@ import { ScopeProvider, useScope } from "./lib/scope";
 import { logout } from "./lib/auth";
 import { formatRole } from "./components/ProfileMenu";
 import { Notice } from "./ui/Notice";
-import { AuthWorking } from "./ui/AuthWindow";
 import { Page } from "./ui/Page";
 import { cx, ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
@@ -179,7 +178,7 @@ function Missing() {
   const me = useMe();
   const inConsole = () => !!me.data && !onboardingRedirectPath(me.data, "organization");
   return (
-    <Show when={!me.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
+    <Show when={!me.isPending}>
       <Show when={inConsole()} fallback={<NotFoundWindow />}>
         <ScopeProvider>
           <AppShell>

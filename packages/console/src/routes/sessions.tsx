@@ -14,6 +14,7 @@ import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { Toolbar } from "../ui/Page";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -101,7 +102,7 @@ export function SessionList(props: { agent?: string }) {
       />
       <QueryState
         query={sessions}
-        pending="Loading sessions..."
+        pending={<TableSkeleton label="Loading sessions" columns={columns()} minWidth="min-w-200" />}
         error={sessionsErrorMessage}
         empty={{
           when: (data) => data.pages.every((page) => page.sessions.length === 0),

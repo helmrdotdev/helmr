@@ -12,9 +12,12 @@ import { formatID } from "../ui/id";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
+
+const EVENT_COLUMNS = ["Kind", "Message", "At"] as const;
 
 type Tab = "agents" | "templates" | "events";
 
@@ -56,7 +59,7 @@ function DefinitionTable<T>(props: { noun: Noun; columns: string[]; query: Defin
   return (
     <QueryState
       query={props.query}
-      pending={`Loading ${props.noun.other}...`}
+      pending={<TableSkeleton label={`Loading ${props.noun.other}`} columns={props.columns} />}
       error={(error) => deploymentError(error, `Could not load ${props.noun.other}.`)}
       empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `This deployment declares no ${props.noun.other}.` }}
     >
@@ -156,7 +159,7 @@ export function DeploymentDetail() {
       />
 
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <QueryState query={deployment} pending="Loading deployment..." error={(error) => deploymentError(error, "Could not load this deployment.")}>
+      <QueryState query={deployment} pending={<LinesSkeleton label="Loading deployment" />} error={(error) => deploymentError(error, "Could not load this deployment.")}>
         {() => (
           <>
             <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />
@@ -176,13 +179,13 @@ export function DeploymentDetail() {
             <TabPanel tabs="deployment-sections" value="events" selected={tab()}>
               <QueryState
                 query={events}
-                pending="Loading events..."
+                pending={<TableSkeleton label="Loading events" columns={EVENT_COLUMNS} minWidth="min-w-180" />}
                 error={(error) => deploymentError(error, "Could not load deployment events.")}
                 empty={{ when: (data) => data.pages.every(page => page.events.length === 0), title: "No events recorded for this deployment." }}
               >
                 {() => (
                   <DataTable
-                    columns={["Kind", "Message", "At"]}
+                    columns={EVENT_COLUMNS}
                     minWidth="min-w-180"
                     footer={<LoadMore count={eventItems().length} noun={{ one: "event", other: "events" }} hasMore={events.hasNextPage} loading={events.isFetchingNextPage} failed={events.isFetchNextPageError} onLoadMore={() => void events.fetchNextPage()} />}
                   >

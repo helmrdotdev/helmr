@@ -295,7 +295,8 @@ trigger for the chosen option.
   the data as an accessor, so a refetch updates it in place. Once data has loaded,
   a failed refetch keeps the content with a danger Notice and Retry above it; a
   failed next page is reported by the LoadMore footer (`failed`), which retries
-  only that page. Without `pending`, nothing renders during the first load.
+  only that page. `pending` is the content's skeleton for the first load; without
+  it nothing renders. A refetch never blanks loaded content.
 - **EmptyState.** What is missing and the next step; may hold a CodeBlock or action.
   Also the state for something a page computes itself, such as no selected scope.
   Dashed and tinted directly on the page; plain inside a container body.
@@ -304,7 +305,14 @@ trigger for the chosen option.
   under the app bar; `onDismiss` adds a close control. Danger is announced as an
   alert, the rest as status.
 - **InlineStatus.** A short transient result next to its control ("Saved", "Copied").
-- **Progress.** The striped bar for redirects and long operations.
+- **Skeletons.** Loading shows the shape of what is coming, never a sentence or a
+  bar, and only once the wait passes 250 ms (`Delayed`): **TableSkeleton** (the
+  real column headers over rows of bars), **PageSkeleton** (the page's titled
+  sections, optionally a rail), **LinesSkeleton** (a container body or list) and
+  **SkeletonBar** (one value). Bars are static. **Spinner** is only for an action
+  the person just started and is waiting on (sign-in callbacks, account linking);
+  live views show a "Live" dot instead. In the dev server, `/__dev/delay?ms=1500`
+  slows every API response for that browser to review these states (`ms=0` off).
 
 ## Overlays
 
@@ -345,8 +353,7 @@ trigger for the chosen option.
 **AuthWindow** is the centered window for sign-in, invites, callbacks, Slack
 linking, CLI device approval, access screens and onboarding (`step` shows progress
 in the container header, next to the product name, with **Steps** in the window). Its states: the form itself,
-**AuthWorking** (Progress and a message), **AuthSuccess** (result, optional redirect
-bar), **AuthError** (human message, folded technical details from `errorDetails`,
+**AuthWorking** (Spinner and a message), **AuthSuccess** (result and next step), **AuthError** (human message, folded technical details from `errorDetails`,
 next step; without a title it sits inside a form) and **AuthMissing** (the link or
 code is missing or expired, and how to get a new one). The raw server message is
 only ever in the technical details. `AuthTitle`, `AuthCopy`,

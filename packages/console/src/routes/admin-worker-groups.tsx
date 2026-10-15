@@ -20,10 +20,13 @@ import { IDText } from "../ui/IDText";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { createRowActions } from "../ui/rowActions";
 import { Select } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
+
+const COLUMNS = ["Worker group", "Status", "ID", "Region", "Version", { label: "Actions", srOnly: true }] as const;
 
 type Transition = "pause" | "activate" | "drain" | "disable";
 
@@ -172,7 +175,7 @@ export function AdminWorkerGroups() {
       />
       <QueryState
         query={groups}
-        pending="Loading worker groups..."
+        pending={<TableSkeleton label="Loading worker groups" columns={COLUMNS} minWidth="min-w-220" />}
         error={(error) => errorMessage(error, "Could not load worker groups.")}
         empty={{
           when: (data) => data.worker_groups.length === 0,
@@ -185,7 +188,7 @@ export function AdminWorkerGroups() {
         }}
       >
         {(data) => (
-          <DataTable columns={["Worker group", "Status", "ID", "Region", "Version", { label: "Actions", srOnly: true }]} minWidth="min-w-220">
+          <DataTable columns={COLUMNS} minWidth="min-w-220">
             <For each={data().worker_groups}>
               {(group) => (
                 <>
@@ -197,7 +200,7 @@ export function AdminWorkerGroups() {
                     <td>{group.claim_version}</td>
                     <RowActions label={`Actions for ${group.name}`} items={actions(group)} />
                   </tr>
-                  <RowError columns={6} message={rows.error(group.id)} />
+                  <RowError columns={COLUMNS.length} message={rows.error(group.id)} />
                 </>
               )}
             </For>

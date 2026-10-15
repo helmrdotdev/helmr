@@ -19,10 +19,13 @@ import { CheckboxGroup, Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 import { EnvironmentTarget } from "../ui/EnvChip";
+
+const COLUMNS = ["Name", "Status", "Key prefix", "Permissions", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }] as const;
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -240,13 +243,13 @@ export function ApiKeys() {
 
         <QueryState
           query={keys}
-          pending="Loading API keys..."
+          pending={<TableSkeleton label="Loading API keys" columns={COLUMNS} minWidth="min-w-270" />}
           error={apiKeyErrorMessage}
           empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
         >
           {() => (
             <DataTable
-              columns={["Name", "Status", "Key prefix", "Permissions", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }]}
+              columns={COLUMNS}
               minWidth="min-w-270"
               footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >

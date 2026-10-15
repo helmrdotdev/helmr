@@ -25,6 +25,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { createRowActions } from "../ui/rowActions";
@@ -360,7 +361,7 @@ export function Members() {
 
       <QueryState
         query={members}
-        pending="Loading members..."
+        pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-210" />}
         error={membersErrorMessage}
       >
         {(data) => <>

@@ -9,6 +9,7 @@ import { getAsk, getSession, sessionConsolePath, type AskAddress } from "../lib/
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { PageSkeleton } from "../ui/Skeleton";
 
 export function QuestionDetail() {
   const params = useParams(), scope = useScope();
@@ -30,7 +31,7 @@ function QuestionDetailContent(props: { address: AskAddress }) {
       { href: sessionConsolePath(props.address.sessionID), label: "Session" },
     ]} />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <QueryState query={ask} pending="Loading question..." error={(error) => errorMessage(error, "The question could not be loaded.")}>
+      <QueryState query={ask} pending={<PageSkeleton label="Loading question" sections={["Question"]} rail="Question details" />} error={(error) => errorMessage(error, "The question could not be loaded.")}>
         {value => <Question ask={value()} address={props.address} />}
       </QueryState>
     </Show>

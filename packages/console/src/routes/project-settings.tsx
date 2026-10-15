@@ -13,6 +13,7 @@ import { InlineStatus, Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { LinesSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
 export function ProjectSettings() {
@@ -169,7 +170,7 @@ function ProjectHistorySettings(props: { project: string }) {
 
   return (
     <Panel title="Session history retention">
-      <QueryState query={settings} pending="Loading history retention..." error={() => "Could not load history retention."}>
+      <QueryState query={settings} pending={<LinesSkeleton label="Loading history retention" />} error={() => "Could not load history retention."}>
         {() => (
           <form onSubmit={submit}>
             <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>

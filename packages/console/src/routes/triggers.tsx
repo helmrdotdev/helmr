@@ -8,6 +8,7 @@ import { listTriggers } from "../lib/triggers";
 import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 
 const failure = (error: unknown) => errorMessage(error, "Could not load triggers.");
@@ -39,7 +40,7 @@ export function TriggerList(props: { agent?: string }) {
   return (
     <QueryState
       query={triggers}
-      pending="Loading triggers..."
+      pending={<TableSkeleton label="Loading triggers" columns={columns()} minWidth="min-w-230" />}
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.triggers.length === 0),

@@ -21,6 +21,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList } from "../ui/Panel";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
@@ -36,6 +37,7 @@ const actionErrorMessage = (error: unknown, fallback: string) =>
 // The sessions or commands using this Computer, paged, as the table of its tab.
 function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
   const noun = () => props.kind === "sessions" ? { one: "session", other: "sessions" } : { one: "command", other: "commands" };
+  const columns = () => [props.kind === "sessions" ? "Session" : "Command", "Usage"];
   const usage = createInfiniteQuery(() => ({
     queryKey: ["computer", props.computerID, props.kind, props.scope.projectID, props.scope.environmentID],
     queryFn: async ({ pageParam }) => {
@@ -56,13 +58,13 @@ function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: 
   return (
     <QueryState
       query={usage}
-      pending={`Loading ${noun().other}...`}
+      pending={<TableSkeleton label={`Loading ${noun().other}`} columns={columns()} minWidth="min-w-0" />}
       error={(error) => actionErrorMessage(error, `Could not load ${noun().other}.`)}
       empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this computer.` }}
     >
       {() => (
         <DataTable
-          columns={[props.kind === "sessions" ? "Session" : "Command", "Usage"]}
+          columns={columns()}
           minWidth="min-w-0"
           footer={<LoadMore count={items().length} noun={noun()} hasMore={usage.hasNextPage} loading={usage.isFetchingNextPage} failed={usage.isFetchNextPageError} onLoadMore={() => void usage.fetchNextPage()} />}
         >
@@ -116,7 +118,7 @@ export function ComputerDetail() {
       />
 
       <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
-        <QueryState query={computer} pending="Loading computer..." error={computerErrorMessage}>
+        <QueryState query={computer} pending={<PageSkeleton label="Loading computer" sections={["Sessions"]} rail="Computer details" />} error={computerErrorMessage}>
           {(current) => (
             <DetailLayout
               rail={

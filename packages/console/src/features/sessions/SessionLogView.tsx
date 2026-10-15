@@ -4,6 +4,7 @@ import { askConsolePath, type SessionAddress, type SessionEvent, type SessionTur
 import { JsonView } from "../../ui/PayloadView";
 import { Segmented } from "../../ui/Field";
 import { Popover } from "../../ui/Popover";
+import { Delayed, SkeletonBar } from "../../ui/Skeleton";
 import { byteLength, formatBytes, preview } from "../../ui/payload";
 import { cx, toneClass, ui, type Tone } from "../../ui/styles";
 import { useClipboard } from "../../ui/useClipboard";
@@ -288,8 +289,8 @@ export function SessionLogView(props: {
         </Show>
         <Show when={props.live && log.ready()}>
           <div class="flex h-7 items-center gap-2 border-t border-console-border-soft pl-[34px] font-mono text-micro text-console-subtle" role="status">
-            <span aria-hidden="true" class="inline-block h-1.5 w-9 bg-(image:--console-progress-stripes)" />
-            {follow() ? "Following new events" : "Watching for new events"}
+            <span aria-hidden="true" class="size-1.5 rounded-full bg-console-success" />
+            {follow() ? "Live · following new events" : "Live · new events appear here"}
           </div>
         </Show>
         <Show when={log.error()}>
@@ -312,9 +313,11 @@ export function SessionLogView(props: {
 
 function LoadingRows() {
   return (
-    <div class="flex flex-col gap-2.5 py-3 pl-[34px]" aria-busy="true" aria-label="Loading events">
-      <For each={[180, 120, 210]}>{width => <span class="flex gap-2"><span class="h-2.5 w-20 bg-console-surface-muted" /><span class="h-2.5 w-24 bg-console-surface-muted" /><span class="h-2.5 bg-console-surface-muted" style={{ width: `${width}px` }} /></span>}</For>
-    </div>
+    <Delayed>
+      <div class="flex flex-col gap-2.5 py-3 pl-[34px]" aria-busy="true" aria-label="Loading events">
+        <For each={[180, 120, 210]}>{width => <span class="flex gap-2"><SkeletonBar width="80px" /><SkeletonBar width="96px" /><SkeletonBar width={`${width}px`} /></span>}</For>
+      </div>
+    </Delayed>
   );
 }
 

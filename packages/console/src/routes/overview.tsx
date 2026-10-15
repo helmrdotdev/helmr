@@ -15,7 +15,8 @@ import { List, ListItem } from "../ui/List";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
-import { EmptyState, ErrorState, PendingState } from "../ui/QueryState";
+import { EmptyState, ErrorState } from "../ui/QueryState";
+import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { Steps } from "../ui/Steps";
@@ -229,7 +230,7 @@ export function Overview() {
             <ErrorState message={overviewError(attention.error)} onRetry={() => void attention.refetch()} />
           </Match>
           <Match when={!attention.data || deciding()}>
-            <PendingState>Loading…</PendingState>
+            <PageSkeleton label="Loading overview" sections={["Waiting on you"]} />
           </Match>
           <Match when={firstRun()}>
             <FirstDeployment projectID={ids().projectID} environmentID={ids().environmentID} environmentName={scope.selectedEnvironment()?.name ?? ids().environmentID} />

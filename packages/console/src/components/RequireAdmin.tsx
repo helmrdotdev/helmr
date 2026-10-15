@@ -1,7 +1,7 @@
 import { A } from "@solidjs/router";
 import { Show, type JSX } from "solid-js";
 import { useMe } from "../lib/me";
-import { AuthError, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { AuthError, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 import { RequireAuth } from "./RequireAuth";
 
@@ -10,7 +10,7 @@ export function RequireAdmin(props: { children: JSX.Element }) {
 
   return (
     <RequireAuth requirement="session">
-      <Show when={!me.isPending} fallback={<AuthWorking>Loading...</AuthWorking>}>
+      <Show when={!me.isPending}>
         <Show
           when={me.data?.admin}
           fallback={

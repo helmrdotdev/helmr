@@ -5,7 +5,7 @@ import { onboardingRedirectPath, type AuthRequirement } from "../lib/auth";
 import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { errorDetails } from "../lib/error";
-import { AuthError, AuthWorking, AuthWindow } from "../ui/AuthWindow";
+import { AuthError, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRequirement }) {
@@ -24,7 +24,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
     if (path) navigate(path, { replace: true });
   });
   return (
-    <Show when={!me.isPending && !redirectPath()} fallback={<AuthWorking>Loading...</AuthWorking>}>
+    <Show when={!me.isPending && !redirectPath()}>
       <Show when={!me.isError} fallback={
         <AuthWindow>
           <AuthError

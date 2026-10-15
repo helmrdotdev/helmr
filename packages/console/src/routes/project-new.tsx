@@ -7,7 +7,7 @@ import { createSignOut, onboardingSteps } from "../features/projects/onboarding"
 import { errorDetails, errorMessage } from "../lib/error";
 import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { rememberProjectScope } from "../lib/scope";
-import { AuthError, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { AuthError, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { FormActions } from "../ui/Field";
 import { Steps } from "../ui/Steps";
 import { ui } from "../ui/styles";
@@ -43,7 +43,7 @@ export function ProjectNew() {
   }
 
   return (
-    <Show when={!me.isPending && !draft.loading()} fallback={<AuthWorking>Loading...</AuthWorking>}>
+    <Show when={!me.isPending && !draft.loading()}>
       <AuthWindow step={firstProject() ? "Step 2 of 2" : undefined}>
         <AuthTitle>{firstProject() ? "Create your first project" : "New project"}</AuthTitle>
         <Show when={firstProject()}>
