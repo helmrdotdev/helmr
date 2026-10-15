@@ -240,8 +240,15 @@ Panel.
   sits in a trailing column right-aligned before the check mark.
   **EnvironmentTarget** names the Environment a dialog writes to.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
-- **CodeBlock.** Every block of code or output, with `copy` for things meant to be
-  pasted.
+- **CodeBlock.** Code and commands, with `copy` for things meant to be pasted.
+- **JsonView** and **TextView** (`PayloadView`). Every payload a Session or
+  question carries: Turn input, output, result and response, question
+  definitions and answers. A 24px header names the kind and size and holds Copy.
+  JsonView is a folding tree (root open, children closed with a one-line preview,
+  Copy value and Copy path on the hovered or focused row) with a Raw toggle;
+  children show in pages of 100, strings clamp at 1 KB, and a value over 64 KB
+  shows the first 64 KB as raw text only. TextView clamps to 6 lines. Limits live
+  in `payload.ts`.
 - **Steps.** Numbered setup steps with done, current and upcoming states; a step's
   description may hold a CodeBlock. Multi-step setup is never a modal; it is Steps
   on the owning page or tab (the Agent's Slack tab, the Overview before the first

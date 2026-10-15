@@ -37,6 +37,7 @@ import {
 } from "../lib/sessions";
 import { environmentChip } from "../features/projects/display";
 import { CodeBlock } from "../ui/CodeBlock";
+import { JsonView, TextView } from "../ui/PayloadView";
 import { LoadMore, PrimaryLink } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { IDText } from "../ui/IDText";
@@ -303,10 +304,10 @@ function SessionDetailContent() {
                             </Show>
                             <Show when={Object.hasOwn(turn, "result")}>
                               <p class={ui.microLabel}>Result</p>
-                              <CodeBlock code={JSON.stringify(turn.result, null, 2)} label={`Turn #${turn.sequence} result`} />
+                              <JsonView value={turn.result as JsonValue} label={`Turn #${turn.sequence} result`} />
                             </Show>
                             <Show when={turn.status === "completed" && turn.response}>
-                              {response => <div class={ui.blockStack}><p class={ui.microLabel}>Response</p><ContentView content={response()} /></div>}
+                              {response => <div class={ui.blockStack}><p class={ui.microLabel}>Response</p><ContentView content={response()} label={`Turn #${turn.sequence} response`} /></div>}
                             </Show>
                             <TurnQuestions address={address()} turnID={turn.id} polling={polling()} />
                             <Show when={turn.terminal_at}>
@@ -372,11 +373,12 @@ function InvocationInput(props: { value: JsonValue | undefined; label: string })
     if (!Array.isArray(value) || !value.every(part => part !== null && typeof part === "object" && !Array.isArray(part) && part.type === "text" && typeof part.text === "string" && Object.keys(part).length === 2)) return undefined;
     return value.map(part => (part as { text: string }).text).join("");
   });
-  const json = () => JSON.stringify(props.value, null, 2);
   return <>
-    <CodeBlock code={text() ?? json() ?? ""} label={props.label} />
-    <Show when={text() !== undefined}>
-      <details><summary class="cursor-pointer font-mono text-chrome">Inspect input JSON</summary><CodeBlock code={json() ?? ""} class="mt-2" /></details>
+    <Show when={text()} keyed fallback={<JsonView value={props.value ?? null} label={props.label} />}>
+      {value => <>
+        <TextView text={value} label={props.label} />
+        <details><summary class="cursor-pointer font-mono text-chrome">Inspect input JSON</summary><JsonView value={props.value ?? null} label={`${props.label} JSON`} class="mt-2" /></details>
+      </>}
     </Show>
   </>;
 }

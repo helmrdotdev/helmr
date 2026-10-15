@@ -83,7 +83,9 @@ test("pending questions expose complete content and exact CLI commands as read-o
   await expect(page.getByText("Full description", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("question-desktop.png"), fullPage: true });
   await page.getByText("Inspect question", { exact: true }).click();
-  expect(JSON.parse(await page.getByLabel("Question definition").innerText())).toEqual(question(control).question);
+  const definition = page.getByRole("figure", { name: "Question definition" });
+  await definition.getByRole("button", { name: "Raw", exact: true }).click();
+  expect(JSON.parse(await definition.locator("pre").innerText())).toEqual(question(control).question);
   const origin = new URL(page.url()).origin;
   const guide = page.getByLabel("Answer through CLI");
   await expect(guide).toContainText(`helmr login '${origin}'`);
