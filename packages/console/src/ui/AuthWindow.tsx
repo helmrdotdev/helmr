@@ -1,6 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import { BrandMark } from "./BrandMark";
-import { Progress } from "./Progress";
+import { Spinner } from "./Skeleton";
 import { cx, ui } from "./styles";
 
 // The centered window for sign-in, invites, callbacks, Slack linking, device
@@ -44,14 +44,12 @@ export function AuthActions(props: { children: JSX.Element }) {
   return <div class={ui.authActions}>{props.children}</div>;
 }
 
-// Working: a request or redirect is in progress.
+// Working: the server is finishing something the person just started (a
+// sign-in callback, linking an account).
 export function AuthWorking(props: { children: JSX.Element }) {
   return (
     <AuthWindow>
-      <div class={ui.blockStack}>
-        <Progress label="Working" />
-        <p class={ui.muted}>{props.children}</p>
-      </div>
+      <p class="flex items-center gap-2" role="status"><Spinner />{props.children}</p>
     </AuthWindow>
   );
 }
@@ -76,13 +74,12 @@ export function AuthError(props: { title?: string; message: string; details?: st
   );
 }
 
-// Done: the result and, while the next page loads, a redirect bar.
-export function AuthSuccess(props: { title: string; children?: JSX.Element; redirecting?: boolean; action?: JSX.Element }) {
+// Done: the result and the next step.
+export function AuthSuccess(props: { title: string; children?: JSX.Element; action?: JSX.Element }) {
   return (
     <>
       <AuthTitle>{props.title}</AuthTitle>
       <Show when={props.children}><p role="status">{props.children}</p></Show>
-      <Show when={props.redirecting}><Progress label="Redirecting" class="mt-3" /></Show>
       <Show when={props.action}><AuthActions>{props.action}</AuthActions></Show>
     </>
   );

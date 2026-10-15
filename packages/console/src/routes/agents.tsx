@@ -17,6 +17,7 @@ import { SearchInput, Segmented } from "../ui/Field";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { StatusBadge } from "../ui/StatusBadge";
 import { selectedLinkTab } from "../ui/linkTab";
 import { LinkTabs, TabPanel, type LinkTabItem } from "../ui/Tabs";
@@ -66,10 +67,11 @@ export function AgentList() {
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
   const query = () => search().trim().toLowerCase();
   const shown = createMemo(() => query() ? items().filter(item => item.agent.toLowerCase().includes(query())) : items());
+  const columns = () => all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"];
   const table = () => (
     <QueryState
       query={agents}
-      pending="Loading agents..."
+      pending={<TableSkeleton label="Loading agents" columns={columns()} />}
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.agents.length === 0),
@@ -80,7 +82,7 @@ export function AgentList() {
       {() => (
         <Show when={shown().length > 0} fallback={<EmptyState title="No loaded agents match this filter." hint={agents.hasNextPage ? "Load more agents to search further." : undefined} />}>
           <DataTable
-            columns={all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"]}
+            columns={columns()}
             footer={<LoadMore count={items().length} noun={{ one: "agent", other: "agents" }} hasMore={agents.hasNextPage} loading={agents.isFetchingNextPage} failed={agents.isFetchNextPageError} onLoadMore={() => void agents.fetchNextPage()} />}
           >
             <For each={shown()}>{item => <tr>
@@ -105,7 +107,7 @@ export function AgentList() {
     <Show when={all()} fallback={
       <QueryState
         query={current}
-        pending="Loading current agents..."
+        pending={<TableSkeleton label="Loading agents" columns={columns()} />}
         error={failure}
         empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Show all agents to manage retained connections and history." }}
       >
@@ -170,7 +172,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
     />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
       <Show when={!missing()} fallback={<EmptyState title="This environment has no agent with this name." hint="Agents appear once a deployment in this environment defines them." />}>
-        <QueryState query={agent} pending="Loading agent..." error={failure}>
+        <QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
           {record => <>
             <Show when={!record().defined_in_current}>
               <Notice tone="info" class="mb-4">{record().current_deployment_id ? "This agent is not in the current deployment." : "This environment has no current deployment."} New independent sessions cannot start. Existing sessions, trigger history and connections remain available for inspection and management.</Notice>

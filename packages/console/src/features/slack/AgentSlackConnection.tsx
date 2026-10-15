@@ -11,6 +11,7 @@ import { IDText } from "../../ui/IDText";
 import { Notice } from "../../ui/Notice";
 import { DangerZone, DetailLayout, KeyValue, KeyValueList, Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
+import { PageSkeleton } from "../../ui/Skeleton";
 import { StatusBadge } from "../../ui/StatusBadge";
 import { Steps, type Step } from "../../ui/Steps";
 import { statusLabel } from "../../ui/label";
@@ -84,7 +85,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
 
   return (
     <Show when={!slackNotConfigured(state.error)} fallback={<SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents in this installation cannot be connected to Slack." />}>
-    <QueryState query={state} pending="Loading connection..." error={(failure) => slackFailure(failure, "The connection could not be loaded.").message}>
+    <QueryState query={state} pending={<PageSkeleton label="Loading Slack connection" sections={["Slack connection"]} />} error={(failure) => slackFailure(failure, "The connection could not be loaded.").message}>
       {(data) => (
         <DetailLayout rail={
           <div class="flex flex-col gap-4">

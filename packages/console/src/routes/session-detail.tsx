@@ -32,6 +32,7 @@ import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DangerZone } from "../ui/Panel";
 import { EmptyState, QueryState } from "../ui/QueryState";
+import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
@@ -122,7 +123,7 @@ function SessionDetailContent() {
         }
       />
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-        <QueryState query={session} pending="Loading session..." error={sessionError}>
+        <QueryState query={session} pending={<PageSkeleton label="Loading session" sections={["Log"]} />} error={sessionError}>
           {(current) => (
             <div class="flex flex-col gap-3">
               <SessionProperties session={current()} />

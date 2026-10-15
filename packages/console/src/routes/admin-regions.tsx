@@ -9,7 +9,10 @@ import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
+
+const COLUMNS = ["Region", "ID", "Location", { label: "Actions", srOnly: true }] as const;
 
 // Create (no region) or edit one Region. The ID is fixed once created.
 function RegionDialog(props: { region: AdminRegion | null; onClose: () => void; onSaved: () => Promise<void> }) {
@@ -77,7 +80,7 @@ export function AdminRegions() {
       />
       <QueryState
         query={regions}
-        pending="Loading regions..."
+        pending={<TableSkeleton label="Loading regions" columns={COLUMNS} />}
         error={(error) => errorMessage(error, "Could not load regions.")}
         empty={{
           when: (data) => data.regions.length === 0,
@@ -86,7 +89,7 @@ export function AdminRegions() {
         }}
       >
         {(data) => (
-          <DataTable columns={["Region", "ID", "Location", { label: "Actions", srOnly: true }]}>
+          <DataTable columns={COLUMNS}>
             <For each={data().regions}>
               {(region) => (
                 <tr>

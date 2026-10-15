@@ -5,7 +5,7 @@ import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import { ApiError } from "../lib/api";
 import { approveDeviceCode, denyDeviceCode, getDeviceCodeStatus } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
-import { AuthCopy, AuthError, AuthMissing, AuthSuccess, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { AuthCopy, AuthError, AuthMissing, AuthSuccess, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { KeyValue, KeyValueList } from "../ui/Panel";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -88,9 +88,6 @@ export function Device() {
             action={<RestartHint />}
           />
         </AuthWindow>
-      </Match>
-      <Match when={status.isPending}>
-        <AuthWorking>Loading device request...</AuthWorking>
       </Match>
       <Match when={status.data}>
         {(device) => (

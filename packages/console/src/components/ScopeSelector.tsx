@@ -9,7 +9,8 @@ import { scopeSwitchPath } from "../lib/scope-navigation";
 import { CommandList, type CommandItem } from "../ui/CommandList";
 import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
 import { Popover } from "../ui/Popover";
-import { cx, toneClass } from "../ui/styles";
+import { Delayed, SkeletonBar } from "../ui/Skeleton";
+import { cx } from "../ui/styles";
 
 // While the picker is open, further pages of projects load by themselves up to
 // this many projects, so the search covers them; past it "Load more" remains.
@@ -170,9 +171,11 @@ export function ScopeSelector() {
         setOpen={setOpenProject}
         disabled={scope.isLoading()}
         trigger={
-          <span class="max-w-40 truncate max-sm:max-w-22">
-            {noProjects() ? "No projects yet" : scope.selectedProject()?.name ?? "—"}
-          </span>
+          <Show when={!scope.isLoading()} fallback={<Delayed><SkeletonBar width="72px" /></Delayed>}>
+            <span class="max-w-40 truncate max-sm:max-w-22">
+              {noProjects() ? "No projects yet" : scope.selectedProject()?.name ?? "—"}
+            </span>
+          </Show>
         }
         items={projectItems()}
         search={{
@@ -225,9 +228,6 @@ export function ScopeSelector() {
             </>
           }
         />
-      </Show>
-      <Show when={scope.isLoading()}>
-        <span class={cx("ml-1 border px-1.5 py-0.5 text-micro font-medium", toneClass.warning)}>Loading…</span>
       </Show>
 
       <Show when={creating() === "project"}>

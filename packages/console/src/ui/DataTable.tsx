@@ -3,12 +3,12 @@ import { For, Show, type JSX } from "solid-js";
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
 import { cx, ui } from "./styles";
 
-type Column = string | { label: string; srOnly?: boolean };
+export type Column = string | { label: string; srOnly?: boolean };
 
 // The only table. Rows are single-line; secondary information gets its own column.
 // `footer` renders under the rows inside the table frame (see LoadMore). As a
 // direct child of a Panel body it has no frame and runs to the Panel's edges.
-export function DataTable(props: { columns: readonly Column[]; minWidth?: string; footer?: JSX.Element; children: JSX.Element }) {
+export function DataTable(props: { columns: readonly Column[]; minWidth?: string | undefined; footer?: JSX.Element; children: JSX.Element }) {
   return (
     <div class={ui.container} data-list-frame>
       <div class={ui.tableWrap}>

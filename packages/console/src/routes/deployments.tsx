@@ -13,9 +13,12 @@ import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx } from "../ui/styles";
+
+const COLUMNS = ["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }] as const;
 
 const deploymentsErrorMessage = (error: unknown) =>
   errorMessage(error, "Could not load deployments.", { forbidden: "You do not have permission to view deployments." });
@@ -83,7 +86,7 @@ export function Deployments() {
       <PageHeader title="Deployments" />
       <QueryState
         query={deployments}
-        pending="Loading deployments..."
+        pending={<TableSkeleton label="Loading deployments" columns={COLUMNS} minWidth="min-w-180" />}
         error={deploymentsErrorMessage}
         empty={{
           when: (data) => data.pages.every((page) => page.deployments.length === 0),
@@ -93,7 +96,7 @@ export function Deployments() {
       >
         {() => (
           <DataTable
-            columns={["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }]}
+            columns={COLUMNS}
             minWidth="min-w-180"
             footer={<LoadMore count={items().length} noun={{ one: "deployment", other: "deployments" }} hasMore={deployments.hasNextPage} loading={deployments.isFetchingNextPage} failed={deployments.isFetchNextPageError} onLoadMore={() => void deployments.fetchNextPage()} />}
           >

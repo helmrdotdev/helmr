@@ -22,10 +22,12 @@ type Fixture = {
   // Fail every Sessions request, or only the request for the second page.
   failSessions: boolean;
   failNextSessions: boolean;
+  // While set, Sessions requests wait for it.
+  holdSessions: Promise<void> | null;
 };
 
 async function fixture(page: Page): Promise<Fixture> {
-  const state: Fixture = { revocations: 0, apiKeyRequests: [], sessionCursors: [], secretWrites: [], deletions: [], invitations: [], failSessions: false, failNextSessions: false };
+  const state: Fixture = { revocations: 0, apiKeyRequests: [], sessionCursors: [], secretWrites: [], deletions: [], invitations: [], failSessions: false, failNextSessions: false, holdSessions: null };
   const session = (index: number) => ({ id: `00000000-0000-7000-8000-00000000060${index}`, agent: "assistant", template: "browser", deployment_id: deploymentID, computer_id: null, status: "open", holds: [], created_at: now });
   const environment = { environment: environmentID, project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
   const project = { project: projectID, name: "Test", default_region_id: "amsterdam", is_default: true, environments: [environment], created_at: now, updated_at: now };
@@ -73,6 +75,7 @@ async function fixture(page: Page): Promise<Fixture> {
     else if (path === `${base}/sessions`) {
       const cursor = url.searchParams.get("cursor");
       state.sessionCursors.push(cursor);
+      await state.holdSessions;
       if (state.failSessions || (cursor === "page-2" && state.failNextSessions)) {
         await route.fulfill({ status: 500, json: { error: { code: "internal_error", message: "Sessions are unavailable." } } });
         return;
@@ -346,6 +349,20 @@ test("a table footer shows the row count and loads the next page", async ({ page
   await expect(page.getByText("Showing 3 sessions", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more sessions", exact: true })).toHaveCount(0);
   expect(state.sessionCursors).toContain("page-2");
+});
+
+test("a slow table shows its column headers over skeleton rows, then the rows", async ({ page }) => {
+  const state = await fixture(page);
+  let release!: () => void;
+  state.holdSessions = new Promise(resolve => { release = resolve; });
+  await page.goto(`/sessions?${scope}`);
+  const loading = page.getByRole("status").filter({ hasText: "Loading sessions" });
+  await expect(loading).toBeVisible();
+  await expect(loading).toHaveAttribute("aria-busy", "true");
+  await expect(loading.getByText("Session", { exact: true })).toBeVisible();
+  release();
+  await expect(loading).toHaveCount(0);
+  await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();
 });
 
 test("a failed sign-in gives a next step and folds the server message into technical details", async ({ page }) => {

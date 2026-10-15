@@ -10,10 +10,13 @@ import { EnvironmentTarget } from "../ui/EnvChip";
 import { Field, SecretTextArea, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 import { useClipboard } from "../ui/useClipboard";
+
+const COLUMNS = ["Secret ID", "Status", "Rotated", "Created", { label: "Actions", srOnly: true }] as const;
 
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage secrets.",
@@ -148,12 +151,12 @@ export function Secrets() {
       <EnvironmentSelectorLayout edited={edited}>
         <QueryState
           query={secrets}
-          pending="Loading secrets..."
+          pending={<TableSkeleton label="Loading secrets" columns={COLUMNS} minWidth="min-w-160" />}
           error={(error) => errorMessage(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
           empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
         >
           {(data) => (
-            <DataTable columns={["Secret ID", "Status", "Rotated", "Created", { label: "Actions", srOnly: true }]} minWidth="min-w-160">
+            <DataTable columns={COLUMNS} minWidth="min-w-160">
               <For each={data().secrets}>
                 {(secret) => (
                   <SecretRow

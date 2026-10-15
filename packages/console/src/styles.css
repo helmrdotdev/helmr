@@ -6,6 +6,7 @@
   --console-bg-panel: #f7f8f9;
   --console-surface: #ffffff;
   --console-surface-muted: #f2f4f6;
+  --console-skeleton: #e6e9ee;
   --console-surface-raised: #fbfcfd;
   --console-border: rgba(15, 23, 42, 0.16);
   --console-border-strong: rgba(15, 23, 42, 0.22);
@@ -57,7 +58,6 @@
   --console-gradient-button: linear-gradient(to bottom, #fbfcfd 0%, #eef1f3 100%);
   --console-gradient-button-hover: linear-gradient(to bottom, #f3f5f7 0%, #dfe5ea 100%);
   --console-gradient-pressed: linear-gradient(to bottom, #e3e7ec 0%, #d5dbe2 100%);
-  --console-progress-stripes: repeating-linear-gradient(-45deg, #315fce 0 6px, #5f84dc 6px 12px);
 
   /* JSON syntax in payload viewers. */
   --console-syntax-key: #7a3e9d;
@@ -76,6 +76,7 @@
   --color-console-bg-panel: var(--console-bg-panel);
   --color-console-surface: var(--console-surface);
   --color-console-surface-muted: var(--console-surface-muted);
+  --color-console-skeleton: var(--console-skeleton);
   --color-console-surface-raised: var(--console-surface-raised);
   --color-console-border: var(--console-border);
   --color-console-border-strong: var(--console-border-strong);
@@ -167,10 +168,6 @@
   mask-image: linear-gradient(to left, transparent 0, #000 var(--console-scroll-fade));
   animation: console-scroll-fade linear both;
   animation-timeline: scroll(self inline);
-}
-
-@utility progress-stripes {
-  background-image: var(--console-progress-stripes);
 }
 
 @layer base {

@@ -13,8 +13,12 @@ import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
+import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { cx, ui } from "../ui/styles";
+
+const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created"] as const;
+const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
 
 const computersErrorMessage = (error: unknown) =>
   errorMessage(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
@@ -71,7 +75,7 @@ export function ComputerList() {
   return (
     <QueryState
       query={computers}
-      pending="Loading computers..."
+      pending={<TableSkeleton label="Loading computers" columns={COMPUTER_COLUMNS} minWidth="min-w-190" />}
       error={computersErrorMessage}
       empty={{
         when: (data) => data.pages.every((page) => page.computers.length === 0),
@@ -81,7 +85,7 @@ export function ComputerList() {
     >
       {() => (
         <DataTable
-          columns={["Computer", "Status", "Key", "Template", "Last activity", "Created"]}
+          columns={COMPUTER_COLUMNS}
           minWidth="min-w-190"
           footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
@@ -113,7 +117,7 @@ export function TemplateList() {
   return (
     <QueryState
       query={current}
-      pending="Loading current deployment..."
+      pending={<TableSkeleton label="Loading templates" columns={TEMPLATE_COLUMNS} />}
       error={templatesFailure}
       empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Deploy your code to make its templates available here." }}
     >
@@ -121,7 +125,7 @@ export function TemplateList() {
         <p class={cx(ui.muted, "mb-3")}>Templates in the current deployment <IDText value={deployment()!.id} mode="link" href={deploymentHref(deployment()!.id)} />, for creating computers.</p>
         <QueryState
           query={definitions}
-          pending="Loading templates..."
+          pending={<TableSkeleton label="Loading templates" columns={TEMPLATE_COLUMNS} />}
           error={templatesFailure}
           empty={{
             when: (data) => data.pages.every(page => page.items.length === 0),
@@ -131,7 +135,7 @@ export function TemplateList() {
         >
           {() => (
             <DataTable
-              columns={["Template", "Resources"]}
+              columns={TEMPLATE_COLUMNS}
               footer={<LoadMore count={items().length} noun={{ one: "template", other: "templates" }} hasMore={definitions.hasNextPage} loading={definitions.isFetchingNextPage} failed={definitions.isFetchNextPageError} onLoadMore={() => void definitions.fetchNextPage()} />}
             >
               <For each={items()}>{item => <tr>
