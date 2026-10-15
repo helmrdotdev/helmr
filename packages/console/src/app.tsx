@@ -27,7 +27,7 @@ import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
-import { SessionList } from "./routes/sessions";
+import { SessionsPage } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab } from "./routes/agents";
 import { ComputersSection, ComputerList, TemplateList } from "./routes/computers";
@@ -103,7 +103,8 @@ function AppShell(props: { children?: JSX.Element }) {
   const attention = useAttention();
   const nav: NavItem[] = [
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
-    { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
+    { href: "/sessions", label: "Sessions" },
+    { href: "/agents", label: "Agents", match: ["/triggers"] },
     { href: "/computers", label: "Computers", match: ["/templates"] },
     { href: "/deployments", label: "Deployments" },
   ];
@@ -217,7 +218,6 @@ export function App() {
 
       <Route component={wrapLayout(AgentsSection)}>
         <Route path="/agents" component={AgentList} />
-        <Route path="/sessions" component={SessionList} />
         <Route path="/triggers" component={TriggerList} />
       </Route>
       <Route path="/agents/:agent" component={wrapLayout(AgentDetail)}>
@@ -225,6 +225,7 @@ export function App() {
         <Route path="/triggers" component={AgentTriggersTab} />
         <Route path="/slack" component={AgentSlackTab} />
       </Route>
+      <Route path="/sessions" component={wrap(SessionsPage)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
       <Route component={wrapLayout(ComputersSection)}>

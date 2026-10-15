@@ -1,6 +1,7 @@
-import { agentHref } from "../lib/definitions";
+import { useSearchParams } from "@solidjs/router";
+import { agentHref, listRetainedAgents } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
-import { createInfiniteQuery } from "@tanstack/solid-query";
+import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
@@ -12,8 +13,9 @@ import {
 } from "../lib/sessions";
 import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Toolbar } from "../ui/Page";
-import { QueryState } from "../ui/QueryState";
+import { Page, Toolbar } from "../ui/Page";
+import { PageHeader } from "../ui/PageHeader";
+import { EmptyState, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
@@ -62,7 +64,23 @@ export function SessionList(props: { agent?: string }) {
   const scope = useScopeIDs();
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
-  const agent = () => props.agent ?? "";
+  // On an Agent's page the Agent is fixed; on the Sessions page it is a filter
+  // kept in the URL (`?agent=`), so a link can open the list already filtered.
+  const [params, setParams] = useSearchParams<{ agent?: string }>();
+  const fixedAgent = () => props.agent !== undefined;
+  const agent = () => props.agent ?? params.agent ?? "";
+  const agents = createQuery(() => ({
+    // The first 100 retained Agents; any other can still be named in the URL.
+    queryKey: ["agents", "palette", projectID(), environmentID()],
+    queryFn: () => listRetainedAgents(scope()),
+    enabled: !fixedAgent() && !!projectID() && !!environmentID(),
+    retry: false,
+  }));
+  const agentOptions = (): SelectOption<string>[] => [
+    { value: "", label: "All agents" },
+    ...(agents.data?.agents ?? []).map((item) => ({ value: item.agent, label: item.agent })),
+    ...(agent() && !agents.data?.agents.some((item) => item.agent === agent()) ? [{ value: agent(), label: agent() }] : []),
+  ];
   const [filter, setFilter] = createSignal<SessionFilter>("all");
   const sessions = createInfiniteQuery(() => ({
     queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agent()],
@@ -87,7 +105,7 @@ export function SessionList(props: { agent?: string }) {
     () => sessions.data?.pages.flatMap((page) => page.sessions) ?? [],
   );
 
-  const columns = () => agent()
+  const columns = () => fixedAgent()
     ? ["Session", "Status", "Key", "Holds", "Computer", "Created"]
     : ["Session", "Status", "Agent", "Key", "Holds", "Computer", "Created"];
 
@@ -95,9 +113,12 @@ export function SessionList(props: { agent?: string }) {
     <>
       <Toolbar
         start={
-          <div class="w-44">
-            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter sessions" />
-          </div>
+          <>
+            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter by status" />
+            <Show when={!fixedAgent()}>
+              <Select<string> value={agent()} options={agentOptions()} onChange={(value) => setParams({ agent: value || undefined })} ariaLabel="Filter by agent" />
+            </Show>
+          </>
         }
       />
       <QueryState
@@ -116,10 +137,24 @@ export function SessionList(props: { agent?: string }) {
             minWidth="min-w-200"
             footer={<LoadMore count={items().length} noun={{ one: "session", other: "sessions" }} hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
           >
-            <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!agent()} />}</For>
+            <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!fixedAgent()} />}</For>
           </DataTable>
         )}
       </QueryState>
     </>
+  );
+}
+
+// The Sessions page: every Session in the Environment, filtered by status and
+// Agent.
+export function SessionsPage() {
+  const scope = useScopeIDs();
+  return (
+    <Page>
+      <PageHeader title="Sessions" />
+      <Show when={scope().projectID && scope().environmentID} fallback={<EmptyState title="Select a project and environment." />}>
+        <SessionList />
+      </Show>
+    </Page>
   );
 }

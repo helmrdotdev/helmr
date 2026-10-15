@@ -6,8 +6,7 @@ import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { useScope } from "../lib/scope";
-import { agentHref } from "../lib/definitions";
-import { getAsk, getSession, sessionConsolePath, type AskAddress } from "../lib/sessions";
+import { getAsk, sessionConsolePath, type AskAddress } from "../lib/sessions";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../ui/QueryState";
@@ -24,16 +23,13 @@ export function QuestionDetail() {
 function QuestionDetailContent(props: { address: AskAddress }) {
   const scope = useScope();
   const enabled = () => Object.values(props.address).every(Boolean);
-  // The Session names the Agent for the breadcrumb; the Session page shares this query.
-  const session = createQuery(() => ({ queryKey: ["session", props.address.sessionID, props.address.projectID, props.address.environmentID], queryFn: () => getSession(props.address), enabled: enabled(), retry: false }));
   const ask = createQuery(() => ({ queryKey: ["ask", props.address], queryFn: () => getAsk(props.address), enabled: enabled(), retry: false, refetchInterval: 5_000 }));
   const me = useMe();
   const missing = (error: unknown) => isMissingSessionRead(error, hasPermission(me.data, "sessions.read"));
   const notFound = () => !ask.data && ask.isError && missing(ask.error);
   return <Page>
     <PageHeader title={notFound() ? "Question not found" : "Question"} breadcrumb={[
-      { href: "/agents", label: "Agents" },
-      ...(session.data ? [{ href: agentHref(session.data.agent), label: session.data.agent }] : []),
+      { href: "/sessions", label: "Sessions" },
       { href: sessionConsolePath(props.address.sessionID), label: "Session" },
     ]} />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>

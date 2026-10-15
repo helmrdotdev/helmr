@@ -17,8 +17,8 @@ import { cx } from "../ui/styles";
 
 const PAGES: readonly { label: string; href: string; keywords?: string }[] = [
   { label: "Overview", href: "/", keywords: "needs you questions holds" },
-  { label: "Agents", href: "/agents" },
   { label: "Sessions", href: "/sessions" },
+  { label: "Agents", href: "/agents" },
   { label: "Triggers", href: "/triggers" },
   { label: "Computers", href: "/computers" },
   { label: "Templates", href: "/templates" },
