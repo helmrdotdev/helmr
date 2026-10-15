@@ -140,7 +140,7 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <Show when={!isDenied(secrets.error) && secrets.data?.secrets.length !== 0}>
+          <Show when={!isDenied(secrets.error) && !secrets.isPending && secrets.data?.secrets.length !== 0}>
             <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
               {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
             </button>

@@ -18,7 +18,7 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { DataTable, LoadMore, RowActions, RowError } from "../ui/DataTable";
+import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
 import { statusLabel } from "../ui/label";
 import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { Field, TextArea } from "../ui/Field";
@@ -29,7 +29,6 @@ import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
-import { createRowActions } from "../ui/rowActions";
 import { cx, toneClass, ui } from "../ui/styles";
 
 const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
@@ -48,6 +47,7 @@ const NO_EMAIL_DELIVERY = "Email delivery is not set up for this Helmr installat
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",
   not_found: "This member or invitation is no longer available.",
+  conflict: "This member's role changed. Check it and try again.",
   service_unavailable: NO_EMAIL_DELIVERY,
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
@@ -229,8 +229,10 @@ function MemberCell(props: { name: string; email?: string | null | undefined; yo
   );
 }
 
-// The roles the signed-in account may give another member.
-function assignableRoles(currentUserRole: string | null | undefined): SelectOption<MemberRole>[] {
+// The roles the signed-in account may give a member. An owner may step down to
+// admin on their own row; the server keeps the last owner.
+function assignableRoles(currentUserRole: string | null | undefined, ownRow: boolean): SelectOption<MemberRole>[] {
+  if (ownRow) return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
   return currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS;
 }
 
@@ -239,14 +241,15 @@ function MemberRow(props: {
   canManage: boolean;
   isCurrentUser: boolean;
   currentUserRole: string | null | undefined;
-  busy: boolean;
-  error: string | null;
   onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.role === "owner";
-  const manageable = () => props.member.status === "active" && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
+  const active = () => props.member.status === "active" && props.canManage && id() !== "";
+  const manageable = () => active() && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
+  // Your own row: only an owner has a role to step down from.
+  const ownOwner = () => active() && props.isCurrentUser && isOwner();
   return (
     <>
       <tr>
@@ -257,12 +260,11 @@ function MemberRow(props: {
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
           items={manageable() ? [
-            { label: "Change role", disabled: props.busy, onSelect: () => props.onChangeRole(props.member) },
-            { label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) },
-          ] : []}
+            { label: "Change role", onSelect: () => props.onChangeRole(props.member) },
+            { label: "Remove", tone: "danger", onSelect: () => props.onRemove(props.member) },
+          ] : ownOwner() ? [{ label: "Change role", onSelect: () => props.onChangeRole(props.member) }] : []}
         />
       </tr>
-      <RowError columns={COLUMNS.length} message={props.error} />
     </>
   );
 }
@@ -288,7 +290,7 @@ function InvitationRow(props: {
 }
 
 function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<MemberRole>[]; onClose: () => void; onSave: (role: MemberRole) => Promise<void> }) {
-  const [role, setRole] = createSignal<MemberRole>(props.member.role as MemberRole);
+  const [role, setRole] = createSignal<MemberRole>(props.member.role);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   return (
@@ -321,7 +323,6 @@ export function Members() {
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
   const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
-  const memberRows = createRowActions<"role">();
 
   const me = useMe();
   const members = createQuery(() => ({
@@ -352,12 +353,18 @@ export function Members() {
     ]);
   };
 
-  const [changingRole, setChangingRole] = createSignal<OrganizationMember | null>(null);
+  // The member whose role is being changed, read fresh from the list so a
+  // retry after someone else's change expects the role they set.
+  const [changingRoleID, setChangingRoleID] = createSignal<string | null>(null);
+  const changingRole = () => members.data?.members.find((member) => memberResourceID(member) === changingRoleID()) ?? null;
   const changeMemberRole = async (member: OrganizationMember, role: MemberRole) => {
     const id = memberResourceID(member);
     if (!id || role === member.role) return;
-    await updateMemberRole(id, role, member.role);
-    await queryClient.invalidateQueries({ queryKey: ["members"] });
+    try {
+      await updateMemberRole(id, role, member.role);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["members"] });
+    }
   };
 
   const isCurrentUser = (member: OrganizationMember) =>
@@ -410,9 +417,7 @@ export function Members() {
                   canManage={canManage()}
                   isCurrentUser={isCurrentUser(member)}
                   currentUserRole={me.data?.role}
-                  busy={memberRows.busy(memberResourceID(member))}
-                  error={memberRows.error(memberResourceID(member))}
-                  onChangeRole={setChangingRole}
+                  onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
                   onRemove={setRemoving}
                 />
               )}
@@ -441,7 +446,7 @@ export function Members() {
       </Show>
 
       <Show when={changingRole()}>
-        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.role)} onClose={() => setChangingRole(null)} onSave={(role) => changeMemberRole(member(), role)} />}
+        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.role, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeMemberRole(member(), role)} />}
       </Show>
 
       <Show when={removing()}>

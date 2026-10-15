@@ -35,7 +35,7 @@ export function EnvChip(props: { name: string; colorHex: string | undefined; pro
 // Where a dialog's action applies, as one line: "Console demo · ● Demo".
 export function EnvironmentTarget(props: { label: string; environmentName: string; environmentColorHex: string | undefined; projectName: string }) {
   return (
-    <p class="mb-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-chrome text-console-text" aria-label={props.label}>
+    <p class="mb-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-chrome text-console-text" role="group" aria-label={props.label}>
       <span>{props.projectName}</span>
       <span class="text-console-subtle" aria-hidden="true">·</span>
       <Show when={props.environmentColorHex}><EnvDot colorHex={props.environmentColorHex} /></Show>

@@ -564,7 +564,10 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows).toHaveCount(4);
   await expect(rows.nth(1)).toContainText("Local");
   await expect(rows.nth(1)).toContainText("You");
-  await expect(page.getByRole("button", { name: "Actions for Local", exact: true })).toHaveCount(0);
+  // An owner's own row only offers stepping down; nobody removes themselves here.
+  await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Change role"]);
+  await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(2)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Membersecond@example.test");
   await expect(rows.nth(2).getByRole("cell").nth(2)).toHaveText("Active");
@@ -627,6 +630,42 @@ test("invitations that fail to load leave the members and offer Retry", async ({
   await expect(notice).toHaveCount(0);
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
+});
+
+test("a member's role changes from the row menu and a conflicting change can be retried", async ({ page }) => {
+  await fixture(page);
+  let role = "developer";
+  const patches: unknown[] = [];
+  await page.route("**/api/members**", async route => {
+    const request = route.request();
+    if (request.method() === "PATCH") {
+      const body = request.postDataJSON() as { role: string; expected_role: string };
+      patches.push(body);
+      if (body.expected_role !== role) return route.fulfill({ status: 409, json: { error: { code: "conflict", message: "member role changed" } } });
+      role = body.role;
+      return route.fulfill({ json: { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role, status: "active", created_at: now, updated_at: now } });
+    }
+    if (new URL(request.url()).pathname !== "/api/members") return route.fallback();
+    return route.fulfill({ json: { members: [
+      { user_id: "local", display_name: "Local", email: "local@example.test", role: "owner", status: "active", created_at: now, updated_at: now },
+      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role, status: "active", created_at: now, updated_at: now },
+    ] } });
+  });
+  await page.goto(`/settings/members?${scope}`);
+  await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Change role", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Change role" });
+  // Someone else makes them a viewer while the dialog is open.
+  role = "viewer";
+  await dialog.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Admin", exact: true }).click();
+  await dialog.getByRole("button", { name: "Change role", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("This member's role changed. Check it and try again.");
+  // The retry expects the role they now have.
+  await dialog.getByRole("button", { name: "Change role", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(patches).toEqual([{ role: "admin", expected_role: "developer" }, { role: "admin", expected_role: "viewer" }]);
+  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(1)).toHaveText("Admin");
 });
 
 test("removing a member and revoking an invitation each confirm before the request", async ({ page }) => {

@@ -38,7 +38,7 @@ export function PromoteDeploymentModal(props: {
       }}
       errorMessage={promoteErrorMessage}
     >
-      New sessions start on this deployment and its triggers take effect. Running sessions keep their deployment.
+      New sessions start on this deployment and its triggers take effect. Open sessions keep their deployment. Agents missing from it stop taking new sessions and Slack conversations.
     </ConfirmDialog>
   );
 }

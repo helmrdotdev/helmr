@@ -44,7 +44,7 @@ export function ProjectSettings() {
   async function submitProject(event: SubmitEvent) {
     event.preventDefault();
     const current = project();
-    if (!current) return;
+    if (!current || !dirty()) return;
     const nextName = name().trim();
     if (!nextName) {
       setSaveError("Name is required.");
@@ -154,7 +154,7 @@ function ProjectHistorySettings(props: { project: string }) {
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!canManage() || !settings.data || saving()) return;
+    if (!canManage() || !settings.data || saving() || !dirty()) return;
     setError(null);
     setSaved(false);
     let next: string;

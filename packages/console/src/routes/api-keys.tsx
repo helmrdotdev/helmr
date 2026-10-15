@@ -100,8 +100,9 @@ function Permissions(props: { keyItem: ApiKeySummary }) {
   const labels = () => (props.keyItem.permissions ?? []).flatMap((grant) => grant.scopes).map((scope) => PERMISSION_LABELS.get(scope) ?? scope);
   return (
     <Show when={labels().length > 0} fallback={<EmptyCell />}>
-      <span class="cursor-help underline decoration-dotted underline-offset-4" title={labels().join("\n")} aria-label={labels().join(", ")}>
+      <span class="cursor-help underline decoration-dotted underline-offset-4" title={labels().join("\n")}>
         {labels().length} {labels().length === 1 ? "permission" : "permissions"}
+        <span class="sr-only">: {labels().join(", ")}</span>
       </span>
     </Show>
   );
@@ -234,7 +235,7 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Limited to the permissions chosen when generated."
         actions={
-          <Show when={!isDenied(keys.error) && !noKeys()}>
+          <Show when={!isDenied(keys.error) && !keys.isPending && !noKeys()}>
             <button
               class={ui.button}
               type="button"
