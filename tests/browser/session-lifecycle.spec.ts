@@ -1,304 +1,134 @@
 import { expect, test, type Page } from "@playwright/test";
+import { addEvent, makeTurn, serveSession, sessionPath, sessionURL, sessionWith, settleTurn, turnID, type SessionData, expandTurns } from "./fixtures/session-log";
 
-const projectID = "console-demo";
-const environmentID = "demo";
-const id = "00000000-0000-7000-8000-000000000799";
-const turnID = "00000000-0000-7000-8000-000000000798";
-const base = `/api/projects/${projectID}/environments/${environmentID}`;
-const path = `${base}/sessions/${id}`;
-const url = `/sessions/${id}?project=${projectID}&environment=${environmentID}`;
-const now = "2026-10-06T00:00:00Z";
-const initialSession = {
-  activity: { process: null },
-  initial_turn: { id: turnID, status: "queued" },
-  id,
-  agent: "support",
-  template: "browser",
-  deployment_id: turnID,
-  computer_id: turnID,
-  root_session_id: id,
-  parent_session_id: null,
-  status: "open",
-  created_at: now,
-  holds: [],
-};
-const initialTurn = {
-  id: turnID,
-  session_id: id,
-  sequence: 1,
-  status: "queued",
-  input: [{ type: "text", text: "original input" }],
-};
+const now = new Date().toISOString();
+const log = (page: Page) => page.getByRole("region", { name: "Log" });
+const inputLine = (page: Page, sequence: number) => log(page).locator(`#turn-${turnID(sequence)}`).getByRole("button", { name: /^(\S+ )?input\b/ });
 
-async function scope(page: Page, controls: string[] = []) {
-  const environment = {
-    environment: environmentID, project: projectID,
-    name: "Development",
-    color_hex: "#008000",
-    is_default: true,
-    created_at: now,
-    updated_at: now,
-  };
-  const project = {
-    project: projectID,
-    name: "Test",
-    default_region_id: "local",
-    is_default: true,
-    environments: [environment],
-    created_at: now,
-    updated_at: now,
-  };
-  await page.route("**/api/**", async (route) => {
-    const endpoint = new URL(route.request().url()).pathname;
-    let json: unknown;
-    if (endpoint === "/api/me")
-      json = {
-        user_id: "local",
-        display_name: "Local",
-        org_id: "org",
-        permissions: ["sessions.read", "sessions.send", "sessions.cancel", ...controls],
-        admin: false,
-        organization_required: false,
-        project_required: false,
-      };
-    else if (endpoint === "/api/projects") json = { projects: [project] };
-    else if (endpoint === `/api/projects/${projectID}`) json = project;
-    else if (endpoint === base) json = environment;
-    else if (endpoint.endsWith("/events")) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
-    else if (endpoint.endsWith("/asks")) json = { asks: [] };
-    else {
-      await route.fulfill({
-        status: 404,
-        json: { error: { code: "not_found", message: endpoint } },
-      });
-      return;
-    }
-    await route.fulfill({ json });
+// Answers a control POST once the page asks for it; everything else falls through
+// to the in-memory Session.
+async function onControl(page: Page, action: string, handle: (body: unknown) => { status?: number; json: unknown }) {
+  await page.route(`**${sessionPath}/${action}`, async route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const reply = handle(route.request().postDataJSON());
+    await route.fulfill({ status: reply.status ?? 200, json: reply.json });
   });
 }
 
-test("retained queue shows independent holds and cancellation preserves input", async ({
-  page,
-}) => {
-  await scope(page);
-  let cancelled = false;
+test("retained queue shows independent holds and cancellation preserves input", async ({ page }) => {
+  const data = sessionWith({
+    holds: [
+      { id: "hold-a", session_id: "00000000-0000-7000-8000-000000000900", scope: "local", reason: "Operator pause", created_at: now },
+      { id: "hold-b", session_id: "00000000-0000-7000-8000-000000000900", scope: "subtree", reason: "Secret revoked", created_at: now },
+    ],
+  }, [makeTurn(1)]);
+  await serveSession(page, data);
   const mutations: unknown[] = [];
-  await page.route(`**${path}**`, async (route) => {
-    const request = route.request();
-    const endpoint = new URL(request.url()).pathname;
-    if (request.method() === "POST") {
-      expect(endpoint).toBe(`${path}/cancel`);
-      mutations.push(request.postDataJSON());
-      cancelled = true;
-      await route.fulfill({
-        json: { id: turnID, session_id: id, status: "accepted" },
-      });
-    } else if (endpoint === path) {
-      await route.fulfill({
-        json: {
-          ...initialSession,
-          status: cancelled ? "cancelled" : "open",
-          holds: [
-            {
-              id: "hold-a",
-              session_id: id,
-              scope: "local",
-              reason: "Operator pause",
-              created_at: now,
-            },
-            {
-              id: "hold-b",
-              session_id: id,
-              scope: "subtree",
-              reason: "Secret revoked",
-              created_at: now,
-            },
-          ],
-        },
-      });
-    } else if (endpoint === `${path}/turns`)
-      await route.fulfill({
-        json: {
-          turns: [
-            {
-              ...initialTurn,
-              status: cancelled ? "cancelled" : "queued",
-              ...(cancelled ? { terminal_at: now } : {}),
-            },
-          ],
-        },
-      });
-    else await route.fallback();
+  await onControl(page, "cancel", body => {
+    mutations.push(body);
+    data.session["status"] = "cancelled";
+    settleTurn(data, 1, { status: "cancelled", terminal_at: now });
+    return { json: { id: turnID(1), session_id: data.session["id"], status: "accepted" } };
   });
-  await page.goto(url);
-  await expect(
-    page.getByText("original input", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Operator pause (local)")).toBeVisible();
-  await expect(page.getByText("Secret revoked (subtree)")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Cancel session", exact: true })
-    .click();
-  await expect(
-    page.getByText("Other Sessions sharing the Computer are not cancelled.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Cancel session", exact: true })
-    .click();
-  await expect(
-    page.getByText('"status": "accepted"', { exact: false }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("original input", { exact: true }),
-  ).toBeVisible();
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(inputLine(page, 1)).toContainText("original input");
+  await expect(page.getByText("Held: Operator pause (this session).", { exact: false })).toBeVisible();
+  await expect(page.getByText("Held: Secret revoked (this session and its children).", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await expect(page.getByText("Other sessions sharing the computer are not cancelled.", { exact: false })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
+  await expect(page.getByText("Cancel session requested.", { exact: false })).toBeVisible();
+  await expect(log(page).locator(`#turn-${turnID(1)}`)).toContainText("cancelled");
+  await expect(inputLine(page, 1)).toContainText("original input");
   await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
-  expect(mutations).toHaveLength(1);
-  expect(mutations[0]).toEqual({ idempotency_key: expect.any(String) });
+  expect(mutations).toEqual([{ idempotency_key: expect.any(String) }]);
 });
 
-test("terminal Session observation refreshes retained Turn outcome", async ({
-  page,
-}) => {
-  await scope(page);
+test("terminal Session observation refreshes retained Turn outcome", async ({ page }) => {
   await page.clock.install();
-  let terminal = false;
-  let reads = 0;
-  await page.route(`**${path}**`, async (route) => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path)
-      await route.fulfill({
-        json: { ...initialSession, status: terminal ? "closed" : "open" },
-      });
-    else if (endpoint === `${path}/turns`) {
-      reads++;
-      await route.fulfill({
-        json: {
-          turns: [
-            {
-              ...initialTurn,
-              status: terminal ? "completed" : "finalizing",
-              ...(terminal
-                ? {
-                    terminal_at: now,
-                    completion_save_id: turnID,
-                    result: { saved: "complete" },
-                  }
-                : {}),
-            },
-          ],
-        },
-      });
-    } else await route.fallback();
-  });
-  await page.goto(url);
-  await expect(
-    page.getByText("The handler has returned.", { exact: false }),
-  ).toBeVisible();
-  await expect(
-    page.getByText('"saved": "complete"', { exact: false }),
-  ).toHaveCount(0);
-  terminal = true;
-  await page.clock.runFor(5100);
-  await expect(
-    page.getByText('"saved": "complete"', { exact: false }),
-  ).toBeVisible();
-  expect(reads).toBeGreaterThan(1);
+  const data = sessionWith({}, [makeTurn(1, { status: "finalizing", started_at: now })]);
+  await serveSession(page, data);
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(log(page).locator(`#turn-${turnID(1)}`)).toContainText("finalizing");
+  await expect(log(page).getByRole("button", { name: /^(\S+ )?result / })).toHaveCount(0);
+  settleTurn(data, 1, { status: "completed", terminal_at: now, completion_save_id: turnID(1), result: { saved: "complete" } });
+  data.session["status"] = "closed";
+  await page.clock.runFor(3_100);
+  await expect(log(page).getByRole("button", { name: /^(\S+ )?result / })).toContainText('json {saved: "complete"}');
 });
 
 test("ordered progress remains visible while final response waits for completion", async ({ page }) => {
-  await scope(page);
   await page.clock.install();
-  let completed = false;
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: completed ? "closed" : "open" } });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, status: completed ? "completed" : "finalizing", ...(completed ? { response: [{ type: "text", text: "Finished response" }], result: null } : {}) }] } });
-    else if (endpoint === `${path}/events`) await route.fulfill({ json: { records: [{ session_id: id, turn_id: turnID, sequence: 1, kind: "turn.output", data: [{ type: "text", text: "Published progress" }, { type: "json", value: { n: null } }], created_at: now }], next_after: 1, has_more: false, retained_after: 0 } });
-    else if (endpoint === `${path}/turns/${turnID}/asks`) await route.fulfill({ json: { asks: [] } });
-    else await route.fallback();
-  });
-  await page.goto(url);
-  await expect(page.getByText("Published progress", { exact: true })).toBeVisible();
-  await expect(page.getByText("Finished response", { exact: true })).toHaveCount(0);
-  completed = true;
-  await page.clock.fastForward(5_001);
-  await expect(page.getByText("Finished response", { exact: true })).toBeVisible();
-  await expect(page.getByText("Published progress", { exact: true })).toBeVisible();
+  const data = sessionWith({}, [makeTurn(1, { status: "finalizing", started_at: now })]);
+  addEvent(data, 1, "turn.output", [{ type: "text", text: "Published progress" }, { type: "json", value: { n: null } }]);
+  await serveSession(page, data);
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(log(page).getByText('"Published progress" · json {n: null}')).toBeVisible();
+  await expect(log(page).getByRole("button", { name: /^(\S+ )?response / })).toHaveCount(0);
+  settleTurn(data, 1, { status: "completed", terminal_at: now, completion_save_id: turnID(1), response: [{ type: "text", text: "Finished response" }], result: null });
+  data.session["status"] = "closed";
+  await page.clock.runFor(3_100);
+  await expect(log(page).getByRole("button", { name: /^(\S+ )?response / })).toContainText('"Finished response"');
+  await expect(log(page).getByText('"Published progress" · json {n: null}')).toBeVisible();
 });
 
-test("Session closure refreshes final progress and questions before another polling tick", async ({ page }) => {
-  await scope(page);
-  await page.clock.install();
-  let closed = false;
+test("Session closure refreshes final progress and the waiting question", async ({ page }) => {
   const askID = "00000000-0000-7000-8000-000000000797";
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === `${path}/cancel`) { closed = true; await route.fulfill({ json: { id: turnID, status: "accepted" } }); }
-    else if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: closed ? "cancelled" : "open" } });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, status: closed ? "cancelled" : "running" }] } });
-    else if (endpoint === `${path}/events`) await route.fulfill({ json: { records: closed ? [{ session_id: id, turn_id: turnID, sequence: 1, kind: "turn.output", data: [{ type: "text", text: "Last published output" }], created_at: now }] : [], next_after: closed ? 1 : 0, has_more: false, retained_after: 0 } });
-    else if (endpoint === `${path}/turns/${turnID}/asks`) await route.fulfill({ json: { asks: [{ id: askID, session_id: id, turn_id: turnID, status: closed ? "cancelled" : "pending", created_at: now, ...(closed ? { cancelled_at: now } : {}), question: { prompt: [{ type: "text", text: "Question" }], type: "text" } }] } });
-    else await route.fallback();
+  const data = sessionWith({}, [makeTurn(1, { status: "running", started_at: now })]);
+  addEvent(data, 1, "ask.created", { ask_id: askID, question: { prompt: [{ type: "text", text: "Ship it?" }], type: "text" } });
+  data.asks.push({ id: askID, session_id: data.session["id"], turn_id: turnID(1), status: "pending", created_at: now, question: { prompt: [{ type: "text", text: "Ship it?" }], type: "text" } });
+  await serveSession(page, data);
+  await onControl(page, "cancel", () => {
+    data.session["status"] = "cancelled";
+    addEvent(data, 1, "turn.output", [{ type: "text", text: "Last published output" }]);
+    addEvent(data, 1, "ask.cancelled", { ask_id: askID });
+    data.asks[0]!["status"] = "cancelled";
+    settleTurn(data, 1, { status: "cancelled", terminal_at: now });
+    return { json: { id: turnID(1), status: "accepted" } };
   });
-  await page.goto(url);
-  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Pending");
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(page.getByText("Turn #1 is waiting on a question", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Cancel session", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
-  await expect(page.getByText("Last published output", { exact: true })).toBeVisible();
-  await expect(page.getByRole("list", { name: "Questions" }).getByRole("listitem")).toContainText("Cancelled");
+  await expect(log(page).getByText('"Last published output"')).toBeVisible();
+  await expect(log(page).getByText("question cancelled")).toBeVisible();
+  await expect(page.getByText("Turn #1 is waiting on a question", { exact: false })).toHaveCount(0);
 });
 
 test("expired Turn content remains distinct from empty input and a null result", async ({ page }) => {
-  await scope(page);
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: "closed" } });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [
-      { id: turnID, session_id: id, sequence: 1, status: "completed", terminal_at: now, completion_save_id: turnID, payload_expired_at: now },
-      { id: "00000000-0000-7000-8000-000000000797", session_id: id, sequence: 2, status: "completed", terminal_at: now, completion_save_id: turnID, input: [], result: null },
-    ] } });
-    else await route.fallback();
-  });
-  await page.goto(url);
-  const expired = page.getByRole("listitem").filter({ hasText: "Turn #1" });
-  await expect(expired.getByText("Turn content expired.")).toBeVisible();
-  await expect(expired.getByText("Completed", { exact: true })).toBeVisible();
-  await expect(expired.getByText("Input", { exact: true })).toHaveCount(0);
-  const retained = page.getByRole("listitem").filter({ hasText: "Turn #2" });
-  await expect(retained.getByText("Input", { exact: true })).toBeVisible();
-  await expect(retained.locator("pre").filter({ hasText: /^null$/ })).toHaveCount(1);
+  const data = sessionWith({ status: "closed" }, [
+    makeTurn(1, { status: "completed", terminal_at: now, completion_save_id: turnID(1), payload_expired_at: now }),
+    makeTurn(2, { status: "completed", terminal_at: now, completion_save_id: turnID(1), input: [], result: null }),
+  ]);
+  delete data.turns[0]!.input;
+  await serveSession(page, data);
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  const expired = log(page).locator(`#turn-${turnID(1)}`);
+  await expect(expired.locator("[data-log-line]").filter({ hasText: /^[\d:.]*input/ })).toContainText("content expired");
+  await expect(log(page).locator(`#turn-${turnID(1)}`).getByRole("button", { name: /^(\S+ )?result / })).toHaveCount(0);
+  await expect(inputLine(page, 2)).not.toContainText("expired");
+  await expect(log(page).locator(`#turn-${turnID(2)}`).getByRole("button", { name: /^(\S+ )?result / })).toContainText("json null");
 });
 
 for (const action of ["interrupt", "cancel"] as const) {
   test(`${action} retries preserve identity`, async ({ page }) => {
-    await scope(page, [`sessions.${action}`]);
     const label = { interrupt: "Interrupt session", cancel: "Cancel session" }[action];
+    const data = sessionWith({ holds: [{ id: "owned-hold", session_id: "00000000-0000-7000-8000-000000000900", scope: "subtree", reason: "Operator pause", created_at: now }] }, [makeTurn(1)]);
+    await serveSession(page, data);
     const attempts: unknown[] = [];
-    let accepted = false;
-    await page.route(`**${path}**`, async route => {
-      const request = route.request();
-      const endpoint = new URL(request.url()).pathname;
-      if (request.method() === "POST") {
-        expect(endpoint).toBe(`${path}/${action}`);
-        attempts.push(request.postDataJSON());
-        if (attempts.length === 1) await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Reply unavailable" } } });
-        else {
-          accepted = true;
-          await route.fulfill({ json: { id: "control-receipt", session_id: id, status: "accepted" } });
-        }
-      } else if (endpoint === path) await route.fulfill({ json: {
-        ...initialSession,
-        status: accepted && action === "cancel" ? "cancelled" : "open",
-        holds: [{ id: "owned-hold", session_id: id, scope: "subtree", reason: "Operator pause", created_at: now }],
-      } });
-      else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [initialTurn] } });
-      else await route.fallback();
+    await onControl(page, action, body => {
+      attempts.push(body);
+      if (attempts.length === 1) return { status: 503, json: { error: { code: "unavailable", message: "Reply unavailable" } } };
+      if (action === "cancel") data.session["status"] = "cancelled";
+      return { json: { id: "control-receipt", session_id: data.session["id"], status: "accepted" } };
     });
-    await page.goto(url);
+    await page.goto(sessionURL);
+    await expandTurns(page);
     await page.getByRole("button", { name: label, exact: true }).click();
     const dialog = page.getByRole("dialog", { name: label });
     await dialog.getByRole("button", { name: label, exact: true }).click();
@@ -314,16 +144,11 @@ for (const action of ["interrupt", "cancel"] as const) {
 }
 
 test("inherited hold links its owner and cannot be released on a child", async ({ page }) => {
-  await scope(page, ["sessions.resume"]);
   const owner = "00000000-0000-7000-8000-000000000796";
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path) await route.fulfill({ json: { ...initialSession, holds: [{ id: "parent-hold", session_id: owner, scope: "subtree", reason: "Parent paused", created_at: now }] } });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [initialTurn] } });
-    else await route.fallback();
-  });
-  await page.goto(url);
-  await expect(page.getByText("Parent paused (subtree)")).toBeVisible();
+  await serveSession(page, sessionWith({ holds: [{ id: "parent-hold", session_id: owner, scope: "subtree", reason: "Parent paused", created_at: now }] }, [makeTurn(1)]));
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(page.getByText("Held: Parent paused (this session and its children).", { exact: false })).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}`);
 });
@@ -331,100 +156,72 @@ test("inherited hold links its owner and cannot be released on a child", async (
 for (const status of ["open", "closing", "closed", "cancelled"] as const) {
   const active = status === "open" || status === "closing";
   test(`Interrupt session and the Cancel session danger zone are ${active ? "offered" : "not offered"} for a ${status} Session`, async ({ page }) => {
-    await scope(page, ["sessions.interrupt"]);
-    await page.route(`**${path}**`, async route => {
-      const endpoint = new URL(route.request().url()).pathname;
-      // Settled Turns only: whether work is running does not decide the action.
-      if (endpoint === path) await route.fulfill({ json: { ...initialSession, status } });
-      else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, status: "completed", terminal_at: now }] } });
-      else await route.fallback();
-    });
-    await page.goto(url);
-    await expect(page.getByLabel("Turn #1 input", { exact: true })).toHaveText("original input");
+    // Settled Turns only: whether work is running does not decide the action.
+    await serveSession(page, sessionWith({ status }, [makeTurn(1, { status: "completed", terminal_at: now, completion_save_id: turnID(1), result: null })]), ["sessions.read", "sessions.interrupt", "sessions.cancel"]);
+    await page.goto(sessionURL);
+    await expandTurns(page);
+    await expect(inputLine(page, 1)).toContainText("original input");
     await expect(page.getByRole("button", { name: "Interrupt session", exact: true })).toHaveCount(active ? 1 : 0);
     await expect(page.getByRole("region", { name: "Cancel session" }).getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
   });
 }
 
-test("Cancel session sits in a danger zone after the Turns and confirms before cancelling", async ({ page }) => {
-  await scope(page);
+test("Cancel session sits in a danger zone after the log and confirms before cancelling", async ({ page }) => {
+  const data = sessionWith({}, [makeTurn(1)]);
+  await serveSession(page, data);
   const mutations: string[] = [];
-  let cancelled = false;
-  await page.route(`**${path}**`, async route => {
-    const request = route.request();
-    const endpoint = new URL(request.url()).pathname;
-    if (request.method() === "POST") {
-      mutations.push(endpoint);
-      cancelled = true;
-      await route.fulfill({ json: { id: turnID, session_id: id, status: "accepted" } });
-    } else if (endpoint === path) await route.fulfill({ json: { ...initialSession, status: cancelled ? "cancelled" : "open" } });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [{ ...initialTurn, ...(cancelled ? { status: "cancelled", terminal_at: now } : {}) }] } });
-    else await route.fallback();
+  await onControl(page, "cancel", () => {
+    mutations.push("cancel");
+    data.session["status"] = "cancelled";
+    settleTurn(data, 1, { status: "cancelled", terminal_at: now });
+    return { json: { id: turnID(1), status: "accepted" } };
   });
-  await page.goto(url);
+  await page.goto(sessionURL);
+  await expandTurns(page);
   const zone = page.getByRole("region", { name: "Cancel session" });
   await expect(zone).toBeVisible();
-  // The page header keeps Copy link only; the destructive action is not there.
+  // The page header keeps Copy link and Interrupt; the destructive action is not there.
   await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(1);
-  const turns = page.getByRole("region", { name: "Turns" });
-  const turnsBox = (await turns.boundingBox())!;
+  const logBox = (await log(page).boundingBox())!;
   const zoneBox = (await zone.boundingBox())!;
-  expect(zoneBox.y).toBeGreaterThan(turnsBox.y + turnsBox.height);
+  expect(zoneBox.y).toBeGreaterThan(logBox.y + logBox.height);
   await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Cancel session" });
   await expect(dialog).toBeVisible();
-  expect(mutations).toHaveLength(0);
   await dialog.getByRole("button", { name: "Keep", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(mutations).toHaveLength(0);
   await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
   await dialog.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(mutations).toEqual([`${path}/cancel`]);
+  expect(mutations).toEqual(["cancel"]);
   await expect(page.getByRole("region", { name: "Cancel session" })).toHaveCount(0);
 });
 
-test("a Session without progress output or notices has no Progress panel", async ({ page }) => {
-  await scope(page);
-  let output = false;
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path) await route.fulfill({ json: initialSession });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: [initialTurn] } });
-    else if (endpoint === `${path}/events`) await route.fulfill({ json: { records: output ? [{ session_id: id, turn_id: turnID, sequence: 1, kind: "turn.output", data: [{ type: "text", text: "Working on it" }], created_at: now }] : [], next_after: output ? 1 : 0, has_more: false, retained_after: 0 } });
-    else await route.fallback();
-  });
-  await page.goto(url);
-  await expect(page.getByRole("region", { name: "Turns" })).toBeVisible();
-  await expect(page.getByLabel("Turn #1 input", { exact: true })).toHaveText("original input");
-  await expect(page.getByRole("region", { name: "Progress" })).toHaveCount(0);
-  output = true;
-  await page.reload();
-  const progress = page.getByRole("region", { name: "Progress" });
-  await expect(progress).toBeVisible();
-  await expect(progress.getByText("Working on it", { exact: true })).toBeVisible();
+test("a Session without events says so instead of an empty log", async ({ page }) => {
+  await serveSession(page, sessionWith({}, []));
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(log(page).getByText("No events yet. Events appear when the first turn is queued.")).toBeVisible();
 });
 
-
 test("retained structured inputs render without treating JSON values as text parts", async ({ page }) => {
-  await scope(page);
-  const inputs = [{ topic: "structured object", count: 2 }, "structured string", 7, false, null, [1, { nested: true }], initialTurn.input];
-  await page.route(`**${path}**`, async route => {
-    const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === path) await route.fulfill({ json: initialSession });
-    else if (endpoint === `${path}/turns`) await route.fulfill({ json: { turns: inputs.map((input, index) => ({ ...initialTurn, id: `${turnID.slice(0, -1)}${index}`, sequence: index + 1, input })) } });
-    else await route.fallback();
-  });
+  const inputs: unknown[] = [{ topic: "structured object", count: 2 }, "structured string", 7, false, null, [1, { nested: true }]];
+  const data: SessionData = sessionWith({}, [...inputs.map((input, index) => makeTurn(index + 1, { input })), makeTurn(inputs.length + 1)]);
+  await serveSession(page, data);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(url);
-  for (let index = 0; index < inputs.length - 1; index++) {
-    const item = page.locator(`[id="turn-${turnID.slice(0, -1)}${index}"]`);
-    await expect(item.locator("pre").first()).toHaveText(JSON.stringify(inputs[index], null, 2));
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  for (let index = 0; index < inputs.length; index++) {
+    const line = inputLine(page, index + 1);
+    await line.click();
+    // The input line opens the Turn record's input; Raw shows it exactly.
+    const view = log(page).getByRole("figure", { name: `Turn #${index + 1} input` });
+    await view.getByRole("button", { name: "Raw", exact: true }).click();
+    expect(JSON.parse(await view.locator("pre").innerText()).input).toEqual(inputs[index]);
   }
-  const textTurn = page.locator(`[id="turn-${turnID.slice(0, -1)}6"]`);
-  await expect(textTurn.locator("pre").first()).toHaveText("original input");
-  await textTurn.getByText("Inspect input JSON", { exact: true }).click();
-  await expect(textTurn.locator("details pre")).toHaveText(JSON.stringify(initialTurn.input, null, 2));
+  await inputLine(page, inputs.length + 1).click();
+  await expect(log(page).getByRole("figure", { name: `Turn #${inputs.length + 1} input` })).toContainText("original input");
   expect(errors).toEqual([]);
 });

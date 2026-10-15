@@ -192,6 +192,34 @@ export const ui = {
   payloadPinned: "rounded-xs bg-console-accent-soft outline outline-1 -outline-offset-1 outline-console-accent/35",
   payloadRaw: "m-0 overflow-auto whitespace-pre-wrap break-words font-mono text-control leading-5 text-console-text",
 
+  // A row of label/value cells under a detail page's header (Session properties).
+  propertyBar:
+    "m-0 flex min-h-11.5 flex-wrap items-stretch border border-console-border-strong bg-console-surface",
+  propertyCell:
+    "flex min-w-0 max-w-full flex-col justify-center gap-px border-r border-console-border-soft px-3.5 py-1.5 last:border-r-0",
+
+  // Session log (SessionLogView): 28px event lines and 36px Turn headers share
+  // columns; the row's toggle spans the leading columns as a subgrid so the whole
+  // row is one focusable control.
+  logLine:
+    "group/line grid min-h-7 grid-cols-[96px_46px_168px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border-soft pr-3 text-body max-[720px]:flex max-[720px]:py-1",
+  logTurnHeader:
+    "grid h-9 grid-cols-[14px_44px_96px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border bg-console-bg-panel px-3 text-body max-[720px]:grid-cols-[14px_auto_auto_minmax(0,1fr)_auto] max-[720px]:gap-x-2",
+  logRowButton:
+    "col-span-4 grid min-h-7 cursor-pointer grid-cols-subgrid items-center border-0 bg-transparent p-0 text-left text-inherit max-[720px]:flex max-[720px]:min-w-0 max-[720px]:flex-1 max-[720px]:flex-wrap max-[720px]:gap-x-2 max-[720px]:gap-y-0.5",
+  logTurnButton: "col-span-4 grid min-h-9 cursor-pointer grid-cols-subgrid items-center border-0 bg-transparent p-0 text-left text-inherit",
+  logKind: "max-w-full justify-self-start truncate rounded-xs border px-1.5 font-mono text-micro leading-[18px]",
+  // An opened line and its record: one tinted band with a 2px accent rail,
+  // closed by a strong rule so consecutive open records stay apart. The opened
+  // row itself carries the selection tint.
+  logOpen:
+    "relative border-b border-console-border bg-console-bg-panel before:absolute before:inset-y-0 before:left-0 before:z-1 before:w-0.5 before:bg-console-accent before:content-['']",
+  logOpenRow: "border-t-console-border bg-console-accent-soft",
+  logLineHighlight:
+    "relative bg-console-warning-bg before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-console-warning-border before:content-['']",
+  logChip:
+    "inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-xs border border-console-border bg-console-surface px-2 font-mono text-badge text-console-muted transition hover:border-console-border-strong hover:text-console-text aria-pressed:border-console-border-strong aria-pressed:bg-console-bg-panel aria-pressed:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
+
   // Auth windows
   authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
   authCopy: "mb-3.5 text-body leading-normal text-console-muted",
