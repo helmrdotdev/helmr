@@ -5,13 +5,20 @@ import { cx } from "./styles";
 
 // How long a wait goes unmarked. Most reads finish sooner, and a skeleton that
 // flashes for a few frames reads as flicker.
-export const SKELETON_DELAY_MS = 250;
+const DELAY_MS = 250;
+// A skeleton that replaces one that just left (a page's record, then the list
+// it loads next) shows at once, so the wait does not blink out between them.
+const HANDOFF_MS = 100;
+let lastShownUntil = 0;
 
-// Renders its children only once the wait has lasted SKELETON_DELAY_MS.
+// Renders its children only once the wait has lasted DELAY_MS.
 export function Delayed(props: { children: JSX.Element }) {
-  const [shown, setShown] = createSignal(false);
-  const timer = setTimeout(() => setShown(true), SKELETON_DELAY_MS);
-  onCleanup(() => clearTimeout(timer));
+  const [shown, setShown] = createSignal(Date.now() - lastShownUntil < HANDOFF_MS);
+  const timer = shown() ? undefined : setTimeout(() => setShown(true), DELAY_MS);
+  onCleanup(() => {
+    clearTimeout(timer);
+    if (shown()) lastShownUntil = Date.now();
+  });
   return <Show when={shown()}>{props.children}</Show>;
 }
 
@@ -20,75 +27,75 @@ export function SkeletonBar(props: { width: string; class?: string }) {
   return <span aria-hidden="true" class={cx("block h-2.5 bg-console-skeleton", props.class)} style={{ width: props.width }} />;
 }
 
+// What every skeleton wraps its shape in: announced once as loading, the shape
+// itself hidden from assistive technology.
+export function Loading(props: { label: string; children: JSX.Element }) {
+  return (
+    <Delayed>
+      <div role="status" aria-busy="true">
+        <span class="sr-only">{props.label}</span>
+        <div aria-hidden="true">{props.children}</div>
+      </div>
+    </Delayed>
+  );
+}
+
 // Bar widths vary row to row so the rows read as content, not as a pattern.
 const WIDTHS = ["72%", "54%", "86%", "62%", "44%"];
 const width = (row: number, column: number) => WIDTHS[(row + column * 2) % WIDTHS.length]!;
+const range = (count: number) => Array.from({ length: count }, (_, index) => index);
+
+function Lines(props: { count: number; column: number }) {
+  return (
+    <div class="flex flex-col gap-2.5 py-1">
+      <For each={range(props.count)}>{(line) => <SkeletonBar width={width(line, props.column)} />}</For>
+    </div>
+  );
+}
 
 // A table whose rows have not arrived: the real column headers over bars.
-export function TableSkeleton(props: { label: string; columns: readonly Column[]; minWidth?: string; rows?: number }) {
+export function TableSkeleton(props: { label: string; columns: readonly Column[]; minWidth?: string }) {
   return (
-    <Delayed>
-      <div aria-busy="true" aria-label={props.label}>
-        <DataTable columns={props.columns} minWidth={props.minWidth}>
-          <For each={Array.from({ length: props.rows ?? 5 }, (_, row) => row)}>
-            {(row) => (
-              <tr>
-                <For each={props.columns}>
-                  {(_, column) => <td><SkeletonBar width={width(row, column())} class="max-w-48" /></td>}
-                </For>
-              </tr>
-            )}
-          </For>
-        </DataTable>
-      </div>
-    </Delayed>
-  );
-}
-
-// Lines of a container body, a list, or a log that has not arrived.
-export function LinesSkeleton(props: { label: string; lines?: number; class?: string }) {
-  return (
-    <Delayed>
-      <div class={cx("flex flex-col gap-2.5 py-1", props.class)} aria-busy="true" aria-label={props.label}>
-        <For each={Array.from({ length: props.lines ?? 3 }, (_, line) => line)}>
-          {(line) => <SkeletonBar width={width(line, 0)} />}
+    <Loading label={props.label}>
+      <DataTable columns={props.columns} minWidth={props.minWidth}>
+        <For each={range(5)}>
+          {(row) => (
+            <tr>
+              <For each={props.columns}>
+                {(_, column) => <td><SkeletonBar width={width(row, column())} class="max-w-48" /></td>}
+              </For>
+            </tr>
+          )}
         </For>
-      </div>
-    </Delayed>
+      </DataTable>
+    </Loading>
   );
 }
 
-// A page whose resource has not arrived: its sections as titled containers
-// with bars. Titles are the page's real section names.
+// A container body or list that has not arrived.
+export function LinesSkeleton(props: { label: string }) {
+  return <Loading label={props.label}><Lines count={3} column={0} /></Loading>;
+}
+
+// A page whose resource has not arrived: titled containers with bars,
+// optionally beside a rail.
 export function PageSkeleton(props: { label: string; sections: readonly string[]; rail?: string }) {
   const sections = (
     <div class="flex min-w-0 flex-col gap-6">
-      <For each={props.sections}>
-        {(title) => <Panel title={title}><SkeletonLines lines={3} /></Panel>}
-      </For>
+      <For each={props.sections}>{(title) => <Panel title={title}><Lines count={3} column={1} /></Panel>}</For>
     </div>
   );
   return (
-    <Delayed>
-      <div aria-busy="true" aria-label={props.label}>
-        <Show when={props.rail} fallback={sections}>
-          {(rail) => (
-            <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-6 max-[960px]:grid-cols-1">
-              {sections}
-              <Panel title={rail()}><SkeletonLines lines={4} /></Panel>
-            </div>
-          )}
-        </Show>
-      </div>
-    </Delayed>
-  );
-}
-
-function SkeletonLines(props: { lines: number }) {
-  return (
-    <div class="flex flex-col gap-2.5 py-1">
-      <For each={Array.from({ length: props.lines }, (_, line) => line)}>{(line) => <SkeletonBar width={width(line, 1)} />}</For>
-    </div>
+    <Loading label={props.label}>
+      <Show when={props.rail} fallback={sections}>
+        {(rail) => (
+          <div class="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-6 max-[960px]:grid-cols-1">
+            {sections}
+            <Panel title={rail()}><Lines count={4} column={1} /></Panel>
+          </div>
+        )}
+      </Show>
+    </Loading>
   );
 }
 

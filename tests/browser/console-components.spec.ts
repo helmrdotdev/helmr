@@ -356,11 +356,10 @@ test("a slow table shows its column headers over skeleton rows, then the rows", 
   let release!: () => void;
   state.holdSessions = new Promise(resolve => { release = resolve; });
   await page.goto(`/sessions?${scope}`);
-  const loading = page.getByLabel("Loading sessions", { exact: true });
+  const loading = page.getByRole("status").filter({ hasText: "Loading sessions" });
   await expect(loading).toBeVisible();
   await expect(loading).toHaveAttribute("aria-busy", "true");
-  await expect(loading.getByRole("columnheader", { name: "Session", exact: true })).toBeVisible();
-  await expect(page.getByText(/Loading/)).toHaveCount(0);
+  await expect(loading.getByText("Session", { exact: true })).toBeVisible();
   release();
   await expect(loading).toHaveCount(0);
   await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();

@@ -4,7 +4,7 @@ import { askConsolePath, type SessionAddress, type SessionEvent, type SessionTur
 import { JsonView } from "../../ui/PayloadView";
 import { Segmented } from "../../ui/Field";
 import { Popover } from "../../ui/Popover";
-import { Delayed, SkeletonBar } from "../../ui/Skeleton";
+import { Loading, SkeletonBar } from "../../ui/Skeleton";
 import { byteLength, formatBytes, preview } from "../../ui/payload";
 import { cx, toneClass, ui, type Tone } from "../../ui/styles";
 import { useClipboard } from "../../ui/useClipboard";
@@ -313,11 +313,11 @@ export function SessionLogView(props: {
 
 function LoadingRows() {
   return (
-    <Delayed>
-      <div class="flex flex-col gap-2.5 py-3 pl-[34px]" aria-busy="true" aria-label="Loading events">
+    <Loading label="Loading events">
+      <div class="flex flex-col gap-2.5 py-3 pl-[34px]">
         <For each={[180, 120, 210]}>{width => <span class="flex gap-2"><SkeletonBar width="80px" /><SkeletonBar width="96px" /><SkeletonBar width={`${width}px`} /></span>}</For>
       </div>
-    </Delayed>
+    </Loading>
   );
 }
 

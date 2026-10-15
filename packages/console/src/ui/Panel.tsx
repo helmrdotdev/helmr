@@ -19,7 +19,7 @@ export function ContainerHeader(props: { id: string; title: string; count?: numb
 // blocks sit 12px apart. A description belongs on the body's first line. A table
 // or list that is a direct child of the body runs flush to its edges with no frame
 // of its own (`ui.containerBody`). The body is never rendered empty: when its
-// content renders nothing (a query still loading without a pending line), only
+// content renders nothing (a query whose skeleton has not appeared yet), only
 // the header shows. A Panel with nothing to say is not rendered by its page.
 export function Panel(props: {
   title?: string;

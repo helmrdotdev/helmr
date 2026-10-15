@@ -15,16 +15,17 @@ function apiDelay(): Plugin {
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://dev");
         if (url.pathname === "/__dev/delay") {
-          const ms = Math.max(0, Number.parseInt(url.searchParams.get("ms") ?? "0", 10) || 0);
+          const ms = Math.min(60_000, Math.max(0, Number.parseInt(url.searchParams.get("ms") ?? "0", 10) || 0));
+          const next = url.searchParams.get("next") ?? "/";
           res.statusCode = 302;
           res.setHeader("Set-Cookie", `helmr_dev_delay=${ms}; Path=/; SameSite=Lax${ms === 0 ? "; Max-Age=0" : ""}`);
-          res.setHeader("Location", url.searchParams.get("next") ?? "/");
+          res.setHeader("Location", next.startsWith("/") && !next.startsWith("//") ? next : "/");
           res.end();
           return;
         }
         const ms = Number.parseInt(/(?:^|;\s*)helmr_dev_delay=(\d+)/.exec(req.headers.cookie ?? "")?.[1] ?? "0", 10);
         if (ms > 0 && url.pathname.startsWith("/api/")) {
-          setTimeout(next, ms);
+          setTimeout(next, Math.min(ms, 60_000));
           return;
         }
         next();

@@ -351,13 +351,15 @@ trigger for the chosen option.
 ## Auth windows
 
 **AuthWindow** is the centered window for sign-in, invites, callbacks, Slack
-linking, CLI device approval, access screens and onboarding (`step` shows progress
-in the container header, next to the product name, with **Steps** in the window). Its states: the form itself,
-**AuthWorking** (Spinner and a message), **AuthSuccess** (result and next step), **AuthError** (human message, folded technical details from `errorDetails`,
-next step; without a title it sits inside a form) and **AuthMissing** (the link or
-code is missing or expired, and how to get a new one). The raw server message is
-only ever in the technical details. `AuthTitle`, `AuthCopy`,
-`AuthActions` and `AuthDivider` lay out the content.
+linking, CLI device approval, access screens and onboarding (`step` shows
+progress in the container header, next to the product name, with **Steps** in
+the window). Its states: the form itself, **AuthWorking** (Spinner and a
+message), **AuthSuccess** (result and next step), **AuthError** (human message,
+folded technical details from `errorDetails`, next step; without a title it sits
+inside a form) and **AuthMissing** (the link or code is missing or expired, and
+how to get a new one). The raw server message is only ever in the technical
+details. `AuthTitle`, `AuthCopy`, `AuthActions` and `AuthDivider` lay out the
+content.
 
 ## Shared behavior
 

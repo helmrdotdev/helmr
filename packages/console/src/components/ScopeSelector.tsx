@@ -9,7 +9,7 @@ import { scopeSwitchPath } from "../lib/scope-navigation";
 import { CommandList, type CommandItem } from "../ui/CommandList";
 import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
 import { Popover } from "../ui/Popover";
-import { SkeletonBar } from "../ui/Skeleton";
+import { Delayed, SkeletonBar } from "../ui/Skeleton";
 import { cx } from "../ui/styles";
 
 // While the picker is open, further pages of projects load by themselves up to
@@ -171,7 +171,7 @@ export function ScopeSelector() {
         setOpen={setOpenProject}
         disabled={scope.isLoading()}
         trigger={
-          <Show when={!scope.isLoading()} fallback={<SkeletonBar width="72px" />}>
+          <Show when={!scope.isLoading()} fallback={<Delayed><SkeletonBar width="72px" /></Delayed>}>
             <span class="max-w-40 truncate max-sm:max-w-22">
               {noProjects() ? "No projects yet" : scope.selectedProject()?.name ?? "—"}
             </span>
