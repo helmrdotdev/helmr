@@ -444,6 +444,31 @@ test("a failed refresh keeps the loaded rows with a notice that clears on recove
   expect(await content!.evaluate(element => element.isConnected)).toBe(true);
 });
 
+test("the Sessions page filters by Agent through the URL", async ({ page }) => {
+  await fixture(page);
+  const agentsAsked: (string | null)[] = [];
+  await page.route(`**${base}/agents?*`, route => route.fulfill({ json: { agents: [{ agent: "assistant", defined_in_current: true }, { agent: "reviewer", defined_in_current: true }] } }));
+  await page.route(`**${base}/sessions?*`, route => {
+    agentsAsked.push(new URL(route.request().url()).searchParams.get("agent"));
+    return route.fulfill({ json: { sessions: [] } });
+  });
+  await page.goto(`/sessions?agent=ghost&${scope}`);
+  await expect(page).toHaveURL("/sessions?agent=ghost");
+  const agentFilter = page.getByRole("combobox", { name: "Filter by agent" });
+  await expect(agentFilter).toContainText("ghost");
+  await expect.poll(() => agentsAsked.at(-1)).toBe("ghost");
+
+  await agentFilter.click();
+  await page.getByRole("option", { name: "reviewer", exact: true }).click();
+  await expect(page).toHaveURL("/sessions?agent=reviewer");
+  await expect.poll(() => agentsAsked.at(-1)).toBe("reviewer");
+
+  await agentFilter.click();
+  await page.getByRole("option", { name: "All agents", exact: true }).click();
+  await expect(page).toHaveURL("/sessions");
+  await expect.poll(() => agentsAsked.at(-1)).toBeNull();
+});
+
 test("a failed first load says what failed, offers Retry and folds the server message away", async ({ page }) => {
   const state = await fixture(page);
   state.failSessions = true;

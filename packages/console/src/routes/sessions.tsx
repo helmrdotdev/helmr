@@ -70,7 +70,8 @@ export function SessionList(props: { agent?: string }) {
   const fixedAgent = () => props.agent !== undefined;
   const agent = () => props.agent ?? params.agent ?? "";
   const agents = createQuery(() => ({
-    queryKey: ["agents", "retained", projectID(), environmentID()],
+    // The first 100 retained Agents; any other can still be named in the URL.
+    queryKey: ["agents", "palette", projectID(), environmentID()],
     queryFn: () => listRetainedAgents(scope()),
     enabled: !fixedAgent() && !!projectID() && !!environmentID(),
     retry: false,
@@ -114,7 +115,7 @@ export function SessionList(props: { agent?: string }) {
         start={
           <>
             <div class="w-44">
-              <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter sessions" />
+              <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter by status" />
             </div>
             <Show when={!fixedAgent()}>
               <div class="w-44">
