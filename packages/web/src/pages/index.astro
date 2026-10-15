@@ -369,7 +369,7 @@ const nav = [
                 <li data-for={m.id}>
                   <span class="cast-face" style={m.agent ? `background:${m.agent.wash}` : undefined} aria-hidden="true">
                     {m.agent ? (
-                      <img src={character(m.agent.character)} alt="" />
+                      <img src={character(m.agent.character)} alt="" width="28" height="28" loading="lazy" decoding="async" />
                     ) : (
                       <svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.5" /><path d="M3.5 17 C 3.5 11 16.5 11 16.5 17" /></svg>
                     )}
@@ -457,7 +457,7 @@ const nav = [
           <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
           <div class="homes">
             <div class="home-slot">
-              <img class="peek" src={character("cloud")} alt="" />
+              <img class="peek" src={character("cloud")} alt="" width="88" height="88" loading="lazy" decoding="async" />
               <div class="card home">
                 <p class="home-title">Helmr Cloud <span class="soon">planned</span></p>
                 <p>Managed hosting is planned and is not currently available.</p>
@@ -465,7 +465,7 @@ const nav = [
               </div>
             </div>
             <div class="home-slot">
-              <img class="peek peek-right" src={character("hut")} alt="" />
+              <img class="peek peek-right" src={character("hut")} alt="" width="80" height="80" loading="lazy" decoding="async" />
               <div class="card home home-dark">
                 <p class="home-title">Your AWS account</p>
                 <p>Run the control plane and workers yourself. Inspect the source and own the deployment boundary.</p>
