@@ -167,7 +167,7 @@ const sectionDocs = [
 
 const docsFor = (id: (typeof sectionDocs)[number]["id"]) => sectionDocs.find((o) => o.id === id)!.docs;
 
-// Hand-drawn characters. Agents use the same ones offered as Slack app icons.
+// Hand-drawn characters, drawn in the same style as the hero illustration.
 const character = (name: string) => `/characters/${name}.svg`;
 
 const nav = [
@@ -593,6 +593,12 @@ const nav = [
     --pad: 3.25rem;
     --top: 9rem;
 
+    /* hand-drawn outlines for buttons and boxes, inline so they never arrive late */
+    --frame: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+    --frame-solid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,5 L35,4 L73,4 L90,3 L110,3 L115,3 L116,4 L117,14 L117,44 L116,45 L96,45 L78,44 L68,45 L51,45 L3,46 L3,31 L2,23 L2,4 Z' fill='%2316161a'/%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+    --frame-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,6 L35,4 L73,5 L90,4 L115,4 L116,14 L116,44 L115,44 L96,45 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L117,44 L117,14 L116,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='30' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='115' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='116' cy='4' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='117' cy='44' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='116' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='6' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='46' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='43' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='2' cy='6' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='2' cy='4' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='5' cy='4' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --frame-hover: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,5 L35,4 L73,4 L90,3 L110,3 L115,3 L116,4 L117,14 L117,44 L116,45 L96,45 L78,44 L68,45 L51,45 L3,46 L3,31 L2,23 L2,4 Z' fill='%23ebe8e2'/%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+
     min-height: 100vh;
     background: var(--paper);
     color: var(--ink-1);
@@ -686,13 +692,12 @@ const nav = [
     width: fit-content;
     padding: 0.3rem 0.6rem;
     border: 1px solid transparent;
-    border-image: url("/illustrations/frame.svg") 8 / 8px stretch;
+    border-image: var(--frame) 8 / 8px stretch;
     font-size: 0.8125rem;
     color: var(--ink-1);
-    transition: background 0.12s, color 0.12s;
   }
 
-  .rail-cta:hover { border-image: url("/illustrations/frame-solid.svg") 8 fill / 8px stretch; color: var(--paper); }
+  .rail-cta:hover { border-image: var(--frame-solid) 8 fill / 8px stretch; color: var(--paper); }
 
 
   /* ---- main band ---- */
@@ -787,14 +792,14 @@ const nav = [
   .button {
     padding: 0.45rem 0.85rem;
     border: 1px solid transparent;
-    border-image: url("/illustrations/frame.svg") 8 / 8px stretch;
+    border-image: var(--frame) 8 / 8px stretch;
     font-size: 0.875rem;
     color: var(--ink-1);
-    transition: background 0.12s, color 0.12s;
+    transition: opacity 0.12s;
   }
 
-  .button:hover { background: #ebe8e2; }
-  .button-dark { border-image: url("/illustrations/frame-solid.svg") 8 fill / 8px stretch; color: var(--paper); }
+  .button:hover { border-image: var(--frame-hover) 8 fill / 8px stretch; }
+  .button-dark { border-image: var(--frame-solid) 8 fill / 8px stretch; color: var(--paper); }
   .button-dark:hover { background: none; opacity: 0.88; }
 
   .hand-underline { position: relative; white-space: nowrap; }
@@ -817,7 +822,7 @@ const nav = [
     margin-top: 1rem;
     padding: 0.5rem 0.7rem;
     border: 1px solid transparent;
-    border-image: url("/illustrations/frame-light.svg") 8 / 8px stretch;
+    border-image: var(--frame-light) 8 / 8px stretch;
     background: transparent;
     font-family: var(--font-mono);
     font-size: 0.75rem;
@@ -827,7 +832,7 @@ const nav = [
   }
 
   .install:hover,
-  .install:focus-visible { border-image-source: url("/illustrations/frame.svg"); outline: 0; }
+  .install:focus-visible { border-image-source: var(--frame); outline: 0; }
   .install code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
   .install-prompt, .install-state { color: var(--ink-3); }
 
@@ -1190,7 +1195,6 @@ const nav = [
       width: calc(var(--rail) - 2.25rem);
       margin: 0;
     }
-
   }
 
 
@@ -1483,7 +1487,7 @@ const nav = [
 
     /* keep the path, the cast and the hut; let the outer trees fall off */
     .scene { margin-top: 0; }
-    .scene img { height: 17.5rem; object-fit: cover; object-position: 74% 50%; }
+    .scene img { min-height: 17.5rem; object-fit: cover; object-position: 74% 50%; }
     .ground { margin: 0; }
   }
 
