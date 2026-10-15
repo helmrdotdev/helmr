@@ -45,7 +45,11 @@ const highlightTypeScript = (value: string) => {
 };
 
 // A note covers the lines from the first one containing `from` through the next one containing `to`.
-type Note = { from: string; to: string; title: string; text: string };
+// Its scribble is handwritten into the code: on the line containing `scribbleAt` when given, otherwise
+// on the first line of the range short enough to leave room.
+type Note = { from: string; to: string; title: string; text: string; scribble: string; scribbleAt?: string };
+
+const scribbleRoom = 40;
 
 const annotated = (source: string, notes: Note[]) => {
   const raw = source.trimEnd().split("\n");
@@ -53,25 +57,31 @@ const annotated = (source: string, notes: Note[]) => {
     const start = raw.findIndex((line) => line.includes(note.from));
     const end = raw.findIndex((line, i) => i >= start && line.includes(note.to));
     if (start < 0 || end < 0) throw new Error(`Annotation not found: ${note.title}`);
-    return { start, end };
+    const span = raw.slice(start, end + 1);
+    const pinned = note.scribbleAt === undefined ? -1 : span.findIndex((line) => line.includes(note.scribbleAt!));
+    const roomy = span.findIndex((line) => line.length <= scribbleRoom);
+    const at = start + (pinned >= 0 ? pinned : roomy >= 0 ? roomy : span.indexOf(span.reduce((a, b) => (b.length < a.length ? b : a))));
+    return { start, end, at };
   });
   return highlightTypeScript(source.trimEnd()).split("\n").map((html, i) => {
     const n = ranges.findIndex((r) => i >= r.start && i <= r.end);
-    return { html, note: n < 0 ? null : n + 1 };
+    const scribble = ranges.findIndex((r) => r.at === i);
+    const indent = raw[i]!.length - raw[i]!.trimStart().length;
+    return { indent: html.slice(0, indent), html: html.slice(indent), note: n < 0 ? null : n + 1, scribble: scribble < 0 ? null : notes[scribble].scribble };
   });
 };
 
 const computerNotes: Note[] = [
-  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
-  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM." },
-  { from: "async prepare", to: "  },", title: "One prepared version.", text: "Every new computer starts from it." },
+  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift.", scribble: "no hidden base, no drift" },
+  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM.", scribble: "the real key never enters the VM", scribbleAt: 'mode: "protected"' },
+  { from: "async prepare", to: "  },", title: "Prepare it your way.", text: "Write any setup in prepare. Every new computer starts from the result.", scribble: "prepare the VM your way" },
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "return OpenCodeHarness.open", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
-  { from: "const { response, ...result }", to: "if (response !== undefined)", title: "One conversation, every turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
-  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
-  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
+  { from: "async init", to: "return { opencode", title: "Start the agent you use.", text: "init starts OpenCode once, before the first turn. Hibernation keeps it running.", scribble: "start any agent you like" },
+  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered.", scribble: "waits for a teammate, records who" },
+  { from: "const { data } = await opencode.session.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same OpenCode session.", scribble: "run it on each turn" },
+  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session.", scribble: "runs itself, weekdays at 9" },
 ];
 
 const examples = {
@@ -188,6 +198,7 @@ const nav = [
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
 
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500&display=swap" />
   <div class="page">
     <div class="frame">
     <aside class="rail">
@@ -264,7 +275,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.computer.file}</span></div>
             <pre class="code"><code>{examples.computer.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -287,7 +298,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.agent.file}</span></div>
             <pre class="code"><code>{examples.agent.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -493,8 +504,6 @@ const nav = [
   </div>
 
   <script>
-    const wide = window.matchMedia("(min-width: 84rem)");
-
     document.querySelectorAll<HTMLElement>("[data-annotated]").forEach((block) => {
       const notes = [...block.querySelectorAll<HTMLElement>(".notes [data-note]")];
 
@@ -506,25 +515,6 @@ const nav = [
         });
       };
 
-      // Align each margin note with the first line it describes, without overlapping the previous note.
-      const place = () => {
-        let floor = 0;
-        for (const note of notes) {
-          if (!wide.matches) {
-            note.style.top = "";
-            continue;
-          }
-          const line = block.querySelector<HTMLElement>(`.is-noted[data-note="${note.dataset.note}"]`);
-          if (!line) continue;
-          const title = note.querySelector<HTMLElement>(".note-title");
-          const lineBox = line.getBoundingClientRect();
-          const centered = lineBox.top + (lineBox.height - (title?.offsetHeight ?? lineBox.height)) / 2;
-          const top = Math.max(centered - block.getBoundingClientRect().top, floor);
-          note.style.top = `${top}px`;
-          floor = top + note.offsetHeight + 12;
-        }
-      };
-
       for (const note of notes) {
         note.addEventListener("mouseenter", () => set(note.dataset.note ?? null));
         note.addEventListener("mouseleave", () => set(null));
@@ -534,10 +524,6 @@ const nav = [
         line.addEventListener("mouseleave", () => set(null));
       });
 
-      place();
-      wide.addEventListener("change", place);
-      window.addEventListener("resize", place);
-      document.fonts?.ready.then(place);
     });
 
     document.querySelectorAll<HTMLElement>("[data-hub]").forEach((hub) => {
@@ -607,9 +593,14 @@ const nav = [
     --hand-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='8' viewBox='0 0 600 8' preserveAspectRatio='none'%3E%3Cpath d='M3,6 L50,6 L58,5 L68,6 L98,4 L108,5 L138,5 L170,4 L185,5 L210,4 L218,5 L235,5 L243,4 L273,5 L283,4 L298,4 L308,5 L323,4 L330,5 L338,4 L355,5 L363,4 L378,5 L388,4 L465,6 L505,5 L530,6 L578,6 L599,6 L599,5 L578,4 L563,5 L548,4 L535,5 L505,4 L465,4 L403,3 L385,3 L378,4 L363,3 L353,4 L338,3 L330,4 L323,3 L308,4 L298,3 L283,3 L273,4 L243,3 L220,4 L210,3 L185,3 L170,3 L123,4 L105,4 L98,3 L68,4 L58,4 L50,5 L35,4 L3,5 Z' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='599' cy='5' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
     --hand-rule-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='200' viewBox='0 0 8 200' preserveAspectRatio='none'%3E%3Cpath d='M3,1 L1,33 L1,71 L2,88 L2,96 L3,111 L5,121 L5,136 L6,143 L4,191 L2,199 L4,199 L5,191 L7,143 L6,136 L6,118 L5,111 L4,96 L4,88 L2,71 L2,26 L4,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='199' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
     --hand-rule-dashed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='8' viewBox='0 0 26 8'%3E%3Cpath d='M1,5 L4,5 L4,4 L1,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='1' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M9,4 L13,4 L13,3 L9,3 Z' fill='%23cfcac1'/%3E%3Ccircle cx='9' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='13' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M18,5 L22,5 L22,4 L17,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='18' cy='5' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='22' cy='4' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
-    --hand-boundary: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='8' viewBox='0 0 26 8'%3E%3Cpath d='M1,5 L5,5 L5,3 L1,3 Z' fill='%234c4b52'/%3E%3Ccircle cx='1' cy='4' r='0.7' fill='%234c4b52'/%3E%3Ccircle cx='5' cy='4' r='0.7' fill='%234c4b52'/%3E%3Cpath d='M9,4 L13,4 L13,3 L9,3 Z' fill='%234c4b52'/%3E%3Ccircle cx='9' cy='4' r='0.7' fill='%234c4b52'/%3E%3Ccircle cx='13' cy='4' r='0.7' fill='%234c4b52'/%3E%3Cpath d='M17,4 L22,4 L22,3 L17,3 Z' fill='%234c4b52'/%3E%3Ccircle cx='17' cy='4' r='0.7' fill='%234c4b52'/%3E%3Ccircle cx='22' cy='4' r='0.7' fill='%234c4b52'/%3E%3C/svg%3E");
-    --hand-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='14' viewBox='0 0 72 14'%3E%3Cpath d='M2,8 L5,8 L6,7 L2,7 Z' fill='%2316161a'/%3E%3Ccircle cx='2' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='5' cy='8' r='0.8' fill='%2316161a'/%3E%3Cpath d='M8,8 L12,8 L12,7 L8,7 Z' fill='%2316161a'/%3E%3Ccircle cx='8' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='12' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M14,7 L17,7 L18,6 L15,5 Z' fill='%2316161a'/%3E%3Ccircle cx='15' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='18' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M21,8 L24,8 L24,6 L21,6 Z' fill='%2316161a'/%3E%3Ccircle cx='21' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='24' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M27,8 L30,8 L30,7 L27,7 Z' fill='%2316161a'/%3E%3Ccircle cx='27' cy='8' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='30' cy='8' r='0.8' fill='%2316161a'/%3E%3Cpath d='M33,8 L37,7 L37,6 L32,6 Z' fill='%2316161a'/%3E%3Ccircle cx='33' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='37' cy='6' r='0.8' fill='%2316161a'/%3E%3Cpath d='M39,7 L42,8 L42,6 L40,6 Z' fill='%2316161a'/%3E%3Ccircle cx='39' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='42' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M45,7 L49,7 L49,6 L45,6 Z' fill='%2316161a'/%3E%3Ccircle cx='45' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='49' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M52,7 L55,7 L55,6 L52,5 Z' fill='%2316161a'/%3E%3Ccircle cx='52' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='55' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M57,3 L69,7 L58,10 L58,12 L67,8 L70,6 L58,2 Z' fill='%2316161a'/%3E%3Ccircle cx='57' cy='2' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='58' cy='11' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='67' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='69' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='67' cy='8' r='0.8' fill='%2316161a'/%3E%3C/svg%3E");
-    --hand-arrow-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='72' viewBox='0 0 14 72'%3E%3Cg transform='translate%2814 0%29 rotate%2890%29'%3E%3Cpath d='M2,8 L5,8 L5,7 L2,7 Z' fill='%2316161a'/%3E%3Ccircle cx='2' cy='8' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='5' cy='8' r='0.8' fill='%2316161a'/%3E%3Cpath d='M8,8 L12,7 L11,5 L8,6 Z' fill='%2316161a'/%3E%3Ccircle cx='8' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='11' cy='6' r='0.8' fill='%2316161a'/%3E%3Cpath d='M15,8 L18,7 L18,6 L14,6 Z' fill='%2316161a'/%3E%3Ccircle cx='14' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='18' cy='6' r='0.8' fill='%2316161a'/%3E%3Cpath d='M20,7 L23,8 L24,6 L21,6 Z' fill='%2316161a'/%3E%3Ccircle cx='21' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='24' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M27,9 L30,8 L30,6 L27,7 Z' fill='%2316161a'/%3E%3Ccircle cx='27' cy='8' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='30' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M33,8 L37,8 L37,6 L33,7 Z' fill='%2316161a'/%3E%3Ccircle cx='33' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='37' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M39,8 L42,8 L43,7 L39,6 Z' fill='%2316161a'/%3E%3Ccircle cx='39' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='42' cy='8' r='0.8' fill='%2316161a'/%3E%3Cpath d='M45,8 L49,8 L49,7 L45,7 Z' fill='%2316161a'/%3E%3Ccircle cx='45' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='49' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M52,8 L55,7 L55,6 L52,6 Z' fill='%2316161a'/%3E%3Ccircle cx='52' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='55' cy='7' r='0.8' fill='%2316161a'/%3E%3Cpath d='M58,3 L68,7 L56,11 L57,12 L69,8 L68,6 L59,2 Z' fill='%2316161a'/%3E%3Ccircle cx='58' cy='2' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='57' cy='11' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='67' cy='7' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='68' cy='8' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='66' cy='9' r='0.8' fill='%2316161a'/%3E%3C/g%3E%3C/svg%3E");
+
+    /* hand-drawn rules for notes and lists, and the arrow for notes written into code */
+    --hand-rule-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='8' viewBox='0 0 400 8' preserveAspectRatio='none'%3E%3Cpath d='M1,3 L54,4 L91,2 L109,2 L119,3 L171,3 L181,4 L251,5 L261,7 L279,6 L289,7 L296,6 L324,6 L351,5 L359,6 L399,6 L398,5 L359,5 L351,4 L331,4 L324,5 L296,4 L289,5 L279,5 L261,5 L251,4 L181,3 L171,2 L116,2 L109,1 L89,1 L54,3 L1,2 Z' fill='%23e3e0da'/%3E%3Ccircle cx='1' cy='3' r='0.7' fill='%23e3e0da'/%3E%3Ccircle cx='398' cy='5' r='0.7' fill='%23e3e0da'/%3E%3C/svg%3E");
+    --hand-line-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='8' viewBox='0 0 800 8' preserveAspectRatio='none'%3E%3Cg opacity='0.09'%3E%3Cpath d='M1,6 L8,5 L60,5 L75,4 L135,3 L180,3 L223,5 L258,4 L290,5 L308,4 L315,5 L350,5 L358,6 L385,5 L420,6 L435,5 L443,6 L460,6 L470,6 L478,5 L495,6 L503,5 L530,6 L588,5 L598,5 L640,6 L683,6 L700,5 L733,5 L743,6 L750,5 L758,6 L768,5 L799,5 L799,4 L768,4 L758,5 L733,4 L700,4 L683,4 L605,4 L588,3 L530,5 L520,4 L495,4 L485,4 L470,5 L460,4 L450,5 L435,4 L423,5 L383,3 L358,5 L315,4 L308,3 L290,4 L255,3 L223,4 L180,2 L128,1 L68,3 L60,3 L8,4 L0,5 Z' fill='%2316161a'/%3E%3Ccircle cx='0' cy='5' r='0.7' fill='%2316161a'/%3E%3Ccircle cx='799' cy='5' r='0.7' fill='%2316161a'/%3E%3C/g%3E%3C/svg%3E");
+    --hand-note-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --hand-note-v-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%232b4fd8'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
+    --hand-scribble-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='10' viewBox='0 0 16 10'%3E%3Cpath d='M2,6 L9,5 L14,5 L14,4 L9,3 L1,5 Z' fill='%232b4fd8'/%3E%3Ccircle cx='1' cy='6' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Cpath d='M10,3 L13,5 L10,8 L10,9 L15,5 L10,2 Z' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='2' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='8' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='13' cy='6' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
+    --hand-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='24' viewBox='0 0 240 24' preserveAspectRatio='none'%3E%3Cpath d='M1.5,6.5 L0.5,12.0 L2.5,18.5 L6.0,2.6 L18.0,2.2 L30.0,3.5 L42.0,2.0 L54.0,3.2 L66.0,2.8 L78.0,2.0 L90.0,3.1 L102.0,1.9 L114.0,2.9 L126.0,2.0 L138.0,2.0 L150.0,2.9 L162.0,3.9 L174.0,2.1 L186.0,2.4 L198.0,3.4 L210.0,4.3 L222.0,3.3 L234.0,2.8 L238.0,4.5 L239.5,10.0 L237.0,15.5 L238.5,20.0 L234.0,22.1 L222.0,19.7 L210.0,21.8 L198.0,20.4 L186.0,20.0 L174.0,19.9 L162.0,20.4 L150.0,21.7 L138.0,20.1 L126.0,21.1 L114.0,21.3 L102.0,20.6 L90.0,21.0 L78.0,19.8 L66.0,19.8 L54.0,20.1 L42.0,21.4 L30.0,20.7 L18.0,20.4 L6.0,21.1 Z' fill='%23fff0bd'/%3E%3C/svg%3E");
 
     min-height: 100vh;
     background: var(--paper);
@@ -942,6 +933,39 @@ const nav = [
 
   .code code { display: block; min-width: max-content; font: inherit; }
   .line { display: block; padding-right: 0.75rem; white-space: pre; }
+
+  /*
+   * With a margin to write in, notes are handwritten into the code and run past the card's edge,
+   * pointing back at their line. Narrower screens list the same notes under the code.
+   */
+  .scribble { display: none; }
+  @media (min-width: 84rem) {
+    .annotated .notes { display: none; }
+    .annotated .code { overflow: visible; }
+    .annotated .line { position: relative; }
+    .scribble {
+      position: absolute;
+      left: calc(100% - 8rem);
+      top: 50%;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-family: "Caveat", cursive;
+      font-size: 1.3rem;
+      line-height: 1;
+      color: var(--link);
+      white-space: nowrap;
+      transform: translateY(-55%) rotate(-2.5deg);
+      cursor: default;
+    }
+    .scribble::before {
+      content: "";
+      width: 1.9rem;
+      height: 0.8rem;
+      background: var(--hand-scribble-arrow) center / contain no-repeat;
+      transform: scaleX(-1);
+    }
+  }
   .ln {
     display: inline-block;
     width: 2.6rem;
@@ -992,7 +1016,7 @@ const nav = [
 
   .cast-list {
     list-style: none;
-    border-top: 1px solid var(--rule);
+    background: var(--hand-rule-faint) top / 100% 5px no-repeat;
   }
 
   .cast-list li {
@@ -1001,7 +1025,7 @@ const nav = [
     gap: 0.75rem;
     align-items: start;
     padding: 0.85rem 0;
-    border-bottom: 1px solid var(--rule);
+    background: var(--hand-rule-faint) bottom / 100% 5px no-repeat;
     cursor: default;
   }
 
@@ -1151,14 +1175,23 @@ const nav = [
     align-self: center;
     display: flex;
     justify-content: center;
-    height: 14px;
+    height: 1px;
     margin: 0 0.4rem;
-    background: var(--hand-arrow) center / 100% 14px no-repeat;
+    background-image: linear-gradient(90deg, var(--ink-1) 3px, transparent 3px);
+    background-size: 6px 1px;
+  }
+  .carry-arrow::after {
+    content: "";
+    position: absolute;
+    top: -3.5px;
+    right: -1px;
+    border-block: 4px solid transparent;
+    border-left: 7px solid var(--ink-1);
   }
 
   .carry-arrow span {
     position: absolute;
-    bottom: 1.05rem;
+    bottom: 0.4rem;
     font-family: var(--font-mono);
     font-size: 0.6rem;
     color: var(--ink-2);
@@ -1200,7 +1233,14 @@ const nav = [
 
   .is-noted { transition: background 0.15s, opacity 0.15s; }
   .annotated[data-active] .is-noted { opacity: 0.4; }
-  .annotated[data-active] .is-noted.is-active { opacity: 1; background: #eef2fd; }
+  .annotated[data-active] .is-noted.is-active { opacity: 1; }
+  /* the hovered note's code gets a pass of highlighter, only as wide as its text */
+  .annotated[data-active] .is-noted.is-active > .text {
+    padding: 0.12em 0.3em;
+    margin: -0.12em -0.3em;
+    background: var(--hand-marker) center / 100% 100% no-repeat;
+  }
+
 
   .notes {
     display: grid;
@@ -1214,12 +1254,11 @@ const nav = [
     position: relative;
     font-size: 0.8125rem;
     padding-left: 0.9rem;
-    border-left: 1px solid var(--rule-strong);
+    background: var(--hand-note-v) left / 4px 100% no-repeat;
     cursor: default;
-    transition: border-color 0.15s;
   }
 
-  .notes li.is-active { border-left-color: var(--link); }
+  .notes li.is-active { background-image: var(--hand-note-v-active); }
 
   .notes p {
     font-size: 0.8125rem;
@@ -1231,33 +1270,6 @@ const nav = [
     margin-bottom: 0.15rem;
     font-weight: 500;
     color: var(--ink-1);
-  }
-
-  /* Margin notes sit beside the line they describe. */
-  @media (min-width: 84rem) {
-    .notes {
-      position: absolute;
-      top: 0;
-      left: calc(100% + var(--pad) + 1.25rem);
-      display: block;
-      width: calc(var(--rail) - 1.75rem);
-      margin: 0;
-    }
-
-    .notes li { position: absolute; left: 0; right: 0; }
-
-    .notes li::before {
-      content: "";
-      position: absolute;
-      top: 0.75em;
-      left: calc(-1 * (var(--pad) + 1.25rem));
-      width: calc(var(--pad) + 0.85rem);
-      height: 1px;
-      background: var(--rule-strong);
-      transition: background 0.15s;
-    }
-
-    .notes li.is-active::before { background: var(--link); }
   }
 
   /* secrets */
@@ -1294,9 +1306,9 @@ const nav = [
     left: 0;
     right: 0;
     top: 50%;
-    height: 8px;
-    margin-top: -4px;
-    background: var(--hand-boundary) left center / 26px 8px repeat-x;
+    height: 1px;
+    background-image: linear-gradient(90deg, var(--ink-2) 3px, transparent 3px);
+    background-size: 7px 1px;
   }
 
   .wire-gate span {
@@ -1384,7 +1396,7 @@ const nav = [
     grid-column: 1 / -1;
     display: grid;
     grid-template-columns: var(--rail) minmax(0, var(--main)) var(--rail);
-    border-top: 1px solid var(--line);
+    background: var(--hand-line-faint) top / 100% 6px no-repeat;
     font-family: var(--font-mono);
     font-size: 0.6875rem;
     line-height: 1.8;
@@ -1468,7 +1480,8 @@ const nav = [
     .notes { grid-template-columns: minmax(0, 1fr); }
 
     .carry { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
-    .carry-arrow { width: 14px; height: 2.75rem; margin: 0 auto; background: var(--hand-arrow-down) center / 14px 100% no-repeat; }
+    .carry-arrow { width: 1px; height: 2.75rem; margin: 0 auto; background-image: linear-gradient(var(--ink-1) 3px, transparent 3px); background-size: 1px 6px; }
+    .carry-arrow::after { top: auto; bottom: -1px; right: -3.5px; border-block: 0; border-inline: 4px solid transparent; border-top: 7px solid var(--ink-1); }
     .carry-arrow span { bottom: auto; top: 50%; left: 0.6rem; transform: translateY(-50%); }
     .hub { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
     .dial { max-width: 22rem; margin: 0 auto; }
@@ -1506,11 +1519,10 @@ const nav = [
     .is-saved .machine-h, .is-saved .machine-note { border-style: dashed; }
     .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
     .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
-    .carry-arrow { background: none; height: 0; border-top: 1px dashed CanvasText; }
-    .wire-gate::before { background: none; border-top: 1px dashed CanvasText; }
-  }
-
-  @media (forced-colors: active) and (max-width: 67.49rem) {
-    .carry-arrow { width: 0; height: 2.75rem; border-top: 0; border-left: 1px dashed CanvasText; }
+    .notes li, .notes li.is-active, .cast-list, .cast-list li, .foot { background-image: none; }
+    .notes li { border-left: 1px solid CanvasText; }
+    .cast-list { border-top: 1px solid CanvasText; }
+    .cast-list li { border-bottom: 1px solid CanvasText; }
+    .foot { border-top: 1px solid CanvasText; }
   }
 </style>
