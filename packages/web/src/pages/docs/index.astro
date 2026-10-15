@@ -135,8 +135,9 @@ const entryPoints = [
     transition: background 0.1s ease-out, color 0.1s ease-out;
   }
 
+  /* the hover fill sits inside the drawn rules so they stay visible */
   .entry-main:hover {
-    background-color: var(--surface-dim);
+    background: linear-gradient(var(--surface-dim), var(--surface-dim)) center / calc(100% - 12px) calc(100% - 12px) no-repeat;
   }
 
   .entry-main:hover strong {
@@ -242,9 +243,14 @@ const entryPoints = [
   @media (forced-colors: active) {
     .docs-index-grid { border-image-source: none !important; border-color: CanvasText; }
     .docs-index-grid section, .entry-links, .entry-links a + a { background-image: none !important; }
-    .docs-index-grid section { border-bottom: 1px solid CanvasText; }
-    .docs-index-grid section:nth-child(even) { border-left: 1px solid CanvasText; }
+    .docs-index-grid section:not(:nth-last-child(-n + 2)) { border-bottom: 1px solid CanvasText; }
+    .docs-index-grid section:nth-child(even) { border-right: 1px solid CanvasText; }
     .entry-links { border-top: 1px solid CanvasText; }
     .entry-links a + a { border-left: 1px solid CanvasText; }
+  }
+
+  @media (forced-colors: active) and (max-width: 640px) {
+    .docs-index-grid section:nth-child(even) { border-right: 0; }
+    .docs-index-grid section:not(:last-child) { border-bottom: 1px solid CanvasText; }
   }
 </style>

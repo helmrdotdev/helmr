@@ -545,12 +545,11 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     font-weight: 500;
     line-height: 1.35;
     text-decoration: none;
-    transition: border-color 0.1s ease-out, background 0.1s ease-out, color 0.1s ease-out;
+    transition: color 0.1s ease-out;
   }
 
   .doc-pagination a:hover {
-    border-image-source: var(--frame);
-    background: var(--surface-soft);
+    border-image: var(--frame-hover) 8 fill / 8px stretch;
     color: var(--text);
   }
 
@@ -726,6 +725,12 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     .docs-toc {
       display: none;
     }
+
+    :global(.docs-content table) {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+    }
   }
 
   @media (max-width: 760px) {
@@ -778,6 +783,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       left: -15.5rem;
       z-index: 200;
       width: 15rem;
+      align-self: auto;
       height: auto;
       border-right: 1px solid var(--border-strong);
       background: var(--bg);
@@ -803,10 +809,8 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       font-size: 0.84rem;
     }
 
-    :global(.docs-content table) {
-      display: block;
-      max-width: 100%;
-      overflow-x: auto;
+    :global(.docs-content :not(pre) > code) {
+      overflow-wrap: anywhere;
     }
 
     .doc-pagination {
