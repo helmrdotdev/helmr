@@ -154,15 +154,15 @@ const stages = [
   { kind: "vm", label: "another vm", note: "picks up where it left off" },
 ] as const;
 
-// The docs page each section points to, with the character drawn under the link.
+// The docs page each section points to.
 const sectionDocs = [
-  { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness", character: "hiker" } },
-  { id: "environment", docs: { href: "/docs/concepts/computers", label: "Computers", character: "robot" } },
-  { id: "work", docs: { href: "/docs/concepts/agents", label: "Agents", character: "ant" } },
-  { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack", character: "marmot" } },
-  { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability", character: "snail" } },
-  { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets", character: "owl" } },
-  { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting", character: "tree" } },
+  { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness" } },
+  { id: "environment", docs: { href: "/docs/concepts/computers", label: "Computers" } },
+  { id: "work", docs: { href: "/docs/concepts/agents", label: "Agents" } },
+  { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack" } },
+  { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability" } },
+  { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
+  { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
 ] as const;
 
 const docsFor = (id: (typeof sectionDocs)[number]["id"]) => sectionDocs.find((o) => o.id === id)!.docs;
@@ -212,7 +212,7 @@ const nav = [
 
       <main class="column">
         <section class="block hero" aria-labelledby="hero-title">
-          <h1 id="hero-title">Build cloud agents that work your way.</h1>
+          <h1 id="hero-title">Build cloud agents that work <span class="hand-underline">your way.</span></h1>
           <p class="lede">Your models, tools, and code. We handle the infrastructure.</p>
           <p>
             Define an agent&rsquo;s work in plain TypeScript and run it with the coding agent you
@@ -231,7 +231,8 @@ const nav = [
         </section>
 
         <figure class="scene" aria-hidden="true">
-          <img src="/illustrations/hero.svg" alt="" width="1160" height="620" />
+          <img src="/illustrations/hero.svg" alt="" width="1200" height="700" />
+          <div class="ground"></div>
         </figure>
 
         <section id="agents" class="block" aria-labelledby="agents-title">
@@ -240,7 +241,7 @@ const nav = [
             Helmr runs your agent as ordinary code on a computer you define. No new inference API,
             no rewrite into a framework&rsquo;s abstractions.
           </p>
-          <a class="side-link" href={docsFor("agents").href}><span>Docs</span>{docsFor("agents").label} &rarr;<img class="side-spot" src={character(docsFor("agents").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("agents").href}><span>Docs</span>{docsFor("agents").label} &rarr;</a>
           <ul class="logo-grid" aria-label="Agents you can run">
             {agents.map((agent) => (
               <li>
@@ -258,7 +259,7 @@ const nav = [
             Nothing is configured behind a console, so what&rsquo;s in the file is exactly what your agent
             gets &mdash; reviewable, versioned and the same for every session.
           </p>
-          <a class="side-link" href={docsFor("environment").href}><span>Docs</span>{docsFor("environment").label} &rarr;<img class="side-spot" src={character(docsFor("environment").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("environment").href}><span>Docs</span>{docsFor("environment").label} &rarr;</a>
           <div class="annotated" data-annotated>
           <div class="card code-card">
             <div class="card-head"><span>{examples.computer.file}</span></div>
@@ -281,7 +282,7 @@ const nav = [
             needs a decision, a teammate answers. No workflow engine, and no rewriting your agent for
             someone else&rsquo;s API.
           </p>
-          <a class="side-link" href={docsFor("work").href}><span>Docs</span>{docsFor("work").label} &rarr;<img class="side-spot" src={character(docsFor("work").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("work").href}><span>Docs</span>{docsFor("work").label} &rarr;</a>
           <div class="annotated" data-annotated>
           <div class="card code-card">
             <div class="card-head"><span>{examples.agent.file}</span></div>
@@ -305,7 +306,7 @@ const nav = [
             it asks teammates for context, hands parts of the job to other agents, and reports back
             in the thread.
           </p>
-          <a class="side-link" href={docsFor("team").href}><span>Docs</span>{docsFor("team").label} &rarr;<img class="side-spot" src={character(docsFor("team").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("team").href}><span>Docs</span>{docsFor("team").label} &rarr;</a>
           <figure class="hub" data-hub aria-label="Teammates and agents built on OpenCode, Claude Code and Codex working in one Slack channel">
             <svg class="dial" viewBox="0 0 460 460" role="img" aria-hidden="true">
               <defs>
@@ -313,8 +314,7 @@ const nav = [
                   <path d="M0 0 L8 4 L0 8 z" fill="currentColor" />
                 </marker>
               </defs>
-              <circle class="ring" cx={ring.c} cy={ring.c} r={ring.r} />
-              <circle class="ring-in" cx={ring.c} cy={ring.c} r={ring.r - 44} />
+              <image href="/illustrations/dial-ring.svg" x="0" y="0" width={ring.c * 2} height={ring.c * 2} />
               {ticks.map((deg) => {
                 const o = at(deg, ring.r + 8);
                 const i = at(deg, ring.r + (deg % 30 === 0 ? 16 : 12));
@@ -381,7 +381,7 @@ const nav = [
             and files are saved outside the VM as your agent works, so it picks up where it left off,
             even on another machine, without repeating work or running <code>init</code> again.
           </p>
-          <a class="side-link" href={docsFor("durable").href}><span>Docs</span>{docsFor("durable").label} &rarr;<img class="side-spot" src={character(docsFor("durable").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("durable").href}><span>Docs</span>{docsFor("durable").label} &rarr;</a>
           <figure class="carry" aria-label="A VM's memory, processes and files are saved outside it and appear unchanged in another VM">
             {stages.map((stage, i) => (
               <Fragment>
@@ -418,7 +418,7 @@ const nav = [
             swaps in the real value at the network boundary, only for origins you allow, and fails
             the request once the secret is revoked.
           </p>
-          <a class="side-link" href={docsFor("security").href}><span>Docs</span>{docsFor("security").label} &rarr;<img class="side-spot" src={character(docsFor("security").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("security").href}><span>Docs</span>{docsFor("security").label} &rarr;</a>
           <div class="wire">
             <div class="card wire-card">
               <div class="card-head"><span>inside the microVM</span><span class="muted">GH_TOKEN</span></div>
@@ -444,7 +444,7 @@ const nav = [
             Early, open, Apache&nbsp;2.0. Read the source before you trust it with your repositories,
             then choose where it runs.
           </p>
-          <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;<img class="side-spot" src={character(docsFor("open-source").character)} alt="" /></a>
+          <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
           <div class="homes">
             <div class="home-slot">
               <img class="peek" src={character("cloud")} alt="" />
@@ -685,13 +685,14 @@ const nav = [
   .rail-cta {
     width: fit-content;
     padding: 0.3rem 0.6rem;
-    border: 1px solid var(--ink-1);
+    border: 1px solid transparent;
+    border-image: url("/illustrations/frame.svg") 8 / 8px stretch;
     font-size: 0.8125rem;
     color: var(--ink-1);
     transition: background 0.12s, color 0.12s;
   }
 
-  .rail-cta:hover { background: var(--ink-1); color: var(--paper); }
+  .rail-cta:hover { border-image: url("/illustrations/frame-solid.svg") 8 fill / 8px stretch; color: var(--paper); }
 
 
   /* ---- main band ---- */
@@ -782,17 +783,30 @@ const nav = [
     margin-top: 1.75rem;
   }
 
+  /* buttons and boxes keep crisp text inside hand-drawn outlines */
   .button {
     padding: 0.45rem 0.85rem;
-    border: 1px solid var(--ink-1);
+    border: 1px solid transparent;
+    border-image: url("/illustrations/frame.svg") 8 / 8px stretch;
     font-size: 0.875rem;
     color: var(--ink-1);
     transition: background 0.12s, color 0.12s;
   }
 
   .button:hover { background: #ebe8e2; }
-  .button-dark { background: var(--ink-1); color: var(--paper); }
-  .button-dark:hover { background: #33333a; }
+  .button-dark { border-image: url("/illustrations/frame-solid.svg") 8 fill / 8px stretch; color: var(--paper); }
+  .button-dark:hover { background: none; opacity: 0.88; }
+
+  .hand-underline { position: relative; white-space: nowrap; }
+  .hand-underline::after {
+    content: "";
+    position: absolute;
+    left: -0.06em;
+    right: -0.04em;
+    bottom: -0.16em;
+    height: 0.3em;
+    background: url("/illustrations/underline.svg") 0 0 / 100% 100% no-repeat;
+  }
 
   .install {
     appearance: none;
@@ -802,7 +816,8 @@ const nav = [
     width: min(100%, 25rem);
     margin-top: 1rem;
     padding: 0.5rem 0.7rem;
-    border: 1px dashed var(--rule-strong);
+    border: 1px solid transparent;
+    border-image: url("/illustrations/frame-light.svg") 8 / 8px stretch;
     background: transparent;
     font-family: var(--font-mono);
     font-size: 0.75rem;
@@ -812,17 +827,30 @@ const nav = [
   }
 
   .install:hover,
-  .install:focus-visible { border-color: var(--ink-1); outline: 0; }
+  .install:focus-visible { border-image-source: url("/illustrations/frame.svg"); outline: 0; }
   .install code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
   .install-prompt, .install-state { color: var(--ink-3); }
 
   /* ---- hero scene ---- */
-  .scene { margin: 0; }
+  /* the drawing's peak and sky rise beside the buttons; the copy stays on top */
+  .hero { z-index: 1; }
+  .scene { margin: -6rem 0 0; }
+
+  @media (min-width: 84rem) {
+    .scene { margin-top: -9.5rem; }
+  }
 
   .scene img {
     display: block;
     width: 100%;
     height: auto;
+  }
+
+  /* the ground runs out to the column's edges, so the drawing stands on the page */
+  .ground {
+    height: 12px;
+    margin: -0.25rem calc(-1 * var(--pad)) 0 calc(-1 * var(--gutter));
+    background: url("/illustrations/ground.svg") 0 0 / 100% 100% no-repeat;
   }
 
 
@@ -928,8 +956,6 @@ const nav = [
 
   .dial { display: block; width: 100%; height: auto; overflow: visible; }
 
-  .ring { fill: none; stroke: var(--ink-1); stroke-width: 1; }
-  .ring-in { fill: none; stroke: var(--rule-strong); stroke-width: 1; stroke-dasharray: 2 4; }
   .tick { stroke: var(--rule-strong); stroke-width: 1; }
   .spoke { stroke: var(--rule-strong); stroke-width: 1; transition: stroke 0.15s; }
 
@@ -1152,7 +1178,6 @@ const nav = [
   }
 
   .side-link span { color: var(--ink-3); }
-  .side-spot { display: none; }
   .side-link:hover { text-decoration: underline; }
 
   @media (min-width: 84rem) {
@@ -1166,12 +1191,6 @@ const nav = [
       margin: 0;
     }
 
-    .side-spot {
-      display: block;
-      width: 4.25rem;
-      height: auto;
-      margin-top: 0.85rem;
-    }
   }
 
 
@@ -1463,7 +1482,9 @@ const nav = [
     .foot-links { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 1.5rem 0 3rem; border: 0; }
 
     /* keep the path, the cast and the hut; let the outer trees fall off */
-    .scene img { height: 17.5rem; object-fit: cover; object-position: 62% 50%; }
+    .scene { margin-top: 0; }
+    .scene img { height: 17.5rem; object-fit: cover; object-position: 74% 50%; }
+    .ground { margin: 0; }
   }
 
   @media (max-width: 480px) {
