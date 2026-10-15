@@ -44,44 +44,36 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
-// A note covers the lines from the first one containing `from` through the next one containing `to`.
-// Its scribble is handwritten into the code: on the line containing `scribbleAt` when given, otherwise
-// on the first line of the range short enough to leave room.
-type Note = { from: string; to: string; title: string; text: string; scribble: string; scribbleAt?: string };
-
-const scribbleRoom = 40;
+// A note covers the lines from the first one containing `from` through the next one containing `to`,
+// searched from the line containing `toAfter` when that is given.
+type Note = { from: string; to: string; toAfter?: string; title: string; text: string };
 
 const annotated = (source: string, notes: Note[]) => {
   const raw = source.trimEnd().split("\n");
   const ranges = notes.map((note) => {
     const start = raw.findIndex((line) => line.includes(note.from));
-    const end = raw.findIndex((line, i) => i >= start && line.includes(note.to));
+    const after = note.toAfter === undefined ? start : raw.findIndex((line, i) => i >= start && line.includes(note.toAfter!));
+    const end = raw.findIndex((line, i) => i >= after && after >= 0 && line.includes(note.to));
     if (start < 0 || end < 0) throw new Error(`Annotation not found: ${note.title}`);
-    const span = raw.slice(start, end + 1);
-    const pinned = note.scribbleAt === undefined ? -1 : span.findIndex((line) => line.includes(note.scribbleAt!));
-    const roomy = span.findIndex((line) => line.length <= scribbleRoom);
-    const at = start + (pinned >= 0 ? pinned : roomy >= 0 ? roomy : span.indexOf(span.reduce((a, b) => (b.length < a.length ? b : a))));
-    return { start, end, at };
+    return { start, end };
   });
   return highlightTypeScript(source.trimEnd()).split("\n").map((html, i) => {
     const n = ranges.findIndex((r) => i >= r.start && i <= r.end);
-    const scribble = ranges.findIndex((r) => r.at === i);
-    const indent = raw[i]!.length - raw[i]!.trimStart().length;
-    return { indent: html.slice(0, indent), html: html.slice(indent), note: n < 0 ? null : n + 1, scribble: scribble < 0 ? null : notes[scribble].scribble };
+    return { html, note: n < 0 ? null : n + 1 };
   });
 };
 
 const computerNotes: Note[] = [
-  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift.", scribble: "no hidden base, no drift" },
-  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM.", scribble: "the real key never enters the VM", scribbleAt: 'mode: "protected"' },
-  { from: "async prepare", to: "  },", title: "Prepare it your way.", text: "Write any setup in prepare. Every new computer starts from the result.", scribble: "prepare the VM your way" },
+  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
+  { from: "buildSecrets:", to: "  }],", toAfter: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM." },
+  { from: "async prepare", to: "  },", title: "Prepare it your way.", text: "Write any setup in prepare. Every new computer starts from the result." },
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "return { opencode", title: "Start the agent you use.", text: "init starts OpenCode once, before the first turn. Hibernation keeps it running.", scribble: "start any agent you like" },
-  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered.", scribble: "waits for a teammate, records who" },
-  { from: "const { data } = await opencode.session.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same OpenCode session.", scribble: "run it on each turn" },
-  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session.", scribble: "runs itself, weekdays at 9" },
+  { from: "async init", to: "  },", title: "Start the agent you use.", text: "init starts OpenCode once, before the first turn. Hibernation keeps it running." },
+  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
+  { from: "const { data } = await opencode.session.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
+  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
 ];
 
 const examples = {
@@ -274,7 +266,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.computer.file}</span></div>
             <pre class="code"><code>{examples.computer.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -297,7 +289,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.agent.file}</span></div>
             <pre class="code"><code>{examples.agent.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -503,6 +495,8 @@ const nav = [
   </div>
 
   <script>
+    const wide = window.matchMedia("(min-width: 84rem)");
+
     document.querySelectorAll<HTMLElement>("[data-annotated]").forEach((block) => {
       const notes = [...block.querySelectorAll<HTMLElement>(".notes [data-note]")];
 
@@ -514,6 +508,39 @@ const nav = [
         });
       };
 
+      // Align each margin note with the first line it describes, without overlapping the previous note.
+      const place = () => {
+        let floor = 0;
+        for (const note of notes) {
+          if (!wide.matches) {
+            note.style.top = "";
+            continue;
+          }
+          const line = block.querySelector<HTMLElement>(`.is-noted[data-note="${note.dataset.note}"]`);
+          if (!line) continue;
+          const title = note.querySelector<HTMLElement>(".note-title");
+          const lineBox = line.getBoundingClientRect();
+          const centered = lineBox.top + (lineBox.height - (title?.offsetHeight ?? lineBox.height)) / 2;
+          const top = Math.max(centered - block.getBoundingClientRect().top, floor);
+          note.style.top = `${top}px`;
+          floor = top + note.offsetHeight + 12;
+
+          // Bracket the note's lines beside the card and run the leader from the bracket to the title.
+          const lines = block.querySelectorAll<HTMLElement>(`.is-noted[data-note="${note.dataset.note}"]`);
+          const noteTop = note.getBoundingClientRect().top;
+          const rangeTop = lineBox.top - noteTop + 2;
+          const rangeBottom = lines[lines.length - 1]!.getBoundingClientRect().bottom - noteTop - 2;
+          const leader = (title ? title.offsetTop + title.offsetHeight / 2 : lineBox.height / 2);
+          const barTop = Math.min(rangeTop, leader);
+          const barBottom = Math.max(rangeBottom, leader);
+          note.style.setProperty("--leader-y", `${leader}px`);
+          note.style.setProperty("--bar-top", `${barTop}px`);
+          note.style.setProperty("--bar-height", `${barBottom - barTop + 1}px`);
+          note.style.setProperty("--tick-top", `${rangeTop - barTop}px`);
+          note.style.setProperty("--tick-bottom", `${rangeBottom - barTop}px`);
+        }
+      };
+
       for (const note of notes) {
         note.addEventListener("mouseenter", () => set(note.dataset.note ?? null));
         note.addEventListener("mouseleave", () => set(null));
@@ -522,6 +549,11 @@ const nav = [
         line.addEventListener("mouseenter", () => set(line.dataset.note ?? null));
         line.addEventListener("mouseleave", () => set(null));
       });
+
+      place();
+      wide.addEventListener("change", place);
+      window.addEventListener("resize", place);
+      document.fonts?.ready.then(place);
     });
 
     document.querySelectorAll<HTMLElement>("[data-hub]").forEach((hub) => {
@@ -592,13 +624,9 @@ const nav = [
     --hand-rule-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='200' viewBox='0 0 8 200' preserveAspectRatio='none'%3E%3Cpath d='M3,1 L1,33 L1,71 L2,88 L2,96 L3,111 L5,121 L5,136 L6,143 L4,191 L2,199 L4,199 L5,191 L7,143 L6,136 L6,118 L5,111 L4,96 L4,88 L2,71 L2,26 L4,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='199' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
     --hand-rule-dashed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='8' viewBox='0 0 26 8'%3E%3Cpath d='M1,5 L4,5 L4,4 L1,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='1' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M9,4 L13,4 L13,3 L9,3 Z' fill='%23cfcac1'/%3E%3Ccircle cx='9' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='13' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M18,5 L22,5 L22,4 L17,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='18' cy='5' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='22' cy='4' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
 
-    /* hand-drawn rules for notes and lists, and the arrow for notes written into code */
+    /* hand-drawn rules for lists */
     --hand-rule-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='8' viewBox='0 0 400 8' preserveAspectRatio='none'%3E%3Cpath d='M1,3 L54,4 L91,2 L109,2 L119,3 L171,3 L181,4 L251,5 L261,7 L279,6 L289,7 L296,6 L324,6 L351,5 L359,6 L399,6 L398,5 L359,5 L351,4 L331,4 L324,5 L296,4 L289,5 L279,5 L261,5 L251,4 L181,3 L171,2 L116,2 L109,1 L89,1 L54,3 L1,2 Z' fill='%23e3e0da'/%3E%3Ccircle cx='1' cy='3' r='0.7' fill='%23e3e0da'/%3E%3Ccircle cx='398' cy='5' r='0.7' fill='%23e3e0da'/%3E%3C/svg%3E");
     --hand-line-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='8' viewBox='0 0 800 8' preserveAspectRatio='none'%3E%3Cg opacity='0.09'%3E%3Cpath d='M1,6 L8,5 L60,5 L75,4 L135,3 L180,3 L223,5 L258,4 L290,5 L308,4 L315,5 L350,5 L358,6 L385,5 L420,6 L435,5 L443,6 L460,6 L470,6 L478,5 L495,6 L503,5 L530,6 L588,5 L598,5 L640,6 L683,6 L700,5 L733,5 L743,6 L750,5 L758,6 L768,5 L799,5 L799,4 L768,4 L758,5 L733,4 L700,4 L683,4 L605,4 L588,3 L530,5 L520,4 L495,4 L485,4 L470,5 L460,4 L450,5 L435,4 L423,5 L383,3 L358,5 L315,4 L308,3 L290,4 L255,3 L223,4 L180,2 L128,1 L68,3 L60,3 L8,4 L0,5 Z' fill='%2316161a'/%3E%3Ccircle cx='0' cy='5' r='0.7' fill='%2316161a'/%3E%3Ccircle cx='799' cy='5' r='0.7' fill='%2316161a'/%3E%3C/g%3E%3C/svg%3E");
-    --hand-note-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
-    --hand-note-v-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%232b4fd8'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
-    --hand-scribble-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='10' viewBox='0 0 16 10'%3E%3Cpath d='M2,6 L9,5 L14,5 L14,4 L9,3 L1,5 Z' fill='%232b4fd8'/%3E%3Ccircle cx='1' cy='6' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Cpath d='M10,3 L13,5 L10,8 L10,9 L15,5 L10,2 Z' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='2' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='8' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='13' cy='6' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
-    --hand-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='24' viewBox='0 0 240 24' preserveAspectRatio='none'%3E%3Cpath d='M1.5,6.5 L0.5,12.0 L2.5,18.5 L6.0,2.6 L18.0,2.2 L30.0,3.5 L42.0,2.0 L54.0,3.2 L66.0,2.8 L78.0,2.0 L90.0,3.1 L102.0,1.9 L114.0,2.9 L126.0,2.0 L138.0,2.0 L150.0,2.9 L162.0,3.9 L174.0,2.1 L186.0,2.4 L198.0,3.4 L210.0,4.3 L222.0,3.3 L234.0,2.8 L238.0,4.5 L239.5,10.0 L237.0,15.5 L238.5,20.0 L234.0,22.1 L222.0,19.7 L210.0,21.8 L198.0,20.4 L186.0,20.0 L174.0,19.9 L162.0,20.4 L150.0,21.7 L138.0,20.1 L126.0,21.1 L114.0,21.3 L102.0,20.6 L90.0,21.0 L78.0,19.8 L66.0,19.8 L54.0,20.1 L42.0,21.4 L30.0,20.7 L18.0,20.4 L6.0,21.1 Z' fill='%23fff0bd'/%3E%3C/svg%3E");
 
     min-height: 100vh;
     background: var(--paper);
@@ -932,46 +960,6 @@ const nav = [
   .code code { display: block; min-width: max-content; font: inherit; }
   .line { display: block; padding-right: 0.75rem; white-space: pre; }
 
-  /*
-   * With a margin to write in, notes are handwritten into the code and run past the card's edge,
-   * pointing back at their line. Narrower screens list the same notes under the code.
-   */
-  .scribble { display: none; }
-  @media (min-width: 84rem) {
-    /* the handwritten notes are decorative; the full notes stay available to screen readers */
-    .annotated .notes {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
-    .annotated .code { overflow: visible; }
-    .annotated .line { position: relative; }
-    .scribble {
-      position: absolute;
-      left: calc(100% - 8rem);
-      top: 50%;
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      font-family: "Caveat", cursive;
-      font-size: 1.3rem;
-      line-height: 1;
-      color: var(--link);
-      white-space: nowrap;
-      transform: translateY(-55%) rotate(-2.5deg);
-      cursor: default;
-    }
-    .scribble::before {
-      content: "";
-      width: 1.9rem;
-      height: 0.8rem;
-      background: var(--hand-scribble-arrow) center / contain no-repeat;
-      transform: scaleX(-1);
-    }
-  }
   .ln {
     display: inline-block;
     width: 2.6rem;
@@ -1237,15 +1225,9 @@ const nav = [
   .annotated { position: relative; }
   .annotated .card { margin-top: 2rem; }
 
-  .is-noted { transition: opacity 0.15s; }
-  .annotated[data-active] .is-noted { opacity: 0.4; }
-  .annotated[data-active] .is-noted.is-active { opacity: 1; }
-  /* the hovered note's code gets a pass of highlighter, only as wide as its text */
-  .annotated[data-active] .is-noted.is-active > .text {
-    padding: 0.12em 0.3em;
-    margin: -0.12em -0.3em;
-    background: var(--hand-marker) center / 100% 100% no-repeat;
-  }
+  /* the band's place is fixed, inset to stay inside the card's hand-drawn outline; hover only fills it */
+  .is-noted { background: 5px 0 / calc(100% - 10px) 100% no-repeat; }
+  .annotated[data-active] .is-noted.is-active { background-image: linear-gradient(var(--accent-wash), var(--accent-wash)); }
 
   .notes {
     display: grid;
@@ -1256,13 +1238,15 @@ const nav = [
   }
 
   .notes li {
+    position: relative;
     font-size: 0.8125rem;
     padding-left: 0.9rem;
-    background: var(--hand-note-v) left / 4px 100% no-repeat;
+    border-left: 1px solid var(--rule-strong);
     cursor: default;
+    transition: border-color 0.15s;
   }
 
-  .notes li.is-active { background-image: var(--hand-note-v-active); }
+  .notes li.is-active { border-left-color: var(--link); }
 
   .notes p {
     font-size: 0.8125rem;
@@ -1274,6 +1258,55 @@ const nav = [
     margin-bottom: 0.15rem;
     font-weight: 500;
     color: var(--ink-1);
+  }
+
+  /* Margin notes sit beside the line they describe. */
+  @media (min-width: 84rem) {
+    .notes {
+      position: absolute;
+      top: 0;
+      left: calc(100% + var(--pad) + 1.25rem);
+      display: block;
+      width: calc(var(--rail) - 1.75rem);
+      margin: 0;
+    }
+
+    .notes li { position: absolute; left: 0; right: 0; }
+
+    /* a bracket beside the card spans the note's lines; the leader runs from it to the title */
+    .notes li { --leader: var(--rule-strong); }
+    .notes li.is-active { --leader: var(--link); }
+
+    .notes li::before,
+    .notes li::after {
+      content: "";
+      position: absolute;
+    }
+
+    .notes li::before {
+      top: var(--leader-y, 0.75em);
+      left: calc(-1 * (var(--pad) + 1.25rem) + 0.65rem);
+      width: calc(var(--pad) + 0.2rem);
+      height: 1px;
+      background: linear-gradient(var(--leader), var(--leader));
+    }
+
+    .notes li::after {
+      top: var(--bar-top, 0.75em);
+      left: calc(-1 * (var(--pad) + 1.25rem) + 0.25rem);
+      width: 0.4rem;
+      height: var(--bar-height, 1px);
+      background:
+        linear-gradient(var(--leader), var(--leader)) right top / 1px 100% no-repeat,
+        linear-gradient(var(--leader), var(--leader)) left var(--tick-top, 0) / 100% 1px no-repeat,
+        linear-gradient(var(--leader), var(--leader)) left var(--tick-bottom, 0) / 100% 1px no-repeat;
+    }
+  }
+
+  /* high-contrast mode drops gradients: draw the bracket and leader with borders */
+  @media (forced-colors: active) and (min-width: 84rem) {
+    .notes li::before { background: none; border-top: 1px solid CanvasText; }
+    .notes li::after { background: none; border: 1px solid CanvasText; border-left: 0; }
   }
 
   /* secrets */
@@ -1523,11 +1556,9 @@ const nav = [
     .is-saved .machine-h, .is-saved .machine-note { border-style: dashed; }
     .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
     .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
-    .notes li, .notes li.is-active, .cast-list, .cast-list li, .foot { background-image: none; }
-    .annotated[data-active] .is-noted.is-active > .text { background: Mark; color: MarkText; }
-    .annotated[data-active] .is-noted.is-active > .text :global(*) { color: MarkText; }
-    .scribble::before { content: "\2190"; width: auto; height: auto; background: none; transform: none; }
-    .notes li { border-left: 1px solid CanvasText; }
+    .cast-list, .cast-list li, .foot { background-image: none; }
+    .annotated[data-active] .is-noted.is-active { forced-color-adjust: none; background: Mark; color: MarkText; }
+    .annotated[data-active] .is-noted.is-active :global(*) { forced-color-adjust: none; color: MarkText; }
     .cast-list { border-top: 1px solid CanvasText; }
     .cast-list li { border-bottom: 1px solid CanvasText; }
     .foot { border-top: 1px solid CanvasText; }
