@@ -14,6 +14,16 @@ export function errorMessage(
   return messages[error.code] ?? (error.message.trim() || fallback);
 }
 
+// The sentence for a failed read: the page's message for the error code, else
+// its fallback. The server's own text is left to the technical details.
+// Some reads refuse with `permission_required` instead of `forbidden`; both
+// take the page's `forbidden` sentence.
+export function loadError(error: unknown, fallback: string, messages: Readonly<Record<string, string>> = {}): string {
+  const code = error instanceof ApiError ? error.code : undefined;
+  if (!code) return fallback;
+  return messages[code] ?? (code === "permission_required" ? messages["forbidden"] : undefined) ?? fallback;
+}
+
 export type Failure = { message: string; details: string | undefined };
 
 // A failure as people read it: the message for its error code, else the
@@ -23,8 +33,7 @@ export function describeFailure(
   messages: Readonly<Record<string, string>>,
   fallback: string,
 ): Failure {
-  const code = error instanceof ApiError ? error.code : undefined;
-  return { message: (code && messages[code]) || fallback, details: errorDetails(error) };
+  return { message: loadError(error, fallback, messages), details: errorDetails(error) };
 }
 
 // Messages for the codes sign-in, invite and device approval requests return.

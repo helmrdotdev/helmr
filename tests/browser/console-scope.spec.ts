@@ -161,7 +161,8 @@ test("Copy link shares the page in this tab's scope and an Agent page survives a
 
   await chooseEnvironment(page, "Staging");
   await expect(page).toHaveURL("/agents/support/triggers");
-  await expect(page.getByText("This environment has no agent with this name.")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Agent not found" })).toBeVisible();
+  await expect(page.getByText("No agent support in Staging. It may be in another environment, or the link is wrong.")).toBeVisible();
   await chooseEnvironment(page, "Production");
   await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
 });

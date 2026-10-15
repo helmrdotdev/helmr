@@ -1,7 +1,7 @@
 import { createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import {
   issueApiKey,
   listApiKeys,
@@ -18,7 +18,7 @@ import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { CheckboxGroup, Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -225,14 +225,16 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Limited to the permissions chosen when generated."
         actions={
-          <button
-            class={ui.button}
-            type="button"
-            disabled={!edited.projectID() || !edited.environment()}
-            onClick={() => setIssuing(edited.target())}
-          >
-            {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
-          </button>
+          <Show when={!isDenied(keys.error)}>
+            <button
+              class={ui.button}
+              type="button"
+              disabled={!edited.projectID() || !edited.environment()}
+              onClick={() => setIssuing(edited.target())}
+            >
+              {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
+            </button>
+          </Show>
         }
       />
 
@@ -244,7 +246,7 @@ export function ApiKeys() {
         <QueryState
           query={keys}
           pending={<TableSkeleton label="Loading API keys" columns={COLUMNS} minWidth="min-w-270" />}
-          error={apiKeyErrorMessage}
+          error={(error) => loadError(error, "Could not load API keys.", API_KEY_ERROR_MESSAGES)}
           empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
         >
           {() => (

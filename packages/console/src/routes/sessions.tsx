@@ -2,7 +2,7 @@ import { agentHref } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { errorMessage } from "../lib/error";
+import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import {
   listSessions,
@@ -30,7 +30,7 @@ const FILTERS: SelectOption<SessionFilter>[] = [
 ];
 
 const sessionsErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load sessions.", { forbidden: "You do not have permission to view sessions." });
+  loadError(error, "Could not load sessions.", { forbidden: "You do not have permission to view sessions." });
 
 function SessionRow(props: { session: Session; agentColumn: boolean }) {
   return (

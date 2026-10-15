@@ -5,7 +5,7 @@ import { deploymentHref } from "../features/deployments/navigation";
 import { attentionTotal, useAttention, type AttentionCounts, type AttentionItem, type AttentionKind } from "../lib/attention";
 import { agentHref } from "../lib/definitions";
 import { getCurrentDeployment, getDeploymentEvents } from "../lib/deployments";
-import { errorMessage } from "../lib/error";
+import { errorDetails, loadError } from "../lib/error";
 import { useScope, useScopeIDs } from "../lib/scope";
 import { askConsolePath, listSessions, sessionConsolePath } from "../lib/sessions";
 import { CodeBlock } from "../ui/CodeBlock";
@@ -22,7 +22,7 @@ import { StatusBadge } from "../ui/StatusBadge";
 import { Steps } from "../ui/Steps";
 import { cx, ui } from "../ui/styles";
 
-const overviewError = (error: unknown) => errorMessage(error, "Could not load what is waiting in this environment.");
+const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.");
 
 type Filter = "all" | AttentionKind;
 
@@ -227,7 +227,7 @@ export function Overview() {
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
         <Switch>
           <Match when={attention.isError && !attention.data}>
-            <ErrorState message={overviewError(attention.error)} onRetry={() => void attention.refetch()} />
+            <ErrorState message={overviewError(attention.error)} details={errorDetails(attention.error)} onRetry={() => void attention.refetch()} />
           </Match>
           <Match when={!attention.data || deciding()}>
             <PageSkeleton label="Loading overview" sections={["Waiting on you"]} />

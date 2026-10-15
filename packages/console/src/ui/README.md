@@ -290,17 +290,26 @@ trigger for the chosen option.
 
 ## Feedback
 
-- **QueryState.** One query's pending, error (with Retry), empty (title, hint,
-  action) and content states, so pages do not nest them by hand. The content gets
-  the data as an accessor, so a refetch updates it in place. Once data has loaded,
-  a failed refetch keeps the content with a danger Notice and Retry above it; a
-  failed next page is reported by the LoadMore footer (`failed`), which retries
-  only that page. `pending` is the content's skeleton for the first load; without
-  it nothing renders. A refetch never blanks loaded content.
+- **QueryState.** One query's pending, error, denied, not found, empty and content
+  states, so pages do not nest them by hand. The content gets the data as an
+  accessor, so a refetch updates it in place. `error` is the page's sentence for a
+  failed read (`loadError` in lib/error: a message per error code, else the
+  fallback, never the server's text). A 403 shows that sentence as **DeniedState**;
+  `notFound` replaces the error when `missing` holds (a 404 by default). Once data
+  has loaded, a failed refetch keeps the content with a danger Notice and Retry
+  above it; a failed next page is reported by the LoadMore footer (`failed`),
+  which retries only that page. `pending` is the content's skeleton; a refetch
+  never blanks loaded content.
 - **EmptyState.** What is missing and the next step; may hold a CodeBlock or action.
   Also the state for something a page computes itself, such as no selected scope.
   Dashed and tinted directly on the page; plain inside a container body.
-- **ErrorState.** A failure with Retry; QueryState uses it.
+- **ErrorState.** A failed read: the sentence in danger text, a compact Retry, and
+  the server's code and message under a collapsed "Technical details".
+- **DeniedState.** A read the account may not make: a neutral notice, no Retry.
+  The page also hides actions that need the denied data (create buttons).
+- **NotFoundState.** A resource missing from the selected Environment: what was
+  asked for, where, and the way back. The page titles itself "<Resource> not
+  found" and drops its status badge and actions.
 - **Notice.** `info`, `warning`, `danger` or `success`; inline or `variant="bar"`
   under the app bar; `onDismiss` adds a close control. Danger is announced as an
   alert, the rest as status.
@@ -311,8 +320,12 @@ trigger for the chosen option.
   sections, optionally a rail), **LinesSkeleton** (a container body or list) and
   **SkeletonBar** (one value). Bars are static. **Spinner** is only for an action
   the person just started and is waiting on (sign-in callbacks, account linking);
-  live views show a "Live" dot instead. In the dev server, `/__dev/delay?ms=1500`
-  slows every API response for that browser to review these states (`ms=0` off).
+  live views show a "Live" dot instead.
+
+In the dev server, `/__dev/delay?ms=1500` slows every API response for that
+browser (`ms=0` off), and `/__dev/fail?match=sessions&status=500` answers API
+requests whose path contains `match` with that status (`/__dev/fail` off), to
+review loading, failure, denied and not-found states.
 
 ## Overlays
 

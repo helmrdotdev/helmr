@@ -6,7 +6,7 @@ import { computerHref } from "../features/computers/navigation";
 import { deploymentHref } from "../features/deployments/navigation";
 import { listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { getCurrentDeployment } from "../lib/deployments";
-import { errorMessage } from "../lib/error";
+import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
 import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
@@ -21,7 +21,7 @@ const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activit
 const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
 
 const computersErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
+  loadError(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
 
 function ComputerRow(props: { computer: ComputerListItem }) {
   return (
@@ -96,7 +96,7 @@ export function ComputerList() {
   );
 }
 
-const templatesFailure = (error: unknown) => errorMessage(error, "Could not load templates.");
+const templatesFailure = (error: unknown) => loadError(error, "Could not load templates.", { forbidden: "You do not have permission to view templates." });
 
 // The Templates of the current Deployment, for creating Computers.
 export function TemplateList() {

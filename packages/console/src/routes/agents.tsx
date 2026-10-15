@@ -5,18 +5,17 @@ import { CopyLinkButton } from "../components/CopyLinkButton";
 import { SectionLayout } from "../components/SectionLayout";
 import { deploymentHref } from "../features/deployments/navigation";
 import { AgentSlackConnection } from "../features/slack/AgentSlackConnection";
-import { ApiError } from "../lib/api";
 import { getCurrentDeployment } from "../lib/deployments";
 import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, type AgentTab, type RetainedAgent } from "../lib/definitions";
-import { errorMessage } from "../lib/error";
-import { useScopeIDs } from "../lib/scope";
+import { loadError } from "../lib/error";
+import { useScope, useScopeIDs } from "../lib/scope";
 import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { Notice } from "../ui/Notice";
 import { IDText } from "../ui/IDText";
 import { SearchInput, Segmented } from "../ui/Field";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { StatusBadge } from "../ui/StatusBadge";
 import { selectedLinkTab } from "../ui/linkTab";
@@ -29,7 +28,7 @@ const SHOW_OPTIONS = [
   { value: "all", label: "All agents" },
 ] as const;
 
-const failure = (error: unknown) => errorMessage(error, "Could not load agents.");
+const failure = (error: unknown) => loadError(error, "Could not load agents.", { forbidden: "You do not have permission to view agents." });
 
 type Section = "agents" | "sessions" | "triggers";
 const SECTION_TABS: LinkTabItem<Section>[] = [
@@ -141,6 +140,7 @@ const AGENT_TABS: { value: AgentTab; label: string }[] = [
 // page of its own.
 export function AgentDetail(props: { children?: JSX.Element }) {
   const scope = useScopeIDs();
+  const scopeState = useScope();
   const params = useParams();
   const location = useLocation();
   const name = () => params["agent"] ?? "";
@@ -152,12 +152,13 @@ export function AgentDetail(props: { children?: JSX.Element }) {
     queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: currentDeploymentID() }),
     enabled: !!currentDeploymentID(), retry: false,
   }));
-  const missing = () => agent.error instanceof ApiError && agent.error.status === 404;
+  const missing = () => !agent.data && isNotFound(agent.error);
+  const environment = () => scopeState.selectedEnvironment()?.name;
   const tabs = createMemo(() => AGENT_TABS.map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
   const selected = () => selectedLinkTab(tabs(), location.pathname);
   return <Page>
     <PageHeader
-      title={name()}
+      title={missing() ? "Agent not found" : name()}
       breadcrumb={[{ href: "/agents", label: "Agents" }]}
       badge={<Show when={agent.data}>{record => <StatusBadge resource="agent" status={record().defined_in_current ? "defined" : "not_defined"} />}</Show>}
       meta={<>
@@ -168,10 +169,10 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<CopyLinkButton />}
+      actions={<Show when={!missing()}><CopyLinkButton /></Show>}
     />
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <Show when={!missing()} fallback={<EmptyState title="This environment has no agent with this name." hint="Agents appear once a deployment in this environment defines them." />}>
+      <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>
         <QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
           {record => <>
             <Show when={!record().defined_in_current}>

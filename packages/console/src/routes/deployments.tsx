@@ -4,7 +4,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
 import { defaultEnvironmentColor } from "../features/projects/display";
-import { errorMessage } from "../lib/error";
+import { loadError } from "../lib/error";
 import { hasPermission } from "../lib/auth";
 import { getCurrentDeployment, listDeployments, type Deployment } from "../lib/deployments";
 import { useScope } from "../lib/scope";
@@ -21,7 +21,7 @@ import { cx } from "../ui/styles";
 const COLUMNS = ["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }] as const;
 
 const deploymentsErrorMessage = (error: unknown) =>
-  errorMessage(error, "Could not load deployments.", { forbidden: "You do not have permission to view deployments." });
+  loadError(error, "Could not load deployments.", { forbidden: "You do not have permission to view deployments." });
 
 function DeploymentRow(props: {
   deployment: Deployment;

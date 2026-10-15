@@ -1,7 +1,7 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
 import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, RowActions } from "../ui/DataTable";
@@ -9,7 +9,7 @@ import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { EnvironmentTarget } from "../ui/EnvChip";
 import { Field, SecretTextArea, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -142,9 +142,11 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
-            {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
-          </button>
+          <Show when={!isDenied(secrets.error)}>
+            <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
+              {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
+            </button>
+          </Show>
         }
       />
 
@@ -152,7 +154,7 @@ export function Secrets() {
         <QueryState
           query={secrets}
           pending={<TableSkeleton label="Loading secrets" columns={COLUMNS} minWidth="min-w-160" />}
-          error={(error) => errorMessage(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
+          error={(error) => loadError(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
           empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
         >
           {(data) => (
