@@ -323,11 +323,10 @@ trigger for the chosen option.
   the person just started and is waiting on (sign-in callbacks, account linking);
   live views show a "Live" dot instead.
 
-In the dev server, `/__dev/delay?ms=1500` slows every API response for that
-browser (`ms=0` off), and `/__dev/fail?match=sessions&status=500` answers API
-requests whose path contains `match` with that status (`/__dev/fail` off), to
-review loading, failure, denied and not-found states. `/__dev/device` starts a
-CLI sign-in request and opens its approval page.
+The dev server reaches states a local stack cannot on its own, per browser:
+slow responses (`/__dev/delay`), failures and denials (`/__dev/fail`), a CLI
+sign-in request (`/__dev/device`) and Slack set up in any state with delivery
+issues and a linked identity (`/__dev/slack`). `dev-states.ts` lists them.
 
 ## Overlays
 

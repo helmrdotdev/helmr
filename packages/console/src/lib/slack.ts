@@ -1,3 +1,4 @@
+import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request } from "./api";
 
 export type AgentSlackAddress = { projectID: string; environmentID: string; agentName: string };
@@ -7,7 +8,7 @@ export type AgentSlackConnection = {
   credentials_configured: boolean; client_id: string | null; app_id: string | null;
   team_id: string | null; workspace_name: string | null; app_name: string | null; app_icon_url: string | null;
 };
-type AgentSlackConnectionState = { connection: AgentSlackConnection | null; manifest?: unknown; create_app_url?: string };
+type AgentSlackConnectionState = { connection: AgentSlackConnection | null; manifest?: JsonValue; create_app_url?: string };
 type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret: string };
 function connectionPath(address: AgentSlackAddress): string {
   return `/api/projects/${encodeURIComponent(address.projectID)}/environments/${encodeURIComponent(address.environmentID)}/agents/${encodeURIComponent(address.agentName)}/slack`;

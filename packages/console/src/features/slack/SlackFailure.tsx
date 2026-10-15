@@ -1,6 +1,5 @@
 import { Show } from "solid-js";
 import type { Failure } from "../../lib/error";
-import { EmptyState } from "../../ui/QueryState";
 import { Notice } from "../../ui/Notice";
 
 function Details(props: { details: string | undefined }) {
@@ -8,7 +7,7 @@ function Details(props: { details: string | undefined }) {
     <Show when={props.details}>
       <details class="mt-1 text-chrome text-console-muted">
         <summary class="cursor-pointer font-mono">Technical details</summary>
-        <pre class="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel p-2 font-mono text-badge">{props.details}</pre>
+        <p class="m-0 mt-1 whitespace-pre-wrap break-words font-mono text-badge">{props.details}</p>
       </details>
     </Show>
   );
@@ -25,11 +24,13 @@ export function SlackFailureNotice(props: { failure: Failure }) {
 }
 
 // The Slack integration is off on the control plane: what that means and who
-// can change it, instead of an error to retry.
+// can change it, as plain text in its panel instead of an error to retry.
 export function SlackNotSetUp(props: { failure: Failure; consequence: string }) {
   return (
-    <EmptyState title="Slack is not set up for this Helmr installation." hint={`${props.consequence} The operator of this installation must enable the Slack integration on its control plane; nothing on this page can change that.`}>
+    <div>
+      <p class="m-0 text-body">Slack is not set up for this Helmr installation. {props.consequence}</p>
+      <p class="m-0 text-body text-console-muted">The operator enables it on the control plane; nothing on this page can change that.</p>
       <Details details={props.failure.details} />
-    </EmptyState>
+    </div>
   );
 }

@@ -53,14 +53,14 @@ export function IdentitySettings(props: { userID: string; organizationID: string
       {() => (
         <List
           label="Linked Slack identities"
-          footer={<LoadMore count={allLinks().length} noun={{ one: "linked identity", other: "linked identities" }} hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} />}
+          footer={allLinks().length > 1 || links.hasNextPage ? <LoadMore count={allLinks().length} noun={{ one: "linked identity", other: "linked identities" }} hasMore={links.hasNextPage} loading={links.isFetchingNextPage} failed={links.isFetchNextPageError} onLoadMore={() => void links.fetchNextPage()} /> : undefined}
         >
           <For each={allLinks()}>{(link) => <ListItem line class="flex-wrap justify-between">
-            <span class="inline-flex flex-wrap items-baseline gap-1.5">
-              <IDText value={link.slack_user_id} />
-              <span class={ui.muted}>in {workspaceName(link.team_id) || <IDText value={link.team_id} />}</span>
+            <span class="inline-flex flex-wrap items-baseline gap-2">
+              <span class="text-body text-console-text">{workspaceName(link.team_id) || <IDText value={link.team_id} />}</span>
+              <span class="font-mono text-chrome text-console-faint"><IDText value={link.slack_user_id} /></span>
             </span>
-            <button type="button" class={ui.secondaryButton} disabled={busy()} aria-label={`Unlink ${link.slack_user_id}`} onClick={() => { setError(null); setUnlinking(link); }}>Unlink</button>
+            <button type="button" class={ui.secondaryButton} disabled={busy()} aria-label={`Unlink ${link.slack_user_id} in ${workspaceName(link.team_id) || link.team_id}`} onClick={() => { setError(null); setUnlinking(link); }}>Unlink</button>
           </ListItem>}</For>
         </List>
       )}
