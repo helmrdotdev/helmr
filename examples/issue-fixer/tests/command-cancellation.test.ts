@@ -20,10 +20,11 @@ async function executing(pid: number): Promise<boolean> {
   }
 }
 async function waitFor<T>(read: () => Promise<T>): Promise<T> {
+  let last: unknown
   for (let attempt = 0; attempt < 200; attempt++) {
-    try { return await read() } catch { await delay(25) }
+    try { return await read() } catch (error) { last = error; await delay(25) }
   }
-  throw new Error("Fixture did not become ready")
+  throw last
 }
 
 for (const ignoresStop of [false, true]) {
@@ -35,9 +36,14 @@ for (const ignoresStop of [false, true]) {
     try {
       const runner = `
         const fs = require("node:fs");
-        process.on("SIGTERM", () => { ${ignoresStop ? "" : "setTimeout(() => process.exit(0), 600)"} });
-        fs.writeFileSync("ready", String(process.pid));
-        let n = 0; setInterval(() => fs.writeFileSync("heartbeat", String(++n)), 20);
+        // Publish via rename so concurrent readers never observe a truncated file.
+        const publish = (name, value) => { fs.writeFileSync(name + ".tmp", value); fs.renameSync(name + ".tmp", name) };
+        process.on("SIGTERM", () => {
+          publish("stopping", "1");
+          ${ignoresStop ? "" : 'setInterval(() => fs.existsSync("release") && process.exit(0), 10)'}
+        });
+        publish("ready", String(process.pid));
+        let n = 0; setInterval(() => publish("heartbeat", String(++n)), 20);
       `
       await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "node runner.cjs" } }))
       await writeFile(join(cwd, "runner.cjs"), runner)
@@ -45,15 +51,18 @@ for (const ignoresStop of [false, true]) {
       let settled = false
       const outcome = work.then(() => { settled = true; return undefined }, (error: unknown) => { settled = true; return error })
       pid = await waitFor(async () => Number(await readFile(join(cwd, "ready"), "utf8")))
-      await waitFor(() => readFile(join(cwd, "heartbeat"), "utf8"))
+      const heartbeat = async () => Number(await readFile(join(cwd, "heartbeat"), "utf8"))
+      await waitFor(heartbeat)
       controller.abort()
+      await waitFor(() => readFile(join(cwd, "stopping"), "utf8"))
       await delay(150)
       assert.equal(settled, false, "AbortError must not settle the handler while work is alive")
       assert.equal(alive(pid), true)
-      const before = await readFile(join(cwd, "heartbeat"), "utf8")
-      await delay(100)
-      assert.notEqual(await readFile(join(cwd, "heartbeat"), "utf8"), before)
+      const before = await heartbeat()
+      await waitFor(async () => assert.ok(await heartbeat() > before, "work must keep running after the stop request"))
+      assert.equal(settled, false)
       if (ignoresStop) process.kill(pid, "SIGKILL")
+      else await writeFile(join(cwd, "release"), "")
       const error = await outcome
       assert.equal((error as Error).name, "AbortError")
       assert.equal(await executing(pid), false, "work must have ceased before rejection")
