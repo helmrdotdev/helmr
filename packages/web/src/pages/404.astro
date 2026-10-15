@@ -4,6 +4,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
 <BaseLayout title="Page not found | Helmr" path="/404" noindex minimalHeader>
   <section class="not-found">
+    <img class="lost" src="/characters/hiker.svg" alt="" width="128" height="128" />
     <h1 class="headline">404 — off the chart.</h1>
     <p>This page drifted away. Head back to known waters.</p>
     <div class="not-found-actions">
@@ -22,6 +23,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     max-width: 48rem;
     margin: 0 auto;
     padding: 6rem 1.5rem;
+  }
+
+  .lost {
+    width: 8rem;
+    height: auto;
+    margin-bottom: 0.5rem;
   }
 
   .not-found h1 {

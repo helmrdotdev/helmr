@@ -45,7 +45,11 @@ const highlightTypeScript = (value: string) => {
 };
 
 // A note covers the lines from the first one containing `from` through the next one containing `to`.
-type Note = { from: string; to: string; title: string; text: string };
+// Its scribble is handwritten into the code: on the line containing `scribbleAt` when given, otherwise
+// on the first line of the range short enough to leave room.
+type Note = { from: string; to: string; title: string; text: string; scribble: string; scribbleAt?: string };
+
+const scribbleRoom = 40;
 
 const annotated = (source: string, notes: Note[]) => {
   const raw = source.trimEnd().split("\n");
@@ -53,25 +57,31 @@ const annotated = (source: string, notes: Note[]) => {
     const start = raw.findIndex((line) => line.includes(note.from));
     const end = raw.findIndex((line, i) => i >= start && line.includes(note.to));
     if (start < 0 || end < 0) throw new Error(`Annotation not found: ${note.title}`);
-    return { start, end };
+    const span = raw.slice(start, end + 1);
+    const pinned = note.scribbleAt === undefined ? -1 : span.findIndex((line) => line.includes(note.scribbleAt!));
+    const roomy = span.findIndex((line) => line.length <= scribbleRoom);
+    const at = start + (pinned >= 0 ? pinned : roomy >= 0 ? roomy : span.indexOf(span.reduce((a, b) => (b.length < a.length ? b : a))));
+    return { start, end, at };
   });
   return highlightTypeScript(source.trimEnd()).split("\n").map((html, i) => {
     const n = ranges.findIndex((r) => i >= r.start && i <= r.end);
-    return { html, note: n < 0 ? null : n + 1 };
+    const scribble = ranges.findIndex((r) => r.at === i);
+    const indent = raw[i]!.length - raw[i]!.trimStart().length;
+    return { indent: html.slice(0, indent), html: html.slice(indent), note: n < 0 ? null : n + 1, scribble: scribble < 0 ? null : notes[scribble].scribble };
   });
 };
 
 const computerNotes: Note[] = [
-  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
-  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM." },
-  { from: "async prepare", to: "  },", title: "One prepared version.", text: "Every new computer starts from it." },
+  { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift.", scribble: "no hidden base, no drift" },
+  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM.", scribble: "the real key never enters the VM", scribbleAt: 'mode: "protected"' },
+  { from: "async prepare", to: "  },", title: "Prepare it your way.", text: "Write any setup in prepare. Every new computer starts from the result.", scribble: "prepare the VM your way" },
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "return OpenCodeHarness.open", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
-  { from: "const { response, ...result }", to: "if (response !== undefined)", title: "One conversation, every turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
-  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
-  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
+  { from: "async init", to: "return { opencode", title: "Start the agent you use.", text: "init starts OpenCode once, before the first turn. Hibernation keeps it running.", scribble: "start any agent you like" },
+  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered.", scribble: "waits for a teammate, records who" },
+  { from: "const { data } = await opencode.session.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same OpenCode session.", scribble: "run it on each turn" },
+  { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session.", scribble: "runs itself, weekdays at 9" },
 ];
 
 const examples = {
@@ -92,21 +102,23 @@ type Member = {
   id: string;
   name: string;
   role: string;
-  logo?: string;
+  // Agents appear as their Slack app icon: a character on a colored tile.
+  agent?: { character: string; wash: string };
   angle: number;
   did: string;
 };
 
 // People and agents share one channel; they alternate around it at even angles.
 const members: Member[] = [
-  { id: "triage", name: "triage", role: "OpenCode", logo: "/logos/opencode.svg", angle: -90, did: "Flags three new checkout issues." },
+  { id: "triage", name: "triage", role: "OpenCode", agent: { character: "bug", wash: "var(--wash-yellow)" }, angle: -90, did: "Flags three new checkout issues." },
   { id: "maya", name: "Maya", role: "teammate", angle: -18, did: "Hands the timeout to coder." },
-  { id: "coder", name: "coder", role: "Claude Code", logo: "/logos/claude.svg", angle: 54, did: "Fixes it and asks for a review." },
+  { id: "coder", name: "coder", role: "Claude Code", agent: { character: "robot", wash: "var(--wash-green)" }, angle: 54, did: "Fixes it and asks for a review." },
   { id: "ken", name: "Ken", role: "teammate", angle: 126, did: "Decides to keep the 30s timeout." },
-  { id: "reviewer", name: "reviewer", role: "Codex", logo: "/logos/openai.svg", angle: 198, did: "Reviews the change." },
+  { id: "reviewer", name: "reviewer", role: "Codex", agent: { character: "mushroom", wash: "var(--wash-pink)" }, angle: 198, did: "Reviews the change." },
 ];
 
-const ring = { c: 230, r: 160, node: 20 };
+// Everyone is a rounded-square tile, as Slack draws people and apps alike.
+const ring = { c: 230, r: 160, tile: 50 };
 const at = (angle: number, radius = ring.r) => {
   const t = (angle * Math.PI) / 180;
   return { x: ring.c + radius * Math.cos(t), y: ring.c + radius * Math.sin(t) };
@@ -121,8 +133,8 @@ const handoffs = [
 ].map((h) => {
   const a = members.find((m) => m.id === h.from)!;
   const b = members.find((m) => m.id === h.to)!;
-  const p = at(a.angle, ring.r - ring.node - 6);
-  const q = at(b.angle, ring.r - ring.node - 6);
+  const p = at(a.angle, ring.r - ring.tile / 2 - 6);
+  const q = at(b.angle, ring.r - ring.tile / 2 - 6);
   const mid = at((a.angle + b.angle) / 2 + (b.angle - a.angle > 180 ? 180 : 0), ring.r * 0.42);
   return { ...h, d: `M ${p.x} ${p.y} Q ${mid.x} ${mid.y} ${q.x} ${q.y}` };
 });
@@ -164,6 +176,9 @@ const sectionDocs = [
 ] as const;
 
 const docsFor = (id: (typeof sectionDocs)[number]["id"]) => sectionDocs.find((o) => o.id === id)!.docs;
+
+// Hand-drawn characters, drawn in the same style as the hero illustration.
+const character = (name: string) => `/characters/${name}.svg`;
 
 const nav = [
   { label: "Home", href: "/", current: true },
@@ -207,7 +222,7 @@ const nav = [
 
       <main class="column">
         <section class="block hero" aria-labelledby="hero-title">
-          <h1 id="hero-title">Build cloud agents that work your way.</h1>
+          <h1 id="hero-title">Build cloud agents that work <span class="hand-underline">your way.</span></h1>
           <p class="lede">Your models, tools, and code. We handle the infrastructure.</p>
           <p>
             Define an agent&rsquo;s work in plain TypeScript and run it with the coding agent you
@@ -225,8 +240,9 @@ const nav = [
           </button>
         </section>
 
-        <figure class="plate" aria-hidden="true">
-          <canvas data-print></canvas>
+        <figure class="scene" aria-hidden="true">
+          <img src="/illustrations/hero.svg" alt="" width="1200" height="700" />
+          <div class="ground"></div>
         </figure>
 
         <section id="agents" class="block" aria-labelledby="agents-title">
@@ -258,7 +274,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.computer.file}</span></div>
             <pre class="code"><code>{examples.computer.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -281,7 +297,7 @@ const nav = [
           <div class="card code-card">
             <div class="card-head"><span>{examples.agent.file}</span></div>
             <pre class="code"><code>{examples.agent.lines.map((line, i) => (
-              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span set:html={line.html || " "} /></span>
+              <span class:list={["line", line.note && "is-noted"]} data-note={line.note ?? undefined}><span class="ln" aria-hidden="true">{i + 1}</span><span class="indent">{line.indent}</span><span class="text" set:html={line.html || " "} />{line.scribble && <span class="scribble" aria-hidden="true">{line.scribble}</span>}</span>
             ))}</code></pre>
           </div>
             <ol class="notes">
@@ -308,15 +324,14 @@ const nav = [
                   <path d="M0 0 L8 4 L0 8 z" fill="currentColor" />
                 </marker>
               </defs>
-              <circle class="ring" cx={ring.c} cy={ring.c} r={ring.r} />
-              <circle class="ring-in" cx={ring.c} cy={ring.c} r={ring.r - 44} />
+              <image href="/illustrations/dial-ring.svg" x="0" y="0" width={ring.c * 2} height={ring.c * 2} />
               {ticks.map((deg) => {
                 const o = at(deg, ring.r + 8);
                 const i = at(deg, ring.r + (deg % 30 === 0 ? 16 : 12));
                 return <line class="tick" x1={o.x} y1={o.y} x2={i.x} y2={i.y} />;
               })}
               {members.map((m) => {
-                const p = at(m.angle, ring.r - ring.node);
+                const p = at(m.angle, ring.r - ring.tile / 2);
                 return <line class="spoke" data-for={m.id} x1={ring.c} y1={ring.c} x2={p.x} y2={p.y} />;
               })}
               {handoffs.map((h) => (
@@ -329,18 +344,18 @@ const nav = [
               <text class="core-label" x={ring.c} y={ring.c + 26} text-anchor="middle"># checkout</text>
               {members.map((m) => {
                 const p = at(m.angle);
-                const l = at(m.angle, ring.r + 40);
+                const l = at(m.angle, ring.r + 48);
                 const cos = Math.cos((m.angle * Math.PI) / 180);
                 const anchor = cos > 0.3 ? "start" : cos < -0.3 ? "end" : "middle";
                 return (
                   <g class="node" data-for={m.id}>
-                    <circle cx={p.x} cy={p.y} r={ring.node} />
-                    {m.logo ? (
-                      <image href={m.logo} x={p.x - 9} y={p.y - 9} width="18" height="18" />
+                    <rect class="tile" x={p.x - ring.tile / 2} y={p.y - ring.tile / 2} width={ring.tile} height={ring.tile} rx="9" style={m.agent ? `fill:${m.agent.wash}` : undefined} />
+                    {m.agent ? (
+                      <image href={character(m.agent.character)} x={p.x - ring.tile / 2 + 3} y={p.y - ring.tile / 2 + 3} width={ring.tile - 6} height={ring.tile - 6} />
                     ) : (
                       <g class="person">
-                        <circle cx={p.x} cy={p.y - 4.5} r="4.25" />
-                        <path d={`M ${p.x - 8.5} ${p.y + 11} C ${p.x - 8.5} ${p.y + 2.5} ${p.x + 8.5} ${p.y + 2.5} ${p.x + 8.5} ${p.y + 11}`} />
+                        <circle cx={p.x} cy={p.y - 5} r="5" />
+                        <path d={`M ${p.x - 10} ${p.y + 13} C ${p.x - 10} ${p.y + 3} ${p.x + 10} ${p.y + 3} ${p.x + 10} ${p.y + 13}`} />
                       </g>
                     )}
                     <text class="node-name" x={l.x} y={l.y - 2} text-anchor={anchor}>{m.name}</text>
@@ -352,8 +367,17 @@ const nav = [
             <ul class="cast-list">
               {members.map((m) => (
                 <li data-for={m.id}>
-                  <p class="cast-who">{m.name}<span>{m.role}</span></p>
-                  <p class="cast-did">{m.did}</p>
+                  <span class="cast-face" style={m.agent ? `background:${m.agent.wash}` : undefined} aria-hidden="true">
+                    {m.agent ? (
+                      <img src={character(m.agent.character)} alt="" width="28" height="28" loading="lazy" decoding="async" />
+                    ) : (
+                      <svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.5" /><path d="M3.5 17 C 3.5 11 16.5 11 16.5 17" /></svg>
+                    )}
+                  </span>
+                  <div>
+                    <p class="cast-who">{m.name}<span>{m.role}</span></p>
+                    <p class="cast-did">{m.did}</p>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -432,15 +456,21 @@ const nav = [
           </p>
           <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
           <div class="homes">
-            <div class="card home">
-              <p class="home-title">Helmr Cloud <span class="soon">planned</span></p>
-              <p>Managed hosting is planned and is not currently available.</p>
-              <a href="/docs">Read the docs &rarr;</a>
+            <div class="home-slot">
+              <img class="peek" src={character("cloud")} alt="" width="88" height="88" loading="lazy" decoding="async" />
+              <div class="card home">
+                <p class="home-title">Helmr Cloud <span class="soon">planned</span></p>
+                <p>Managed hosting is planned and is not currently available.</p>
+                <a href="/docs">Read the docs &rarr;</a>
+              </div>
             </div>
-            <div class="card home home-dark">
-              <p class="home-title">Your AWS account</p>
-              <p>Run the control plane and workers yourself. Inspect the source and own the deployment boundary.</p>
-              <a href="/docs/self-hosting/overview">Self-hosting guide &rarr;</a>
+            <div class="home-slot">
+              <img class="peek peek-right" src={character("hut")} alt="" width="80" height="80" loading="lazy" decoding="async" />
+              <div class="card home home-dark">
+                <p class="home-title">Your AWS account</p>
+                <p>Run the control plane and workers yourself. Inspect the source and own the deployment boundary.</p>
+                <a href="/docs/self-hosting/overview">Self-hosting guide &rarr;</a>
+              </div>
             </div>
           </div>
           <div class="actions">
@@ -473,16 +503,6 @@ const nav = [
   </div>
 
   <script>
-    import { mountDitherScene } from "../lib/dither-scene";
-
-    const printCanvas = document.querySelector<HTMLCanvasElement>("[data-print]");
-    if (printCanvas) {
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      mountDitherScene(printCanvas, { horizonPx: 150, skyMax: 0.36, sun: false, animate: !reduceMotion });
-    }
-
-    const wide = window.matchMedia("(min-width: 84rem)");
-
     document.querySelectorAll<HTMLElement>("[data-annotated]").forEach((block) => {
       const notes = [...block.querySelectorAll<HTMLElement>(".notes [data-note]")];
 
@@ -494,25 +514,6 @@ const nav = [
         });
       };
 
-      // Align each margin note with the first line it describes, without overlapping the previous note.
-      const place = () => {
-        let floor = 0;
-        for (const note of notes) {
-          if (!wide.matches) {
-            note.style.top = "";
-            continue;
-          }
-          const line = block.querySelector<HTMLElement>(`.is-noted[data-note="${note.dataset.note}"]`);
-          if (!line) continue;
-          const title = note.querySelector<HTMLElement>(".note-title");
-          const lineBox = line.getBoundingClientRect();
-          const centered = lineBox.top + (lineBox.height - (title?.offsetHeight ?? lineBox.height)) / 2;
-          const top = Math.max(centered - block.getBoundingClientRect().top, floor);
-          note.style.top = `${top}px`;
-          floor = top + note.offsetHeight + 12;
-        }
-      };
-
       for (const note of notes) {
         note.addEventListener("mouseenter", () => set(note.dataset.note ?? null));
         note.addEventListener("mouseleave", () => set(null));
@@ -521,11 +522,6 @@ const nav = [
         line.addEventListener("mouseenter", () => set(line.dataset.note ?? null));
         line.addEventListener("mouseleave", () => set(null));
       });
-
-      place();
-      wide.addEventListener("change", place);
-      window.addEventListener("resize", place);
-      document.fonts?.ready.then(place);
     });
 
     document.querySelectorAll<HTMLElement>("[data-hub]").forEach((hub) => {
@@ -580,6 +576,29 @@ const nav = [
     --col: 46rem;
     --pad: 3.25rem;
     --top: 9rem;
+
+    /* hand-drawn outlines for buttons and boxes, inline so they never arrive late */
+    --frame: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+    --frame-solid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,5 L35,4 L73,4 L90,3 L110,3 L115,3 L116,4 L117,14 L117,44 L116,45 L96,45 L78,44 L68,45 L51,45 L3,46 L3,31 L2,23 L2,4 Z' fill='%2316161a'/%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+    --frame-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,6 L35,4 L73,5 L90,4 L115,4 L116,14 L116,44 L115,44 L96,45 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L117,44 L117,14 L116,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='30' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='115' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='116' cy='4' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='117' cy='44' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='116' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='6' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='46' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='43' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='2' cy='6' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='2' cy='4' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='5' cy='4' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --frame-hover: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M3,5 L35,4 L73,4 L90,3 L110,3 L115,3 L116,4 L117,14 L117,44 L116,45 L96,45 L78,44 L68,45 L51,45 L3,46 L3,31 L2,23 L2,4 Z' fill='%23ebe8e2'/%3E%3Cpath d='M3,6 L35,5 L73,5 L90,4 L115,4 L116,14 L116,43 L115,44 L96,44 L78,44 L68,45 L18,44 L4,45 L2,5 L30,4 L30,3 L1,3 L1,23 L3,46 L51,46 L68,46 L78,45 L96,46 L116,46 L118,44 L117,14 L117,4 L115,3 L90,2 L73,3 L65,3 L48,3 L35,3 L3,4 Z' fill='%2316161a'/%3E%3Ccircle cx='3' cy='5' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='30' cy='3' r='1.0' fill='%2316161a'/%3E%3Ccircle cx='115' cy='3' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='6' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='46' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='3' cy='43' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='6' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='4' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='5' cy='4' r='0.9' fill='%2316161a'/%3E%3C/svg%3E");
+
+    /* hand-drawn outlines and rules for cards and diagrams; their contents stay crisp */
+    --hand-card: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M4,45 L3,38 L4,20 L3,5 L5,4 L17,5 L50,4 L87,3 L117,3 L118,46 L116,46 L108,46 L85,46 L78,45 L53,46 L3,45 Z' fill='%23fdfcfa'/%3E%3Cpath d='M4,45 L4,38 L4,20 L4,5 L5,5 L17,6 L50,5 L89,4 L102,4 L117,4 L118,45 L85,46 L78,45 L53,45 L21,44 L16,44 L4,44 L4,18 L3,18 L3,45 L53,47 L78,46 L85,47 L108,46 L116,47 L119,46 L119,43 L118,5 L118,3 L87,2 L49,4 L4,3 L2,5 L3,20 L2,38 L3,45 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='18' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='8' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='5' cy='4' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='115' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='117' cy='3' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='118' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='118' cy='43' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='118' cy='46' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='116' cy='46' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='5' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='45' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='43' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --hand-machine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M2,45 L3,23 L2,18 L2,5 L3,2 L51,3 L64,2 L71,3 L79,2 L86,2 L117,1 L117,4 L117,9 L118,21 L117,29 L118,39 L118,44 L117,44 L109,45 L67,45 L59,45 L44,45 L3,45 Z' fill='%23fdfcfa'/%3E%3Cpath d='M3,45 L4,23 L3,15 L3,5 L4,3 L51,4 L64,3 L71,3 L79,2 L86,3 L116,2 L117,24 L117,29 L117,43 L116,44 L109,45 L67,44 L59,45 L44,44 L3,45 L3,20 L1,20 L2,43 L2,46 L4,46 L22,46 L44,45 L59,46 L67,45 L74,46 L109,46 L117,45 L118,44 L119,24 L117,9 L118,4 L117,1 L86,2 L79,1 L71,2 L64,1 L49,2 L3,2 L1,5 L1,18 L2,23 L1,38 L2,45 Z' fill='%2316161a'/%3E%3Ccircle cx='2' cy='45' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='20' r='0.9' fill='%2316161a'/%3E%3Ccircle cx='2' cy='5' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='3' cy='2' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='6' cy='2' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='114' cy='1' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='117' cy='1' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='117' cy='4' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='118' cy='44' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='117' cy='44' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='4' cy='45' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='3' cy='45' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='2' cy='43' r='0.8' fill='%2316161a'/%3E%3C/svg%3E");
+    --hand-saved: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Cpath d='M3,4 L9,4 L9,3 L3,2 Z' fill='%238a8890'/%3E%3Ccircle cx='3' cy='3' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='9' cy='4' r='0.7' fill='%238a8890'/%3E%3Cpath d='M16,4 L23,3 L22,2 L16,2 Z' fill='%238a8890'/%3E%3Ccircle cx='16' cy='3' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='23' cy='3' r='0.7' fill='%238a8890'/%3E%3Cpath d='M29,3 L34,3 L34,2 L29,2 Z' fill='%238a8890'/%3E%3Ccircle cx='29' cy='3' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='34' cy='3' r='0.7' fill='%238a8890'/%3E%3Cpath d='M40,4 L45,3 L45,2 L40,3 Z' fill='%238a8890'/%3E%3Ccircle cx='40' cy='3' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='45' cy='2' r='0.7' fill='%238a8890'/%3E%3Cpath d='M44,3 L45,9 L46,9 L45,3 Z' fill='%238a8890'/%3E%3Ccircle cx='45' cy='3' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='45' cy='9' r='0.7' fill='%238a8890'/%3E%3Cpath d='M45,16 L45,22 L46,22 L46,16 Z' fill='%238a8890'/%3E%3Ccircle cx='45' cy='16' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='46' cy='22' r='0.7' fill='%238a8890'/%3E%3Cpath d='M45,29 L45,34 L46,34 L47,29 Z' fill='%238a8890'/%3E%3Ccircle cx='46' cy='29' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='46' cy='34' r='0.7' fill='%238a8890'/%3E%3Cpath d='M45,40 L45,45 L47,45 L47,40 Z' fill='%238a8890'/%3E%3Ccircle cx='46' cy='40' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='46' cy='45' r='0.7' fill='%238a8890'/%3E%3Cpath d='M45,45 L39,45 L39,46 L45,46 Z' fill='%238a8890'/%3E%3Ccircle cx='45' cy='45' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='39' cy='46' r='0.7' fill='%238a8890'/%3E%3Cpath d='M32,45 L26,45 L26,46 L32,46 Z' fill='%238a8890'/%3E%3Ccircle cx='32' cy='45' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='26' cy='46' r='0.7' fill='%238a8890'/%3E%3Cpath d='M19,45 L14,45 L14,46 L19,46 Z' fill='%238a8890'/%3E%3Ccircle cx='19' cy='45' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='14' cy='45' r='0.7' fill='%238a8890'/%3E%3Cpath d='M8,45 L3,45 L3,46 L8,46 Z' fill='%238a8890'/%3E%3Ccircle cx='8' cy='45' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='3' cy='46' r='0.7' fill='%238a8890'/%3E%3Cpath d='M4,45 L4,39 L2,39 L2,45 Z' fill='%238a8890'/%3E%3Ccircle cx='3' cy='45' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='3' cy='39' r='0.7' fill='%238a8890'/%3E%3Cpath d='M3,32 L4,26 L3,25 L2,32 Z' fill='%238a8890'/%3E%3Ccircle cx='3' cy='32' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='3' cy='25' r='0.7' fill='%238a8890'/%3E%3Cpath d='M3,19 L4,14 L2,14 L2,19 Z' fill='%238a8890'/%3E%3Ccircle cx='3' cy='19' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='3' cy='14' r='0.7' fill='%238a8890'/%3E%3Cpath d='M3,8 L3,3 L2,3 L2,8 Z' fill='%238a8890'/%3E%3Ccircle cx='2' cy='8' r='0.7' fill='%238a8890'/%3E%3Ccircle cx='3' cy='3' r='0.7' fill='%238a8890'/%3E%3C/svg%3E");
+    --hand-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48' viewBox='0 0 120 48'%3E%3Cpath d='M2,46 L3,3 L33,3 L56,3 L73,2 L86,3 L93,2 L116,2 L117,4 L117,19 L118,44 L111,45 L101,44 L91,45 L71,45 L51,46 L44,45 L2,45 Z' fill='%2316161a'/%3E%3Cpath d='M2,46 L3,26 L4,18 L4,4 L33,3 L53,4 L73,3 L86,3 L93,2 L113,2 L116,2 L116,4 L116,19 L117,44 L111,44 L96,44 L91,45 L71,44 L51,45 L44,44 L2,45 L2,36 L1,36 L1,43 L1,46 L4,46 L89,46 L101,45 L111,46 L118,44 L118,34 L117,19 L117,4 L116,1 L93,1 L86,2 L73,1 L56,3 L33,2 L3,3 L1,46 Z' fill='%2316161a'/%3E%3Ccircle cx='2' cy='46' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='1' cy='36' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='3' cy='6' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='3' cy='3' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='6' cy='3' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='113' cy='2' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='116' cy='2' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='117' cy='4' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='118' cy='42' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='118' cy='44' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='116' cy='45' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='4' cy='45' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='2' cy='45' r='0.8' fill='%2316161a'/%3E%3Ccircle cx='1' cy='43' r='0.8' fill='%2316161a'/%3E%3C/svg%3E");
+    --hand-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='8' viewBox='0 0 600 8' preserveAspectRatio='none'%3E%3Cpath d='M3,6 L50,6 L58,5 L68,6 L98,4 L108,5 L138,5 L170,4 L185,5 L210,4 L218,5 L235,5 L243,4 L273,5 L283,4 L298,4 L308,5 L323,4 L330,5 L338,4 L355,5 L363,4 L378,5 L388,4 L465,6 L505,5 L530,6 L578,6 L599,6 L599,5 L578,4 L563,5 L548,4 L535,5 L505,4 L465,4 L403,3 L385,3 L378,4 L363,3 L353,4 L338,3 L330,4 L323,3 L308,4 L298,3 L283,3 L273,4 L243,3 L220,4 L210,3 L185,3 L170,3 L123,4 L105,4 L98,3 L68,4 L58,4 L50,5 L35,4 L3,5 Z' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='5' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='599' cy='5' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --hand-rule-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='200' viewBox='0 0 8 200' preserveAspectRatio='none'%3E%3Cpath d='M3,1 L1,33 L1,71 L2,88 L2,96 L3,111 L5,121 L5,136 L6,143 L4,191 L2,199 L4,199 L5,191 L7,143 L6,136 L6,118 L5,111 L4,96 L4,88 L2,71 L2,26 L4,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.8' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='199' r='0.8' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --hand-rule-dashed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='8' viewBox='0 0 26 8'%3E%3Cpath d='M1,5 L4,5 L4,4 L1,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='1' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='4' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M9,4 L13,4 L13,3 L9,3 Z' fill='%23cfcac1'/%3E%3Ccircle cx='9' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='13' cy='3' r='0.7' fill='%23cfcac1'/%3E%3Cpath d='M18,5 L22,5 L22,4 L17,4 Z' fill='%23cfcac1'/%3E%3Ccircle cx='18' cy='5' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='22' cy='4' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
+
+    /* hand-drawn rules for notes and lists, and the arrow for notes written into code */
+    --hand-rule-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='8' viewBox='0 0 400 8' preserveAspectRatio='none'%3E%3Cpath d='M1,3 L54,4 L91,2 L109,2 L119,3 L171,3 L181,4 L251,5 L261,7 L279,6 L289,7 L296,6 L324,6 L351,5 L359,6 L399,6 L398,5 L359,5 L351,4 L331,4 L324,5 L296,4 L289,5 L279,5 L261,5 L251,4 L181,3 L171,2 L116,2 L109,1 L89,1 L54,3 L1,2 Z' fill='%23e3e0da'/%3E%3Ccircle cx='1' cy='3' r='0.7' fill='%23e3e0da'/%3E%3Ccircle cx='398' cy='5' r='0.7' fill='%23e3e0da'/%3E%3C/svg%3E");
+    --hand-line-faint: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='8' viewBox='0 0 800 8' preserveAspectRatio='none'%3E%3Cg opacity='0.09'%3E%3Cpath d='M1,6 L8,5 L60,5 L75,4 L135,3 L180,3 L223,5 L258,4 L290,5 L308,4 L315,5 L350,5 L358,6 L385,5 L420,6 L435,5 L443,6 L460,6 L470,6 L478,5 L495,6 L503,5 L530,6 L588,5 L598,5 L640,6 L683,6 L700,5 L733,5 L743,6 L750,5 L758,6 L768,5 L799,5 L799,4 L768,4 L758,5 L733,4 L700,4 L683,4 L605,4 L588,3 L530,5 L520,4 L495,4 L485,4 L470,5 L460,4 L450,5 L435,4 L423,5 L383,3 L358,5 L315,4 L308,3 L290,4 L255,3 L223,4 L180,2 L128,1 L68,3 L60,3 L8,4 L0,5 Z' fill='%2316161a'/%3E%3Ccircle cx='0' cy='5' r='0.7' fill='%2316161a'/%3E%3Ccircle cx='799' cy='5' r='0.7' fill='%2316161a'/%3E%3C/g%3E%3C/svg%3E");
+    --hand-note-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%23cfcac1'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%23cfcac1'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%23cfcac1'/%3E%3C/svg%3E");
+    --hand-note-v-active: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='240' viewBox='0 0 8 240' preserveAspectRatio='none'%3E%3Cpath d='M4,1 L3,16 L3,46 L2,56 L4,86 L3,109 L3,124 L2,139 L3,146 L2,186 L4,201 L3,231 L3,240 L4,240 L5,231 L5,201 L4,186 L4,149 L4,134 L5,121 L4,109 L5,86 L5,71 L4,56 L4,46 L4,16 L5,1 Z' fill='%232b4fd8'/%3E%3Ccircle cx='4' cy='1' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='3' cy='240' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
+    --hand-scribble-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='10' viewBox='0 0 16 10'%3E%3Cpath d='M2,6 L9,5 L14,5 L14,4 L9,3 L1,5 Z' fill='%232b4fd8'/%3E%3Ccircle cx='1' cy='6' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Cpath d='M10,3 L13,5 L10,8 L10,9 L15,5 L10,2 Z' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='2' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='10' cy='8' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='14' cy='5' r='0.7' fill='%232b4fd8'/%3E%3Ccircle cx='13' cy='6' r='0.7' fill='%232b4fd8'/%3E%3C/svg%3E");
+    --hand-marker: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='24' viewBox='0 0 240 24' preserveAspectRatio='none'%3E%3Cpath d='M1.5,6.5 L0.5,12.0 L2.5,18.5 L6.0,2.6 L18.0,2.2 L30.0,3.5 L42.0,2.0 L54.0,3.2 L66.0,2.8 L78.0,2.0 L90.0,3.1 L102.0,1.9 L114.0,2.9 L126.0,2.0 L138.0,2.0 L150.0,2.9 L162.0,3.9 L174.0,2.1 L186.0,2.4 L198.0,3.4 L210.0,4.3 L222.0,3.3 L234.0,2.8 L238.0,4.5 L239.5,10.0 L237.0,15.5 L238.5,20.0 L234.0,22.1 L222.0,19.7 L210.0,21.8 L198.0,20.4 L186.0,20.0 L174.0,19.9 L162.0,20.4 L150.0,21.7 L138.0,20.1 L126.0,21.1 L114.0,21.3 L102.0,20.6 L90.0,21.0 L78.0,19.8 L66.0,19.8 L54.0,20.1 L42.0,21.4 L30.0,20.7 L18.0,20.4 L6.0,21.1 Z' fill='%23fff0bd'/%3E%3C/svg%3E");
 
     min-height: 100vh;
     background: var(--paper);
@@ -673,13 +692,13 @@ const nav = [
   .rail-cta {
     width: fit-content;
     padding: 0.3rem 0.6rem;
-    border: 1px solid var(--ink-1);
+    border: 1px solid transparent;
+    border-image: var(--frame) 8 / 8px stretch;
     font-size: 0.8125rem;
     color: var(--ink-1);
-    transition: background 0.12s, color 0.12s;
   }
 
-  .rail-cta:hover { background: var(--ink-1); color: var(--paper); }
+  .rail-cta:hover { border-image: var(--frame-solid) 8 fill / 8px stretch; color: var(--paper); }
 
 
   /* ---- main band ---- */
@@ -770,17 +789,30 @@ const nav = [
     margin-top: 1.75rem;
   }
 
+  /* buttons and boxes keep crisp text inside hand-drawn outlines */
   .button {
     padding: 0.45rem 0.85rem;
-    border: 1px solid var(--ink-1);
+    border: 1px solid transparent;
+    border-image: var(--frame) 8 / 8px stretch;
     font-size: 0.875rem;
     color: var(--ink-1);
-    transition: background 0.12s, color 0.12s;
+    transition: opacity 0.12s;
   }
 
-  .button:hover { background: #ebe8e2; }
-  .button-dark { background: var(--ink-1); color: var(--paper); }
-  .button-dark:hover { background: #33333a; }
+  .button:hover { border-image: var(--frame-hover) 8 fill / 8px stretch; }
+  .button-dark { border-image: var(--frame-solid) 8 fill / 8px stretch; color: var(--paper); }
+  .button-dark:hover { border-image-source: var(--frame-solid); opacity: 0.88; }
+
+  .hand-underline { position: relative; white-space: nowrap; }
+  .hand-underline::after {
+    content: "";
+    position: absolute;
+    left: -0.06em;
+    right: -0.04em;
+    bottom: -0.16em;
+    height: 0.3em;
+    background: url("/illustrations/underline.svg") 0 0 / 100% 100% no-repeat;
+  }
 
   .install {
     appearance: none;
@@ -790,7 +822,8 @@ const nav = [
     width: min(100%, 25rem);
     margin-top: 1rem;
     padding: 0.5rem 0.7rem;
-    border: 1px dashed var(--rule-strong);
+    border: 1px solid transparent;
+    border-image: var(--frame-light) 8 / 8px stretch;
     background: transparent;
     font-family: var(--font-mono);
     font-size: 0.75rem;
@@ -800,20 +833,30 @@ const nav = [
   }
 
   .install:hover,
-  .install:focus-visible { border-color: var(--ink-1); outline: 0; }
+  .install:focus-visible { border-image-source: var(--frame); outline: 0; }
   .install code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
   .install-prompt, .install-state { color: var(--ink-3); }
 
-  /* ---- plate ---- */
-  .plate {
-    margin: 0;
-    border: 1px solid var(--rule);
+  /* ---- hero scene ---- */
+  /* the drawing's peak and sky rise beside the buttons; the copy stays on top */
+  .hero { z-index: 1; }
+  .scene { margin: -6rem 0 0; }
+
+  @media (min-width: 84rem) {
+    .scene { margin-top: -9.5rem; }
   }
 
-  .plate canvas {
+  .scene img {
     display: block;
     width: 100%;
-    height: 260px;
+    height: auto;
+  }
+
+  /* the ground runs out to the column's edges, so the drawing stands on the page */
+  .ground {
+    height: 12px;
+    margin: -0.25rem calc(-1 * var(--pad)) 0 calc(-1 * var(--gutter));
+    background: url("/illustrations/ground.svg") 0 0 / 100% 100% no-repeat;
   }
 
 
@@ -823,8 +866,7 @@ const nav = [
     grid-template-columns: repeat(6, minmax(0, 1fr));
     margin-top: 2rem;
     list-style: none;
-    border-top: 1px solid var(--rule);
-    border-left: 1px solid var(--rule);
+    background: var(--hand-rule) top / 100% 4px no-repeat, var(--hand-rule-v) left / 4px 100% no-repeat;
   }
 
   .logo-grid li {
@@ -834,8 +876,7 @@ const nav = [
     justify-content: center;
     gap: 0.6rem;
     height: 6.5rem;
-    border-right: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
+    background: var(--hand-rule-v) right / 4px 100% no-repeat, var(--hand-rule) bottom / 100% 4px no-repeat;
     font-size: 0.8125rem;
     color: var(--ink-2);
   }
@@ -852,8 +893,8 @@ const nav = [
   /* ---- cards ---- */
   .card {
     margin-top: 2rem;
-    border: 1px solid var(--rule);
-    background: var(--card);
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
   }
 
   .card-head {
@@ -862,7 +903,7 @@ const nav = [
     align-items: center;
     gap: 1rem;
     padding: 0.7rem 1rem;
-    border-bottom: 1px solid var(--rule);
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
     font-family: var(--font-mono);
     font-size: 0.6875rem;
     color: var(--ink-1);
@@ -890,6 +931,47 @@ const nav = [
 
   .code code { display: block; min-width: max-content; font: inherit; }
   .line { display: block; padding-right: 0.75rem; white-space: pre; }
+
+  /*
+   * With a margin to write in, notes are handwritten into the code and run past the card's edge,
+   * pointing back at their line. Narrower screens list the same notes under the code.
+   */
+  .scribble { display: none; }
+  @media (min-width: 84rem) {
+    /* the handwritten notes are decorative; the full notes stay available to screen readers */
+    .annotated .notes {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .annotated .code { overflow: visible; }
+    .annotated .line { position: relative; }
+    .scribble {
+      position: absolute;
+      left: calc(100% - 8rem);
+      top: 50%;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-family: "Caveat", cursive;
+      font-size: 1.3rem;
+      line-height: 1;
+      color: var(--link);
+      white-space: nowrap;
+      transform: translateY(-55%) rotate(-2.5deg);
+      cursor: default;
+    }
+    .scribble::before {
+      content: "";
+      width: 1.9rem;
+      height: 0.8rem;
+      background: var(--hand-scribble-arrow) center / contain no-repeat;
+      transform: scaleX(-1);
+    }
+  }
   .ln {
     display: inline-block;
     width: 2.6rem;
@@ -919,8 +1001,6 @@ const nav = [
 
   .dial { display: block; width: 100%; height: auto; overflow: visible; }
 
-  .ring { fill: none; stroke: var(--ink-1); stroke-width: 1; }
-  .ring-in { fill: none; stroke: var(--rule-strong); stroke-width: 1; stroke-dasharray: 2 4; }
   .tick { stroke: var(--rule-strong); stroke-width: 1; }
   .spoke { stroke: var(--rule-strong); stroke-width: 1; transition: stroke 0.15s; }
 
@@ -930,26 +1010,44 @@ const nav = [
   .core { fill: #fff; stroke: var(--ink-1); stroke-width: 1; }
   .core-label { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-2); }
 
-  .node circle { fill: #fff; stroke: var(--ink-1); stroke-width: 1; transition: fill 0.15s, stroke 0.15s; }
+  .node .tile { fill: #fff; stroke: var(--ink-1); stroke-width: 1; transition: stroke 0.15s; }
   .node .person circle,
   .node .person path { fill: none; stroke: var(--ink-1); stroke-width: 1.1; stroke-linecap: round; }
   .node-name { font-family: var(--font-sans); font-size: 14px; fill: var(--ink-1); }
   .node-role { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-3); }
 
-  .hub[data-active] .node circle { stroke: var(--rule-strong); }
-  .hub[data-active] .node.is-active circle { fill: #eef2fd; stroke: var(--link); }
+  .hub[data-active] .node .tile { stroke: var(--rule-strong); }
+  .hub[data-active] .node.is-active .tile { stroke: var(--link); stroke-width: 1.5; }
   .hub[data-active] .spoke.is-active { stroke: var(--link); }
 
   .cast-list {
     list-style: none;
-    border-top: 1px solid var(--rule);
+    background: var(--hand-rule-faint) top / 100% 5px no-repeat;
   }
 
   .cast-list li {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: start;
     padding: 0.85rem 0;
-    border-bottom: 1px solid var(--rule);
+    background: var(--hand-rule-faint) bottom / 100% 5px no-repeat;
     cursor: default;
   }
+
+  .cast-face {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    margin-top: 0.1rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    background: #fff;
+  }
+
+  .cast-face img { width: 1.75rem; height: 1.75rem; }
+  .cast-face svg { width: 1rem; height: 1rem; fill: none; stroke: var(--ink-1); stroke-width: 1.4; stroke-linecap: round; }
 
   .cast-who {
     display: flex;
@@ -985,27 +1083,23 @@ const nav = [
   .machine {
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--ink-1);
-    background: var(--card);
+    border: 1px solid transparent;
+    border-image: var(--hand-machine) 8 fill / 8px stretch;
   }
 
-  .machine.is-saved {
-    border-style: dashed;
-    border-color: var(--ink-3);
-    background: transparent;
-  }
+  .machine.is-saved { border-image: var(--hand-saved) 8 / 8px round; }
 
   .machine-h {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 0.6rem 0.9rem;
-    border-bottom: 1px solid var(--rule);
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
     font-family: var(--font-mono);
     font-size: 0.6875rem;
   }
 
-  .is-saved .machine-h { border-bottom-style: dashed; color: var(--ink-2); }
+  .is-saved .machine-h { background: var(--hand-rule-dashed) bottom / 26px 8px repeat-x; color: var(--ink-2); }
 
   .ts {
     padding: 0.05rem 0.3rem;
@@ -1075,12 +1169,12 @@ const nav = [
   .machine-note {
     margin-top: auto;
     padding: 0.6rem 0.9rem;
-    border-top: 1px solid var(--rule);
+    background: var(--hand-rule) top / 100% 4px no-repeat;
     font-size: 0.8125rem;
     color: var(--ink-2);
   }
 
-  .is-saved .machine-note { border-top-style: dashed; }
+  .is-saved .machine-note { background: var(--hand-rule-dashed) top / 26px 8px repeat-x; }
 
   .carry-arrow {
     position: relative;
@@ -1092,7 +1186,6 @@ const nav = [
     background-image: linear-gradient(90deg, var(--ink-1) 3px, transparent 3px);
     background-size: 6px 1px;
   }
-
   .carry-arrow::after {
     content: "";
     position: absolute;
@@ -1144,9 +1237,15 @@ const nav = [
   .annotated { position: relative; }
   .annotated .card { margin-top: 2rem; }
 
-  .is-noted { transition: background 0.15s, opacity 0.15s; }
+  .is-noted { transition: opacity 0.15s; }
   .annotated[data-active] .is-noted { opacity: 0.4; }
-  .annotated[data-active] .is-noted.is-active { opacity: 1; background: #eef2fd; }
+  .annotated[data-active] .is-noted.is-active { opacity: 1; }
+  /* the hovered note's code gets a pass of highlighter, only as wide as its text */
+  .annotated[data-active] .is-noted.is-active > .text {
+    padding: 0.12em 0.3em;
+    margin: -0.12em -0.3em;
+    background: var(--hand-marker) center / 100% 100% no-repeat;
+  }
 
   .notes {
     display: grid;
@@ -1157,15 +1256,13 @@ const nav = [
   }
 
   .notes li {
-    position: relative;
     font-size: 0.8125rem;
     padding-left: 0.9rem;
-    border-left: 1px solid var(--rule-strong);
+    background: var(--hand-note-v) left / 4px 100% no-repeat;
     cursor: default;
-    transition: border-color 0.15s;
   }
 
-  .notes li.is-active { border-left-color: var(--link); }
+  .notes li.is-active { background-image: var(--hand-note-v-active); }
 
   .notes p {
     font-size: 0.8125rem;
@@ -1177,33 +1274,6 @@ const nav = [
     margin-bottom: 0.15rem;
     font-weight: 500;
     color: var(--ink-1);
-  }
-
-  /* Margin notes sit beside the line they describe. */
-  @media (min-width: 84rem) {
-    .notes {
-      position: absolute;
-      top: 0;
-      left: calc(100% + var(--pad) + 1.25rem);
-      display: block;
-      width: calc(var(--rail) - 1.75rem);
-      margin: 0;
-    }
-
-    .notes li { position: absolute; left: 0; right: 0; }
-
-    .notes li::before {
-      content: "";
-      position: absolute;
-      top: 0.75em;
-      left: calc(-1 * (var(--pad) + 1.25rem));
-      width: calc(var(--pad) + 0.85rem);
-      height: 1px;
-      background: var(--rule-strong);
-      transition: background 0.15s;
-    }
-
-    .notes li.is-active::before { background: var(--link); }
   }
 
   /* secrets */
@@ -1265,8 +1335,27 @@ const nav = [
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
-    margin-top: 2rem;
+    margin-top: 5rem;
   }
+
+  /* each option has a character peeking over its top edge, behind the card */
+  .home-slot {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .home-slot .home { position: relative; z-index: 1; flex: 1; }
+
+  .peek {
+    position: absolute;
+    top: -3.5rem;
+    left: 1.25rem;
+    width: 5.5rem;
+    height: auto;
+  }
+
+  .peek-right { left: auto; right: 1.5rem; width: 5rem; top: -4.4rem; }
 
   .home {
     display: flex;
@@ -1300,7 +1389,7 @@ const nav = [
     color: #7a5a12;
   }
 
-  .home-dark { background: var(--ink-1); border-color: var(--ink-1); }
+  .home-dark { border-image: var(--hand-dark) 8 fill / 8px stretch; }
   .home-dark p { color: rgba(255, 255, 255, 0.7); }
   .home-dark .home-title { color: #fff; }
   .home-dark a { color: #b9c8ff; }
@@ -1311,7 +1400,7 @@ const nav = [
     grid-column: 1 / -1;
     display: grid;
     grid-template-columns: var(--rail) minmax(0, var(--main)) var(--rail);
-    border-top: 1px solid var(--line);
+    background: var(--hand-line-faint) top / 100% 6px no-repeat;
     font-family: var(--font-mono);
     font-size: 0.6875rem;
     line-height: 1.8;
@@ -1387,7 +1476,6 @@ const nav = [
     .block { padding: 3.5rem 0; }
     .hero { padding: 0 0 2.5rem; }
     .block + .block { border-top: 1px solid var(--rule); }
-    .plate { margin: 0; }
 
     .logo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .logo-grid li { height: 5.5rem; }
@@ -1402,18 +1490,46 @@ const nav = [
     .hub { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
     .dial { max-width: 22rem; margin: 0 auto; }
     .wire-out, .homes { grid-template-columns: minmax(0, 1fr); }
+    .homes { row-gap: 4.5rem; }
 
 
     .foot { grid-template-columns: minmax(0, 1fr); padding: 0 1rem; }
     .foot-brand { margin-left: 0; }
     .foot-links { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 1.5rem 0 3rem; border: 0; }
 
-    .plate canvas { height: 200px; }
+    /* keep the path, the cast and the hut; let the outer trees fall off */
+    .scene { margin-top: 0; }
+    .scene img { min-height: 17.5rem; object-fit: cover; object-position: 74% 50%; }
+    .ground { margin: 0; }
   }
 
   @media (max-width: 480px) {
     .rail-cta { display: none; }
     .code { font-size: 0.7rem; }
     .ln { width: 2.25rem; padding-right: 0.75rem; }
+  }
+
+  /* high-contrast mode: drop the drawn outlines for plain system-colored lines */
+  @media (forced-colors: active) {
+    .button, .button:hover, .button-dark:hover, .install, .install:hover, .install:focus-visible,
+    .rail-cta, .rail-cta:hover, .card, .home-dark, .machine, .machine.is-saved {
+      border-image-source: none !important;
+      border-color: CanvasText;
+    }
+    .machine.is-saved { border-style: dashed; }
+    .card-head, .machine-h, .machine-note, .logo-grid, .logo-grid li { background-image: none; }
+    .card-head, .machine-h { border-bottom: 1px solid CanvasText; }
+    .machine-note { border-top: 1px solid CanvasText; }
+    .is-saved .machine-h, .is-saved .machine-note { border-style: dashed; }
+    .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
+    .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
+    .notes li, .notes li.is-active, .cast-list, .cast-list li, .foot { background-image: none; }
+    .annotated[data-active] .is-noted.is-active > .text { background: Mark; color: MarkText; }
+    .annotated[data-active] .is-noted.is-active > .text :global(*) { color: MarkText; }
+    .scribble::before { content: "\2190"; width: auto; height: auto; background: none; transform: none; }
+    .notes li { border-left: 1px solid CanvasText; }
+    .cast-list { border-top: 1px solid CanvasText; }
+    .cast-list li { border-bottom: 1px solid CanvasText; }
+    .foot { border-top: 1px solid CanvasText; }
   }
 </style>

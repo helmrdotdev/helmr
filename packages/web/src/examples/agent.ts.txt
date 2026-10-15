@@ -1,17 +1,19 @@
 import { agent, triggers } from "@helmr/sdk"
-import { OpenCodeHarness } from "./opencode"
+import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk/v2"
 import { workspace } from "./computer"
 
-// The native bridge is included in examples/opencode-assistant.
 export const coder = agent({
   id: "coder",
   template: workspace,
 
-  async init(ctx) {
-    return OpenCodeHarness.open("/app", ctx.session.id, {})
+  async init() {
+    const { url } = await createOpencodeServer()
+    const opencode = createOpencodeClient({ baseUrl: url, directory: "/app" })
+    const { data } = await opencode.session.create({}, { throwOnError: true })
+    return { opencode, sessionID: data.id }
   },
 
-  async turn(turn, { initResult: opencode }) {
+  async turn(turn, { initResult: { opencode, sessionID } }) {
     // Ask a teammate before choosing the scope of this task.
     const { answer } = await turn.ask({
       type: "choice",
@@ -22,11 +24,13 @@ export const coder = agent({
       ],
     })
     const prompt = turn.input.map(part => part.text).join("")
-    const { response, ...result } = await opencode.run(
-      turn, `${prompt}\n\n${answer.selected[0]!.value}`,
-    )
-    if (response !== undefined) await turn.respond(response)
-    return result
+    const { data } = await opencode.session.prompt({
+      sessionID,
+      parts: [{ type: "text", text: `${prompt}\n\n${answer.selected[0]!.value}` }],
+    }, { throwOnError: true })
+    const reply = data.parts.map(part => part.type === "text" ? part.text : "")
+    await turn.respond(reply.join(""))
+    return { sessionID }
   },
 
   triggers: [

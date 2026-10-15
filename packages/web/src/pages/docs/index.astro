@@ -1,60 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import { getDocs } from "../../lib/docs";
-import { pixelsFromRows } from "../../lib/pixels";
 
 const docs = await getDocs();
-
-const entryIcons = {
-  bolt: [
-    "..........",
-    ".....##...",
-    "....##....",
-    "...##.....",
-    "..######..",
-    "....##....",
-    "...##.....",
-    "..##......",
-    ".##.......",
-    "..........",
-  ],
-  layers: [
-    "....##....",
-    "..######..",
-    "##########",
-    "..######..",
-    "....##....",
-    "..........",
-    "##......##",
-    "..##..##..",
-    "....##....",
-    "..........",
-  ],
-  cloud: [
-    "..........",
-    "..........",
-    "..##..##..",
-    ".########.",
-    "##########",
-    "##########",
-    ".########.",
-    "..........",
-    "..........",
-    "..........",
-  ],
-  terminal: [
-    "..........",
-    "##########",
-    "#........#",
-    "#.#......#",
-    "#..#.....#",
-    "#.#......#",
-    "#....###.#",
-    "#........#",
-    "##########",
-    "..........",
-  ],
-} as const;
 
 const entryPoints = [
   {
@@ -62,7 +10,7 @@ const entryPoints = [
     title: "Run your first agent",
     description: "Install Helmr, deploy a TypeScript project, and complete a Turn on a durable Computer.",
     href: "/docs/quickstart",
-    icon: pixelsFromRows(entryIcons.bolt),
+    character: "hiker",
     tone: "yellow",
     links: [
       { label: "Quickstart", href: "/docs/quickstart" },
@@ -74,7 +22,7 @@ const entryPoints = [
     title: "Understand the runtime",
     description: "See how Agents, Computers, Sessions and Turns fit together, and what Helmr keeps durable.",
     href: "/docs/concepts/how-helmr-works",
-    icon: pixelsFromRows(entryIcons.layers),
+    character: "owl",
     tone: "green",
     links: [
       { label: "Agents", href: "/docs/concepts/agents" },
@@ -86,7 +34,7 @@ const entryPoints = [
     title: "Do one thing",
     description: "Deploy, prepare a Computer, observe a Session, answer questions or connect Slack.",
     href: "/docs/guides/start-and-observe-a-session",
-    icon: pixelsFromRows(entryIcons.layers),
+    character: "ant",
     tone: "blue",
     links: [
       { label: "Prepare a computer", href: "/docs/guides/prepare-a-computer" },
@@ -98,7 +46,7 @@ const entryPoints = [
     title: "Look up an interface",
     description: "Check the SDK, CLI, REST API, configuration, environment variables and Session events.",
     href: "/docs/reference/sdk/overview",
-    icon: pixelsFromRows(entryIcons.terminal),
+    character: "robot",
     tone: "pink",
     links: [
       { label: "CLI", href: "/docs/reference/cli/overview" },
@@ -110,7 +58,7 @@ const entryPoints = [
     title: "Run Helmr in AWS",
     description: "Choose the evaluation or production stack, then operate the control plane and workers.",
     href: "/docs/self-hosting/overview",
-    icon: pixelsFromRows(entryIcons.cloud),
+    character: "hut",
     tone: "blue",
     links: [
       { label: "Evaluation", href: "/docs/self-hosting/evaluation" },
@@ -130,11 +78,9 @@ const entryPoints = [
       <section>
         <a class="entry-main" href={entry.href} data-astro-prefetch="viewport">
           <span class="entry-head">
-            <svg class="entry-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: var(--wash-${entry.tone})`}>
-              {entry.icon.map((pixel) => (
-                <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-              ))}
-            </svg>
+            <span class="entry-icon" aria-hidden="true" style={`background: var(--wash-${entry.tone})`}>
+              <img src={`/characters/${entry.character}.svg`} alt="" width="22" height="22" />
+            </span>
             <span class="entry-section">{entry.section}</span>
           </span>
           <strong>{entry.title}</strong>
@@ -195,13 +141,16 @@ const entryPoints = [
   }
 
   .entry-icon {
-    width: 26px;
-    height: 26px;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
     flex: 0 0 auto;
-    padding: 5px;
-    fill: var(--ink);
-    shape-rendering: crispEdges;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
   }
+
+  .entry-icon img { width: 22px; height: 22px; }
 
   .entry-section {
     color: var(--text-subtle);
