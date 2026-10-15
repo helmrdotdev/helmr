@@ -30,14 +30,13 @@ const SHOW_OPTIONS = [
 
 const failure = (error: unknown) => loadError(error, "Could not load agents.", { forbidden: "You do not have permission to view agents." });
 
-type Section = "agents" | "sessions" | "triggers";
+type Section = "agents" | "triggers";
 const SECTION_TABS: LinkTabItem<Section>[] = [
   { value: "agents", label: "Agents", href: "/agents" },
-  { value: "sessions", label: "Sessions", href: "/sessions" },
   { value: "triggers", label: "Triggers", href: "/triggers" },
 ];
 
-// The Agents section: Agents, their Sessions and triggers, one page each.
+// The Agents section: Agents and their triggers, one page each.
 export function AgentsSection(props: { children?: JSX.Element }) {
   return (
     <SectionLayout id="agents-section" title="Agents" tabs={SECTION_TABS}>

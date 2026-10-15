@@ -105,10 +105,7 @@ function SessionDetailContent() {
     <Page>
       <PageHeader
         title={notFound() ? "Session not found" : "Session"}
-        breadcrumb={[
-          { href: "/agents", label: "Agents" },
-          ...(session.data ? [{ href: agentHref(session.data.agent), label: session.data.agent }] : []),
-        ]}
+        breadcrumb={[{ href: "/sessions", label: "Sessions" }]}
         subtitle={<Show when={!notFound()}><IDText value={sessionID()} mode="full" /></Show>}
         badge={
           <Show when={session.data}>

@@ -46,7 +46,7 @@ test("console demo shows its waiting work on the Overview and retained history i
   }
   await page.getByRole("tab", { name: "Triggers", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("daily");
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await navigation.getByRole("link", { name: "Sessions", exact: true }).click();
   await expect(page).toHaveURL("/sessions");
   for (const id of ["000000000701", "000000000702", "000000000703", "000000000704"]) {
     await expect(page.getByRole("link", { name: id, exact: true })).toBeVisible();
