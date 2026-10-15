@@ -130,17 +130,20 @@ export function FormDialog(props: {
   children: JSX.Element;
 }) {
   return (
-    <Dialog title={props.title} onClose={props.onClose} closeDisabled={props.busy}>
+    <Dialog title={props.title} onClose={props.onClose} closeDisabled={props.busy} bodyClass="flex flex-col">
       <form
+        class="flex min-h-0 flex-1 flex-col"
         onSubmit={(event) => {
           event.preventDefault();
           props.onSubmit();
         }}
       >
-        <Show when={props.intro}><p class={ui.modalIntro}>{props.intro}</p></Show>
-        {props.children}
-        <Show when={props.error}><p class={ui.error} role="alert">{props.error}</p></Show>
-        <FormActions submitLabel={props.submitLabel} busyLabel={props.busyLabel} busy={props.busy} disabled={props.disabled} onCancel={props.onClose} />
+        <div class="min-h-0 overflow-y-auto p-3">
+          <Show when={props.intro}><p class={ui.modalIntro}>{props.intro}</p></Show>
+          {props.children}
+          <Show when={props.error}><p class={ui.error} role="alert">{props.error}</p></Show>
+        </div>
+        <FormActions class={ui.dialogFooter} submitLabel={props.submitLabel} busyLabel={props.busyLabel} busy={props.busy} disabled={props.disabled} onCancel={props.onClose} />
       </form>
     </Dialog>
   );

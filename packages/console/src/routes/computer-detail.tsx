@@ -54,7 +54,7 @@ function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: 
       query={usage}
       pending={<TableSkeleton label={`Loading ${noun().other}`} columns={columns()} minWidth="min-w-0" />}
       error={(error) => loadError(error, `Could not load ${noun().other}.`, { forbidden: `You do not have permission to view these ${noun().other}.` })}
-      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this computer.` }}
+      empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this computer now.`, hint: "Work that has finished is not listed here." }}
     >
       {() => (
         <DataTable
@@ -162,7 +162,9 @@ export function ComputerDetail() {
                   </Show>
                 </TabPanel>
               </div>
-              <p class={ui.muted}>Use the CLI to run commands or delete this computer.</p>
+              <Show when={current().status === "available"}>
+                <p class={ui.muted}>Use the CLI to run commands or delete this computer.</p>
+              </Show>
             </DetailLayout>
           )}
         </QueryState>

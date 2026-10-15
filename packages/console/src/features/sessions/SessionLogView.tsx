@@ -35,6 +35,8 @@ export function SessionLogView(props: {
   log: SessionLog;
   address: SessionAddress;
   live: boolean;
+  // What the person can do with the open Session, beside the live line.
+  liveHint?: string;
   canInterrupt: boolean;
   onInterruptTurn: (turnID: string) => void;
 }) {
@@ -291,6 +293,7 @@ export function SessionLogView(props: {
           <div class="flex h-7 items-center gap-2 border-t border-console-border-soft pl-[34px] font-mono text-micro text-console-subtle" role="status">
             <span aria-hidden="true" class="size-1.5 rounded-full bg-console-success" />
             {follow() ? "Live · following new events" : "Live · new events appear here"}
+            <Show when={props.liveHint}><span class="ml-auto truncate pr-3 font-sans text-chrome text-console-muted">{props.liveHint}</span></Show>
           </div>
         </Show>
         <Show when={log.error()}>

@@ -161,7 +161,7 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   expect((await (await page.request.get(f.askBase)).json()).status).toBe("cancelled");
   await page.reload();
   await expandTurns(page);
-  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Send work or close the session from the CLI.", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("real-api-secret-blocked-queue.png"), fullPage: true });
   const held = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
   const release = await page.request.post(`${f.base}/sessions/${f.sessionID}/resume`, { data: { hold_id: held.holds[0].id, idempotency_key: crypto.randomUUID() } });

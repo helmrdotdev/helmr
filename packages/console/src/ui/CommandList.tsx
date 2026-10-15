@@ -29,7 +29,8 @@ export function CommandList(props: {
   empty: string;
   inputRef?: (element: HTMLInputElement) => void;
   // Caps each group once a query narrows the list, and without one.
-  limitPerGroup?: (query: string) => number | undefined;
+  // How many matches a group shows for the query; undefined shows them all.
+  limitPerGroup?: (query: string, group: string) => number | undefined;
   class?: string;
 }) {
   const id = createUniqueId();
@@ -40,9 +41,10 @@ export function CommandList(props: {
 
   const groups = createMemo(() => {
     const matched = props.items.filter((item) => matchesQuery(item, query()));
-    const limit = props.limitPerGroup?.(query().trim());
-    const capped = limit === undefined ? matched : matched.filter((item, index) =>
-      matched.slice(0, index).filter((other) => other.group === item.group).length < limit);
+    const capped = matched.filter((item, index) => {
+      const limit = props.limitPerGroup?.(query().trim(), item.group ?? "");
+      return limit === undefined || matched.slice(0, index).filter((other) => other.group === item.group).length < limit;
+    });
     return groupEntries(capped);
   });
   const ordered = createMemo(() => groups().flatMap((group) => group.entries.map(({ entry }) => entry)));
