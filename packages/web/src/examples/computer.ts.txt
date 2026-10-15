@@ -6,6 +6,7 @@ export const workspace = template({
     .from("node:24-bookworm")
     .run(["npm", "install", "-g", "opencode-ai@1.18.30"]),
   resources: { cpu: 2, memory: "4GiB" },
+
   buildSecrets: [{
     secret: "REGISTRY_TOKEN",
     env: { name: "REGISTRY_TOKEN", mode: "raw" },
