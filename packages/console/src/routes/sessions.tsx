@@ -114,13 +114,9 @@ export function SessionList(props: { agent?: string }) {
       <Toolbar
         start={
           <>
-            <div class="w-44">
-              <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter by status" />
-            </div>
+            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter by status" />
             <Show when={!fixedAgent()}>
-              <div class="w-44">
-                <Select<string> value={agent()} options={agentOptions()} onChange={(value) => setParams({ agent: value || undefined })} ariaLabel="Filter by agent" />
-              </div>
+              <Select<string> value={agent()} options={agentOptions()} onChange={(value) => setParams({ agent: value || undefined })} ariaLabel="Filter by agent" />
             </Show>
           </>
         }
