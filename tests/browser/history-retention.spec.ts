@@ -48,7 +48,7 @@ test("Project creation uses the default without asking for a policy", async ({ p
   await page.goto("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("New project");
   await expect(mode(page)).toHaveCount(0);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]!.body).not.toHaveProperty("history_retention");
 });
@@ -168,7 +168,7 @@ test("real Project defaults to 30d and settings persist across all Environments"
   await page.goto("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill(project);
   const creation = page.waitForResponse(response => response.url().endsWith("/api/projects") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
   const response = await creation;
   expect(response.ok(), await response.text()).toBeTruthy();
   const created = await response.json();

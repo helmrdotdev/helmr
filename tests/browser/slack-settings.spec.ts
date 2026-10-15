@@ -219,8 +219,8 @@ test("Slack identity proof needs explicit account confirmation and clears callba
   await page.goto("/dev/login");
   await page.goto("/auth/slack/link#state=flow-state&code=temporary-code");
   await expect(page).toHaveURL("/auth/slack/link");
-  await expect(page.getByText("Slack Person", { exact: true })).toBeVisible();
-  await expect(page.getByText("Helmr Person", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Accounts")).toContainText("Slack Person in");
+  await expect(page.getByLabel("Accounts")).toContainText("Helmr Person in");
   expect(verifies).toEqual([{ state: "flow-state", code: "temporary-code", error: "" }]);
   expect(confirms).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("slack-identity-confirmation.png"), fullPage: true });

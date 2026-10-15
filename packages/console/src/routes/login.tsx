@@ -1,6 +1,7 @@
 import { useLocation } from "@solidjs/router";
 import { locationDestination } from "../lib/continuation";
 import { createSignal, Show } from "solid-js";
+import { ApiError } from "../lib/api";
 import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthCopy, AuthDivider, AuthError, AuthWindow, AuthTitle } from "../ui/AuthWindow";
@@ -52,7 +53,9 @@ export function Login() {
       setSentEmail(trimmedEmail);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      setError(describeFailure(e, EMAIL_MESSAGES, START_FALLBACK));
+      const failure = describeFailure(e, EMAIL_MESSAGES, START_FALLBACK);
+      // A mistyped address is the person's to fix; nothing technical about it.
+      setError(e instanceof ApiError && e.code === "bad_request" ? { ...failure, details: undefined } : failure);
     } finally {
       setBusy(false);
     }
@@ -97,8 +100,8 @@ export function Login() {
           </>
         }
       >
-        <AuthTitle>Sign in</AuthTitle>
-        <AuthCopy>Choose a sign-in method to access your sessions, computers, and credentials.</AuthCopy>
+        <AuthTitle>Sign in to Helmr</AuthTitle>
+        <AuthCopy>Your sessions, computers, and credentials.</AuthCopy>
         <button
           class={ui.button}
           type="button"
@@ -120,12 +123,12 @@ export function Login() {
               placeholder="you@example.com"
             />
           </Field>
+          <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
           <button class={ui.button} type="submit" disabled={busy()}>
             {buttonText()}
           </button>
         </form>
       </Show>
-      <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
     </AuthWindow>
   );
 }

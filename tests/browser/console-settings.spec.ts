@@ -103,8 +103,8 @@ test("a path that does not exist shows Page not found inside the console", async
     await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Settings sections" })).toHaveCount(0);
-    await expect(page.getByRole("main").getByRole("link", { name: "Overview", exact: true })).toHaveAttribute("href", "/");
-    await expect(page.getByRole("main").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "/settings/project");
+    await expect(page.getByRole("main").getByRole("link", { name: "Go to overview", exact: true })).toHaveAttribute("href", "/");
+    await expect(page.getByRole("main").getByRole("link", { name: "Sessions", exact: true })).toHaveAttribute("href", "/sessions");
   }
 });
 

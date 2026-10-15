@@ -1,7 +1,7 @@
 import { A } from "@solidjs/router";
 import { AuthActions, AuthCopy, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { PageHeader } from "../ui/PageHeader";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
 const COPY = "There is no page at this address. It may have moved, or the link may be mistyped.";
 
@@ -12,8 +12,8 @@ export function NotFound() {
       title="Page not found"
       subtitle={COPY}
       actions={<>
-        <A class={ui.secondaryButton} href="/settings/project">Settings</A>
-        <A class={ui.button} href="/">Overview</A>
+        <A class={ui.secondaryButton} href="/sessions">Sessions</A>
+        <A class={ui.button} href="/">Go to overview</A>
       </>}
     />
   );
@@ -26,7 +26,7 @@ export function NotFoundWindow() {
       <AuthTitle>Page not found</AuthTitle>
       <AuthCopy>{COPY}</AuthCopy>
       <AuthActions>
-        <A class={ui.button} href="/">Go to the console</A>
+        <A class={cx(ui.button, "auth-full")} href="/">Go to the console</A>
       </AuthActions>
     </AuthWindow>
   );

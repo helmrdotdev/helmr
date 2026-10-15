@@ -8,13 +8,15 @@ const devPort = Number.parseInt(process.env["HELMR_DEV_CONSOLE_PORT"] ?? "3000",
 // Dev server only, for reviewing loading and failure states in this browser:
 // `/__dev/delay?ms=1500` slows every API response (`ms=0` off), and
 // `/__dev/fail?match=sessions&status=500` answers API requests whose path
-// contains `match` with that error status (`/__dev/fail` alone turns it off).
+// contains `match` with that error status (`/__dev/fail` alone turns it off),
+// and `/__dev/device` starts a CLI sign-in request and opens its approval page.
 function devStates(): Plugin {
   const cookie = (header: string | undefined, name: string) =>
     new RegExp(`(?:^|;\\s*)${name}=([^;]*)`).exec(header ?? "")?.[1];
   const redirect = (res: import("node:http").ServerResponse, next: string | null, cookies: string[]) => {
     const target = next ?? "/";
     res.statusCode = 302;
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Set-Cookie", cookies);
     res.setHeader("Location", /^\/(?![/\\])/.test(target) ? target : "/");
     res.end();
@@ -35,6 +37,13 @@ function devStates(): Plugin {
           const match = url.searchParams.get("match") ?? "";
           const status = url.searchParams.get("status") ?? "500";
           redirect(res, url.searchParams.get("next"), [set("helmr_dev_fail", match === "" ? "" : `${status}:${match}`)]);
+          return;
+        }
+        if (url.pathname === "/__dev/device") {
+          void fetch(`${backendURL}/api/auth/device/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+            .then((response) => response.json() as Promise<{ user_code?: string }>)
+            .then((started) => redirect(res, `/auth/device?code=${encodeURIComponent(started.user_code ?? "")}`, []))
+            .catch(next);
           return;
         }
         if (!url.pathname.startsWith("/api/")) {

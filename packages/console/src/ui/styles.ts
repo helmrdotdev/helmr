@@ -222,14 +222,17 @@ export const ui = {
   logChip:
     "inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-xs border border-console-border bg-console-surface px-2 font-mono text-badge text-console-muted transition hover:border-console-border-strong hover:text-console-text aria-pressed:border-console-border-strong aria-pressed:bg-console-bg-panel aria-pressed:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
 
-  // Auth windows
-  authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
-  authCopy: "mb-3.5 text-body leading-normal text-console-muted",
+  // Auth pages
+  authTitle: "m-0 text-[1.35rem] font-medium leading-tight text-console-text",
+  authCopy: "mb-4 mt-1 text-body leading-normal text-console-muted",
   authActions: "mt-3 flex flex-col gap-1.5",
+  authLink:
+    "mt-1 inline-flex h-7 w-full cursor-pointer items-center justify-center font-mono text-chrome text-console-accent hover:text-console-accent-hover disabled:cursor-not-allowed disabled:opacity-60",
+  authFacts:
+    "my-3.5 grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-1.5 border-y border-console-border py-2.5 text-body",
   authDivider:
     "my-3.5 flex items-center gap-3 font-mono text-micro font-medium uppercase tracking-[0.06em] text-console-subtle [&>span:first-child]:h-px [&>span:first-child]:flex-1 [&>span:first-child]:bg-console-border [&>span:last-child]:h-px [&>span:last-child]:flex-1 [&>span:last-child]:bg-console-border",
-  authCode:
-    "my-3.5 block w-full border border-console-border-strong bg-console-bg-panel p-3 text-center font-mono text-[1.25rem] font-medium tracking-[0.16em] text-console-accent",
+  authCode: "my-3 block font-mono text-[1.5rem] font-medium tracking-[0.16em] text-console-accent",
 };
 
 export function actionMenuItemClass(tone: "default" | "danger" | undefined): string {

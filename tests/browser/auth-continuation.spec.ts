@@ -61,7 +61,7 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
 }
 
 // The value of one entry in the device request's details.
-const detail = (page: Page, label: string) => page.getByRole("complementary").locator("div").filter({ has: page.locator("dt", { hasText: label }) }).locator("dd");
+const detail = (page: Page, label: string) => page.getByLabel("Request").locator("dt", { hasText: label }).locator("xpath=following-sibling::dd[1]");
 
 async function signIn(page: Page, method: "github" | "email") {
   if (method === "github") await page.getByRole("button", { name: "Continue with GitHub" }).click();
@@ -86,7 +86,7 @@ for (const method of ["github", "email"] as const) {
     expect(state.projectCreates).toBe(0);
     expect(state.approved).toEqual([]);
     await page.getByRole("button", { name: "Approve", exact: true }).click();
-    await expect(page.getByText("Approved. Return to your terminal to finish signing in.")).toBeVisible();
+    await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
     expect(state.approved).toEqual([{ user_code: "ABCD-EFGH", user_id: "user-1", org_id: "org-1" }]);
   });
 }
@@ -105,7 +105,7 @@ test("ordinary protected destinations return after required project creation", a
   await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
   await page.getByLabel("Name", { exact: true }).fill("Example project");
   await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
   await expect(page).toHaveURL("/sessions?status=open#history");
   expect(state.projectCreates).toBe(1);
 });
@@ -124,8 +124,9 @@ for (const status of ["expired", "denied", "consumed"]) {
   test(`${status} requests cannot be approved again`, async ({ page, context }) => {
     await fixture(context, { loggedIn: true, status });
     await page.goto("/auth/device?code=OLD");
-    await expect(page.getByRole("heading", { name: "Authorize CLI" })).toBeVisible();
-    await expect(page.getByText(status === "consumed" ? "This request has already been used. Check your terminal for the login result." : "Run helmr login again in your terminal to start a new request.")).toBeVisible();
+    const titles: Record<string, string> = { expired: "This request expired", denied: "CLI sign-in denied", consumed: "This request was already used" };
+    await expect(page.getByRole("heading", { name: titles[status] })).toBeVisible();
+    await expect(page.getByText(status === "consumed" ? "Check your terminal for the login result." : "Run helmr login again in your terminal.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   });
 }
@@ -166,7 +167,7 @@ test("a changed account requires another explicit review and approval", async ({
   await expect(page.locator("details").filter({ hasText: "Technical details" })).toContainText("device_identity_changed: Account changed. Review again.");
   expect(attempts).toBe(1);
   await page.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(page.getByText("Approved. Return to your terminal to finish signing in.")).toBeVisible();
+  await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
   expect(attempts).toBe(2);
 });
 
@@ -188,7 +189,7 @@ test("direct project creation survives login and finishes at home", async ({ pag
   await expect(page).toHaveURL("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("Another project");
   await expect(page.getByText("Session history retention", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
   await expect(page).toHaveURL("/");
   expect(state.projectCreates).toBe(1);
 });
@@ -200,6 +201,6 @@ test("a request consumed elsewhere replaces the stale action error", async ({ pa
   state.status = "consumed";
   await context.route("**/api/auth/device/approve", route => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Old action failed" } } }));
   await page.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(page.getByText("This request has already been used. Check your terminal for the login result.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This request was already used" })).toBeVisible();
   await expect(page.getByText("Old action failed")).toHaveCount(0);
 });

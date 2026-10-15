@@ -60,8 +60,9 @@ One container language for everything, in the page and floating above it:
   and DangerZone.
 - **Floating** parts sit above the page: Popover (menus, Select, the scope pickers,
   the profile menu, the phone drawer), Dialog (every variant and the command
-  palette) and AuthWindow. They are set apart by their border alone, and dialogs
-  by the modal backdrop; nothing has a shadow.
+  palette). They are set apart by their border alone, and dialogs by the modal
+  backdrop; nothing has a shadow. Auth pages (AuthWindow) have no container at
+  all.
 
 Every container has:
 
@@ -80,8 +81,7 @@ Every container has:
   header.
 - **One body.** 12px padding, blocks 12px apart (`ui.containerBody`). The gap is
   the only spacing: the body's direct children drop their vertical margins.
-  Dialog bodies pad 12px too; AuthWindow keeps 16px around its larger title. A
-  Panel never renders an empty body: when its content renders nothing, only the
+  Dialog bodies pad 12px too. A Panel never renders an empty body: when its content renders nothing, only the
   header shows, and a page does not render a Panel it has nothing to put in (a
   Session without progress has no Progress panel).
 
@@ -325,7 +325,8 @@ trigger for the chosen option.
 In the dev server, `/__dev/delay?ms=1500` slows every API response for that
 browser (`ms=0` off), and `/__dev/fail?match=sessions&status=500` answers API
 requests whose path contains `match` with that status (`/__dev/fail` off), to
-review loading, failure, denied and not-found states.
+review loading, failure, denied and not-found states. `/__dev/device` starts a
+CLI sign-in request and opens its approval page.
 
 ## Overlays
 
@@ -361,18 +362,25 @@ review loading, failure, denied and not-found states.
   actions, then the danger group after a separator, and supports
   ArrowUp/ArrowDown/Home/End, Enter (Space too on action buttons) and Escape.
 
-## Auth windows
+## Auth pages
 
-**AuthWindow** is the centered window for sign-in, invites, callbacks, Slack
-linking, CLI device approval, access screens and onboarding (`step` shows
-progress in the container header, next to the product name, with **Steps** in
-the window). Its states: the form itself, **AuthWorking** (Spinner and a
-message), **AuthSuccess** (result and next step), **AuthError** (human message,
-folded technical details from `errorDetails`, next step; without a title it sits
-inside a form) and **AuthMissing** (the link or code is missing or expired, and
-how to get a new one). The raw server message is only ever in the technical
-details. `AuthTitle`, `AuthCopy`, `AuthActions` and `AuthDivider` lay out the
-content.
+**AuthWindow** is the page for sign-in, invites, callbacks, Slack linking, CLI
+device approval, access screens and onboarding: the product mark in the top-left
+corner, no window or card, and one left-aligned column. `step` labels onboarding
+progress above the title ("Step 1 of 2"); `account` puts **AuthAccount** (the
+signed-in name and Sign out) in the top-right corner. In the column there is one
+full-width primary action; secondary actions are **AuthLink** text under it, and
+an error sentence sits directly above the primary. **AuthFacts** groups what the
+person checks before acting (account, organization) as rows between two
+hairlines; a code to compare is large mono text with no box.
+
+Its states: the form itself, **AuthWorking** (Spinner and a message),
+**AuthSuccess** (one title, one sentence naming the next step, its action),
+**AuthError** (human message, folded technical details from `errorDetails`, next
+step; without a title it sits inside a form, and input mistakes pass no details)
+and **AuthMissing** (the link or code is missing or expired, and how to get a
+new one). The raw server message is only ever in the technical details.
+`AuthTitle`, `AuthCopy`, `AuthActions` and `AuthDivider` lay out the content.
 
 ## Shared behavior
 
