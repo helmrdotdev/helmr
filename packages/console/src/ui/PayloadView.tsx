@@ -120,7 +120,7 @@ function JsonNode(props: {
     return [];
   });
   const brackets = () => (Array.isArray(props.value) ? ["[", "]"] : ["{", "}"]);
-  const count = () => (Array.isArray(props.value) ? `${entries().length} items` : `${entries().length} keys`);
+  const count = () => { const n = entries().length; return Array.isArray(props.value) ? `${n} ${n === 1 ? "item" : "items"}` : `${n} ${n === 1 ? "key" : "keys"}`; };
   return (
     <div>
       {/* A branch's toggle is its one tab stop; Copy actions show on hover or focus.

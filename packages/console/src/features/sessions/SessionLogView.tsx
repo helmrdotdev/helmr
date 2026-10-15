@@ -20,13 +20,13 @@ type Row =
   | { kind: "turn"; block: TurnBlock; events: SessionEvent[] }
   | { kind: "session"; event: SessionEvent };
 
-const shortcuts: [string, string][] = [
-  ["j / k", "next / previous line"],
-  ["Enter", "open or close the line"],
-  ["[ / ]", "previous / next turn"],
-  ["e / E", "next / previous problem"],
-  ["/", "search"],
-  ["G", "latest events"],
+const shortcuts: [string[], string][] = [
+  [["j", "k"], "Next / previous line"],
+  [["Enter"], "Open or close the line"],
+  [["[", "]"], "Previous / next turn"],
+  [["e", "E"], "Next / previous problem"],
+  [["/"], "Search"],
+  [["G"], "Latest events"],
 ];
 
 // The Session's history as one log: Turns group their events, a timeline above
@@ -209,9 +209,10 @@ export function SessionLogView(props: {
       <div class={ui.containerHeader}>
         <div class="flex min-w-0 items-center gap-2">
           <h2 class={ui.containerTitle}>Log</h2>
-          <Show when={log.ready() && !log.expired()}>
+          <Show when={log.ready()}>
             <span class={cx(ui.containerCount, "max-[720px]:hidden")}>
-              {log.timeline().length} {log.timeline().length === 1 ? "turn" : "turns"} · {log.events().length} {log.events().length === 1 ? "event" : "events"}
+              {log.timeline().length} {log.timeline().length === 1 ? "turn" : "turns"}
+              <Show when={!log.expired()}> · {log.events().length} {log.events().length === 1 ? "event" : "events"}</Show>
             </span>
           </Show>
         </div>
@@ -250,8 +251,11 @@ export function SessionLogView(props: {
           />
           <button ref={helpButton} type="button" class={cx(ui.payloadAction, "ml-auto text-console-subtle")} aria-label="Keyboard shortcuts" aria-expanded={help()} onClick={() => setHelp(!help())}>? Keys</button>
           <Popover open={help()} anchor={helpButton} onDismiss={() => setHelp(false)} title="Keyboard shortcuts" role="dialog" label="Keyboard shortcuts" align="end" width={260}>
-            <dl class="m-0 grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-1 text-body">
-              <For each={shortcuts}>{([key, label]) => <><dt class="font-mono text-chrome">{key}</dt><dd class="m-0 text-console-muted">{label}</dd></>}</For>
+            <dl class="m-0 grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 p-3 text-body">
+              <For each={shortcuts}>{([key, label]) => <>
+                <dt class="flex gap-1"><For each={key}>{(part) => <kbd class="inline-grid h-5 min-w-5 place-items-center rounded-xs border border-console-border bg-console-bg-panel px-1 font-mono text-badge text-console-text">{part}</kbd>}</For></dt>
+                <dd class="m-0 text-console-muted">{label}</dd>
+              </>}</For>
             </dl>
           </Popover>
         </div>
@@ -397,6 +401,13 @@ function TurnGroup(props: {
           </Show>
         </span>
       </div>
+      <Show when={status() === "failed" && !props.open && props.record?.error}>
+        {(error) => (
+          <p class="m-0 border-t border-console-border-soft bg-console-danger-bg/30 py-1 pl-[34px] pr-3 text-body text-console-danger">
+            <span class="font-mono text-chrome">{error().code}</span><Show when={error().message}>{(message) => <> · {message()}</>}</Show>
+          </p>
+        )}
+      </Show>
       <Show when={props.open}>
         <Show when={props.record && props.turnRows && props.block.events.some(event => event.kind === "turn.queued")}>
           <InputLine turn={props.record!} time={props.block.events.find(event => event.kind === "turn.queued")?.created_at} />
@@ -406,7 +417,7 @@ function TurnGroup(props: {
           <OutcomeLines turn={props.record!} />
         </Show>
         <Show when={props.turnRows && props.record?.status === "finalizing"}>
-          <p class="m-0 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 text-body text-console-muted min-[721px]:pl-[296px]">
+          <p class="m-0 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 text-body text-console-muted min-[721px]:pl-[394px]">
             The handler has returned. Helmr is saving the required disk state before completion.
           </p>
         </Show>
@@ -434,7 +445,7 @@ function TurnLine(props: { turn: SessionTurn; field: "input" | "response" | "res
   const opened = () => new Set([props.field, `${props.field}.*`, `${props.field}.*.value`]);
   return (
     <Line chip={props.field} tone={props.tone} outline time={props.time} summary={props.summary} size={value() === undefined ? undefined : byteLength(JSON.stringify(value()))} open={open()} onToggle={props.expired ? undefined : () => setOpen(!open())}>
-      <JsonView inline kind="Turn record" value={recordOfTurn(props.turn, props.field)} label={`Turn #${props.turn.sequence} ${props.field}`} open={opened()} pinned={textPins(props.field, value())} />
+      <JsonView inline kind="record" value={recordOfTurn(props.turn, props.field)} label={`Turn #${props.turn.sequence} ${props.field}`} open={opened()} pinned={textPins(props.field, value())} />
     </Line>
   );
 }
@@ -527,7 +538,7 @@ function Line(props: {
     <>
       <span class="font-mono text-badge text-console-subtle max-[720px]:order-2 max-[720px]:empty:hidden">{props.time ? clockTime(props.time) : ""}</span>
       <span class="font-mono text-badge text-console-faint max-[720px]:order-3 max-[720px]:empty:hidden">{props.sequence === undefined ? "" : `#${props.sequence}`}</span>
-      <span class={cx(ui.logKind, "max-[720px]:order-1", props.outline ? "border-console-border bg-console-surface text-console-muted" : toneClass[props.tone])}>{props.chip}</span>
+      <span title={props.chip} class={cx(ui.logKind, "max-[720px]:order-1", props.outline ? "border-console-border bg-console-surface text-console-muted" : toneClass[props.tone])}>{props.chip}</span>
       <span class={cx("min-w-0 truncate max-[720px]:order-4 max-[720px]:basis-full max-[720px]:whitespace-normal max-[720px]:line-clamp-2", props.problem && "text-console-danger")}>{props.summary}</span>
     </>
   );

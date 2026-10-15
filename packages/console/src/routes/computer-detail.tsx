@@ -122,11 +122,8 @@ export function ComputerDetail() {
             <DetailLayout
               rail={
                 <KeyValueList title="Computer details">
-                  <KeyValue label="Status"><ComputerStatus computer={current()} /></KeyValue>
                   <Show when={current().error}>{(error) => <KeyValue label="Unavailable reason">{error().message}</KeyValue>}</Show>
-                  <KeyValue label="Key">
-                    <Show when={current().key}>{(key) => <code>{key()}</code>}</Show>
-                  </KeyValue>
+                  <Show when={current().key}>{(key) => <KeyValue label="Key"><code>{key()}</code></KeyValue>}</Show>
                   <KeyValue label="Created from"><code>{current().template}</code></KeyValue>
                   <KeyValue label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />

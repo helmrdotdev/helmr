@@ -8,7 +8,7 @@ import { CopyLinkButton } from "../components/CopyLinkButton";
 import { agentHref, listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { DataTable, LoadMore, PrimaryLink, type Noun } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { formatID } from "../ui/id";
+import { shortVersion } from "../features/deployments/navigation";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
@@ -17,16 +17,9 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
 
-const EVENT_COLUMNS = ["Kind", "Message", "At"] as const;
+const EVENT_COLUMNS = ["Message", "At"] as const;
 
 type Tab = "agents" | "templates" | "events";
-
-// A version names its Deployment by date and ID ("20260101.<uuid>"); the short
-// form keeps the date and the ID's short form (`formatID`).
-function shortVersion(version: string): string {
-  const separator = version.indexOf(".");
-  return separator > 0 ? `${version.slice(0, separator)}.${formatID(version.slice(separator + 1))}` : formatID(version);
-}
 
 const TABS: TabItem<Tab>[] = [
   { value: "agents", label: "Agents" },
@@ -143,7 +136,7 @@ export function DeploymentDetail() {
   return (
     <Page>
       <PageHeader
-        title={notFound() ? "Deployment not found" : deployment.data?.version ?? "Deployment"}
+        title={notFound() ? "Deployment not found" : deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
         breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
         current={deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
         actions={<Show when={!notFound()}><CopyLinkButton /></Show>}
@@ -197,8 +190,7 @@ export function DeploymentDetail() {
                     <For each={eventItems()}>
                       {(event) => (
                         <tr>
-                          <td><code>{event.kind}</code></td>
-                          <td>{event.message}</td>
+                          <td>{event.message} <span class="ml-1.5 font-mono text-chrome text-console-faint">{event.kind}</span></td>
                           <td><RelativeTime value={event.at} /></td>
                         </tr>
                       )}

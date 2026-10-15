@@ -44,7 +44,8 @@ test("current Agent navigation opens the Agent with its Template and its Session
   await page.goto(`/agents?${scope}`);
   await expect(page.getByRole("group", { name: "Show agents" }).getByRole("button", { name: "Current deployment" })).toHaveAttribute("aria-pressed", "true");
   const row = page.getByRole("row").filter({ hasText: "support" });
-  await expect(row.getByText("In current deployment", { exact: true })).toBeVisible();
+  // The filter already says it; rows carry no "In current deployment" badge.
+  await expect(row.getByText("In current deployment", { exact: true })).toHaveCount(0);
   await expect(row.getByText("browser", { exact: true })).toBeVisible();
   await expect(row.getByRole("link", { name: "browser" })).toHaveCount(0);
   await page.getByRole("link", { name: "support", exact: true }).click();

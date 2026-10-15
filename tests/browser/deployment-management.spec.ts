@@ -90,9 +90,9 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toHaveCount(0);
   await expect(sections.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tabpanel", { name: "Sessions" }).getByText("Unreconciled", { exact: true })).toBeVisible();
-  // The header badge and the rail's Status show the residency, not the lifecycle.
+  // The header badge shows the residency, not the lifecycle; the rail keeps facts only.
   await expect(page.locator("h1").locator("..").getByText("Cold", { exact: true })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Computer details" }).getByText("Cold", { exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Computer details" }).getByText("Cold", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/^(Active|Available)$/)).toHaveCount(0);
   await expect(page.getByText("browser", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "browser" })).toHaveCount(0);

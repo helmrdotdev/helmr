@@ -65,7 +65,9 @@ export function AgentList() {
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
   const query = () => search().trim().toLowerCase();
   const shown = createMemo(() => query() ? items().filter(item => item.agent.toLowerCase().includes(query())) : items());
-  const columns = () => all() ? ["Agent", "Status"] : ["Agent", "Status", "Template"];
+  // The filter already says these Agents are in the current deployment; only
+  // "All agents" marks the ones that are not.
+  const columns = () => all() ? ["Agent", "Status"] : ["Agent", "Template"];
   const table = () => (
     <QueryState
       query={agents}
@@ -85,7 +87,9 @@ export function AgentList() {
           >
             <For each={shown()}>{item => <tr>
               <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
-              <td><StatusBadge resource="agent" status={item.defined_in_current ? "defined" : "not_defined"} /></td>
+              <Show when={all()}>
+                <td><Show when={!item.defined_in_current} fallback={<EmptyCell />}><StatusBadge resource="agent" status="not_defined" /></Show></td>
+              </Show>
               <Show when={!all()}>
                 <td><Show when={item.template} fallback={<EmptyCell />}>{template => <code>{template()}</code>}</Show></td>
               </Show>
@@ -99,7 +103,7 @@ export function AgentList() {
     <Toolbar start={<>
       <Segmented label="Show agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />
       <div class="w-56 max-sm:w-full">
-        <SearchInput aria-label="Filter agents" placeholder="Filter loaded agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
+        <SearchInput aria-label="Filter agents" placeholder="Filter agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
       </div>
     </>} />
     <Show when={all()} fallback={
