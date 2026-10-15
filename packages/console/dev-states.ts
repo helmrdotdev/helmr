@@ -130,9 +130,10 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
     json(res, 200, { connection: connection(state, agent), manifest: manifest(agent), create_app_url: "https://api.slack.com/apps?new_app=1" });
     return true;
   }
-  if (/\/agents\/[^/]+\/slack\//.test(path)) {
-    res.statusCode = 204;
-    res.end();
+  // Writes succeed without changing the fixture; authorizing "returns" here.
+  if (/\/agents\/[^/]+\/slack\//.test(path) || /\/slack-delivery\/[^/]+\/(check|abandon)$/.test(path) || (path.startsWith("/api/slack/user-links/") && req.method === "DELETE")) {
+    if (path.endsWith("/authorize")) json(res, 200, { redirect_url: "/" });
+    else { res.statusCode = 204; res.end(); }
     return true;
   }
   if (path === "/api/slack/user-links" && req.method === "GET") {
@@ -147,7 +148,7 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
     json(res, 200, { posts: deliveryPosts() });
     return true;
   }
-  if (/\/sessions\/[^/]+$/.test(path) && req.method === "GET") {
+  if (/^\/api\/projects\/[^/]+\/environments\/[^/]+\/sessions\/[^/]+$/.test(path) && req.method === "GET") {
     patched(req, res, backendURL, (body) => ({ ...body, slack_channel_id: "C0DEMO" }));
     return true;
   }

@@ -201,7 +201,7 @@ test("Members manage only their Slack identity and explicitly unlink it", async 
   await page.goto("/dev/login"); await page.goto("/settings/account");
   await expect(page.getByRole("heading", { name: "Your Slack identity" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect workspace", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Unlink U1", exact: true }).click();
+  await page.getByRole("button", { name: /^Unlink U1 in/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Work already accepted keeps its original user identity and continues");
   expect(deletions).toEqual([]);

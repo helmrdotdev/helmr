@@ -34,39 +34,37 @@ function roleLabel(post: SlackDeliveryPost): string {
 
 // One delivery issue: a 36px row with its actions; opened, the message text and
 // what is known about its delivery, as plain text under the row.
-function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; canManage: boolean; checking: boolean; onCheck: () => void; onStop: () => void }) {
-  const [open, setOpen] = createSignal(props.open);
+function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: () => void; canManage: boolean; checking: boolean; onCheck: () => void; onStop: () => void }) {
+  const open = () => props.open;
   const post = () => props.post;
   const bodyID = createUniqueId();
+  const titleID = createUniqueId();
   return (
     <ListItem class="p-0!">
       <div class="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1">
-        <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open()} aria-controls={bodyID} onClick={() => setOpen(!open())}>
+        <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open()} aria-controls={bodyID} onClick={() => props.onToggle()}>
           <span aria-hidden="true" class={cx("text-chrome text-console-subtle transition-transform", open() && "rotate-90")}>▸</span>
-          <span class="font-medium text-console-text">{title(post())}</span>
+          <span id={titleID} class="font-medium text-console-text">{title(post())}</span>
           <span class="truncate text-console-muted">· {roleLabel(post())} · message {post().sequence} · <RelativeTime value={post().created_at} /></span>
         </button>
         <Show when={post().attempt_id && !post().check_paused_at}><span class="font-mono text-chrome text-console-subtle">Check scheduled</span></Show>
         <Show when={props.canManage && post().attempt_id}>
-          <Show when={post().check_paused_at}><button type="button" class={ui.compactButton} disabled={props.checking} onClick={() => props.onCheck()}>Check Slack again</button></Show>
-          <Show when={post().status === "uncertain" && !post().disposed_at}><button type="button" class={ui.compactButton} disabled={props.checking} onClick={() => props.onStop()}>Stop delivery</button></Show>
+          <Show when={post().check_paused_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onCheck()}>Check Slack again</button></Show>
+          <Show when={post().status === "uncertain" && !post().disposed_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onStop()}>Stop delivery</button></Show>
         </Show>
       </div>
-      <Show when={open()}>
-        <div id={bodyID} class="flex flex-col gap-1.5 px-3 pb-3 pl-8">
-          <Show when={!post().payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the session’s retention policy.</p>}>
-            <p class="m-0 whitespace-pre-wrap break-words text-console-text">{post().text}</p>
-          </Show>
-          <Show when={post().status === "uncertain"}><p class={ui.muted}>{checkReason(post())}</p></Show>
-          <Show when={!post().root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
-          <Show when={post().disposed_at}>
-            <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
-            <Show when={post().stream_state === "uncertain" || post().stream_state === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
-          </Show>
-          <Show when={post().message_ts && post().confirmed_revision > 0}><p class={ui.muted}>{post().confirmed_revision === post().desired_revision ? "Slack confirmed this message." : "Slack confirmed an earlier version of this message."}</p></Show>
-          <Show when={!props.canManage && post().attempt_id}><p class={ui.muted}>An organization owner or admin can check again or stop delivery.</p></Show>
-        </div>
-      </Show>
+      <div id={bodyID} hidden={!open()} class="flex flex-col gap-1.5 px-3 pb-3 pl-8">
+        <Show when={!post().payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the session’s retention policy.</p>}>
+          <p class="m-0 whitespace-pre-wrap break-words text-console-text">{post().text}</p>
+        </Show>
+        <Show when={post().status === "uncertain"}><p class={ui.muted}>{checkReason(post())}</p></Show>
+        <Show when={!post().root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
+        <Show when={post().disposed_at}>
+          <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
+          <Show when={post().stream_state === "uncertain" || post().stream_state === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
+        </Show>
+        <Show when={post().message_ts && post().confirmed_revision > 0}><p class={ui.muted}>{post().confirmed_revision === post().desired_revision ? "Slack confirmed this message." : "Slack confirmed an earlier version of this message."}</p></Show>
+      </div>
     </ListItem>
   );
 }
@@ -83,6 +81,16 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
   const rows = createMemo(() => posts.data?.pages.flatMap((page) => page.posts) ?? []);
   const [selected, setSelected] = createSignal<SlackDeliveryPost>();
   const [checking, setChecking] = createSignal(false);
+  // Opened rows by post ID, so a refetch that replaces a post keeps its row
+  // open. The first issue, and any that blocks later messages, start open.
+  const [toggled, setToggled] = createSignal<ReadonlySet<string>>(new Set());
+  const startsOpen = (post: SlackDeliveryPost, index: number) => index === 0 || !post.root_known;
+  const isOpen = (post: SlackDeliveryPost, index: number) => startsOpen(post, index) !== toggled().has(post.id);
+  const toggle = (post: SlackDeliveryPost) => {
+    const next = new Set(toggled());
+    if (next.has(post.id)) next.delete(post.id); else next.add(post.id);
+    setToggled(next);
+  };
   const [error, setError] = createSignal<Failure>();
   const check = async (post: SlackDeliveryPost) => {
     setChecking(true); setError(undefined);
@@ -92,6 +100,9 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
   };
   return <Panel title="Slack delivery">
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
+    <Show when={!props.canManage && rows().some((post) => post.attempt_id)}>
+      <p class={cx(ui.muted, "m-0")}>An organization owner or admin can check again or stop delivery.</p>
+    </Show>
     <QueryState
       query={posts}
       pending={<LinesSkeleton label="Loading Slack delivery" />}
@@ -103,7 +114,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
           label="Slack delivery issues"
           footer={<LoadMore count={rows().length} noun={{ one: "delivery issue", other: "delivery issues" }} hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
         >
-          <For each={rows()}>{(post, index) => <DeliveryRow post={post} open={index() === 0} canManage={props.canManage} checking={checking()} onCheck={() => void check(post)} onStop={() => setSelected(post)} />}</For>
+          <For each={rows()}>{(post, index) => <DeliveryRow post={post} open={isOpen(post, index())} onToggle={() => toggle(post)} canManage={props.canManage} checking={checking()} onCheck={() => void check(post)} onStop={() => setSelected(post)} />}</For>
         </List>
       )}
     </QueryState>

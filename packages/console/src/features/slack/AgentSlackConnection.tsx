@@ -21,6 +21,9 @@ import { AppIconPicker } from "./AppIconPicker";
 import { slackFailure, slackNotConfigured } from "./failure";
 import { SlackFailureNotice, SlackNotSetUp } from "./SlackFailure";
 
+// The manifest parts people check against Slack: the scopes and the event URL.
+const MANIFEST_OPEN: ReadonlySet<string> = new Set(["oauth_config", "oauth_config.scopes", "settings", "settings.event_subscriptions"]);
+
 type Credentials = { client_id: string; client_secret: string; signing_secret: string };
 
 const MANAGERS = "Organization owners and admins";
@@ -212,7 +215,7 @@ function SetupPanel(props: { status: string; step?: number; children: JSX.Elemen
 
 function Setup(props: {
   connection: Connection;
-  manifest: unknown;
+  manifest: JsonValue | undefined;
   createAppURL: string | undefined;
   agentName: string;
   iconSeed: string;
@@ -227,7 +230,7 @@ function Setup(props: {
   const createContent = () => (
     <div class={ui.blockStack}>
       <Show when={props.createAppURL}>{(url) => <div><a class={ui.button} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
-      <JsonView value={(props.manifest ?? {}) as unknown as JsonValue} label="App manifest" kind="manifest" />
+      <JsonView value={props.manifest ?? {}} label="App manifest" kind="manifest" open={MANIFEST_OPEN} />
       <AppIconPicker seed={props.iconSeed} agentName={props.agentName} />
       <div><button type="button" class={ui.secondaryButton} onClick={() => setCreated(true)}>I created the app</button></div>
     </div>

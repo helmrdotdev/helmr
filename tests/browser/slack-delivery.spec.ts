@@ -48,8 +48,15 @@ async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[
 test("Slack uncertainty can be checked and explicitly abandoned without cancelling the Agent", async ({ page }) => {
   const { writes } = await fixture(page);
   await expect(page.getByText("This does not mean it was never delivered.", { exact: false })).toBeVisible();
+  // A row someone closed stays closed when the refetch after an action replaces its post.
+  const row = page.getByRole("button", { name: /message 1/ });
+  await expect(row).toHaveAttribute("aria-expanded", "true");
+  await row.click();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("This does not mean it was never delivered.", { exact: false })).toBeHidden();
   await page.getByRole("button", { name: "Check Slack again" }).click();
   await expect(page.getByText("Check scheduled", { exact: true })).toBeVisible();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
   await page.getByRole("button", { name: "Stop delivery", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("This does not stop the agent.");

@@ -60,7 +60,7 @@ export function IdentitySettings(props: { userID: string; organizationID: string
               <span class="text-body text-console-text">{workspaceName(link.team_id) || <IDText value={link.team_id} />}</span>
               <span class="font-mono text-chrome text-console-faint"><IDText value={link.slack_user_id} /></span>
             </span>
-            <button type="button" class={ui.secondaryButton} disabled={busy()} aria-label={`Unlink ${link.slack_user_id}`} onClick={() => { setError(null); setUnlinking(link); }}>Unlink</button>
+            <button type="button" class={ui.secondaryButton} disabled={busy()} aria-label={`Unlink ${link.slack_user_id} in ${workspaceName(link.team_id) || link.team_id}`} onClick={() => { setError(null); setUnlinking(link); }}>Unlink</button>
           </ListItem>}</For>
         </List>
       )}
