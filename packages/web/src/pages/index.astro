@@ -857,10 +857,6 @@ const nav = [
     .scene { margin-top: -9.5rem; }
   }
 
-  @media (forced-colors: active) {
-    .button, .install, .rail-cta, .card, .machine { border-image: none; border-color: CanvasText; }
-  }
-
   .scene img {
     display: block;
     width: 100%;
@@ -1494,5 +1490,21 @@ const nav = [
     .rail-cta { display: none; }
     .code { font-size: 0.7rem; }
     .ln { width: 2.25rem; padding-right: 0.75rem; }
+  }
+
+  /* high-contrast mode: drop the drawn outlines for plain system-colored lines */
+  @media (forced-colors: active) {
+    .button, .button:hover, .button-dark:hover, .install, .install:hover, .install:focus-visible,
+    .rail-cta, .rail-cta:hover, .card, .home-dark, .machine, .machine.is-saved {
+      border-image-source: none !important;
+      border-color: CanvasText;
+    }
+    .machine.is-saved { border-style: dashed; }
+    .card-head, .machine-h { border-bottom: 1px solid CanvasText; }
+    .machine-note { border-top: 1px solid CanvasText; }
+    .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
+    .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
+    .carry-arrow { background: none; border-top: 1px dashed CanvasText; }
+    .wire-gate::before { background: none; border-top: 1px dashed CanvasText; }
   }
 </style>
