@@ -33,8 +33,8 @@ test("first-use confirmation returns to Slack only after explicit linking", asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/auth/slack/link#state=state&code=code");
   await expect(page).toHaveURL("/auth/slack/link");
-  await expect(page.getByText("Slack Person", { exact: true })).toBeVisible();
-  await expect(page.getByText("Helmr Person", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Accounts")).toContainText("Slack Person in Workspace");
+  await expect(page.getByLabel("Accounts")).toContainText("Helmr Person in Organization");
   expect(confirmations).toEqual([]);
   await expect(page.getByRole("link", { name: "Return to Slack" })).toHaveCount(0);
   await page.getByRole("button", { name: "Confirm these accounts are mine" }).click();

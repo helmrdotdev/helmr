@@ -1,24 +1,39 @@
-import { Show, type JSX } from "solid-js";
+import { A } from "@solidjs/router";
 import { BrandMark } from "./BrandMark";
+import { Show, type JSX } from "solid-js";
 import { Spinner } from "./Skeleton";
 import { cx, ui } from "./styles";
 
-// The centered window for sign-in, invites, callbacks, Slack linking, device
-// approval, access and onboarding screens. `step` shows onboarding progress in the
-// container header ("Step 1 of 2").
-export function AuthWindow(props: { children: JSX.Element; step?: string | undefined }) {
+// The page for sign-in, invites, callbacks, Slack linking, device approval,
+// access and onboarding screens: the product mark in the top-left corner, no
+// window or card, and one left-aligned column. `step` labels onboarding progress
+// above the title ("Step 1 of 2"); `account` sits in the top-right corner for a
+// signed-in account (see AuthAccount). In the column, buttons and button links
+// run full width; one primary action, secondary actions as AuthLink under it.
+export function AuthWindow(props: { children: JSX.Element; step?: string | undefined; account?: JSX.Element }) {
   return (
-    <main class="grid min-h-dvh place-items-center bg-transparent px-4 py-6">
-      <section class={cx(ui.container, "w-full max-w-98 text-console-text")}>
-        <div class={ui.containerHeader}>
-          <BrandMark />
-          <Show when={props.step}><span class="font-mono text-chrome text-console-subtle">{props.step}</span></Show>
-        </div>
-        <div class="px-4 pb-4 pt-4 [:where(&_a)]:mt-3 [:where(&_a)]:inline-block [:where(&_a)]:cursor-pointer [:where(&_a)]:text-body [:where(&_a)]:text-console-accent [:where(&_a:hover)]:text-console-accent-hover [&_button]:w-full [&_p]:text-body [&_p]:leading-normal [&_p]:text-console-muted">
-          {props.children}
-        </div>
+    <main class="flex min-h-dvh flex-col px-4 text-console-text">
+      <header class="flex h-12 shrink-0 items-center justify-between gap-3">
+        <BrandMark href="/" />
+        <Show when={props.account}>{props.account}</Show>
+      </header>
+      <section class="mx-auto flex w-full max-w-90 flex-1 flex-col justify-center pb-[12vh] pt-6 [&_.auth-full]:w-full [&_button]:w-full [&_p]:text-body [&_p]:leading-normal [&_p]:text-console-muted">
+        <Show when={props.step}><span class={cx(ui.microLabel, "mb-2")}>{props.step}</span></Show>
+        {props.children}
       </section>
     </main>
+  );
+}
+
+// The signed-in account and Sign out, for the top-right corner of onboarding.
+export function AuthAccount(props: { name: string | null | undefined; signOutLabel: string; signingOut: boolean; onSignOut: () => void }) {
+  return (
+    <div class="flex min-w-0 items-center gap-2 font-mono text-chrome text-console-muted">
+      <Show when={props.name}><span class="min-w-0 truncate">{props.name}</span><span class="shrink-0" aria-hidden="true">·</span></Show>
+      <button type="button" class="shrink-0 cursor-pointer whitespace-nowrap text-console-accent hover:text-console-accent-hover disabled:cursor-not-allowed disabled:opacity-60" disabled={props.signingOut} onClick={() => props.onSignOut()}>
+        {props.signOutLabel}
+      </button>
+    </div>
   );
 }
 
@@ -36,12 +51,40 @@ export function AuthTitle(props: { children: JSX.Element }) {
   return <h1 class={ui.authTitle}>{props.children}</h1>;
 }
 
+// The line under the title: what this screen is for.
 export function AuthCopy(props: { children: JSX.Element }) {
   return <p class={ui.authCopy}>{props.children}</p>;
 }
 
 export function AuthActions(props: { children: JSX.Element }) {
   return <div class={ui.authActions}>{props.children}</div>;
+}
+
+// A secondary action under the primary one, as centered link text.
+export function AuthLink(props: { children: JSX.Element; onClick?: () => void; href?: string; disabled?: boolean }) {
+  return (
+    <Show
+      when={props.href}
+      fallback={<button type="button" class={ui.authLink} disabled={props.disabled} onClick={() => props.onClick?.()}>{props.children}</button>}
+    >
+      {(href) => <A href={href()} class={ui.authLink}>{props.children}</A>}
+    </Show>
+  );
+}
+
+// Facts the person checks before acting (the account, the organization), as
+// label/value rows between two hairlines.
+export function AuthFacts(props: { label: string; children: JSX.Element }) {
+  return <dl class={ui.authFacts} role="group" aria-label={props.label}>{props.children}</dl>;
+}
+
+export function AuthFact(props: { label: string; children: JSX.Element }) {
+  return (
+    <>
+      <dt class="text-console-muted">{props.label}</dt>
+      <dd class="m-0 min-w-0 [overflow-wrap:anywhere]">{props.children}</dd>
+    </>
+  );
 }
 
 // Working: the server is finishing something the person just started (a
@@ -54,17 +97,18 @@ export function AuthWorking(props: { children: JSX.Element }) {
   );
 }
 
-// An actionable failure: a human message, the next step, and the technical
-// detail folded away for support.
+// An actionable failure: a human message, the technical detail folded away for
+// support, then the next step. Inside a form it sits directly above the
+// primary button. Input mistakes pass no details.
 export function AuthError(props: { title?: string; message: string; details?: string | undefined; action?: JSX.Element }) {
   return (
     <>
       <Show when={props.title}><AuthTitle>{props.title}</AuthTitle></Show>
-      <p class="font-medium text-console-danger!" role="alert">{props.message}</p>
+      <p class="mb-2 font-medium text-console-danger!" role="alert">{props.message}</p>
       <Show when={props.details}>
-        <details class="mt-2 text-chrome text-console-muted">
+        <details class="mb-3 text-chrome text-console-muted">
           <summary class="cursor-pointer font-mono">Technical details</summary>
-          <pre class="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words border border-console-border bg-console-bg-panel p-2 font-mono text-badge">{props.details}</pre>
+          <p class="m-0 mt-1 whitespace-pre-wrap break-words font-mono text-badge! text-console-muted">{props.details}</p>
         </details>
       </Show>
       <Show when={props.action}>
@@ -74,7 +118,7 @@ export function AuthError(props: { title?: string; message: string; details?: st
   );
 }
 
-// Done: the result and the next step.
+// Done: one title, one sentence naming the next step, and its action.
 export function AuthSuccess(props: { title: string; children?: JSX.Element; action?: JSX.Element }) {
   return (
     <>

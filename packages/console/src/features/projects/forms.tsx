@@ -31,7 +31,6 @@ export function createProjectDraft() {
   });
 
   return {
-    loading: () => regions.isPending,
     valid: () => !!name().trim() && !!slug.value().trim() && !!regionID(),
     submit: (): Promise<Project> => createProject({ name: name().trim(), project: slug.value().trim(), default_region_id: regionID() }),
     Fields: () => (
@@ -39,7 +38,7 @@ export function createProjectDraft() {
         <Field label="Name">
           <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder="My app" autocomplete="off" autofocus />
         </Field>
-        <Field label="Project ID">
+        <Field label="Project ID" hint="Lowercase letters, numbers and hyphens. Used in URLs and the CLI; it cannot be changed later.">
           <SlugInput slug={slug} placeholder="my-app" />
         </Field>
         <Show when={!regions.isPending && regionOptions().length === 0}>

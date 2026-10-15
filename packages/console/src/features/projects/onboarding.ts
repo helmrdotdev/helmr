@@ -1,15 +1,6 @@
 import { createSignal } from "solid-js";
 import { logout } from "../../lib/auth";
 import { describeFailure, type Failure } from "../../lib/error";
-import type { Step } from "../../ui/Steps";
-
-// The two onboarding steps a new account goes through before reaching the console.
-export function onboardingSteps(current: "organization" | "project"): Step[] {
-  return [
-    { title: "Create your organization", state: current === "organization" ? "current" : "done" },
-    { title: "Create your first project", state: current === "project" ? "current" : "upcoming" },
-  ];
-}
 
 // Leaving onboarding by signing out: busy while the request runs, and the
 // failure when it does not complete.

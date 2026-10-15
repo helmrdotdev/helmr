@@ -2,8 +2,8 @@ import { A, useSearchParams } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
 import { startGitHubInvite, startInviteMagicLink } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
-import { AuthActions, AuthCopy, AuthDivider, AuthError, AuthMissing, AuthWindow, AuthTitle } from "../ui/AuthWindow";
-import { ui } from "../ui/styles";
+import { AuthCopy, AuthDivider, AuthError, AuthLink, AuthMissing, AuthWindow, AuthTitle } from "../ui/AuthWindow";
+import { cx, ui } from "../ui/styles";
 
 const failure = (error: unknown) => describeFailure(error, AUTH_MESSAGES, "This invite could not be accepted. Try again, or ask for a new invite link.");
 
@@ -61,7 +61,7 @@ export function Invite() {
     <AuthWindow>
       <Show when={token()} fallback={
         <Show when={checked()}>
-          <AuthMissing title="This invite link is incomplete" action={<A class={ui.secondaryButton} href="/login">Back to login</A>}>
+          <AuthMissing title="This invite link is incomplete" action={<A class={cx(ui.button, "auth-full")} href="/login">Back to sign in</A>}>
             The link is missing its invitation. Open the full link from your invite email, or ask the person who invited you for a new one.
           </AuthMissing>
         </Show>
@@ -70,6 +70,7 @@ export function Invite() {
           <>
             <AuthTitle>Accept invite</AuthTitle>
             <AuthCopy>Choose how to verify this invitation.</AuthCopy>
+            <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
             <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
               {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
             </button>
@@ -99,16 +100,14 @@ export function Invite() {
             )}
           </Show>
           <AuthDivider>OR</AuthDivider>
-          <AuthActions>
-            <button class={ui.secondaryButton} type="button" onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
-              {magicBusy() ? "Sending..." : "Send another invite link"}
-            </button>
-            <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
-              {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
-            </button>
-          </AuthActions>
+          <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
+          <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
+            {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
+          </button>
+          <AuthLink onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
+            {magicBusy() ? "Sending..." : "Send another invite link"}
+          </AuthLink>
         </Show>
-        <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
       </Show>
     </AuthWindow>
   );

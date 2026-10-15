@@ -368,6 +368,15 @@ test("a slow table shows its column headers over skeleton rows, then the rows", 
   await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();
 });
 
+test("a mistyped sign-in email is the person's to fix: no technical details", async ({ page }) => {
+  await page.route("**/api/auth/magic-link/start", route => route.fulfill({ status: 400, json: { error: { code: "bad_request", message: "invalid email" } } }));
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("someone@example.test");
+  await page.getByRole("button", { name: "Send sign-in link" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Enter a valid email address.");
+  await expect(page.getByText("Technical details")).toHaveCount(0);
+});
+
 test("a failed sign-in gives a next step and folds the server message into technical details", async ({ page }) => {
   await fixture(page);
   await page.route("**/api/auth/github/finish", route => route.fulfill({ status: 400, json: { error: { code: "invalid_request", message: "state mismatch" } } }));

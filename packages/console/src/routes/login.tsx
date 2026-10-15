@@ -1,6 +1,7 @@
 import { useLocation } from "@solidjs/router";
 import { locationDestination } from "../lib/continuation";
 import { createSignal, Show } from "solid-js";
+import { ApiError } from "../lib/api";
 import { startGitHubLogin, startMagicLinkLogin } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthCopy, AuthDivider, AuthError, AuthWindow, AuthTitle } from "../ui/AuthWindow";
@@ -23,6 +24,7 @@ export function Login() {
   const [busy, setBusy] = createSignal(false);
   const [githubBusy, setGitHubBusy] = createSignal(false);
   const [error, setError] = createSignal<Failure | null>(null);
+  const [githubError, setGitHubError] = createSignal<Failure | null>(null);
   const [email, setEmail] = createSignal("");
   const [sentEmail, setSentEmail] = createSignal<string | null>(null);
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
@@ -45,6 +47,7 @@ export function Login() {
     }
 
     setBusy(true);
+    setGitHubError(null);
     setError(null);
     setDebugURL(null);
     try {
@@ -52,7 +55,9 @@ export function Login() {
       setSentEmail(trimmedEmail);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      setError(describeFailure(e, EMAIL_MESSAGES, START_FALLBACK));
+      const failure = describeFailure(e, EMAIL_MESSAGES, START_FALLBACK);
+      // A mistyped address is the person's to fix; nothing technical about it.
+      setError(e instanceof ApiError && e.code === "bad_request" ? { ...failure, details: undefined } : failure);
     } finally {
       setBusy(false);
     }
@@ -61,11 +66,12 @@ export function Login() {
   async function signInWithGitHub() {
     setGitHubBusy(true);
     setError(null);
+    setGitHubError(null);
     try {
       const { redirect_url } = await startGitHubLogin(locationDestination(location));
       window.location.href = redirect_url;
     } catch (e) {
-      setError(describeFailure(e, GITHUB_MESSAGES, START_FALLBACK));
+      setGitHubError(describeFailure(e, GITHUB_MESSAGES, START_FALLBACK));
       setGitHubBusy(false);
     }
   }
@@ -97,8 +103,9 @@ export function Login() {
           </>
         }
       >
-        <AuthTitle>Sign in</AuthTitle>
-        <AuthCopy>Choose a sign-in method to access your sessions, computers, and credentials.</AuthCopy>
+        <AuthTitle>Sign in to Helmr</AuthTitle>
+        <AuthCopy>Build cloud agents that work your way.</AuthCopy>
+        <Show when={githubError()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
         <button
           class={ui.button}
           type="button"
@@ -120,12 +127,12 @@ export function Login() {
               placeholder="you@example.com"
             />
           </Field>
+          <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
           <button class={ui.button} type="submit" disabled={busy()}>
             {buttonText()}
           </button>
         </form>
       </Show>
-      <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
     </AuthWindow>
   );
 }

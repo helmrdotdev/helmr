@@ -3,12 +3,11 @@ import { locationDestination, withNext } from "../lib/continuation";
 import { useNavigate, useLocation } from "@solidjs/router";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
-import { createSignOut, onboardingSteps } from "../features/projects/onboarding";
+import { createSignOut } from "../features/projects/onboarding";
 import { errorDetails, errorMessage } from "../lib/error";
 import { createOrganization } from "../lib/organizations";
-import { AuthCopy, AuthError, AuthTitle, AuthWindow } from "../ui/AuthWindow";
-import { createDerivedSlug, Field, FormActions, SecretInput, SlugInput, TextInput } from "../ui/Field";
-import { Steps } from "../ui/Steps";
+import { AuthAccount, AuthCopy, AuthError, AuthTitle, AuthWindow } from "../ui/AuthWindow";
+import { createDerivedSlug, Field, SecretInput, SlugInput, TextInput } from "../ui/Field";
 import { ui } from "../ui/styles";
 
 export function OrganizationNew() {
@@ -50,17 +49,14 @@ export function OrganizationNew() {
   }
 
   return (
-    <AuthWindow step="Step 1 of 2">
+    <AuthWindow step="Step 1 of 2" account={<AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} />}>
       <AuthTitle>Create your organization</AuthTitle>
-      <div class={ui.blockStack}>
-        <Steps label="Setup steps" steps={onboardingSteps("organization")} />
-        <AuthCopy>Organizations own members, projects, environments, credentials, and sessions.</AuthCopy>
-      </div>
+      <AuthCopy>Organizations own members, projects, environments, credentials, and sessions.</AuthCopy>
       <form onSubmit={submit}>
         <Field label="Name">
           <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder="Acme" autocomplete="organization" autofocus />
         </Field>
-        <Field label="Slug">
+        <Field label="Organization ID" hint="Lowercase letters, numbers and hyphens. Used in URLs and the CLI; it cannot be changed later.">
           <SlugInput slug={slug} placeholder="acme" />
         </Field>
         <Show when={setupTokenRequired()}>
@@ -68,16 +64,11 @@ export function OrganizationNew() {
             <SecretInput value={setupToken()} onInput={(event) => setSetupToken(event.currentTarget.value)} placeholder="Setup token" />
           </Field>
         </Show>
-        <Show when={error() ?? signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
-        <FormActions
-          submitLabel="Create organization"
-          busyLabel="Creating..."
-          busy={submitting()}
-          disabled={signOut.busy() || me.isPending || !name().trim() || !slug.value().trim() || (setupTokenRequired() && !setupToken().trim())}
-          cancelLabel={signOut.label()}
-          cancelDisabled={signOut.busy()}
-          onCancel={() => void signOut.run()}
-        />
+        <Show when={signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+        <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+        <button type="submit" class={ui.button} disabled={submitting() || signOut.busy() || me.isPending || !name().trim() || !slug.value().trim() || (setupTokenRequired() && !setupToken().trim())}>
+          {submitting() ? "Creating..." : "Create organization"}
+        </button>
       </form>
     </AuthWindow>
   );

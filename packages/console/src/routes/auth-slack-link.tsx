@@ -4,10 +4,9 @@ import { withNext } from "../lib/continuation";
 import { describeFailure, type Failure } from "../lib/error";
 import { ApiError } from "../lib/api";
 import { confirmSlackUserLink, verifySlackUserLink, type SlackIdentityProof } from "../lib/slack";
-import { AuthCopy, AuthError, AuthSuccess, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
+import { AuthCopy, AuthError, AuthFact, AuthFacts, AuthLink, AuthSuccess, AuthTitle, AuthWindow, AuthWorking } from "../ui/AuthWindow";
 import { IDText } from "../ui/IDText";
-import { KeyValue, KeyValueList } from "../ui/Panel";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
 const MESSAGES = {
   bad_request: "The linking request expired, or a different Helmr account is signed in.",
@@ -17,23 +16,28 @@ const MESSAGES = {
   service_unavailable: "Slack is not configured on this server.",
 };
 
-// What to do next, by what went wrong.
-function NextStep(props: { failure: Failure & { code: string } }) {
+// What to do next, by what went wrong: the sentence and its one action. On the
+// confirmation screen (`inline`) the page keeps its own primary and My account
+// link, so only signing in again adds a link.
+function NextStep(props: { failure: Failure & { code: string }; inline?: boolean }) {
+  const action = (label: string, href: string) => props.inline ? undefined : <A class={cx(ui.button, "auth-full")} href={href}>{label}</A>;
   return <Switch fallback={<>
     <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from My account.</AuthCopy>
-    <A class={ui.secondaryButton} href="/settings/account">My account</A>
+    {action("My account", "/settings/account")}
   </>}>
     <Match when={props.failure.code === "unauthorized"}>
       <AuthCopy>Sign in again, then try your action in Slack again.</AuthCopy>
-      <A class={ui.secondaryButton} href={withNext("/login", "/settings/account")}>Sign in again</A>
+      <Show when={props.inline} fallback={action("Sign in again", withNext("/login", "/settings/account"))}>
+        <AuthLink href={withNext("/login", "/settings/account")}>Sign in again</AuthLink>
+      </Show>
     </Match>
     <Match when={props.failure.code === "conflict"}>
       <AuthCopy>Unlink the other account from My account, then link again.</AuthCopy>
-      <A class={ui.secondaryButton} href="/settings/account">My account</A>
+      {action("My account", "/settings/account")}
     </Match>
     <Match when={props.failure.code === "forbidden" || props.failure.code === "service_unavailable"}>
       <AuthCopy>Ask an organization owner or admin for help.</AuthCopy>
-      <A class={ui.secondaryButton} href="/settings/account">My account</A>
+      {action("My account", "/settings/account")}
     </Match>
   </Switch>;
 }
@@ -71,7 +75,7 @@ export function AuthSlackLink() {
     <Match when={complete() && proof()}>
       {(current) => (
         <AuthWindow>
-          <AuthSuccess title="Your accounts are linked" action={<a class={ui.button} href={current().return_url} rel="noreferrer">Return to Slack</a>}>
+          <AuthSuccess title="Your accounts are linked" action={<a class={cx(ui.button, "auth-full")} href={current().return_url} rel="noreferrer">Return to Slack</a>}>
             Return to Slack and send a new message or repeat your action. Linking does not apply your earlier action.
           </AuthSuccess>
         </AuthWindow>
@@ -81,19 +85,17 @@ export function AuthSlackLink() {
       {(current) => (
         <AuthWindow>
           <AuthTitle>Link your Slack account</AuthTitle>
-          <div class={ui.blockStack}>
-            <KeyValueList title="Accounts">
-              <KeyValue label="Slack account">{current().identity.name || <IDText value={current().identity.slack_user_id} />}</KeyValue>
-              <KeyValue label="Slack user ID"><IDText value={current().identity.slack_user_id} /></KeyValue>
-              <KeyValue label="Slack workspace">{current().workspace_name || <IDText value={current().identity.team_id} />}</KeyValue>
-              <KeyValue label="Helmr account">{current().helmr_display_name}</KeyValue>
-              <KeyValue label="Organization">{current().helmr_org_name}</KeyValue>
-            </KeyValueList>
-            <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
-            <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} />} />}</Show>
-            <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking..." : "Confirm these accounts are mine"}</button>
-            <A href="/settings/account">My account</A>
-          </div>
+          <AuthFacts label="Accounts">
+            <AuthFact label="Slack">
+              {current().identity.name || <IDText value={current().identity.slack_user_id} />} in {current().workspace_name || <IDText value={current().identity.team_id} />}
+              <Show when={current().identity.name}> <span class="font-mono text-chrome text-console-faint"><IDText value={current().identity.slack_user_id} /></span></Show>
+            </AuthFact>
+            <AuthFact label="Helmr">{current().helmr_display_name} in {current().helmr_org_name}</AuthFact>
+          </AuthFacts>
+          <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
+          <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} inline />} />}</Show>
+          <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking..." : "Confirm these accounts are mine"}</button>
+          <AuthLink href="/settings/account">My account</AuthLink>
         </AuthWindow>
       )}
     </Match>
