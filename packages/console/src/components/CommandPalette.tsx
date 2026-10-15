@@ -28,7 +28,7 @@ const PAGES: readonly { label: string; href: string; keywords?: string }[] = [
   { label: "Settings › Secrets", href: "/settings/secrets" },
   { label: "Settings › API keys", href: "/settings/api-keys", keywords: "tokens" },
   { label: "Settings › Members", href: "/settings/members", keywords: "organization invitations" },
-  { label: "My account", href: "/settings/account", keywords: "settings profile slack" },
+  { label: "Account settings", href: "/settings/account", keywords: "settings profile slack" },
 ];
 
 // Every page and environment is listed; Sessions show the most recent few and

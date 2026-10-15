@@ -320,6 +320,9 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   await expect(readSessions).toHaveAccessibleDescription("Allow automation to read session state in the selected project and environment.");
   await expect(form.getByText("Allow automation to delete computers.", { exact: true })).toBeVisible();
   await form.getByRole("checkbox", { name: "Select all computers" }).check();
+  // The long form scrolls inside the dialog; its actions stay in view.
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await expect(form.getByRole("button", { name: "Generate", exact: true })).toBeInViewport();
   await form.getByRole("button", { name: "Generate", exact: true }).click();
 
   const reveal = page.getByRole("dialog", { name: "API key generated" });

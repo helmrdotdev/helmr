@@ -161,7 +161,7 @@ export const ui = {
   toolbarSide: "flex flex-wrap items-center gap-2",
   modalActions: "mt-3 flex flex-wrap justify-end gap-2",
   // A dialog's actions pinned under its scrolling body.
-  dialogFooter: "mt-0! shrink-0 border-t border-console-border bg-console-bg-panel px-3 py-2",
+  dialogFooter: "flex shrink-0 flex-wrap justify-end gap-2 border-t border-console-border bg-console-bg-panel px-3 py-2",
   modalIntro: "mb-3 text-body leading-normal text-console-muted",
 
   // Tables

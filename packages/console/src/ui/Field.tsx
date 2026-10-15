@@ -369,10 +369,11 @@ export function FormActions(props: {
   tone?: "default" | "danger" | undefined;
   // Without a form around the actions, the primary action calls this instead of submitting.
   onSubmit?: (() => void) | undefined;
+  // Replaces the default spacing, e.g. a dialog's pinned footer.
   class?: string | undefined;
 }) {
   return (
-    <div class={cx(ui.modalActions, props.class)}>
+    <div class={props.class ?? ui.modalActions}>
       <button type="button" class={ui.secondaryButton} disabled={props.busy || props.cancelDisabled} onClick={() => props.onCancel()}>
         {props.cancelLabel ?? "Cancel"}
       </button>

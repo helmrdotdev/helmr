@@ -141,8 +141,8 @@ export function FormDialog(props: {
         <div class="min-h-0 overflow-y-auto p-3">
           <Show when={props.intro}><p class={ui.modalIntro}>{props.intro}</p></Show>
           {props.children}
-          <Show when={props.error}><p class={ui.error} role="alert">{props.error}</p></Show>
         </div>
+        <Show when={props.error}><p class="m-0 shrink-0 border-t border-console-border-soft px-3 py-2 text-body font-medium text-console-danger" role="alert">{props.error}</p></Show>
         <FormActions class={ui.dialogFooter} submitLabel={props.submitLabel} busyLabel={props.busyLabel} busy={props.busy} disabled={props.disabled} onCancel={props.onClose} />
       </form>
     </Dialog>

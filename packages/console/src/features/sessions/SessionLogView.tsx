@@ -290,10 +290,10 @@ export function SessionLogView(props: {
           </Show>
         </Show>
         <Show when={props.live && log.ready()}>
-          <div class="flex h-7 items-center gap-2 border-t border-console-border-soft pl-[34px] font-mono text-micro text-console-subtle" role="status">
+          <div class="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 font-mono text-micro text-console-subtle" role="status">
             <span aria-hidden="true" class="size-1.5 rounded-full bg-console-success" />
-            {follow() ? "Live · following new events" : "Live · new events appear here"}
-            <Show when={props.liveHint}><span class="ml-auto truncate pr-3 font-sans text-chrome text-console-muted">{props.liveHint}</span></Show>
+            <span class="whitespace-nowrap">{follow() ? "Live · following new events" : "Live · new events appear here"}</span>
+            <Show when={props.liveHint}><span class="ml-auto font-sans text-chrome text-console-muted max-[720px]:ml-0 max-[720px]:basis-full">{props.liveHint}</span></Show>
           </div>
         </Show>
         <Show when={log.error()}>
