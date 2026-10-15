@@ -8,9 +8,10 @@ import { environmentChip } from "../features/projects/display";
 import { createSessionLog, type SessionLog } from "../features/sessions/sessionLog";
 import { SessionLogView } from "../features/sessions/SessionLogView";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
+import { ApiError } from "../lib/api";
 import { hasPermission } from "../lib/auth";
 import { agentHref } from "../lib/definitions";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import { isOrganizationAdmin, useMe } from "../lib/me";
 import { useScope } from "../lib/scope";
 import {
@@ -31,7 +32,7 @@ import { Notice } from "../ui/Notice";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DangerZone } from "../ui/Panel";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -81,6 +82,10 @@ function SessionDetailContent() {
         : false,
   }));
   const live = () => ["open", "closing"].includes(session.data?.status ?? "");
+  // The API denies a Session it cannot find in this Environment; to an account
+  // that may read Sessions that is a missing Session, not a permission problem.
+  const missing = (error: unknown) => isNotFound(error) || (error instanceof ApiError && error.status === 403 && can("sessions.read"));
+  const notFound = () => !session.data && session.isError && missing(session.error);
   const log = createSessionLog({ address, session: () => session.data });
   const [receipt, setReceipt] = createSignal<string>();
   type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string };
@@ -102,28 +107,31 @@ function SessionDetailContent() {
   return (
     <Page>
       <PageHeader
-        title="Session"
+        title={notFound() ? "Session not found" : "Session"}
         breadcrumb={[
           { href: "/agents", label: "Agents" },
           ...(session.data ? [{ href: agentHref(session.data.agent), label: session.data.agent }] : []),
         ]}
-        subtitle={<IDText value={sessionID()} mode="full" />}
+        subtitle={<Show when={!notFound()}><IDText value={sessionID()} mode="full" /></Show>}
         badge={
           <Show when={session.data}>
             {(current) => <StatusBadge resource="session" status={current().status} />}
           </Show>
         }
         actions={
-          <>
+          <Show when={!notFound()}>
             <CopyLinkButton />
             <Show when={can("sessions.interrupt") && live()}>
               <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt session</button>
             </Show>
-          </>
+          </Show>
         }
       />
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-        <QueryState query={session} pending={<PageSkeleton label="Loading session" sections={["Log"]} />} error={sessionError}>
+        <QueryState query={session} pending={<PageSkeleton label="Loading session" sections={["Log"]} />} error={(error) => loadError(error, "Could not load this session.")}
+          missing={missing}
+          notFound={<NotFoundState noun="session" id={sessionID()} environment={scope.selectedEnvironment()?.name} back={{ href: "/sessions", label: "Go to sessions" }} />}
+        >
           {(current) => (
             <div class="flex flex-col gap-3">
               <SessionProperties session={current()} />

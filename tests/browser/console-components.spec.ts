@@ -429,7 +429,7 @@ test("a failed refresh keeps the loaded rows with a notice that clears on recove
 
   state.failSessions = true;
   await page.clock.fastForward(5_000);
-  const notice = page.getByRole("alert").filter({ hasText: "Sessions are unavailable." });
+  const notice = page.getByRole("alert").filter({ hasText: "Could not load sessions." });
   await expect(notice).toBeVisible();
   await expect(table.getByRole("row")).toHaveCount(3);
   expect(await content!.evaluate(element => element.isConnected)).toBe(true);
@@ -439,6 +439,40 @@ test("a failed refresh keeps the loaded rows with a notice that clears on recove
   await expect(notice).toHaveCount(0);
   await expect(table.getByRole("row")).toHaveCount(3);
   expect(await content!.evaluate(element => element.isConnected)).toBe(true);
+});
+
+test("a failed first load says what failed, offers Retry and folds the server message away", async ({ page }) => {
+  const state = await fixture(page);
+  state.failSessions = true;
+  await page.goto(`/sessions?${scope}`);
+  const alert = page.getByRole("alert");
+  await expect(alert.getByText("Could not load sessions.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sessions are unavailable.")).toBeHidden();
+  await alert.getByText("Technical details", { exact: true }).click();
+  await expect(alert.getByText("internal_error: Sessions are unavailable.", { exact: true })).toBeVisible();
+  state.failSessions = false;
+  await alert.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();
+});
+
+test("a denied read is a neutral notice without Retry", async ({ page }) => {
+  await fixture(page);
+  await page.route(`**${base}/secrets`, route => route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }));
+  await page.goto(`/settings/secrets?${scope}`);
+  await expect(page.getByRole("status").filter({ hasText: "You do not have permission to manage secrets." })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});
+
+test("an unknown computer is not found in the environment, with the way back", async ({ page }) => {
+  await fixture(page);
+  await page.goto(`/computers/00000000-0000-7000-8000-000000000999?${scope}`);
+  await expect(page.getByRole("heading", { level: 1, name: "Computer not found" })).toBeVisible();
+  await expect(page.getByText("No computer 000000000999 in Production. It may be in another environment, or the link is wrong.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy link" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Go to computers", exact: true }).click();
+  await expect(page).toHaveURL(/\/computers/);
 });
 
 test("a failed Load more is reported in the footer and retries only the next page", async ({ page }) => {

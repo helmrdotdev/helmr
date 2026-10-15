@@ -2,7 +2,7 @@ import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { agentHref } from "../lib/definitions";
-import { errorMessage } from "../lib/error";
+import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listTriggers } from "../lib/triggers";
 import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
@@ -11,7 +11,7 @@ import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 
-const failure = (error: unknown) => errorMessage(error, "Could not load triggers.");
+const failure = (error: unknown) => loadError(error, "Could not load triggers.", { forbidden: "You do not have permission to view triggers." });
 
 // Trigger activations across Deployments: every Agent's in the tab's Environment,
 // or one Agent's.

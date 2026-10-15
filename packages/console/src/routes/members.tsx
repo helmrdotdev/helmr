@@ -1,7 +1,7 @@
 import { isOrganizationAdmin, useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import {
   createInvitations,
   invitationResourceID,
@@ -362,7 +362,7 @@ export function Members() {
       <QueryState
         query={members}
         pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-210" />}
-        error={membersErrorMessage}
+        error={(error) => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}
       >
         {(data) => <>
           <Show when={invitations.isError && !invitations.isFetchNextPageError}>

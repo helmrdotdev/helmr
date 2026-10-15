@@ -1,7 +1,7 @@
 import { createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import {
   issueApiKey,
   listApiKeys,
@@ -244,7 +244,7 @@ export function ApiKeys() {
         <QueryState
           query={keys}
           pending={<TableSkeleton label="Loading API keys" columns={COLUMNS} minWidth="min-w-270" />}
-          error={apiKeyErrorMessage}
+          error={(error) => loadError(error, "Could not load API keys.", API_KEY_ERROR_MESSAGES)}
           empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
         >
           {() => (

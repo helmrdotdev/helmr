@@ -14,6 +14,13 @@ export function errorMessage(
   return messages[error.code] ?? (error.message.trim() || fallback);
 }
 
+// The sentence for a failed read: the page's message for the error code, else
+// its fallback. The server's own text is left to the technical details.
+export function loadError(error: unknown, fallback: string, messages: Readonly<Record<string, string>> = {}): string {
+  const code = error instanceof ApiError ? error.code : undefined;
+  return (code && messages[code]) || fallback;
+}
+
 export type Failure = { message: string; details: string | undefined };
 
 // A failure as people read it: the message for its error code, else the

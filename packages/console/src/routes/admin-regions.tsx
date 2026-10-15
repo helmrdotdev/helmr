@@ -1,6 +1,6 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import { createAdminRegion, listAdminRegions, updateAdminRegion, type AdminRegion } from "../lib/admin";
 import { DataTable, EmptyCell, RowActions } from "../ui/DataTable";
 import { FormDialog } from "../ui/Dialog";
@@ -8,7 +8,7 @@ import { Field, TextInput } from "../ui/Field";
 import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
@@ -76,12 +76,12 @@ export function AdminRegions() {
       <PageHeader
         title="Regions"
         subtitle="Logical placement domains available to projects and worker groups."
-        actions={<button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>New region</button>}
+        actions={<Show when={!isDenied(regions.error)}><button type="button" class={ui.button} onClick={() => setDialog({ region: null })}>New region</button></Show>}
       />
       <QueryState
         query={regions}
         pending={<TableSkeleton label="Loading regions" columns={COLUMNS} />}
-        error={(error) => errorMessage(error, "Could not load regions.")}
+        error={(error) => loadError(error, "Could not load regions.", { forbidden: "Only installation administrators can view regions." })}
         empty={{
           when: (data) => data.regions.length === 0,
           title: "No regions configured.",

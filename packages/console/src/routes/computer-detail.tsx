@@ -4,9 +4,8 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { ComputerStatus } from "../features/computers/ComputerStatus";
 import { deploymentHref } from "../features/deployments/navigation";
-import { ApiError } from "../lib/api";
-import { errorMessage } from "../lib/error";
-import { useScopeIDs } from "../lib/scope";
+import { loadError } from "../lib/error";
+import { useScope, useScopeIDs } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
   getComputer,
@@ -20,19 +19,14 @@ import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList } from "../ui/Panel";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-function computerErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 404) return "Computer not found.";
-  return errorMessage(error, "Could not load this computer.", { forbidden: "You do not have permission to view this computer." });
-}
-
-const actionErrorMessage = (error: unknown, fallback: string) =>
-  errorMessage(error, fallback, { forbidden: "You do not have permission to do this." });
+const computerErrorMessage = (error: unknown) =>
+  loadError(error, "Could not load this computer.", { forbidden: "You do not have permission to view this computer." });
 
 // The sessions or commands using this Computer, paged, as the table of its tab.
 function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
@@ -59,7 +53,7 @@ function ComputerUsage(props: { computerID: string; scope: ComputerScope; kind: 
     <QueryState
       query={usage}
       pending={<TableSkeleton label={`Loading ${noun().other}`} columns={columns()} minWidth="min-w-0" />}
-      error={(error) => actionErrorMessage(error, `Could not load ${noun().other}.`)}
+      error={(error) => loadError(error, `Could not load ${noun().other}.`, { forbidden: `You do not have permission to view these ${noun().other}.` })}
       empty={{ when: (data) => data.pages.every(page => page.items.length === 0), title: `No ${noun().other} are using this computer.` }}
     >
       {() => (
@@ -93,6 +87,7 @@ const tabs = (secrets: number): TabItem<Tab>[] => [
 export function ComputerDetail() {
   const params = useParams();
   const scope = useScopeIDs();
+  const scopeState = useScope();
   const computerID = createMemo(() => params["computer_id"]?.trim() ?? "");
   const projectID = createMemo(() => scope().projectID);
   const environmentID = createMemo(() => scope().environmentID);
@@ -107,18 +102,22 @@ export function ComputerDetail() {
     retry: false,
   }));
 
+  const notFound = () => !computer.data && isNotFound(computer.error);
+  const environment = () => scopeState.selectedEnvironment()?.name;
   return (
     <Page>
       <PageHeader
-        title="Computer"
+        title={notFound() ? "Computer not found" : "Computer"}
         breadcrumb={[{ href: "/computers", label: "Computers" }]}
-        actions={<CopyLinkButton />}
+        actions={<Show when={!notFound()}><CopyLinkButton /></Show>}
         badge={<Show when={computer.data}>{(current) => <ComputerStatus computer={current()} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
 
       <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
-        <QueryState query={computer} pending={<PageSkeleton label="Loading computer" sections={["Sessions"]} rail="Computer details" />} error={computerErrorMessage}>
+        <QueryState query={computer} pending={<PageSkeleton label="Loading computer" sections={["Sessions"]} rail="Computer details" />} error={computerErrorMessage}
+          notFound={<NotFoundState noun="computer" id={computerID()} environment={environment()} back={{ href: "/computers", label: "Go to computers" }} />}
+        >
           {(current) => (
             <DetailLayout
               rail={

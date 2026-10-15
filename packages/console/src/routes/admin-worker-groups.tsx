@@ -11,7 +11,7 @@ import {
   type AdminRegion,
   type AdminWorkerGroup,
 } from "../lib/admin";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import { DataTable, RowActions, RowError } from "../ui/DataTable";
 import type { ActionMenuItem } from "../ui/ActionMenu";
 import { FormDialog, RevealDialog } from "../ui/Dialog";
@@ -19,7 +19,7 @@ import { Field, TextArea, TextInput } from "../ui/Field";
 import { IDText } from "../ui/IDText";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { isDenied, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { createRowActions } from "../ui/rowActions";
 import { Select } from "../ui/Select";
@@ -160,7 +160,7 @@ export function AdminWorkerGroups() {
       <PageHeader
         title="Worker groups"
         subtitle="Execution fleets, routing, and worker enrollment."
-        actions={<button type="button" class={ui.button} disabled={regionList().length === 0} onClick={() => setCreating(true)}>New worker group</button>}
+        actions={<Show when={!isDenied(groups.error)}><button type="button" class={ui.button} disabled={regionList().length === 0} onClick={() => setCreating(true)}>New worker group</button></Show>}
       />
       <Toolbar
         start={
@@ -176,7 +176,7 @@ export function AdminWorkerGroups() {
       <QueryState
         query={groups}
         pending={<TableSkeleton label="Loading worker groups" columns={COLUMNS} minWidth="min-w-220" />}
-        error={(error) => errorMessage(error, "Could not load worker groups.")}
+        error={(error) => loadError(error, "Could not load worker groups.", { forbidden: "Only installation administrators can view worker groups." })}
         empty={{
           when: (data) => data.worker_groups.length === 0,
           title: "No worker groups configured.",

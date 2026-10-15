@@ -1,9 +1,9 @@
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from "solid-js";
-import { errorMessage } from "../lib/error";
+import { loadError } from "../lib/error";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
-import { useScopeIDs } from "../lib/scope";
+import { useScope, useScopeIDs } from "../lib/scope";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { agentHref, listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { DataTable, LoadMore, PrimaryLink, type Noun } from "../ui/DataTable";
@@ -11,7 +11,7 @@ import { IDText } from "../ui/IDText";
 import { formatID } from "../ui/id";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -38,7 +38,7 @@ const DEPLOYMENT_ERROR_MESSAGES = {
   forbidden: "You do not have permission to view this deployment.",
   deployment_not_materialized: "Definitions for this deployment are not materialized yet.",
 };
-const deploymentError = (error: unknown, fallback: string) => errorMessage(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
+const deploymentError = (error: unknown, fallback: string) => loadError(error, fallback, DEPLOYMENT_ERROR_MESSAGES);
 
 type DefinitionPages<T> = {
   isPending: boolean;
@@ -78,6 +78,8 @@ function DefinitionTable<T>(props: { noun: Noun; columns: string[]; query: Defin
 export function DeploymentDetail() {
   const params = useParams();
   const scope = useScopeIDs();
+  const scopeState = useScope();
+  const environment = () => scopeState.selectedEnvironment()?.name;
   const deploymentID = createMemo(() => params["deployment_id"]?.trim() ?? "");
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
@@ -103,6 +105,7 @@ export function DeploymentDetail() {
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,
   }));
+  const notFound = () => !deployment.data && isNotFound(deployment.error);
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const agents = createInfiniteQuery(() => ({
@@ -140,11 +143,11 @@ export function DeploymentDetail() {
   return (
     <Page>
       <PageHeader
-        title={deployment.data?.version ?? "Deployment"}
+        title={notFound() ? "Deployment not found" : deployment.data?.version ?? "Deployment"}
         breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
         current={deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
-        actions={<CopyLinkButton />}
-        badge={<Show when={current.isSuccess}><StatusBadge resource="deployment" status={isCurrent() ? "current" : "not_current"} /></Show>}
+        actions={<Show when={!notFound()}><CopyLinkButton /></Show>}
+        badge={<Show when={current.isSuccess && !notFound()}><StatusBadge resource="deployment" status={isCurrent() ? "current" : "not_current"} /></Show>}
         meta={
           <Show when={deployment.data}>
             {(record) => (
@@ -159,7 +162,9 @@ export function DeploymentDetail() {
       />
 
       <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
-      <QueryState query={deployment} pending={<LinesSkeleton label="Loading deployment" />} error={(error) => deploymentError(error, "Could not load this deployment.")}>
+      <QueryState query={deployment} pending={<LinesSkeleton label="Loading deployment" />} error={(error) => deploymentError(error, "Could not load this deployment.")}
+        notFound={<NotFoundState noun="deployment" id={deploymentID()} environment={environment()} back={{ href: "/deployments", label: "Go to deployments" }} />}
+      >
         {() => (
           <>
             <Tabs id="deployment-sections" label="Deployment sections" items={TABS} selected={tab()} onSelect={setTab} />

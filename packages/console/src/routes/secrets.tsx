@@ -1,7 +1,7 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
-import { errorMessage } from "../lib/error";
+import { errorMessage, loadError } from "../lib/error";
 import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
 import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
 import { DataTable, RowActions } from "../ui/DataTable";
@@ -152,7 +152,7 @@ export function Secrets() {
         <QueryState
           query={secrets}
           pending={<TableSkeleton label="Loading secrets" columns={COLUMNS} minWidth="min-w-160" />}
-          error={(error) => errorMessage(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
+          error={(error) => loadError(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
           empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
         >
           {(data) => (
