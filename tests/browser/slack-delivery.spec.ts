@@ -49,14 +49,14 @@ test("Slack uncertainty can be checked and explicitly abandoned without cancelli
   const { writes } = await fixture(page);
   await expect(page.getByText("This does not mean it was never delivered.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Check Slack again" }).click();
-  await expect(page.getByText("A Slack delivery check is scheduled.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Check scheduled", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Stop delivery", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("This does not stop the agent.");
   expect(writes).toHaveLength(1);
   await dialog.getByRole("button", { name: "Stop delivery", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Delivery stopped; remote outcome unconfirmed", exact: true })).toBeVisible();
+  await expect(page.getByText("Delivery stopped; remote outcome unconfirmed", { exact: true })).toBeVisible();
   expect(writes).toEqual([
     { path: `${path}/slack-delivery/${postID}/check`, body: { attempt_id: attemptID, publication_revision: 2 } },
     { path: `${path}/slack-delivery/${postID}/abandon`, body: { attempt_id: attemptID, publication_revision: 2 } },
@@ -87,6 +87,7 @@ test("readers see unknown roots and retained stream evidence without recovery au
   await expect(page.getByText("Later messages remain blocked", { exact: false })).toBeVisible();
   await expect(page.getByText("Send work from the CLI or Slack; close the session from the CLI.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Load more delivery issues" }).click();
+  await page.getByRole("button", { name: /message 2/ }).click();
   await expect(page.getByText("Slack stream termination remains unconfirmed.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop delivery", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Check Slack again" })).toHaveCount(0);

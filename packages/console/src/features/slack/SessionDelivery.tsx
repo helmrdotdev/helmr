@@ -1,5 +1,5 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import type { Failure } from "../../lib/error";
 import { slackFailure } from "./failure";
 
@@ -15,7 +15,7 @@ import { Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
 import { LinesSkeleton } from "../../ui/Skeleton";
 import { RelativeTime } from "../../ui/RelativeTime";
-import { ui } from "../../ui/styles";
+import { cx, ui } from "../../ui/styles";
 
 function checkReason(post: SlackDeliveryPost): string {
   if (post.error === "history_no_match") return "No matching Slack message was found. This does not mean it was never delivered.";
@@ -26,6 +26,49 @@ function checkReason(post: SlackDeliveryPost): string {
 function title(post: SlackDeliveryPost): string {
   if (post.disposed_at) return post.confirmed_revision > 0 ? "Delivery stopped; some content confirmed" : "Delivery stopped; remote outcome unconfirmed";
   return post.status === "uncertain" ? "Delivery unconfirmed" : post.status === "suppressed" ? "Delivery suppressed" : "Delivery failed";
+}
+
+function roleLabel(post: SlackDeliveryPost): string {
+  return post.role === "intermediate" ? "Progress" : post.role === "request_feedback" ? "Acknowledgment" : post.role === "question" ? "Question" : post.role === "response" ? "Response" : "Task status";
+}
+
+// One delivery issue: a 36px row with its actions; opened, the message text and
+// what is known about its delivery, as plain text under the row.
+function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; canManage: boolean; checking: boolean; onCheck: () => void; onStop: () => void }) {
+  const [open, setOpen] = createSignal(props.open);
+  const post = () => props.post;
+  const bodyID = createUniqueId();
+  return (
+    <ListItem class="p-0!">
+      <div class="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1">
+        <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open()} aria-controls={bodyID} onClick={() => setOpen(!open())}>
+          <span aria-hidden="true" class={cx("text-chrome text-console-subtle transition-transform", open() && "rotate-90")}>▸</span>
+          <span class="font-medium text-console-text">{title(post())}</span>
+          <span class="truncate text-console-muted">· {roleLabel(post())} · message {post().sequence} · <RelativeTime value={post().created_at} /></span>
+        </button>
+        <Show when={post().attempt_id && !post().check_paused_at}><span class="font-mono text-chrome text-console-subtle">Check scheduled</span></Show>
+        <Show when={props.canManage && post().attempt_id}>
+          <Show when={post().check_paused_at}><button type="button" class={ui.compactButton} disabled={props.checking} onClick={() => props.onCheck()}>Check Slack again</button></Show>
+          <Show when={post().status === "uncertain" && !post().disposed_at}><button type="button" class={ui.compactButton} disabled={props.checking} onClick={() => props.onStop()}>Stop delivery</button></Show>
+        </Show>
+      </div>
+      <Show when={open()}>
+        <div id={bodyID} class="flex flex-col gap-1.5 px-3 pb-3 pl-8">
+          <Show when={!post().payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the session’s retention policy.</p>}>
+            <p class="m-0 whitespace-pre-wrap break-words text-console-text">{post().text}</p>
+          </Show>
+          <Show when={post().status === "uncertain"}><p class={ui.muted}>{checkReason(post())}</p></Show>
+          <Show when={!post().root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
+          <Show when={post().disposed_at}>
+            <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
+            <Show when={post().stream_state === "uncertain" || post().stream_state === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
+          </Show>
+          <Show when={post().message_ts && post().confirmed_revision > 0}><p class={ui.muted}>{post().confirmed_revision === post().desired_revision ? "Slack confirmed this message." : "Slack confirmed an earlier version of this message."}</p></Show>
+          <Show when={!props.canManage && post().attempt_id}><p class={ui.muted}>An organization owner or admin can check again or stop delivery.</p></Show>
+        </div>
+      </Show>
+    </ListItem>
+  );
 }
 
 export function SessionDelivery(props: { address: SessionAddress; live: boolean; canManage: boolean }) {
@@ -60,26 +103,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
           label="Slack delivery issues"
           footer={<LoadMore count={rows().length} noun={{ one: "delivery issue", other: "delivery issues" }} hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
         >
-          <For each={rows()}>{(post) => <ListItem class={ui.blockStack}>
-            <h3 class="m-0 text-body font-medium">{title(post)}</h3>
-            <p class={ui.muted}>{post.role === "intermediate" ? "Progress" : post.role === "request_feedback" ? "Request acknowledgment" : post.role === "question" ? "Question" : post.role === "response" ? "Response" : "Task status"} · Message {post.sequence} · <RelativeTime value={post.created_at} /></p>
-            <Show when={!post.payload_expired_at} fallback={<p class={ui.muted}>Message content expired under the session’s retention policy.</p>}><CodeBlock code={post.text} label={`Message ${post.sequence}`} /></Show>
-            <Show when={post.status === "uncertain"}><p>{checkReason(post)}</p></Show>
-            <Show when={post.attempt_id && !post.check_paused_at}><p class={ui.muted}>A Slack delivery check is scheduled.</p></Show>
-            <Show when={!post.root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
-            <Show when={post.disposed_at}>
-              <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
-              <Show when={post.stream_state === "uncertain" || post.stream_state === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
-            </Show>
-            <Show when={post.message_ts && post.confirmed_revision > 0}><p class={ui.muted}>{post.confirmed_revision === post.desired_revision ? "Slack confirmed this message." : "Slack confirmed an earlier version of this message."}</p></Show>
-            <Show when={props.canManage && post.attempt_id}>
-              <div class={ui.buttonGroup}>
-                <Show when={post.check_paused_at}><button type="button" class={ui.secondaryButton} disabled={checking()} onClick={() => void check(post)}>Check Slack again</button></Show>
-                <Show when={post.status === "uncertain" && !post.disposed_at}><button type="button" class={ui.secondaryButton} disabled={checking()} onClick={() => setSelected(post)}>Stop delivery</button></Show>
-              </div>
-            </Show>
-            <Show when={!props.canManage && post.attempt_id}><p class={ui.muted}>An organization owner or admin can check again or stop delivery.</p></Show>
-          </ListItem>}</For>
+          <For each={rows()}>{(post, index) => <DeliveryRow post={post} open={index() === 0} canManage={props.canManage} checking={checking()} onCheck={() => void check(post)} onStop={() => setSelected(post)} />}</For>
         </List>
       )}
     </QueryState>

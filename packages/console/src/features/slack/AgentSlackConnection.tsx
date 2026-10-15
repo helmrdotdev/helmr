@@ -4,10 +4,10 @@ import type { Failure } from "../../lib/error";
 import { usePermission } from "../../lib/me";
 import { useScope } from "../../lib/scope";
 import { authorizeAgentSlackConnection, beginAgentSlackConnection, disconnectAgentSlackConnection, getAgentSlackConnection, saveSlackAppCredentials, type AgentSlackAddress, type AgentSlackConnection as Connection } from "../../lib/slack";
-import { CodeBlock } from "../../ui/CodeBlock";
+import { JsonView } from "../../ui/PayloadView";
+import type { JsonValue } from "../../../../../sdk/typescript/src/contract";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { Field, FormActions, SecretInput, TextInput } from "../../ui/Field";
-import { IDText } from "../../ui/IDText";
 import { Notice } from "../../ui/Notice";
 import { DangerZone, DetailLayout, KeyValue, KeyValueList, Panel } from "../../ui/Panel";
 import { QueryState } from "../../ui/QueryState";
@@ -38,8 +38,8 @@ export function AgentSlackConnection(props: { agentName: string }) {
       fallback={
         <DetailLayout rail={<ConnectionFacts environmentName={environmentName()} />}>
           <Panel title="Slack connection">
-            <p class="m-0 text-body">Each agent can have its own Slack app in this environment. Its app name and avatar identify it in conversations.</p>
-            <Notice tone="info">{MANAGERS} can view and manage this connection. Ask one of them to connect, reauthorize or disconnect it.</Notice>
+            <p class="m-0 text-body">{MANAGERS} manage this connection. Ask one of them to connect, reauthorize or disconnect it.</p>
+            <p class={cx(ui.muted, "m-0")}>Each agent can have its own Slack app in this environment. Its app name and avatar identify it in conversations.</p>
           </Panel>
         </DetailLayout>
       }
@@ -49,13 +49,19 @@ export function AgentSlackConnection(props: { agentName: string }) {
   );
 }
 
-function ConnectionFacts(props: { environmentName: string; children?: JSX.Element }) {
+// The connection's known facts; nothing that would read "—". The scope is
+// shown until the app is installed, after which the page header says it.
+function ConnectionFacts(props: { environmentName: string; installed?: boolean; children?: JSX.Element }) {
   return (
-    <KeyValueList title="Connection">
-      <KeyValue label="Scope">This agent in {props.environmentName}. Kept across deployments.</KeyValue>
-      {props.children}
-      <KeyValue label="Managed by">{MANAGERS}</KeyValue>
-    </KeyValueList>
+    <div class="flex flex-col gap-1.5">
+      <KeyValueList title="Connection">
+        {props.children}
+        <Show when={!props.installed}>
+          <KeyValue label="Scope">This agent in {props.environmentName}. Kept across deployments.</KeyValue>
+        </Show>
+      </KeyValueList>
+      <p class={cx(ui.muted, "m-0 text-chrome")}>Managed by {MANAGERS.toLowerCase()}</p>
+    </div>
   );
 }
 
@@ -84,23 +90,18 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   });
 
   return (
-    <Show when={!slackNotConfigured(state.error)} fallback={<SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents in this installation cannot be connected to Slack." />}>
+    <Show when={!slackNotConfigured(state.error)} fallback={<Panel title="Slack connection"><SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents in this installation cannot be connected to Slack." /></Panel>}>
     <QueryState query={state} pending={<PageSkeleton label="Loading Slack connection" sections={["Slack connection"]} />} error={(failure) => slackFailure(failure, "The connection could not be loaded.").message}>
       {(data) => (
         <DetailLayout rail={
           <div class="flex flex-col gap-4">
-            <ConnectionFacts environmentName={props.environmentName}>
+            <ConnectionFacts environmentName={props.environmentName} installed={!!data().connection?.installation_id}>
               <KeyValue label="Status">
                 <Show when={data().connection} fallback="Not connected">{(connection) => <StatusBadge resource="slack_connection" status={connection().status} />}</Show>
               </KeyValue>
-              <Show when={data().connection}>
-                {(connection) => <>
-                  <KeyValue label="App">{connection().app_name}</KeyValue>
-                  <KeyValue label="App ID"><IDText value={connection().app_id ?? ""} /></KeyValue>
-                  <KeyValue label="Workspace">{connection().workspace_name}</KeyValue>
-                  <KeyValue label="Workspace ID"><IDText value={connection().team_id ?? ""} /></KeyValue>
-                </>}
-              </Show>
+              <Show when={data().connection?.app_name}>{(name) => <KeyValue label="App">{name()}</KeyValue>}</Show>
+              <Show when={data().connection?.workspace_name}>{(name) => <KeyValue label="Workspace">{name()}</KeyValue>}</Show>
+              <Show when={data().connection?.app_id}>{(id) => <KeyValue label="App ID"><span class="font-mono">{id()}</span></KeyValue>}</Show>
             </ConnectionFacts>
             <Show when={data().connection}>
               {(connection) => (
@@ -225,10 +226,10 @@ function Setup(props: {
   const step = () => props.connection.credentials_configured ? 3 : created() ? 2 : 1;
   const createContent = () => (
     <div class={ui.blockStack}>
-      <Show when={props.createAppURL}>{(url) => <div><a class={ui.secondaryButton} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
-      <CodeBlock code={JSON.stringify(props.manifest ?? {}, null, 2)} copy label="App manifest" />
+      <Show when={props.createAppURL}>{(url) => <div><a class={ui.button} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
+      <JsonView value={(props.manifest ?? {}) as unknown as JsonValue} label="App manifest" kind="manifest" />
       <AppIconPicker seed={props.iconSeed} agentName={props.agentName} />
-      <div><button type="button" class={ui.button} onClick={() => setCreated(true)}>I created the app</button></div>
+      <div><button type="button" class={ui.secondaryButton} onClick={() => setCreated(true)}>I created the app</button></div>
     </div>
   );
   return (

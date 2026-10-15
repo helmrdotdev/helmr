@@ -131,7 +131,7 @@ test("viewer sees who manages an Agent's Slack connection without reading it", a
   const paths = await catalog(page, { current: false, defined: false, role: "viewer" });
   await page.goto(`/agents/support/slack?${scope}`);
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
-  await expect(page.getByText("Organization owners and admins can view and manage this connection.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Organization owners and admins manage this connection.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: /Connect Slack|Disconnect|Discard setup|Reauthorize/ })).toHaveCount(0);
   expect(paths.some(path => path.endsWith("/slack"))).toBe(false);
 });

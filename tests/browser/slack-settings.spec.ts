@@ -46,8 +46,10 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   await expect(panel).toContainText("Slack setup 1 of 4");
   await expect(currentStep(panel)).toContainText("Create the Slack app");
   await expect(panel.getByRole("link", { name: "Create app in Slack" })).toHaveAttribute("href", "https://api.slack.com/apps?new_app=1");
-  await expect(panel.getByLabel("App manifest")).toContainText("registration-A/events");
-  await expect(panel.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+  const manifest = panel.getByLabel("App manifest");
+  await manifest.getByRole("button", { name: "Raw", exact: true }).click();
+  await expect(manifest).toContainText("registration-A/events");
+  await expect(manifest.getByRole("button", { name: "Copy JSON" })).toBeVisible();
   await expect(panel.getByRole("button", { name: "Install app in Slack" })).toHaveCount(0);
   const icons = panel.getByRole("group", { name: "App icon" });
   await expect(icons.getByRole("radio")).toHaveCount(8);

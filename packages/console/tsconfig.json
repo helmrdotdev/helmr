@@ -9,6 +9,6 @@
     "module": "ESNext",
     "moduleResolution": "Bundler"
   },
-  "include": ["src", "vite.config.ts"],
+  "include": ["src", "vite.config.ts", "dev-states.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

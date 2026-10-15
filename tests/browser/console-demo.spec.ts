@@ -62,7 +62,7 @@ test("an Agent's Slack tab explains that this installation has no Slack integrat
   await login(page);
   await page.goto(`/agents/demo-agent/slack?project=${PROJECT_ID}&environment=${DEMO_ENVIRONMENT_ID}`);
   await expect(page.getByText("Slack is not set up for this Helmr installation.")).toBeVisible();
-  await expect(page.getByText(/must enable the Slack integration on its control plane/)).toBeVisible();
+  await expect(page.getByText(/The operator enables it on the control plane/)).toBeVisible();
   await expect(page.getByText("service is unavailable")).toBeHidden();
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await page.getByText("Technical details").click();
