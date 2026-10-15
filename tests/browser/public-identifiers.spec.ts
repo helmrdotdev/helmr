@@ -17,7 +17,7 @@ test("Console IDs remain usable through API operations and display-name edits", 
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project);
   await page.getByLabel("Name", { exact: true }).fill("Renamed project");
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   expect((await (await page.request.get(base)).json()).project).toBe(project);
   expect((await page.request.patch(base, { data: { name: "Renamed", project: "replacement" } })).status()).toBe(400);
   await page.goto(`/settings/environments?${scope}`);
@@ -34,7 +34,10 @@ test("Console IDs remain usable through API operations and display-name edits", 
   await expect(dialog).toHaveCount(0);
   expect((await page.request.patch(`${base}/environments/production`, { data: { name: "Live", environment: "replacement" } })).status()).toBe(400);
   await page.goto(`/settings/secrets?${scope}`);
-  await page.getByRole("button", { name: "Set secret in Live workspace", exact: true }).click();
+  // With no secrets yet, the empty state names the Environment and offers the one action.
+  await expect(page.getByText("No secrets in Live workspace yet.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Set secret in Live workspace", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Set secret", exact: true }).click();
   await page.getByLabel("Secret ID", { exact: true }).fill("GITHUB_TOKEN");
   await page.getByLabel("Value", { exact: true }).fill("synthetic-browser-value");
   await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();

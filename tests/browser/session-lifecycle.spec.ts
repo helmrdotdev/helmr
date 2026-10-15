@@ -133,7 +133,7 @@ for (const action of ["interrupt", "cancel"] as const) {
     const dialog = page.getByRole("dialog", { name: label });
     await dialog.getByRole("button", { name: label, exact: true }).click();
     await expect(dialog.getByRole("alert")).toContainText("Reply unavailable");
-    await dialog.getByRole("button", { name: "Keep", exact: true }).click();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: label, exact: true }).click();
     await dialog.getByRole("button", { name: label, exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -188,7 +188,7 @@ test("Cancel session sits in a danger zone after the log and confirms before can
   await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Cancel session" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Keep", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(mutations).toHaveLength(0);
   await zone.getByRole("button", { name: "Cancel session", exact: true }).click();

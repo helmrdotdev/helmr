@@ -106,7 +106,7 @@ test("Agent Slack setup can be discarded only after confirming", async ({ page }
   await zone.getByRole("button", { name: "Discard setup", exact: true }).click();
   const confirmation = page.getByRole("dialog", { name: "Discard setup" });
   await expect(confirmation).toContainText("Discard this setup to release the agent’s connection slot.");
-  await confirmation.getByRole("button", { name: "Keep connection", exact: true }).click();
+  await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(confirmation).toHaveCount(0);
   expect(deletions).toEqual([]);
   await zone.getByRole("button", { name: "Discard setup", exact: true }).click();

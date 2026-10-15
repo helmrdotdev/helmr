@@ -157,7 +157,6 @@ export function ConfirmDialog(props: {
   children: JSX.Element;
   confirmLabel: string;
   busyLabel?: string;
-  cancelLabel?: string;
   tone?: "default" | "danger";
   target?: JSX.Element;
   environment?: { name: string; colorHex: string | undefined; protected?: boolean | undefined } | undefined;
@@ -182,27 +181,29 @@ export function ConfirmDialog(props: {
   };
 
   return (
-    <Dialog title={props.title} onClose={props.onClose} closeDisabled={busy()}>
-      <Show when={props.target || props.environment}>
-        <p class="mb-2 flex flex-wrap items-center gap-1.5 font-mono text-chrome text-console-text">
-          {props.target}
-          <Show when={props.environment}>
-            {(environment) => (
-              <>
-                <Show when={props.target}><span class="text-console-subtle">in</span></Show>
-                <EnvChip name={environment().name} colorHex={environment().colorHex} protected={environment().protected} />
-              </>
-            )}
-          </Show>
-        </p>
-      </Show>
-      <div class={ui.modalIntro}>{props.children}</div>
+    <Dialog title={props.title} onClose={props.onClose} closeDisabled={busy()} bodyClass="flex flex-col">
+      <div class="min-h-0 overflow-y-auto p-3">
+        <Show when={props.target || props.environment}>
+          <p class="mb-2 flex flex-wrap items-center gap-1.5 font-mono text-chrome text-console-text">
+            {props.target}
+            <Show when={props.environment}>
+              {(environment) => (
+                <>
+                  <Show when={props.target}><span class="text-console-subtle">in</span></Show>
+                  <EnvChip name={environment().name} colorHex={environment().colorHex} protected={environment().protected} />
+                </>
+              )}
+            </Show>
+          </p>
+        </Show>
+        <div class="text-body leading-normal text-console-muted">{props.children}</div>
+      </div>
       <Show when={error()}>
-        <p class={ui.error} role="alert">{error()}</p>
+        <p class="m-0 shrink-0 border-t border-console-border-soft px-3 py-2 text-body font-medium text-console-danger" role="alert">{error()}</p>
       </Show>
-      <div class={ui.modalActions}>
+      <div class={ui.dialogFooter}>
         <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={props.onClose}>
-          {props.cancelLabel ?? "Cancel"}
+          Cancel
         </button>
         <button
           type="button"

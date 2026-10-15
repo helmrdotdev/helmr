@@ -86,7 +86,7 @@ test("Project settings shorten with confirmation, persist, and disable expiry", 
   await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("30");
   await expect(page.getByText("Open sessions keep their history.")).toBeVisible();
-  await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toHaveCount(0);
   await period(page).fill("7");
   await save(page).click();
   await expect(confirmShorten(page)).toContainText("permanently deleted");
@@ -116,7 +116,7 @@ test("custom seconds round-trip exactly and hours normalize", async ({ page }) =
   await page.goto("/settings/project");
   await expect(period(page)).toHaveValue("3601");
   await expect(unit(page)).toHaveText("Seconds");
-  await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toHaveCount(0);
   await period(page).fill("48");
   await choose(page, unit(page), "Hours");
   await save(page).click();

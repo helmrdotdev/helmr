@@ -82,7 +82,6 @@ export function IdentitySettings(props: { userID: string; organizationID: string
         title="Unlink Slack identity"
         confirmLabel="Unlink identity"
         busyLabel="Unlinking..."
-        cancelLabel="Keep identity linked"
         tone="danger"
         target={<IDText value={link().slack_user_id} />}
         errorMessage={(e) => slackFailure(e, "Slack identity could not be unlinked.").message}

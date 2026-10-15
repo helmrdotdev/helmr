@@ -75,8 +75,6 @@ function SecretDialog(props: {
         environmentName={props.environmentName}
         environmentColorHex={props.environmentColorHex}
         projectName={props.projectName}
-        projectID={props.projectID}
-        environmentID={props.environmentID}
       />
       <Field label="Secret ID">
         <TextInput class="font-mono" value={name()} disabled={!!props.secret} autocomplete="off" spellcheck={false} autofocus={!props.secret} onInput={(event) => setName(event.currentTarget.value)} />
@@ -99,7 +97,7 @@ function SecretRow(props: {
     <tr>
       <td><code>{props.secret.secret}</code></td>
       <td><StatusBadge resource="secret" status={props.secret.status} /></td>
-      <td><RelativeTime value={props.secret.rotated_at} fallback="never" /></td>
+      <td><RelativeTime value={props.secret.rotated_at} fallback="—" /></td>
       <td><RelativeTime value={props.secret.created_at} /></td>
       <RowActions
         label={`Actions for ${props.secret.secret}`}
@@ -142,7 +140,7 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <Show when={!isDenied(secrets.error)}>
+          <Show when={!isDenied(secrets.error) && secrets.data?.secrets.length !== 0}>
             <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
               {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
             </button>
@@ -155,7 +153,12 @@ export function Secrets() {
           query={secrets}
           pending={<TableSkeleton label="Loading secrets" columns={COLUMNS} minWidth="min-w-160" />}
           error={(error) => loadError(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
-          empty={{ when: (data) => data.secrets.length === 0, title: "No secrets found." }}
+          empty={{
+            when: (data) => data.secrets.length === 0,
+            title: `No secrets in ${edited.environment()?.name ?? "this environment"} yet.`,
+            hint: "Secrets hold tokens and keys your agents read at run time, such as an OpenAI or Slack token.",
+            action: <button type="button" class={ui.button} disabled={!edited.environment()} onClick={() => edit(null)}>Set secret</button>,
+          }}
         >
           {(data) => (
             <DataTable columns={COLUMNS} minWidth="min-w-160">

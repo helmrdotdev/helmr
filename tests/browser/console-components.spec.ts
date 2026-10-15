@@ -317,13 +317,13 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
   const readSessions = form.getByRole("checkbox", { name: "Read sessions", exact: true });
   await expect(readSessions).toBeChecked();
-  await expect(readSessions).toHaveAccessibleDescription("Allow automation to read session state in the selected project and environment.");
-  await expect(form.getByText("Allow automation to delete computers.", { exact: true })).toBeVisible();
+  await expect(readSessions).toHaveAccessibleDescription("Read sessions and their history.");
+  await expect(form.getByText("Delete computers and their disks.", { exact: true })).toBeVisible();
   await form.getByRole("checkbox", { name: "Select all computers" }).check();
   // The long form scrolls inside the dialog; its actions stay in view.
   await page.setViewportSize({ width: 1280, height: 600 });
-  await expect(form.getByRole("button", { name: "Generate", exact: true })).toBeInViewport();
-  await form.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(form.getByRole("button", { name: "Generate key", exact: true })).toBeInViewport();
+  await form.getByRole("button", { name: "Generate key", exact: true }).click();
 
   const reveal = page.getByRole("dialog", { name: "API key generated" });
   await expect(form).toHaveCount(0);
@@ -559,18 +559,20 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
   const table = page.getByRole("table");
   await expect(table).toHaveCount(1);
-  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Email", "Role", "Status", "Joined", "Actions"]);
+  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Role", "Status", "Since", "Actions"]);
   const rows = table.getByRole("row");
   await expect(rows).toHaveCount(4);
   await expect(rows.nth(1)).toContainText("Local");
-  await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
-  await expect(rows.nth(2)).toContainText("Second Member");
-  await expect(rows.nth(2).getByRole("cell").nth(3)).toHaveText("Active");
+  await expect(rows.nth(1)).toContainText("You");
+  await expect(page.getByRole("button", { name: "Actions for Local", exact: true })).toHaveCount(0);
+  await expect(rows.nth(1).getByRole("cell").nth(2)).toHaveText("Active");
+  await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Membersecond@example.test");
+  await expect(rows.nth(2).getByRole("cell").nth(2)).toHaveText("Active");
   // The invitation follows the members: its invited email is the member, its
   // status Invited.
   await expect(rows.nth(3).getByRole("cell").nth(0)).toHaveText("pending@example.test");
-  await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Viewer");
-  await expect(rows.nth(3).getByRole("cell").nth(3)).toHaveText("Invited");
+  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Viewer");
+  await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Invited");
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
 });
@@ -604,7 +606,7 @@ test("the members table footer loads more invitations and counts every row", asy
   await expect(rows).toHaveCount(5);
   await expect(rows.nth(3).getByRole("cell").first()).toHaveText("pending@example.test");
   await expect(rows.nth(4).getByRole("cell").first()).toHaveText("earlier@example.test");
-  await expect(rows.nth(4).getByRole("cell").nth(3)).toHaveText("Invited");
+  await expect(rows.nth(4).getByRole("cell").nth(2)).toHaveText("Invited");
 });
 
 test("invitations that fail to load leave the members and offer Retry", async ({ page }) => {
@@ -643,13 +645,13 @@ test("removing a member and revoking an invitation each confirm before the reque
   expect(state.deletions).toEqual(["/api/members/member-2"]);
 
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke invitation", exact: true }).click();
   const revoke = page.getByRole("dialog", { name: "Revoke invitation" });
   await expect(revoke).toContainText("pending@example.test");
   await revoke.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(state.deletions).toEqual(["/api/members/member-2"]);
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Revoke invitation", exact: true }).click();
   await revoke.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(revoke).toHaveCount(0);
   expect(state.deletions).toEqual(["/api/members/member-2", "/api/invitations/inv-1"]);

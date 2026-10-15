@@ -55,7 +55,7 @@ test("settings navigation groups pages by Account, Project and Organization", as
   await fixture(page);
   await page.goto(`/settings?${scope}`);
   await expect(page).toHaveURL("/settings/project");
-  await expect(page.getByRole("heading", { name: "Project", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   await expect(page.getByText("Region Amsterdam")).toBeVisible();
 
   const navigation = page.getByRole("navigation", { name: "Settings sections" });
@@ -214,7 +214,7 @@ test("API keys list, generate and revoke in the selected Environment, not the ta
   const form = page.getByRole("dialog", { name: "Generate API key" });
   await expect(form.getByLabel("API key target environment")).toContainText("Staging");
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
-  await form.getByRole("button", { name: "Generate", exact: true }).click();
+  await form.getByRole("button", { name: "Generate key", exact: true }).click();
   const reveal = page.getByRole("dialog", { name: "API key generated" });
   await reveal.getByRole("button", { name: "Done", exact: true }).click();
   await expect(reveal).toHaveCount(0);

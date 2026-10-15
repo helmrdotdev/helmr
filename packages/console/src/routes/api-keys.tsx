@@ -13,7 +13,7 @@ import {
 } from "../lib/api-keys";
 import { environmentChip } from "../features/projects/display";
 import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
-import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { CheckboxGroup, Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
@@ -25,7 +25,9 @@ import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 import { EnvironmentTarget } from "../ui/EnvChip";
 
-const COLUMNS = ["Name", "Status", "Key prefix", "Permissions", "Last used", "Created", "Expires", { label: "Actions", srOnly: true }] as const;
+const COLUMNS = ["Name", "Key", "Permissions", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
+// "All" mixes active, expired and revoked keys, so it adds their status.
+const ALL_COLUMNS = ["Name", "Status", "Key", "Permissions", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -55,28 +57,28 @@ const API_KEY_PERMISSION_GROUPS: { label: string; options: { value: ApiKeyScope;
   {
     label: "Sessions",
     options: [
-      { value: "sessions:read", label: "Read sessions", description: "Allow automation to read session state in the selected project and environment." },
-      { value: "sessions:create", label: "Start agents", description: "Allow automation to start declared agents." },
-      { value: "sessions:send", label: "Send session work and messages", description: "Allow automation to enqueue turns and send session or exact turn messages." },
-      { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the session subtree and hold queued work until resumed." },
-      { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
-      { value: "sessions:close", label: "Close sessions", description: "Drain accepted work and close sessions." },
-      { value: "sessions:cancel", label: "Cancel sessions", description: "Cancel queued turns, stop active execution, and close sessions." },
-      { value: "asks:answer", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
+      { value: "sessions:read", label: "Read sessions", description: "Read sessions and their history." },
+      { value: "sessions:create", label: "Start agents", description: "Start sessions of the agents in the deployment." },
+      { value: "sessions:send", label: "Send work to sessions", description: "Send new work and messages to running sessions." },
+      { value: "sessions:interrupt", label: "Interrupt sessions", description: "Stop running work and hold what is queued." },
+      { value: "sessions:resume", label: "Resume held work", description: "Release held work so it runs again." },
+      { value: "sessions:close", label: "Close sessions", description: "Finish accepted work, then close the session." },
+      { value: "sessions:cancel", label: "Cancel sessions", description: "Stop all work now and close the session." },
+      { value: "asks:answer", label: "Answer questions", description: "Answer questions that agents ask." },
     ],
   },
   {
     label: "Computers",
     options: [
-      { value: "computers:read", label: "Read computers", description: "Allow automation to read computer state and configuration." },
-      { value: "computers:create", label: "Create computers", description: "Allow automation to create declared computers." },
-      { value: "computers:update", label: "Update computer retention", description: "Allow automation to change computer retention policies." },
-      { value: "computers:delete", label: "Delete computers", description: "Allow automation to delete computers." },
-      { value: "computer-exec:create", label: "Run computer commands", description: "Allow automation to start commands on computers." },
+      { value: "computers:read", label: "Read computers", description: "Read computers and their settings." },
+      { value: "computers:create", label: "Create computers", description: "Create computers from the deployment's templates." },
+      { value: "computers:update", label: "Change computer retention", description: "Change how long computers are kept." },
+      { value: "computers:delete", label: "Delete computers", description: "Delete computers and their disks." },
+      { value: "computer-exec:create", label: "Run commands on computers", description: "Start commands on computers." },
     ],
   },
-  { label: "Secrets", options: [{ value: "secrets:write", label: "Manage secrets", description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment." }] },
-  { label: "Deployments", options: [{ value: "deployments:write", label: "Deploy bundles", description: "Allow automation to upload, finalize, and promote deployment bundles in the selected project and environment." }] },
+  { label: "Secrets", options: [{ value: "secrets:write", label: "Manage secrets", description: "List, set, rotate and revoke secrets." }] },
+  { label: "Deployments", options: [{ value: "deployments:write", label: "Deploy", description: "Upload deployments and promote one to current." }] },
 ];
 
 const PERMISSION_LABELS = new Map<string, string>(API_KEY_PERMISSION_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.label] as const)));
@@ -93,22 +95,27 @@ function validateLabel(value: string): string | null {
   return null;
 }
 
-function permissionText(keyItem: ApiKeySummary): string {
-  const scopes = (keyItem.permissions ?? []).flatMap((grant) => grant.scopes);
-  if (scopes.length === 0) return "Not reported";
-  return scopes.map((scope) => PERMISSION_LABELS.get(scope) ?? scope).join(", ");
+// A key's permissions as a count; their names are its tooltip and label.
+function Permissions(props: { keyItem: ApiKeySummary }) {
+  const labels = () => (props.keyItem.permissions ?? []).flatMap((grant) => grant.scopes).map((scope) => PERMISSION_LABELS.get(scope) ?? scope);
+  return (
+    <Show when={labels().length > 0} fallback={<EmptyCell />}>
+      <span class="cursor-help underline decoration-dotted underline-offset-4" title={labels().join("\n")} aria-label={labels().join(", ")}>
+        {labels().length} {labels().length === 1 ? "permission" : "permissions"}
+      </span>
+    </Show>
+  );
 }
 
-function ApiKeyRow(props: { keyItem: ApiKeySummary; onRevoke: (keyItem: ApiKeySummary) => void }) {
+function ApiKeyRow(props: { keyItem: ApiKeySummary; status: boolean; onRevoke: (keyItem: ApiKeySummary) => void }) {
   return (
     <tr>
-      <td>{props.keyItem.name}</td>
-      <td><StatusBadge resource="api_key" status={props.keyItem.status} /></td>
-      <td><code>{props.keyItem.key_prefix}...</code></td>
-      <td>{permissionText(props.keyItem)}</td>
-      <td><RelativeTime value={props.keyItem.last_used_at} fallback="never" /></td>
-      <td><RelativeTime value={props.keyItem.created_at} /></td>
-      <td><RelativeTime value={props.keyItem.expires_at} fallback="never" /></td>
+      <td><span class="font-mono text-chrome">{props.keyItem.name}</span></td>
+      <Show when={props.status}><td><StatusBadge resource="api_key" status={props.keyItem.status} /></td></Show>
+      <td><code>{props.keyItem.key_prefix}…</code></td>
+      <td><Permissions keyItem={props.keyItem} /></td>
+      <td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
+      <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td>
       <RowActions
         label={`Actions for ${props.keyItem.name}`}
         items={props.keyItem.status === "active" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.keyItem) }] : []}
@@ -162,8 +169,8 @@ function IssueApiKeyDialog(props: {
   return (
     <FormDialog
       title="Generate API key"
-      intro="Create a machine credential for automation. Limit it to the permissions this workflow needs."
-      submitLabel="Generate"
+      intro="A key for automation such as CI. It can only do what you allow below."
+      submitLabel="Generate key"
       busyLabel="Generating..."
       busy={submitting()}
       error={error()}
@@ -175,8 +182,6 @@ function IssueApiKeyDialog(props: {
         environmentName={props.environmentName}
         environmentColorHex={props.environmentColorHex}
         projectName={props.projectName}
-        projectID={props.projectID}
-        environmentID={props.environmentID}
       />
       <Field label="Name">
         <TextInput value={label()} maxLength={64} autocomplete="off" onInput={(event) => setLabel(event.currentTarget.value)} autofocus />
@@ -215,6 +220,10 @@ export function ApiKeys() {
     retry: false,
   }));
   const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
+  const columns = () => (filter() === "all" ? ALL_COLUMNS : COLUMNS);
+  // While the active list is empty its empty state offers the one action.
+  const noKeys = () => filter() === "active" && keys.data !== undefined && keyItems().length === 0;
+  const generate = () => setIssuing(edited.target());
 
   const invalidateApiKeys = (projectID: string, environmentID: string) =>
     queryClient.invalidateQueries({ queryKey: ["api-keys", projectID, environmentID] });
@@ -225,12 +234,12 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Limited to the permissions chosen when generated."
         actions={
-          <Show when={!isDenied(keys.error)}>
+          <Show when={!isDenied(keys.error) && !noKeys()}>
             <button
               class={ui.button}
               type="button"
               disabled={!edited.projectID() || !edited.environment()}
-              onClick={() => setIssuing(edited.target())}
+              onClick={generate}
             >
               {edited.environment() ? `Generate API key in ${edited.environment()!.name}` : "Generate API key"}
             </button>
@@ -245,17 +254,22 @@ export function ApiKeys() {
 
         <QueryState
           query={keys}
-          pending={<TableSkeleton label="Loading API keys" columns={COLUMNS} minWidth="min-w-270" />}
+          pending={<TableSkeleton label="Loading API keys" columns={columns()} minWidth="min-w-200" />}
           error={(error) => loadError(error, "Could not load API keys.", API_KEY_ERROR_MESSAGES)}
-          empty={{ when: (data) => data.pages.every((page) => page.api_keys.length === 0), title: "No API keys found." }}
+          empty={{
+            when: (data) => data.pages.every((page) => page.api_keys.length === 0),
+            title: filter() === "active" ? `No API keys in ${edited.environment()?.name ?? "this environment"} yet.` : "No API keys match this filter.",
+            hint: filter() === "active" ? "API keys let CI and scripts deploy and start sessions without signing in." : undefined,
+            action: filter() === "active" ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={generate}>Generate API key</button> : undefined,
+          }}
         >
           {() => (
             <DataTable
-              columns={COLUMNS}
-              minWidth="min-w-270"
+              columns={columns()}
+              minWidth="min-w-200"
               footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >
-              <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} onRevoke={revoke} />}</For>
+              <For each={keyItems()}>{(keyItem) => <ApiKeyRow keyItem={keyItem} status={filter() === "all"} onRevoke={revoke} />}</For>
             </DataTable>
           )}
         </QueryState>

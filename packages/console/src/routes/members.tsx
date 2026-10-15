@@ -18,7 +18,8 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { DataTable, EmptyCell, LoadMore, RowActions, RowError } from "../ui/DataTable";
+import { DataTable, LoadMore, RowActions, RowError } from "../ui/DataTable";
+import { statusLabel } from "../ui/label";
 import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
@@ -211,10 +212,27 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
   );
 }
 
-// One table for the organization: members, then pending invitations in the
-// server's order (the invited email as the member, invited time as joined), with
-// the status telling them apart.
-const COLUMNS = ["Member", "Email", "Role", "Status", "Joined", { label: "Actions", srOnly: true }] as const;
+// Members and pending invitations in one table: a member's name over their
+// email, or an invitee's email; "Since" is when they joined or were invited.
+// Roles change from the row menu; your own row has none.
+const COLUMNS = ["Member", "Role", "Status", "Since", { label: "Actions", srOnly: true }] as const;
+
+function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean }) {
+  return (
+    <div class="grid py-1 leading-tight">
+      <span class="flex items-center gap-1.5">
+        <span class="font-medium text-console-text">{props.name}</span>
+        <Show when={props.you}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">You</span></Show>
+      </span>
+      <Show when={props.email && props.email !== props.name}><span class="text-chrome text-console-muted">{props.email}</span></Show>
+    </div>
+  );
+}
+
+// The roles the signed-in account may give another member.
+function assignableRoles(currentUserRole: string | null | undefined): SelectOption<MemberRole>[] {
+  return currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS;
+}
 
 function MemberRow(props: {
   member: OrganizationMember;
@@ -223,45 +241,25 @@ function MemberRow(props: {
   currentUserRole: string | null | undefined;
   busy: boolean;
   error: string | null;
-  onRoleChange: (member: OrganizationMember, role: MemberRole) => void;
+  onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.role === "owner";
-  const isActive = () => props.member.status === "active";
-  const roleOptions = createMemo<SelectOption<MemberRole>[]>(() => {
-    if (props.isCurrentUser) {
-      if (props.member.role === "owner") return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
-      if (props.member.role === "admin") return [NON_OWNER_ROLE_OPTIONS[0]!];
-      return NON_OWNER_ROLE_OPTIONS.filter((option) => option.value === props.member.role);
-    }
-    if (props.currentUserRole === "owner") return OWNER_ROLE_OPTIONS;
-    return NON_OWNER_ROLE_OPTIONS;
-  });
-  const canChangeRole = () => isActive() && props.canManage && id() !== "" && roleOptions().length > 1 && (!isOwner() || props.currentUserRole === "owner");
-  const canRemove = () => isActive() && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
+  const manageable = () => props.member.status === "active" && props.canManage && id() !== "" && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
   return (
     <>
       <tr>
-        <td><strong class="font-medium text-console-text">{memberName(props.member)}</strong></td>
-        <td><Show when={props.member.email} fallback={<EmptyCell />}>{props.member.email}</Show></td>
-        <td>
-          <Show when={canChangeRole()} fallback={<StatusBadge resource="role" status={props.member.role} />}>
-            <Select<MemberRole>
-              value={props.member.role}
-              options={roleOptions()}
-              onChange={(nextRole) => props.onRoleChange(props.member, nextRole)}
-              disabled={props.busy}
-              ariaLabel={`Role for ${memberName(props.member)}`}
-              minWidth="132px"
-            />
-          </Show>
-        </td>
+        <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} /></td>
+        <td>{statusLabel(props.member.role)}</td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
-          items={canRemove() ? [{ label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) }] : []}
+          items={manageable() ? [
+            { label: "Change role", disabled: props.busy, onSelect: () => props.onChangeRole(props.member) },
+            { label: "Remove", disabled: props.busy, tone: "danger", onSelect: () => props.onRemove(props.member) },
+          ] : []}
         />
       </tr>
       <RowError columns={COLUMNS.length} message={props.error} />
@@ -277,16 +275,43 @@ function InvitationRow(props: {
   const id = () => invitationResourceID(props.invitation);
   return (
     <tr>
-      <td><strong class="font-medium text-console-text">{props.invitation.email}</strong></td>
-      <td>{props.invitation.email}</td>
-      <td><StatusBadge resource="role" status={props.invitation.role} /></td>
+      <td><MemberCell name={props.invitation.email} /></td>
+      <td>{statusLabel(props.invitation.role)}</td>
       <td><StatusBadge resource="member" status="invited" /></td>
       <td><RelativeTime value={props.invitation.created_at} /></td>
       <RowActions
         label={`Actions for ${props.invitation.email}`}
-        items={props.canManage && id() !== "" ? [{ label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.invitation) }] : []}
+        items={props.canManage && id() !== "" ? [{ label: "Revoke invitation", tone: "danger", onSelect: () => props.onRevoke(props.invitation) }] : []}
       />
     </tr>
+  );
+}
+
+function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<MemberRole>[]; onClose: () => void; onSave: (role: MemberRole) => Promise<void> }) {
+  const [role, setRole] = createSignal<MemberRole>(props.member.role as MemberRole);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  return (
+    <FormDialog
+      title="Change role"
+      intro={<>Choose the role for <strong>{memberName(props.member)}</strong>. It applies across the organization at once.</>}
+      submitLabel="Change role"
+      busyLabel="Changing..."
+      busy={busy()}
+      disabled={role() === props.member.role}
+      error={error()}
+      onClose={props.onClose}
+      onSubmit={async () => {
+        setBusy(true); setError(null);
+        try { await props.onSave(role()); props.onClose(); }
+        catch (cause) { setError(membersErrorMessage(cause)); }
+        finally { setBusy(false); }
+      }}
+    >
+      <Field label="Role">
+        <Select<MemberRole> value={role()} options={props.roles} onChange={setRole} minWidth="100%" />
+      </Field>
+    </FormDialog>
   );
 }
 
@@ -327,13 +352,12 @@ export function Members() {
     ]);
   };
 
+  const [changingRole, setChangingRole] = createSignal<OrganizationMember | null>(null);
   const changeMemberRole = async (member: OrganizationMember, role: MemberRole) => {
     const id = memberResourceID(member);
     if (!id || role === member.role) return;
-    await memberRows.run(id, "role", async () => {
-      await updateMemberRole(id, role, member.role);
-      await queryClient.invalidateQueries({ queryKey: ["members"] });
-    }, membersErrorMessage);
+    await updateMemberRole(id, role, member.role);
+    await queryClient.invalidateQueries({ queryKey: ["members"] });
   };
 
   const isCurrentUser = (member: OrganizationMember) =>
@@ -361,7 +385,7 @@ export function Members() {
 
       <QueryState
         query={members}
-        pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-210" />}
+        pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-160" />}
         error={(error) => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}
       >
         {(data) => <>
@@ -376,7 +400,7 @@ export function Members() {
           </Show>
           <DataTable
             columns={COLUMNS}
-            minWidth="min-w-210"
+            minWidth="min-w-160"
             footer={<LoadMore count={data().members.length} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
           >
             <For each={data().members}>
@@ -388,7 +412,7 @@ export function Members() {
                   currentUserRole={me.data?.role}
                   busy={memberRows.busy(memberResourceID(member))}
                   error={memberRows.error(memberResourceID(member))}
-                  onRoleChange={changeMemberRole}
+                  onChangeRole={setChangingRole}
                   onRemove={setRemoving}
                 />
               )}
@@ -414,6 +438,10 @@ export function Members() {
 
       <Show when={inviteResults()}>
         {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
+      </Show>
+
+      <Show when={changingRole()}>
+        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.role)} onClose={() => setChangingRole(null)} onSave={(role) => changeMemberRole(member(), role)} />}
       </Show>
 
       <Show when={removing()}>
