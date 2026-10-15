@@ -401,10 +401,10 @@ function TurnGroup(props: {
           </Show>
         </span>
       </div>
-      <Show when={status() === "failed" && props.record?.error}>
+      <Show when={status() === "failed" && !props.open && props.record?.error}>
         {(error) => (
           <p class="m-0 border-t border-console-border-soft bg-console-danger-bg/30 py-1 pl-[34px] pr-3 text-body text-console-danger">
-            Failed · <span class="font-mono text-chrome">{error().code}</span><Show when={error().message}>{(message) => <> — {message()}</>}</Show>
+            <span class="font-mono text-chrome">{error().code}</span><Show when={error().message}>{(message) => <> · {message()}</>}</Show>
           </p>
         )}
       </Show>
@@ -417,7 +417,7 @@ function TurnGroup(props: {
           <OutcomeLines turn={props.record!} />
         </Show>
         <Show when={props.turnRows && props.record?.status === "finalizing"}>
-          <p class="m-0 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 text-body text-console-muted min-[721px]:pl-[316px]">
+          <p class="m-0 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 text-body text-console-muted min-[721px]:pl-[394px]">
             The handler has returned. Helmr is saving the required disk state before completion.
           </p>
         </Show>

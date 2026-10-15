@@ -61,7 +61,7 @@ export function Question(props: { ask: AskState; address: AskAddress }) {
       <Show when={question().type === "choice"}>
         <ul class="m-0 flex list-none flex-col gap-2.5 p-0" aria-label="Options">
           <For each={(question() as ChoiceQuestion).options}>{option => (
-            <li class="grid grid-cols-[16px_minmax(0,1fr)] gap-x-2" aria-current={selected(option.id) ? "true" : undefined}>
+            <li class="grid grid-cols-[16px_minmax(0,1fr)] gap-x-2" data-selected={selected(option.id) ? "" : undefined}>
               <span aria-hidden="true" class="pt-px font-mono text-chrome text-console-accent">{selected(option.id) ? "✓" : ""}</span>
               <div class="grid gap-0.5">
                 <span class="flex flex-wrap items-center gap-2">
@@ -84,7 +84,7 @@ export function Question(props: { ask: AskState; address: AskAddress }) {
           <Show when={answer().notes}>{(value) => <><dt class="text-console-muted">Notes</dt><dd class="m-0 whitespace-pre-wrap break-words">{value()}</dd></>}</Show>
         </dl>
       </Show>
-      <details><summary class="cursor-pointer font-mono text-chrome">Inspect question</summary><JsonView value={{ question: question(), ...(answered() ? { answer: props.ask.answer } : {}) } as unknown as JsonValue} label="Question and answer" class="mt-2" /></details>
+      <details><summary class="cursor-pointer font-mono text-chrome">Inspect question and answer</summary><JsonView value={{ question: question(), ...(answered() ? { answer: props.ask.answer } : {}) } as unknown as JsonValue} label="Question and answer" class="mt-2" /></details>
     </Panel>}</Show>
     <Show when={props.ask.status === "pending" && props.ask.question && !props.ask.payloadExpired}>
       <Panel title="Answer through CLI">

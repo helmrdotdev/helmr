@@ -82,7 +82,7 @@ test("pending questions expose complete content and exact CLI commands as read-o
   await expect(page.getByText("First", { exact: true })).toBeVisible();
   await expect(page.getByText("Full description", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("question-desktop.png"), fullPage: true });
-  await page.getByText("Inspect question", { exact: true }).click();
+  await page.getByText("Inspect question and answer", { exact: true }).click();
   const definition = page.getByRole("figure", { name: "Question and answer" });
   await definition.getByRole("button", { name: "Raw", exact: true }).click();
   expect(JSON.parse(await definition.locator("pre").innerText()).question).toEqual(question(control).question);
@@ -95,7 +95,7 @@ test("pending questions expose complete content and exact CLI commands as read-o
   await expect(guide).toContainText("Reuse it with the same answer");
   await expect(page.locator("form")).toHaveCount(0);
   expect(writes).toEqual([]);
-  await page.getByText("Inspect question", { exact: true }).click();
+  await page.getByText("Inspect question and answer", { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("heading", { name: "Release plan", exact: true })).toBeVisible();
   await expect(page.getByText("Full description", { exact: true })).toBeVisible();
@@ -118,7 +118,7 @@ test("question observation replaces CLI guidance with the recorded answer and at
   await page.reload();
   await expect(page.getByText("The question and answer payloads have expired.")).toBeVisible();
   await expect(page.getByLabel("Recorded answer")).toHaveCount(0);
-  await expect(page.getByLabel("Question definition")).toHaveCount(0);
+  await expect(page.getByLabel("Question and answer")).toHaveCount(0);
   await expect(detail(page, "Answered by")).toContainText("A user");
   await expect(detail(page, "Answered by").getByTitle(userID)).toBeVisible();
 });

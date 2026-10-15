@@ -1,10 +1,10 @@
-import { shortVersion } from "./navigation";
 import { useQueryClient } from "@tanstack/solid-query";
 import { errorMessage } from "../../lib/error";
 import { promoteDeployment, type Deployment } from "../../lib/deployments";
 import type { Environment } from "../../lib/projects";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { environmentChip } from "../projects/display";
+import { shortVersion } from "./navigation";
 
 // The one Promote gate for the list row and the detail header: the caller must
 // know the current Deployment before offering to replace it.

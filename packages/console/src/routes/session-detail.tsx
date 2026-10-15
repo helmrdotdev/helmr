@@ -212,12 +212,9 @@ function SessionProperties(props: { session: Session }) {
       <Property label="Related">
         <Show when={props.session.parent_session_id || props.session.requester_session_id} fallback={<span class={ui.emptyCell}>—</span>}>
           <span class="inline-flex flex-wrap items-baseline gap-1.5">
-            <Show
-              when={props.session.parent_session_id !== props.session.requester_session_id}
-              fallback={<>Started by session <IDText value={props.session.parent_session_id!} mode="link" href={sessionConsolePath(props.session.parent_session_id!)} /></>}
-            >
-              <Show when={props.session.parent_session_id}>{id => <>Owned by session <IDText value={id()} mode="link" href={sessionConsolePath(id())} /></>}</Show>
-              <Show when={props.session.requester_session_id}>{id => <>requested by session <IDText value={id()} mode="link" href={sessionConsolePath(id())} /></>}</Show>
+            {/* A child Session's requester is always its parent. */}
+            <Show when={props.session.parent_session_id} fallback={<>Requested by session <IDText value={props.session.requester_session_id!} mode="link" href={sessionConsolePath(props.session.requester_session_id!)} /></>}>
+              {id => <>Started by session <IDText value={id()} mode="link" href={sessionConsolePath(id())} /></>}
             </Show>
           </span>
         </Show>

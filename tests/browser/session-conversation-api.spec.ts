@@ -5,7 +5,7 @@ import { createAgentCatalog } from "./fixtures/agent-catalog";
 
 // Runtime phase rows are fixtures. External HTTP writes and Console observation
 // use the running Control Plane and PostgreSQL, without mocked API responses.
-// A scalar answer shows as raw JSON; an object answer opens Raw first.
+// The recorded answer reads as words; Inspect shows its exact JSON.
 const recordedAnswer = (page: Page) => page.getByRole("group", { name: "Recorded answer" });
 
 async function conversation(page: Page, kind: "text" | "choice" = "text") {
@@ -81,7 +81,7 @@ test("real API shows ordered progress while saving keeps response and result pri
 test("Console records one externally retried choice with its exact values", async ({ page }) => {
   const f = await conversation(page, "choice");
   await page.goto(f.askURL);
-  await page.getByText("Inspect question", { exact: true }).click();
+  await page.getByText("Inspect question and answer", { exact: true }).click();
   const definition = page.getByRole("figure", { name: "Question and answer" });
   await definition.getByRole("button", { name: "Raw", exact: true }).click();
   await expect(definition.locator("pre")).toContainText("First");
@@ -93,8 +93,10 @@ test("Console records one externally retried choice with its exact values", asyn
   }
   await page.reload();
   await expandTurns(page);
-  await expect(recordedAnswer(page)).toContainText("Other");
-  await page.getByText("Inspect question", { exact: true }).click();
+  await expect(recordedAnswer(page)).toContainText("First, Second");
+  await expect(recordedAnswer(page)).toContainText("extra");
+  await expect(page.getByRole("list", { name: "Options" }).locator("li[data-selected]")).toHaveCount(2);
+  await page.getByText("Inspect question and answer", { exact: true }).click();
   const inspected = page.getByRole("figure", { name: "Question and answer" });
   await inspected.getByRole("button", { name: "Raw", exact: true }).click();
   await expect.poll(async () => JSON.parse(await inspected.locator("pre").innerText()).answer).toEqual(answer);

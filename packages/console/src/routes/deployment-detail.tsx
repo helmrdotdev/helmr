@@ -190,7 +190,7 @@ export function DeploymentDetail() {
                     <For each={eventItems()}>
                       {(event) => (
                         <tr>
-                          <td title={event.kind}>{event.message} <span class="ml-1.5 font-mono text-chrome text-console-faint">{event.kind}</span></td>
+                          <td>{event.message} <span class="ml-1.5 font-mono text-chrome text-console-faint">{event.kind}</span></td>
                           <td><RelativeTime value={event.at} /></td>
                         </tr>
                       )}
