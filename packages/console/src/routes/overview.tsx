@@ -150,7 +150,7 @@ function QueueItem(props: { item: AttentionItem }) {
   return (
     <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
         <StatusBadge resource="attention" status={props.item.kind} />
-        <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first max-sm:line-clamp-2 max-sm:whitespace-normal" title={summary(props.item)}>{summary(props.item)}</span>
+        <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere" title={summary(props.item)}>{summary(props.item)}</span>
         <span class="flex shrink-0 items-center gap-1.5 font-mono text-chrome text-console-muted">
           <A class="text-console-accent hover:text-console-accent-hover" href={agentHref(props.item.agent)}>{props.item.agent}</A>
           <Show when={props.item.session_id}>

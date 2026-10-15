@@ -392,7 +392,7 @@ function TurnGroup(props: {
           <span aria-hidden="true" class="font-mono text-micro text-console-subtle">{props.open ? "▾" : "▸"}</span>
           <span class="font-mono text-chrome font-medium max-[720px]:text-right">{props.block.sequence === undefined ? "Turn" : `#${props.block.sequence}`}</span>
           <TurnStatus status={status()} />
-          <span class="min-w-0 truncate max-[720px]:line-clamp-2 max-[720px]:whitespace-normal">{inputSummary(props.record)}</span>
+          <span class="min-w-0 truncate max-[720px]:line-clamp-2 max-[720px]:whitespace-normal max-[720px]:wrap-anywhere">{inputSummary(props.record)}</span>
         </button>
         <span class="flex shrink-0 items-center gap-2 font-mono text-micro text-console-subtle">
           <span class="max-[720px]:hidden">{counts()}</span>

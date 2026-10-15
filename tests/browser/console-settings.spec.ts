@@ -57,13 +57,26 @@ test("on a phone settings navigation is one control that opens the grouped pages
   await page.goto(`/settings/secrets?${scope}`);
   const control = page.getByText("Settings · Secrets", { exact: true });
   await expect(control).toBeVisible();
-  const sections = page.getByRole("navigation", { name: "Settings sections" });
-  await expect(sections).toBeHidden();
+  const sections = page.locator("nav[aria-label='Settings sections']:visible");
+  await expect(sections).toHaveCount(0);
   await control.click();
+  await expect(sections).toHaveCount(1);
   await sections.getByRole("link", { name: "API keys", exact: true }).click();
   await expect(page).toHaveURL("/settings/api-keys");
-  await expect(page.getByText("Settings · API keys", { exact: true })).toBeVisible();
-  await expect(sections).toBeHidden();
+  const after = page.getByText("Settings · API keys", { exact: true });
+  await expect(after).toBeVisible();
+  await expect(sections).toHaveCount(0);
+  // Focus returns to the control instead of falling to the page.
+  await expect(page.locator("summary")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(sections).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(sections).toHaveCount(0);
+  // At the breakpoint itself only the sidebar shows.
+  await page.setViewportSize({ width: 960, height: 812 });
+  await expect(sections).toHaveCount(1);
+  await expect(page.locator("summary")).toBeHidden();
+  await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
