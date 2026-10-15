@@ -1,3 +1,4 @@
+import { shortVersion } from "./navigation";
 import { useQueryClient } from "@tanstack/solid-query";
 import { errorMessage } from "../../lib/error";
 import { promoteDeployment, type Deployment } from "../../lib/deployments";
@@ -28,7 +29,7 @@ export function PromoteDeploymentModal(props: {
       title="Promote deployment"
       confirmLabel="Promote"
       busyLabel="Promoting..."
-      target={props.deployment.version}
+      target={shortVersion(props.deployment.version)}
       environment={environmentChip(props.environment)}
       onClose={props.onClose}
       onConfirm={async () => {
@@ -38,7 +39,7 @@ export function PromoteDeploymentModal(props: {
       }}
       errorMessage={promoteErrorMessage}
     >
-      <strong>{props.deployment.version}</strong> becomes the current deployment for{" "}
+      <strong>{shortVersion(props.deployment.version)}</strong> becomes the current deployment for{" "}
       <strong>{props.environment?.name ?? "this environment"}</strong>. New sessions use its agents and its triggers take effect. Agents absent from this deployment stop accepting new independent sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced agent IDs retain their identity. Existing sessions keep their pinned deployment, and inactive trigger intervals are not replayed.
     </ConfirmDialog>
   );

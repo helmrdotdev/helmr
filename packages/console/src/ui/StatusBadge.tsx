@@ -29,7 +29,7 @@ const TONES = {
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
   agent: { defined: "active", not_defined: "expired" },
   slack_connection: { setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },
-  computer_usage: { admitted: "waiting", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
+  computer_usage: { admitted: "expired", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
   question: { pending: "waiting", answered: "succeeded", cancelled: "revoked" },

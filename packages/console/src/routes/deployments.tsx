@@ -1,7 +1,7 @@
 import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { deploymentHref } from "../features/deployments/navigation";
+import { deploymentHref, shortVersion } from "../features/deployments/navigation";
 import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
 import { defaultEnvironmentColor } from "../features/projects/display";
 import { loadError } from "../lib/error";
@@ -33,7 +33,7 @@ function DeploymentRow(props: {
   return (
     <tr class={cx(props.current && "bg-console-accent-soft/40")}>
       <td style={props.current ? { "box-shadow": `inset 3px 0 0 ${props.environmentColor}` } : undefined}>
-        <PrimaryLink href={deploymentHref(props.deployment.id)}>{props.deployment.version}</PrimaryLink>
+        <PrimaryLink href={deploymentHref(props.deployment.id)} title={props.deployment.version}>{shortVersion(props.deployment.version)}</PrimaryLink>
       </td>
       <td>
         <Show when={props.current} fallback={<EmptyCell />}>
@@ -43,7 +43,7 @@ function DeploymentRow(props: {
       <td><IDText value={props.deployment.bundle_digest} /></td>
       <td><RelativeTime value={props.deployment.created_at} /></td>
       <RowActions
-        label={`Actions for ${props.deployment.version}`}
+        label={`Actions for ${shortVersion(props.deployment.version)}`}
         items={props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []}
       />
     </tr>

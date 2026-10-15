@@ -6,7 +6,7 @@ import { createAgentCatalog } from "./fixtures/agent-catalog";
 // Runtime phase rows are fixtures. External HTTP writes and Console observation
 // use the running Control Plane and PostgreSQL, without mocked API responses.
 // A scalar answer shows as raw JSON; an object answer opens Raw first.
-const recordedAnswer = (page: Page) => page.getByRole("region", { name: "Recorded answer" }).locator("pre");
+const recordedAnswer = (page: Page) => page.getByRole("group", { name: "Recorded answer" });
 
 async function conversation(page: Page, kind: "text" | "choice" = "text") {
   await page.goto("/dev/login");
@@ -39,7 +39,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   expect(response.ok(), await response.text()).toBeTruthy();
   await page.reload();
   await expandTurns(page);
-  await expect(recordedAnswer(page)).toHaveText('""');
+  await expect(recordedAnswer(page)).toContainText("Empty text");
   const recorded = await (await page.request.get(f.askBase)).json();
   const me = await (await page.request.get("/api/me")).json();
   expect(recorded.status).toBe("answered");
@@ -82,7 +82,7 @@ test("Console records one externally retried choice with its exact values", asyn
   const f = await conversation(page, "choice");
   await page.goto(f.askURL);
   await page.getByText("Inspect question", { exact: true }).click();
-  const definition = page.getByRole("figure", { name: "Question definition" });
+  const definition = page.getByRole("figure", { name: "Question and answer" });
   await definition.getByRole("button", { name: "Raw", exact: true }).click();
   await expect(definition.locator("pre")).toContainText("First");
   const answer = { selected: [{ id: "a", value: { v: 1 } }, { id: "b", value: null }], custom: "extra" };
@@ -93,8 +93,11 @@ test("Console records one externally retried choice with its exact values", asyn
   }
   await page.reload();
   await expandTurns(page);
-  await page.getByRole("region", { name: "Recorded answer" }).getByRole("button", { name: "Raw", exact: true }).click();
-  await expect.poll(async () => JSON.parse(await recordedAnswer(page).innerText())).toEqual(answer);
+  await expect(recordedAnswer(page)).toContainText("Other");
+  await page.getByText("Inspect question", { exact: true }).click();
+  const inspected = page.getByRole("figure", { name: "Question and answer" });
+  await inspected.getByRole("button", { name: "Raw", exact: true }).click();
+  await expect.poll(async () => JSON.parse(await inspected.locator("pre").innerText()).answer).toEqual(answer);
   await expect(page.getByLabel("Answer through CLI")).toHaveCount(0);
   const events = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/events?after=0&limit=100`)).json();
   expect(events.records.filter((event: { kind: string }) => event.kind === "ask.answered")).toHaveLength(1);
@@ -125,7 +128,7 @@ test("real API rejects a loaded question after organization scope loss and accep
   expect(reply.ok(), await reply.text()).toBeTruthy();
   await page.reload();
   await expandTurns(page);
-  await expect(recordedAnswer(page)).toHaveText('"retained draft"');
+  await expect(recordedAnswer(page)).toContainText("retained draft");
 });
 
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {

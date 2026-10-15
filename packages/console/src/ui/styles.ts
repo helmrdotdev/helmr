@@ -204,7 +204,7 @@ export const ui = {
   // columns; the row's toggle spans the leading columns as a subgrid so the whole
   // row is one focusable control.
   logLine:
-    "group/line grid min-h-7 grid-cols-[96px_46px_168px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border-soft pr-3 text-body max-[720px]:flex max-[720px]:py-1",
+    "group/line grid min-h-7 grid-cols-[96px_46px_188px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border-soft pr-3 text-body max-[720px]:flex max-[720px]:py-1",
   logTurnHeader:
     "grid h-9 grid-cols-[14px_44px_96px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-t border-console-border bg-console-bg-panel px-3 text-body max-[720px]:grid-cols-[14px_auto_auto_minmax(0,1fr)_auto] max-[720px]:gap-x-2",
   logRowButton:
