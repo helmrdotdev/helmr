@@ -1,16 +1,18 @@
 import { createSignal, For } from "solid-js";
 import { ui } from "../../ui/styles";
 
-const colors = ["violet", "teal", "orange", "blue", "pink", "yellow"] as const;
-const icons = [...colors, "light", "dark"] as const;
+const icons = [
+  "mushroom", "mountain", "flower", "owl", "snail", "robot", "cloud", "bug",
+  "ant", "marmot", "king", "tree", "hut", "ibex", "hiker", "cow",
+] as const;
 type Icon = (typeof icons)[number];
 
 // Slack manifests cannot carry an app icon, so each Agent starts from a stable
-// color and the admin uploads the downloaded image in Slack.
+// character and the admin uploads the downloaded image in Slack.
 function defaultIcon(seed: string): Icon {
   let hash = 0;
   for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return colors[hash % colors.length]!;
+  return icons[hash % icons.length]!;
 }
 
 export function AppIconPicker(props: { seed: string; agentName: string }) {
