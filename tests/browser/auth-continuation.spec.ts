@@ -86,6 +86,7 @@ for (const method of ["github", "email"] as const) {
     expect(state.projectCreates).toBe(0);
     expect(state.approved).toEqual([]);
     await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "CLI authorized" })).toBeVisible();
     await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
     expect(state.approved).toEqual([{ user_code: "ABCD-EFGH", user_id: "user-1", org_id: "org-1" }]);
   });
@@ -167,6 +168,7 @@ test("a changed account requires another explicit review and approval", async ({
   await expect(page.locator("details").filter({ hasText: "Technical details" })).toContainText("device_identity_changed: Account changed. Review again.");
   expect(attempts).toBe(1);
   await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "CLI authorized" })).toBeVisible();
   await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
   expect(attempts).toBe(2);
 });

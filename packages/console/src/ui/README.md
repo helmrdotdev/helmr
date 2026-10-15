@@ -81,7 +81,8 @@ Every container has:
   header.
 - **One body.** 12px padding, blocks 12px apart (`ui.containerBody`). The gap is
   the only spacing: the body's direct children drop their vertical margins.
-  Dialog bodies pad 12px too. A Panel never renders an empty body: when its content renders nothing, only the
+  Dialog bodies pad 12px too. A Panel never renders an empty body: when its
+  content renders nothing, only the
   header shows, and a page does not render a Panel it has nothing to put in (a
   Session without progress has no Progress panel).
 
@@ -380,7 +381,8 @@ Its states: the form itself, **AuthWorking** (Spinner and a message),
 step; without a title it sits inside a form, and input mistakes pass no details)
 and **AuthMissing** (the link or code is missing or expired, and how to get a
 new one). The raw server message is only ever in the technical details.
-`AuthTitle`, `AuthCopy`, `AuthActions` and `AuthDivider` lay out the content.
+`AuthTitle`, `AuthCopy`, `AuthActions`, `AuthLink`, `AuthFacts` and
+`AuthDivider` lay out the content.
 
 ## Shared behavior
 

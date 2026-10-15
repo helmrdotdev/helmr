@@ -16,23 +16,28 @@ const MESSAGES = {
   service_unavailable: "Slack is not configured on this server.",
 };
 
-// What to do next, by what went wrong.
-function NextStep(props: { failure: Failure & { code: string } }) {
+// What to do next, by what went wrong: the sentence and its one action. On the
+// confirmation screen (`inline`) the page keeps its own primary and My account
+// link, so only signing in again adds a link.
+function NextStep(props: { failure: Failure & { code: string }; inline?: boolean }) {
+  const action = (label: string, href: string) => props.inline ? undefined : <A class={cx(ui.button, "auth-full")} href={href}>{label}</A>;
   return <Switch fallback={<>
     <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from My account.</AuthCopy>
-    <A class={cx(ui.button, "auth-full")} href="/settings/account">My account</A>
+    {action("My account", "/settings/account")}
   </>}>
     <Match when={props.failure.code === "unauthorized"}>
       <AuthCopy>Sign in again, then try your action in Slack again.</AuthCopy>
-      <A class={cx(ui.button, "auth-full")} href={withNext("/login", "/settings/account")}>Sign in again</A>
+      <Show when={props.inline} fallback={action("Sign in again", withNext("/login", "/settings/account"))}>
+        <AuthLink href={withNext("/login", "/settings/account")}>Sign in again</AuthLink>
+      </Show>
     </Match>
     <Match when={props.failure.code === "conflict"}>
       <AuthCopy>Unlink the other account from My account, then link again.</AuthCopy>
-      <A class={cx(ui.button, "auth-full")} href="/settings/account">My account</A>
+      {action("My account", "/settings/account")}
     </Match>
     <Match when={props.failure.code === "forbidden" || props.failure.code === "service_unavailable"}>
       <AuthCopy>Ask an organization owner or admin for help.</AuthCopy>
-      <A class={cx(ui.button, "auth-full")} href="/settings/account">My account</A>
+      {action("My account", "/settings/account")}
     </Match>
   </Switch>;
 }
@@ -81,11 +86,14 @@ export function AuthSlackLink() {
         <AuthWindow>
           <AuthTitle>Link your Slack account</AuthTitle>
           <AuthFacts label="Accounts">
-            <AuthFact label="Slack">{current().identity.name || <IDText value={current().identity.slack_user_id} />} in {current().workspace_name || <IDText value={current().identity.team_id} />}</AuthFact>
+            <AuthFact label="Slack">
+              {current().identity.name || <IDText value={current().identity.slack_user_id} />} in {current().workspace_name || <IDText value={current().identity.team_id} />}
+              <Show when={current().identity.name}> <span class="font-mono text-chrome text-console-faint"><IDText value={current().identity.slack_user_id} /></span></Show>
+            </AuthFact>
             <AuthFact label="Helmr">{current().helmr_display_name} in {current().helmr_org_name}</AuthFact>
           </AuthFacts>
           <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
-          <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} />} />}</Show>
+          <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} inline />} />}</Show>
           <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking..." : "Confirm these accounts are mine"}</button>
           <AuthLink href="/settings/account">My account</AuthLink>
         </AuthWindow>

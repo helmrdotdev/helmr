@@ -70,6 +70,7 @@ export function Invite() {
           <>
             <AuthTitle>Accept invite</AuthTitle>
             <AuthCopy>Choose how to verify this invitation.</AuthCopy>
+            <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
             <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
               {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
             </button>
@@ -99,6 +100,7 @@ export function Invite() {
             )}
           </Show>
           <AuthDivider>OR</AuthDivider>
+          <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
           <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
             {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
           </button>
@@ -106,7 +108,6 @@ export function Invite() {
             {magicBusy() ? "Sending..." : "Send another invite link"}
           </AuthLink>
         </Show>
-        <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
       </Show>
     </AuthWindow>
   );

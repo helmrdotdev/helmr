@@ -64,7 +64,8 @@ export function OrganizationNew() {
             <SecretInput value={setupToken()} onInput={(event) => setSetupToken(event.currentTarget.value)} placeholder="Setup token" />
           </Field>
         </Show>
-        <Show when={error() ?? signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+        <Show when={signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+        <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
         <button type="submit" class={ui.button} disabled={submitting() || signOut.busy() || me.isPending || !name().trim() || !slug.value().trim() || (setupTokenRequired() && !setupToken().trim())}>
           {submitting() ? "Creating..." : "Create organization"}
         </button>

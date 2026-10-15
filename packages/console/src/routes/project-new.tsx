@@ -44,13 +44,14 @@ export function ProjectNew() {
     <Show when={!me.isPending}>
       <AuthWindow
         step={firstProject() ? "Step 2 of 2" : undefined}
-        account={<AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} />}
+        account={firstProject() ? <AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} /> : undefined}
       >
         <AuthTitle>{firstProject() ? "Create your first project" : "New project"}</AuthTitle>
         <AuthCopy>Projects hold the environments your agents deploy to.</AuthCopy>
         <form onSubmit={submit}>
           <draft.Fields />
-          <Show when={error() ?? signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+          <Show when={signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
+          <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
           <button type="submit" class={ui.button} disabled={submitting() || signOut.busy() || !draft.valid()}>
             {submitting() ? "Creating..." : "Create project"}
           </button>

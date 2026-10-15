@@ -13,7 +13,7 @@ export function BrandMark(props: { area?: string; href?: string }) {
     </>
   );
   return (
-    <Show when={props.href} fallback={<span class="inline-flex items-center gap-2">{content()}</span>}>
+    <Show when={props.href} fallback={<span class="inline-flex shrink-0 items-center gap-2">{content()}</span>}>
       {(href) => <A href={href()} aria-label={props.area ? `Helmr ${props.area} home` : "Helmr home"} class="inline-flex shrink-0 items-center gap-2 hover:opacity-80">{content()}</A>}
     </Show>
   );

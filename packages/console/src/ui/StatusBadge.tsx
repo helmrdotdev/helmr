@@ -34,7 +34,6 @@ const TONES = {
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
   question: { pending: "waiting", answered: "succeeded", cancelled: "revoked" },
   attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_reauthorization: "revoked" },
-  device_code: { pending: "waiting", approved: "succeeded", denied: "revoked", consumed: "expired", expired: "expired" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 // Labels that read better than the status name.

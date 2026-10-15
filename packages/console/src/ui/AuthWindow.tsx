@@ -29,8 +29,8 @@ export function AuthWindow(props: { children: JSX.Element; step?: string | undef
 export function AuthAccount(props: { name: string | null | undefined; signOutLabel: string; signingOut: boolean; onSignOut: () => void }) {
   return (
     <div class="flex min-w-0 items-center gap-2 font-mono text-chrome text-console-muted">
-      <Show when={props.name}><span class="truncate">{props.name}</span><span aria-hidden="true">·</span></Show>
-      <button type="button" class="cursor-pointer text-console-accent hover:text-console-accent-hover disabled:cursor-not-allowed disabled:opacity-60" disabled={props.signingOut} onClick={() => props.onSignOut()}>
+      <Show when={props.name}><span class="min-w-0 truncate">{props.name}</span><span class="shrink-0" aria-hidden="true">·</span></Show>
+      <button type="button" class="shrink-0 cursor-pointer whitespace-nowrap text-console-accent hover:text-console-accent-hover disabled:cursor-not-allowed disabled:opacity-60" disabled={props.signingOut} onClick={() => props.onSignOut()}>
         {props.signOutLabel}
       </button>
     </div>
@@ -75,7 +75,7 @@ export function AuthLink(props: { children: JSX.Element; onClick?: () => void; h
 // Facts the person checks before acting (the account, the organization), as
 // label/value rows between two hairlines.
 export function AuthFacts(props: { label: string; children: JSX.Element }) {
-  return <dl class={ui.authFacts} aria-label={props.label}>{props.children}</dl>;
+  return <dl class={ui.authFacts} role="group" aria-label={props.label}>{props.children}</dl>;
 }
 
 export function AuthFact(props: { label: string; children: JSX.Element }) {

@@ -24,6 +24,7 @@ export function Login() {
   const [busy, setBusy] = createSignal(false);
   const [githubBusy, setGitHubBusy] = createSignal(false);
   const [error, setError] = createSignal<Failure | null>(null);
+  const [githubError, setGitHubError] = createSignal<Failure | null>(null);
   const [email, setEmail] = createSignal("");
   const [sentEmail, setSentEmail] = createSignal<string | null>(null);
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
@@ -46,6 +47,7 @@ export function Login() {
     }
 
     setBusy(true);
+    setGitHubError(null);
     setError(null);
     setDebugURL(null);
     try {
@@ -64,11 +66,12 @@ export function Login() {
   async function signInWithGitHub() {
     setGitHubBusy(true);
     setError(null);
+    setGitHubError(null);
     try {
       const { redirect_url } = await startGitHubLogin(locationDestination(location));
       window.location.href = redirect_url;
     } catch (e) {
-      setError(describeFailure(e, GITHUB_MESSAGES, START_FALLBACK));
+      setGitHubError(describeFailure(e, GITHUB_MESSAGES, START_FALLBACK));
       setGitHubBusy(false);
     }
   }
@@ -101,7 +104,8 @@ export function Login() {
         }
       >
         <AuthTitle>Sign in to Helmr</AuthTitle>
-        <AuthCopy>Your sessions, computers, and credentials.</AuthCopy>
+        <AuthCopy>Build cloud agents that work your way.</AuthCopy>
+        <Show when={githubError()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
         <button
           class={ui.button}
           type="button"
