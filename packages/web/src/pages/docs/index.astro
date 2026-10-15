@@ -102,14 +102,24 @@ const entryPoints = [
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0;
     margin-top: 1.4rem;
-    border-top: 1px solid var(--border);
-    border-left: 1px solid var(--border);
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
   }
 
-  .docs-index-grid section {
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-raised);
+  /* hand-drawn rules between the cards, none along the outer frame */
+  .docs-index-grid section:not(:nth-last-child(-n + 2)) {
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
+  }
+
+  .docs-index-grid section:nth-child(even) {
+    background-image: var(--hand-rule-v), var(--hand-rule);
+    background-position: right top, left bottom;
+    background-size: 4px 100%, 100% 4px;
+    background-repeat: no-repeat;
+  }
+
+  .docs-index-grid section:nth-last-child(2):nth-child(even) {
+    background: var(--hand-rule-v) right / 4px 100% no-repeat;
   }
 
   .docs-index-grid section:first-child {
@@ -125,8 +135,9 @@ const entryPoints = [
     transition: background 0.1s ease-out, color 0.1s ease-out;
   }
 
+  /* the hover fill sits inside the drawn rules so they stay visible */
   .entry-main:hover {
-    background: var(--surface-dim);
+    background: linear-gradient(var(--surface-dim), var(--surface-dim)) center / calc(100% - 12px) calc(100% - 12px) no-repeat;
   }
 
   .entry-main:hover strong {
@@ -178,7 +189,7 @@ const entryPoints = [
   .entry-links {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-top: 1px solid var(--border);
+    background: var(--hand-rule-faint) top / 100% 5px no-repeat;
   }
 
   .entry-links a {
@@ -191,11 +202,11 @@ const entryPoints = [
   }
 
   .entry-links a + a {
-    border-left: 1px solid var(--border);
+    background: var(--hand-rule-v) left / 4px 100% no-repeat;
   }
 
   .entry-links a:hover {
-    background: var(--accent-wash);
+    background-color: var(--accent-wash);
     color: var(--accent);
   }
 
@@ -208,13 +219,39 @@ const entryPoints = [
       grid-column: auto;
     }
 
+    /* one column: a rule under every card but the last */
+    .docs-index-grid section,
+    .docs-index-grid section:nth-child(even),
+    .docs-index-grid section:nth-last-child(2):nth-child(even) {
+      background: var(--hand-rule) bottom / 100% 4px no-repeat;
+    }
+
+    .docs-index-grid section:last-child {
+      background: none;
+    }
+
     .entry-links {
       grid-template-columns: 1fr;
     }
 
     .entry-links a + a {
-      border-top: 1px solid var(--border);
-      border-left: 0;
+      background: var(--hand-rule-faint) top / 100% 5px no-repeat;
     }
+  }
+
+  /* high-contrast mode: plain system-colored outline and rules instead of drawn ones */
+  @media (forced-colors: active) {
+    .docs-index-grid { border-image-source: none !important; border-color: CanvasText; }
+    .docs-index-grid section, .entry-links, .entry-links a + a { background-image: none !important; }
+    .docs-index-grid section:not(:nth-last-child(-n + 2)) { border-bottom: 1px solid CanvasText; }
+    .docs-index-grid section:nth-child(even) { border-right: 1px solid CanvasText; }
+    .entry-links { border-top: 1px solid CanvasText; }
+    .entry-links a + a { border-left: 1px solid CanvasText; }
+  }
+
+  @media (forced-colors: active) and (max-width: 640px) {
+    .docs-index-grid section:nth-child(even) { border-right: 0; }
+    .docs-index-grid section:not(:last-child) { border-bottom: 1px solid CanvasText; }
+    .entry-links a + a { border-left: 0; border-top: 1px solid CanvasText; }
   }
 </style>

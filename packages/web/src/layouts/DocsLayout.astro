@@ -332,7 +332,8 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     row-gap: 0.22rem;
     width: 1.75rem;
     height: 1.75rem;
-    border: 1px solid var(--border-strong);
+    border: 1px solid transparent;
+    border-image: var(--frame-light) 8 / 8px stretch;
     border-radius: var(--radius-btn);
     background: var(--btn-surface);
     color: var(--text);
@@ -373,7 +374,8 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     width: 100%;
     min-width: 0;
     height: 2.125rem;
-    border: 1px solid var(--border);
+    border: 1px solid transparent;
+    border-image: var(--frame-light) 8 / 8px stretch;
     border-radius: 0;
     background: var(--bg);
     color: var(--text);
@@ -383,8 +385,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   .docs-search input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-wash);
+    border-image-source: var(--frame);
   }
 
   .docs-shell {
@@ -529,27 +530,26 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     gap: 1rem;
     max-width: 43rem;
     margin: 0 2.5rem 2.5rem;
-    border-top: 1px solid var(--border);
+    background: var(--hand-rule-faint) top / 100% 5px no-repeat;
     padding-top: 1.25rem;
   }
 
   .doc-pagination a {
     display: block;
     min-height: 4rem;
-    border: 1px solid var(--border);
-    background: var(--surface-raised);
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
     color: var(--text);
     padding: 0.8rem 0.9rem;
     font-size: 0.8125rem;
     font-weight: 500;
     line-height: 1.35;
     text-decoration: none;
-    transition: border-color 0.1s ease-out, background 0.1s ease-out, color 0.1s ease-out;
+    transition: color 0.1s ease-out;
   }
 
   .doc-pagination a:hover {
-    border-color: var(--border-strong);
-    background: var(--surface-soft);
+    border-image: var(--frame-hover) 8 fill / 8px stretch;
     color: var(--text);
   }
 
@@ -651,8 +651,9 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     max-width: 100%;
     overflow-x: auto;
     margin: 1.1rem 0;
-    border: 1px solid var(--frame-border);
-    background: var(--frame-bg) !important;
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
+    background: transparent !important;
     color: var(--frame-text);
     padding: 2.35rem 1.1rem 1rem;
     line-height: 1.55;
@@ -674,11 +675,10 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     left: 0;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
     height: 1.75rem;
-    border-bottom: 1px solid var(--frame-line);
-    background: var(--frame-cap);
-    padding: 0 0.75rem;
+    margin: 0 2px;
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
+    padding: 0 0.9rem;
     color: var(--frame-subtle);
     font-family: var(--font-mono);
     font-size: 0.65rem;
@@ -692,13 +692,13 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   :global(.docs-content table) {
     width: 100%;
     border-collapse: collapse;
-    border-top: 1px solid var(--border);
+    background: var(--hand-rule-faint) top / 100% 5px no-repeat;
     font-size: 0.8125rem;
   }
 
   :global(.docs-content th),
   :global(.docs-content td) {
-    border-bottom: 1px solid var(--border);
+    background: var(--hand-rule-faint) bottom / 100% 5px no-repeat;
     padding: 0.6rem 0.75rem 0.6rem 0;
     text-align: left;
     vertical-align: top;
@@ -725,6 +725,12 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     .docs-toc {
       display: none;
     }
+
+    :global(.docs-content table) {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+    }
   }
 
   @media (max-width: 760px) {
@@ -740,7 +746,8 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       display: inline-grid;
       width: 2rem;
       height: 2rem;
-      margin-left: 0.55rem;
+      /* pull the icon out so its bars start where the page text does */
+      margin-left: -0.95rem;
       margin-right: 0.35rem;
       border: 0;
       background: transparent;
@@ -776,6 +783,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       left: -15.5rem;
       z-index: 200;
       width: 15rem;
+      align-self: auto;
       height: auto;
       border-right: 1px solid var(--border-strong);
       background: var(--bg);
@@ -786,10 +794,23 @@ const docsJsonLd: JsonLdNode[] = currentDoc
       left: 0;
     }
 
+    /* dim the page behind the open menu; a tap on it closes the menu */
+    .docs-page:has(.docs-sidebar.open)::after {
+      content: "";
+      position: fixed;
+      inset: var(--docs-nav-h) 0 0 0;
+      z-index: 150;
+      background: rgba(22, 22, 26, 0.18);
+    }
+
     .docs-content {
       max-width: none;
       padding: 1.5rem 1.15rem;
       font-size: 0.84rem;
+    }
+
+    :global(.docs-content :not(pre) > code) {
+      overflow-wrap: anywhere;
     }
 
     .doc-pagination {
@@ -798,8 +819,6 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     }
 
     .doc-pagination a + a {
-      border-top: 0;
-      border-left: 1px solid var(--border);
       text-align: left;
     }
   }
@@ -808,5 +827,19 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     .docs-github {
       display: none;
     }
+  }
+
+  /* high-contrast mode: plain system-colored outlines and rules instead of drawn ones */
+  @media (forced-colors: active) {
+    .menu-button, .docs-search input, .doc-pagination a, :global(.docs-content pre) {
+      border-image-source: none !important;
+      border-color: CanvasText;
+    }
+    .docs-search input:focus { outline: 2px solid Highlight; }
+    .doc-pagination, :global(.docs-content table), :global(.docs-content th), :global(.docs-content td),
+    :global(.docs-content pre[data-language]::before) { background-image: none; }
+    .doc-pagination { border-top: 1px solid CanvasText; }
+    :global(.docs-content th), :global(.docs-content td) { border-bottom: 1px solid CanvasText; }
+    :global(.docs-content pre[data-language]::before) { border-bottom: 1px solid CanvasText; }
   }
 </style>
