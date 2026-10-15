@@ -198,7 +198,6 @@ const nav = [
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
 
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500&display=swap" />
   <div class="page">
     <div class="frame">
     <aside class="rail">
@@ -523,7 +522,6 @@ const nav = [
         line.addEventListener("mouseenter", () => set(line.dataset.note ?? null));
         line.addEventListener("mouseleave", () => set(null));
       });
-
     });
 
     document.querySelectorAll<HTMLElement>("[data-hub]").forEach((hub) => {
@@ -940,7 +938,15 @@ const nav = [
    */
   .scribble { display: none; }
   @media (min-width: 84rem) {
-    .annotated .notes { display: none; }
+    /* the handwritten notes are decorative; the full notes stay available to screen readers */
+    .annotated .notes {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
     .annotated .code { overflow: visible; }
     .annotated .line { position: relative; }
     .scribble {
@@ -1231,7 +1237,7 @@ const nav = [
   .annotated { position: relative; }
   .annotated .card { margin-top: 2rem; }
 
-  .is-noted { transition: background 0.15s, opacity 0.15s; }
+  .is-noted { transition: opacity 0.15s; }
   .annotated[data-active] .is-noted { opacity: 0.4; }
   .annotated[data-active] .is-noted.is-active { opacity: 1; }
   /* the hovered note's code gets a pass of highlighter, only as wide as its text */
@@ -1240,7 +1246,6 @@ const nav = [
     margin: -0.12em -0.3em;
     background: var(--hand-marker) center / 100% 100% no-repeat;
   }
-
 
   .notes {
     display: grid;
@@ -1251,7 +1256,6 @@ const nav = [
   }
 
   .notes li {
-    position: relative;
     font-size: 0.8125rem;
     padding-left: 0.9rem;
     background: var(--hand-note-v) left / 4px 100% no-repeat;
@@ -1520,6 +1524,9 @@ const nav = [
     .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
     .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
     .notes li, .notes li.is-active, .cast-list, .cast-list li, .foot { background-image: none; }
+    .annotated[data-active] .is-noted.is-active > .text { background: Mark; color: MarkText; }
+    .annotated[data-active] .is-noted.is-active > .text :global(*) { color: MarkText; }
+    .scribble::before { content: "\2190"; width: auto; height: auto; background: none; transform: none; }
     .notes li { border-left: 1px solid CanvasText; }
     .cast-list { border-top: 1px solid CanvasText; }
     .cast-list li { border-bottom: 1px solid CanvasText; }

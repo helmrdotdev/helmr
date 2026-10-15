@@ -9,8 +9,8 @@ export const coder = agent({
   async init() {
     const { url } = await createOpencodeServer()
     const opencode = createOpencodeClient({ baseUrl: url, directory: "/app" })
-    const { data: session } = await opencode.session.create({ title: "coder" })
-    return { opencode, sessionID: session!.id }
+    const { data } = await opencode.session.create({}, { throwOnError: true })
+    return { opencode, sessionID: data.id }
   },
 
   async turn(turn, { initResult: { opencode, sessionID } }) {
