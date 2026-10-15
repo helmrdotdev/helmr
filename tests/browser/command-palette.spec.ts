@@ -108,6 +108,24 @@ test("the palette switches Environment and Project by keyboard", async ({ page }
   await expect(environmentTrigger(page)).toContainText("Sandbox");
 });
 
+test("an empty palette lists every page, then recent Sessions and Environments", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(palette(page).getByRole("group", { name: "Go to" }).getByRole("option")).toHaveText([
+    /^Overview/, "Agents", /^Sessions/, "Triggers", "Computers", "Templates", "Deployments",
+    "Settings › General", "Settings › Environments", "Settings › Secrets", "Settings › API keys", "Settings › Members", "Account settings",
+  ]);
+  await expect(palette(page).getByRole("group", { name: "Agents" })).toHaveCount(0);
+  await expect(palette(page).getByRole("group").nth(1)).toHaveAccessibleName("Sessions");
+});
+
+test("the palette opened on a page it does not list starts at its first page", async ({ page }) => {
+  await open(page, `/sessions/${sessionID}`);
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(palette(page).getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+  await expect(palette(page).getByRole("option").first()).toBeInViewport();
+});
+
 test("the palette goes to pages, Agents and Sessions", async ({ page }) => {
   await open(page);
   await page.keyboard.press("ControlOrMeta+k");

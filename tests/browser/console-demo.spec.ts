@@ -75,6 +75,7 @@ test("console demo retains failed Turn input and terminal Session history", asyn
   await expect(page.getByText("Demo input", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Closed", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("region", { name: "Log" }).getByText("failed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Send work, close the session or resume held work from the CLI.", { exact: true })).toBeVisible();
+  // A closed Session takes no more work, so the page offers no CLI hint.
+  await expect(page.getByText(/from the CLI/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
 });

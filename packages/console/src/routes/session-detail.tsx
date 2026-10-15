@@ -35,7 +35,7 @@ import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx, ui } from "../ui/styles";
+import { ui } from "../ui/styles";
 
 const sessionError = (error: unknown) => errorMessage(error, "The operation could not be completed.");
 
@@ -140,14 +140,10 @@ function SessionDetailContent() {
                 log={log}
                 address={address()}
                 live={live()}
+                liveHint={current().slack_channel_id ? "Send work from the CLI or Slack; close the session from the CLI." : "Send work or close the session from the CLI."}
                 canInterrupt={can("sessions.interrupt")}
                 onInterruptTurn={(turnID) => setControl({ kind: "turn_interrupt", turnID })}
               />
-              <p class={cx(ui.muted, "m-0")}>
-                <Show when={current().slack_channel_id} fallback="Send work, close the session or resume held work from the CLI.">
-                  Send work from the CLI or Slack; close the session or resume held work from the CLI.
-                </Show>
-              </p>
               <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
               <Show when={can("sessions.cancel") && live()}>
                 <DangerZone

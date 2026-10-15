@@ -23,17 +23,22 @@ const PAGES: readonly { label: string; href: string; keywords?: string }[] = [
   { label: "Computers", href: "/computers" },
   { label: "Templates", href: "/templates" },
   { label: "Deployments", href: "/deployments" },
-  { label: "Project settings", href: "/settings/project", keywords: "settings general history retention" },
-  { label: "Environments", href: "/settings/environments", keywords: "settings" },
-  { label: "Secrets", href: "/settings/secrets", keywords: "settings" },
-  { label: "API keys", href: "/settings/api-keys", keywords: "settings tokens" },
-  { label: "Members", href: "/settings/members", keywords: "settings organization invitations" },
+  { label: "Settings › General", href: "/settings/project", keywords: "project history retention" },
+  { label: "Settings › Environments", href: "/settings/environments" },
+  { label: "Settings › Secrets", href: "/settings/secrets" },
+  { label: "Settings › API keys", href: "/settings/api-keys", keywords: "tokens" },
+  { label: "Settings › Members", href: "/settings/members", keywords: "organization invitations" },
   { label: "Account settings", href: "/settings/account", keywords: "settings profile slack" },
 ];
 
-// Agents and Sessions show this many items until a query narrows them.
-const UNFILTERED = 5;
+// Every page and environment is listed; Sessions show the most recent few and
+// Agents none until a query narrows them, then up to FILTERED each.
 const FILTERED = 12;
+const limitPerGroup = (query: string, group: string): number | undefined => {
+  if (group === "Agents") return query ? FILTERED : 0;
+  if (group === "Sessions") return query ? FILTERED : 3;
+  return undefined;
+};
 
 
 function SearchIcon() {
@@ -146,7 +151,7 @@ function Palette(props: { onClose: () => void }) {
       keywords: `${session.id} session ${session.status}`,
       onSelect: () => go(sessionConsolePath(session.id)),
     }));
-    return [...environments, ...pages, ...agentItems, ...sessionItems];
+    return [...pages, ...agentItems, ...sessionItems, ...environments];
   });
 
   // Focus the search box as the palette opens, so typing right after the
@@ -158,12 +163,12 @@ function Palette(props: { onClose: () => void }) {
       <CommandList
         label="Results"
         searchLabel="Search"
-        placeholder="Switch environment, go to a page, find an agent or session…"
+        placeholder="Go to a page, switch environment, find an agent or session…"
         empty="Nothing matches."
         items={items()}
         inputRef={(element) => { input = element; }}
         class="max-h-[min(60vh,440px)]"
-        limitPerGroup={(query) => (query ? FILTERED : UNFILTERED)}
+        limitPerGroup={limitPerGroup}
       />
     </Dialog>
   );

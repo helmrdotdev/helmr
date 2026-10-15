@@ -28,8 +28,8 @@ export function CommandList(props: {
   items: readonly CommandItem[];
   empty: string;
   inputRef?: (element: HTMLInputElement) => void;
-  // Caps each group once a query narrows the list, and without one.
-  limitPerGroup?: (query: string) => number | undefined;
+  // How many matches a group shows for the query; undefined shows them all.
+  limitPerGroup?: (query: string, group: string) => number | undefined;
   class?: string;
 }) {
   const id = createUniqueId();
@@ -40,21 +40,23 @@ export function CommandList(props: {
 
   const groups = createMemo(() => {
     const matched = props.items.filter((item) => matchesQuery(item, query()));
-    const limit = props.limitPerGroup?.(query().trim());
-    const capped = limit === undefined ? matched : matched.filter((item, index) =>
-      matched.slice(0, index).filter((other) => other.group === item.group).length < limit);
+    const capped = matched.filter((item, index) => {
+      const limit = props.limitPerGroup?.(query().trim(), item.group ?? "");
+      return limit === undefined || matched.slice(0, index).filter((other) => other.group === item.group).length < limit;
+    });
     return groupEntries(capped);
   });
   const ordered = createMemo(() => groups().flatMap((group) => group.entries.map(({ entry }) => entry)));
 
-  // The list opens on the current item and a new query starts on the first match;
-  // items arriving later keep the position.
+  // The list opens on the current item of its first group (so it never opens
+  // scrolled to a later group) and a new query starts on the first match; items
+  // arriving later keep the position.
   let placed = false;
   createEffect(() => {
     const items = ordered();
     if (!placed && items.length > 0) {
       placed = true;
-      setActive(Math.max(0, items.findIndex((item) => item.current)));
+      setActive(Math.max(0, items.findIndex((item) => item.current && item.group === items[0]!.group)));
     } else if (untrack(active) > items.length - 1) {
       setActive(Math.max(0, items.length - 1));
     }
