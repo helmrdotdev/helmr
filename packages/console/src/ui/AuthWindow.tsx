@@ -1,4 +1,5 @@
 import { A } from "@solidjs/router";
+import { BrandMark } from "./BrandMark";
 import { Show, type JSX } from "solid-js";
 import { Spinner } from "./Skeleton";
 import { cx, ui } from "./styles";
@@ -13,10 +14,7 @@ export function AuthWindow(props: { children: JSX.Element; step?: string | undef
   return (
     <main class="flex min-h-dvh flex-col px-4 text-console-text">
       <header class="flex h-12 shrink-0 items-center justify-between gap-3">
-        <A href="/" class="flex items-center gap-2 font-mono text-control font-medium text-console-text hover:text-console-accent">
-          <img src="/favicon.svg" alt="" class="size-4.5" />
-          Helmr
-        </A>
+        <BrandMark href="/" />
         <Show when={props.account}>{props.account}</Show>
       </header>
       <section class="mx-auto flex w-full max-w-90 flex-1 flex-col justify-center pb-[12vh] pt-6 [&_.auth-full]:w-full [&_button]:w-full [&_p]:text-body [&_p]:leading-normal [&_p]:text-console-muted">

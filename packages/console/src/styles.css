@@ -69,6 +69,7 @@
 
   --console-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", ui-monospace, monospace;
   --console-sans: "Inter", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
+  --console-brand: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
 }
 
 @theme inline {
@@ -113,6 +114,7 @@
   --color-console-danger-solid: var(--console-danger-solid);
   --font-console-mono: var(--console-mono);
   --font-console-sans: var(--console-sans);
+  --font-console-brand: var(--console-brand);
   --font-sans: var(--console-sans);
   --font-mono: var(--console-mono);
 
