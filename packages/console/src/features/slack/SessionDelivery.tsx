@@ -118,7 +118,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
         </List>
       )}
     </QueryState>
-    <Show when={selected()} keyed>{(post) => <ConfirmDialog cancelLabel="Keep" errorMessage={(e) => slackFailure(e, "Delivery could not be stopped.", DELIVERY_MESSAGES).message} title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
+    <Show when={selected()} keyed>{(post) => <ConfirmDialog errorMessage={(e) => slackFailure(e, "Delivery could not be stopped.", DELIVERY_MESSAGES).message} title="Stop delivery of this message?" confirmLabel="Stop delivery" target={`Message ${post.sequence}`} onClose={() => setSelected(undefined)} onConfirm={async () => { await recoverSlackDelivery(props.address, post, "abandon"); await posts.refetch(); }}>
       <div class={ui.blockStack}>
         <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the agent.</p>
         <CodeBlock code={post.text} label="Message content" />

@@ -1,6 +1,5 @@
 import { Show } from "solid-js";
-import { formatID } from "./id";
-import { cx, ui } from "./styles";
+import { cx } from "./styles";
 
 // The Environment's color as a small dot. The color is Environment data, so it is
 // applied inline.
@@ -33,27 +32,14 @@ export function EnvChip(props: { name: string; colorHex: string | undefined; pro
   );
 }
 
-// The Environment a dialog writes to, shown above its fields: the Environment by
-// name and color, then its Project and both IDs.
-export function EnvironmentTarget(props: {
-  label: string;
-  environmentName: string;
-  environmentColorHex: string | undefined;
-  projectName: string;
-  projectID: string;
-  environmentID: string;
-}) {
+// Where a dialog's action applies, as one line: "Console demo · ● Demo".
+export function EnvironmentTarget(props: { label: string; environmentName: string; environmentColorHex: string | undefined; projectName: string }) {
   return (
-    <div class="mb-3 grid gap-1.5 border border-console-border-strong bg-console-bg-panel px-3 py-2.5 text-control" aria-label={props.label}>
-      <span class={ui.microLabel}>Target environment</span>
-      <strong class="text-body font-medium leading-tight text-console-text">{props.environmentName}</strong>
-      <div class="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-badge text-console-muted">
-        <Show when={props.environmentColorHex}>
-          <EnvDot colorHex={props.environmentColorHex} />
-        </Show>
-        <span>{props.projectName}</span>
-        <code class="text-micro text-console-subtle">{formatID(props.projectID)} / {formatID(props.environmentID)}</code>
-      </div>
-    </div>
+    <p class="mb-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-chrome text-console-text" role="group" aria-label={props.label}>
+      <span>{props.projectName}</span>
+      <span class="text-console-subtle" aria-hidden="true">·</span>
+      <Show when={props.environmentColorHex}><EnvDot colorHex={props.environmentColorHex} /></Show>
+      <span>{props.environmentName}</span>
+    </p>
   );
 }

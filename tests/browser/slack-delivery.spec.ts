@@ -76,7 +76,7 @@ test("Slack recovery reports stale evidence and refreshes the selected publicati
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Stop delivery", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("refresh before trying again");
-  await dialog.getByRole("button", { name: "Keep", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.reload();
   await page.getByRole("button", { name: "Stop delivery", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Stop delivery", exact: true }).click();

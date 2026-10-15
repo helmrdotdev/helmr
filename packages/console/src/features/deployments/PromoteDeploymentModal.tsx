@@ -25,8 +25,7 @@ export function PromoteDeploymentModal(props: {
   const queryClient = useQueryClient();
   return (
     <ConfirmDialog
-      cancelLabel="Keep"
-      title="Promote deployment"
+      title="Promote deployment to current?"
       confirmLabel="Promote"
       busyLabel="Promoting..."
       target={shortVersion(props.deployment.version)}
@@ -39,8 +38,7 @@ export function PromoteDeploymentModal(props: {
       }}
       errorMessage={promoteErrorMessage}
     >
-      <strong>{shortVersion(props.deployment.version)}</strong> becomes the current deployment for{" "}
-      <strong>{props.environment?.name ?? "this environment"}</strong>. New sessions use its agents and its triggers take effect. Agents absent from this deployment stop accepting new independent sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced agent IDs retain their identity. Existing sessions keep their pinned deployment, and inactive trigger intervals are not replayed.
+      New sessions start on this deployment and its triggers take effect. Open sessions keep their deployment. Agents missing from it stop taking new sessions and Slack conversations.
     </ConfirmDialog>
   );
 }

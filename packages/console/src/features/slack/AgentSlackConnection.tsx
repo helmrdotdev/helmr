@@ -169,7 +169,6 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                 title={connection().installation_id ? "Disconnect Slack" : "Discard setup"}
                 confirmLabel={connection().installation_id ? "Disconnect Slack" : "Discard setup"}
                 busyLabel={connection().installation_id ? "Disconnecting..." : "Discarding..."}
-                cancelLabel="Keep connection"
                 tone="danger"
                 target={connection().app_name || props.agentName}
                 environment={environmentChip(scope.selectedEnvironment())}

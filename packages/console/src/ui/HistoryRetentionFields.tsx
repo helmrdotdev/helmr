@@ -13,8 +13,8 @@ const maxSeconds = 9223372036854775807n;
 type Mode = "never" | "duration";
 
 const MODES: { value: Mode; label: string; description: string }[] = [
-  { value: "never", label: "Never expire", description: "Expired content cannot be restored." },
-  { value: "duration", label: "Keep for a duration", description: "Open sessions keep their history." },
+  { value: "never", label: "Never expire", description: "Session history is kept until the session is deleted." },
+  { value: "duration", label: "Keep for a duration", description: "History older than this is removed and cannot be restored. Open sessions keep their history." },
 ];
 
 export type HistoryRetentionDraft = { mode: Mode; amount: string; unit: number };

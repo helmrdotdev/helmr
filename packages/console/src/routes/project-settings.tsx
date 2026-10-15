@@ -44,7 +44,7 @@ export function ProjectSettings() {
   async function submitProject(event: SubmitEvent) {
     event.preventDefault();
     const current = project();
-    if (!current) return;
+    if (!current || !dirty()) return;
     const nextName = name().trim();
     if (!nextName) {
       setSaveError("Name is required.");
@@ -65,7 +65,7 @@ export function ProjectSettings() {
   return (
     <>
       <PageHeader
-        title="Project"
+        title="General"
         meta={
           <Show when={project()}>
             {(current) => (
@@ -86,13 +86,15 @@ export function ProjectSettings() {
                 <Field label="Name" error={saveError()}>
                   <TextInput value={name()} onInput={(event) => setName(event.currentTarget.value)} autocomplete="off" />
                 </Field>
-                <FormActions
-                  submitLabel="Save changes"
-                  busyLabel="Saving..."
-                  busy={saving()}
-                  disabled={!dirty() || !name().trim()}
-                  onCancel={() => { setName(current().name); setSaveError(null); }}
-                />
+                <Show when={dirty()}>
+                  <FormActions
+                    submitLabel="Save changes"
+                    busyLabel="Saving..."
+                    busy={saving()}
+                    disabled={!name().trim()}
+                    onCancel={() => { setName(current().name); setSaveError(null); }}
+                  />
+                </Show>
               </form>
             </Panel>
             <ProjectHistorySettings project={current().project} />
@@ -152,7 +154,7 @@ function ProjectHistorySettings(props: { project: string }) {
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!canManage() || !settings.data || saving()) return;
+    if (!canManage() || !settings.data || saving() || !dirty()) return;
     setError(null);
     setSaved(false);
     let next: string;
@@ -169,7 +171,7 @@ function ProjectHistorySettings(props: { project: string }) {
   }
 
   return (
-    <Panel title="Session history retention">
+    <Panel title="Session history retention" actions={<Show when={canManage() && settings.data && dirty()}><span class="font-mono text-chrome text-console-warning">Unsaved changes</span></Show>}>
       <QueryState query={settings} pending={<LinesSkeleton label="Loading history retention" />} error={() => "Could not load history retention."}>
         {() => (
           <form onSubmit={submit}>
@@ -181,13 +183,14 @@ function ProjectHistorySettings(props: { project: string }) {
             <Show when={canManage()}>
               <div class="flex flex-wrap items-center justify-end gap-3">
                 <Show when={saved()}><InlineStatus class="mt-3">History retention saved.</InlineStatus></Show>
-                <FormActions
-                  submitLabel="Save history retention"
-                  busyLabel="Saving..."
-                  busy={saving()}
-                  disabled={!dirty()}
-                  onCancel={() => { reset(); setError(null); setSaved(false); }}
-                />
+                <Show when={dirty()}>
+                  <FormActions
+                    submitLabel="Save history retention"
+                    busyLabel="Saving..."
+                    busy={saving()}
+                    onCancel={() => { reset(); setError(null); setSaved(false); }}
+                  />
+                </Show>
               </div>
             </Show>
           </form>

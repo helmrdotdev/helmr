@@ -41,8 +41,8 @@ for (const view of ["list"] as const) {
     await page.goto("/deployments");
     await page.getByRole("button", { name: "Actions for test-version" }).click();
     await page.getByRole("menuitem", { name: "Promote", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Promote deployment" });
-    await expect(dialog).toContainText("Existing sessions keep their pinned deployment");
+    const dialog = page.getByRole("dialog", { name: "Promote deployment to current?" });
+    await expect(dialog).toContainText("Open sessions keep their deployment.");
     expect(requests).toEqual([]);
     await dialog.getByRole("button", { name: "Promote", exact: true }).click();
     await expect(dialog).toHaveCount(0);

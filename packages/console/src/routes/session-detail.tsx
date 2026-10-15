@@ -158,7 +158,6 @@ function SessionDetailContent() {
       <Show when={control()} keyed>
         {operation => (
           <ConfirmDialog
-            cancelLabel="Keep"
             title={controlLabels[operation.kind]}
             confirmLabel={controlLabels[operation.kind]}
             busyLabel="Requesting..."
