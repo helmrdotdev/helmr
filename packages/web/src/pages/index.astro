@@ -1500,11 +1500,17 @@ const nav = [
       border-color: CanvasText;
     }
     .machine.is-saved { border-style: dashed; }
+    .card-head, .machine-h, .machine-note, .logo-grid, .logo-grid li { background-image: none; }
     .card-head, .machine-h { border-bottom: 1px solid CanvasText; }
     .machine-note { border-top: 1px solid CanvasText; }
+    .is-saved .machine-h, .is-saved .machine-note { border-style: dashed; }
     .logo-grid { border-top: 1px solid CanvasText; border-left: 1px solid CanvasText; }
     .logo-grid li { border-right: 1px solid CanvasText; border-bottom: 1px solid CanvasText; }
-    .carry-arrow { background: none; border-top: 1px dashed CanvasText; }
+    .carry-arrow { background: none; height: 0; border-top: 1px dashed CanvasText; }
     .wire-gate::before { background: none; border-top: 1px dashed CanvasText; }
+  }
+
+  @media (forced-colors: active) and (max-width: 67.49rem) {
+    .carry-arrow { width: 0; height: 2.75rem; border-top: 0; border-left: 1px dashed CanvasText; }
   }
 </style>
