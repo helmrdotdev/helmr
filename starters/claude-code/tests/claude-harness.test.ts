@@ -12,7 +12,9 @@ let events: Queue<any>, prompts: AsyncIterator<any>
 let initializationPending = false
 let permission: any
 let nativeSessionId: string
+let nativeOptions: any
 mock.module("@anthropic-ai/claude-agent-sdk", () => ({ query: (configuration: any) => {
+  nativeOptions = configuration.options
   nativeSessionId = configuration.options.sessionId ?? configuration.options.resume
   permission = configuration.options.canUseTool
   events = new Queue()
@@ -22,6 +24,21 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({ query: (configuration: an
 } }))
 const { ClaudeHarness } = await import("../agents/claude-harness")
 const flush = () => new Promise<void>(resolve => setImmediate(resolve))
+
+test("the model and the system prompt addition reach Claude Code", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-native-settings-"))
+  try {
+    const configured = await ClaudeHarness.open(directory, "configured", {}, { model: "claude-sonnet-5-5", appendSystemPrompt: "You are noether." })
+    expect(nativeOptions.model).toBe("claude-sonnet-5-5")
+    expect(nativeOptions.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "You are noether." })
+    expect(nativeOptions.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1")
+    await configured.close()
+    const plain = await ClaudeHarness.open(directory, "plain", {})
+    expect(nativeOptions.model).toBeUndefined()
+    expect(nativeOptions.systemPrompt).toEqual({ type: "preset", preset: "claude_code" })
+    await plain.close()
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
 
 test("held-back results and old task events cannot complete or enter a later Turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-order-"))

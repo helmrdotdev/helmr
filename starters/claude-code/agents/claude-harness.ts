@@ -67,7 +67,7 @@ export class ClaudeHarness {
     this.native = query({ prompt: this.prompts, options: {
       cwd, abortController: this.lifetime, permissionMode: "default", settingSources: [], includePartialMessages: true, persistSession: true,
       ...(settings.model === undefined ? {} : { model: settings.model }),
-      ...(settings.appendSystemPrompt === undefined ? {} : { systemPrompt: { type: "preset", preset: "claude_code", append: settings.appendSystemPrompt } }),
+      systemPrompt: { type: "preset", preset: "claude_code", ...(settings.appendSystemPrompt === undefined ? {} : { append: settings.appendSystemPrompt }) },
       ...(resume ? { resume: sessionId } : { sessionId }),
       env: { ...environment, CLAUDE_CONFIG_DIR: directory, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
       disallowedTools: ["Agent", "Task"],

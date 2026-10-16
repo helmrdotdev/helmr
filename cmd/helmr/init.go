@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -73,6 +74,18 @@ func writeTemplateProject(out io.Writer, root, templateID, provider, name string
 	pkg, err := starter.PackageJSON(starterSDKVersion(), version.Node())
 	if err != nil {
 		return err
+	}
+	// Every .ts file in agents/ is a definition source, so a leftover Agent
+	// from another init would deploy beside this one.
+	existing, err := os.ReadDir(filepath.Join(root, "agents"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range existing {
+		path := "agents/" + entry.Name()
+		if strings.HasSuffix(path, ".ts") && !slices.Contains(paths, path) {
+			return fmt.Errorf("%s is not part of the %s template; run init in an empty directory", filepath.Join(root, filepath.FromSlash(path)), starter.ID)
+		}
 	}
 	if !force {
 		for _, path := range paths {

@@ -66,7 +66,8 @@ become Helmr questions.
 | --- | --- | --- | --- | --- |
 | `claude-code` | `anthropic` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
 
-The command prints the Agent name, the model and the Secret to add. Add that
+The command refuses a directory whose `agents/` holds other `.ts` files, even
+with `--force`, since they would deploy beside the new Agent. The command prints the Agent name, the model and the Secret to add. Add that
 Secret in the Console for each Environment you deploy to; the template binds
 it in protected mode, so the Computer only sees a placeholder.
 

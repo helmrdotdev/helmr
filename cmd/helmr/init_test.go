@@ -248,3 +248,16 @@ func TestInitRejectsInvalidTemplateInput(t *testing.T) {
 		}
 	}
 }
+
+func TestInitTemplateRefusesOtherAgentSources(t *testing.T) {
+	root := t.TempDir()
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "meitner", "--force"); err == nil || !strings.Contains(err.Error(), "noether.ts is not part of the claude-code template") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether", "--force"); err != nil {
+		t.Fatalf("same name with --force: %v", err)
+	}
+}

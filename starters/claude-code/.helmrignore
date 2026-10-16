@@ -1,7 +1,6 @@
 node_modules/
 helmr/
 dist/
-tests/
 .env
 .env.*
 !.env*.example
