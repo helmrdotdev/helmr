@@ -32,7 +32,7 @@ interface Operation {
 
 // This application owns the server protocol. The managed runtime separately
 // owns process containment and the Session/Turn convergence boundary.
-export class OpenCodeHarness {
+export class OpenCodeBridge {
   private client!: OpencodeClient
   private child!: ChildProcessWithoutNullStreams
   private exited = Promise.resolve()
@@ -47,14 +47,14 @@ export class OpenCodeHarness {
   get idle() { return this.active === undefined }
   get reusable() { return !this.closed }
 
-  static async open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeHarness> {
-    const harness = new OpenCodeHarness(cwd)
-    try { await harness.initialize(helmrSessionId, config, environment); return harness }
-    catch (error) { await harness.close(); throw error }
+  static async open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeBridge> {
+    const bridge = new OpenCodeBridge(cwd)
+    try { await bridge.initialize(helmrSessionId, config, environment); return bridge }
+    catch (error) { await bridge.close(); throw error }
   }
 
   private async initialize(helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv) {
-    const home = join(this.cwd, ".helmr", "opencode", encodeURIComponent(helmrSessionId))
+    const home = join(this.cwd, ".helmr", "opencode-bridge", encodeURIComponent(helmrSessionId))
     await mkdir(home, { recursive: true, mode: 0o700 })
     const identityFile = join(home, "conversation.json")
     let saved: string | undefined
@@ -64,7 +64,7 @@ export class OpenCodeHarness {
       saved = value.id
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
     const password = randomBytes(32).toString("hex")
-    this.child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
+    this.child = spawn("opencode-bridge", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: this.cwd, stdio: "pipe",
       env: {
         ...environment, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"),

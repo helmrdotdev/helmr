@@ -9,7 +9,7 @@ Helmr questions that people answer in Slack or the Console.
 | --- | --- |
 | `agents/settings.ts` | The Agent name, its introduction, the model and the model key binding. |
 | `agents/<name>.ts` | The Template (image, resources, Secret binding) and the Agent. |
-| `agents/claude-harness.ts` | Connects Claude Code to Helmr Sessions and Turns. |
+| `agents/claude-bridge.ts` | Connects Claude Code to Helmr Sessions and Turns. |
 | `agents/native-questions.ts` | Turns Claude's questions and tool approvals into Helmr questions. |
 
 Before deploying, add the `ANTHROPIC_API_KEY` Secret in the Console for the

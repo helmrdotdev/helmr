@@ -75,7 +75,7 @@ it in protected mode, so the Computer only sees a placeholder.
 | --- | --- |
 | `agents/settings.ts` | The Agent name, a one-line introduction used as an addition to the system prompt, the model and the Secret binding. |
 | `agents/NAME.ts` | The Template and the Agent, both with ID `NAME`. |
-| Harness files in `agents/` | The connection between the harness and Helmr Sessions and Turns. |
+| Bridge files in `agents/` | The code that connects the harness to Helmr Sessions and Turns. |
 | `README.md`, `helmr.config.ts`, `.helmrignore`, `tsconfig.json`, `package.json` | Project files; `helmr.config.ts` lists the harness package in `build.external`. |
 
 The `@helmr/sdk` version in `package.json` matches the CLI release. Install

@@ -1,6 +1,6 @@
 import type { InputContent } from "@helmr/sdk"
 import { agent, template, image, MessageRejected } from "@helmr/sdk"
-import { OpenCodeHarness } from "./opencode"
+import { OpenCodeBridge } from "./opencode-bridge"
 
 export const workspace = template({
   id: "opencode-workspace",
@@ -21,7 +21,7 @@ export const assistant = agent({
   maxTurnDuration: "15m",
   async init(context) {
     if (!process.env.OPENCODE_GO_API_KEY) throw new Error("Configure the OpenCode Go Environment Secret before starting")
-    return OpenCodeHarness.open("/workspace", context.session.id, {
+    return OpenCodeBridge.open("/workspace", context.session.id, {
       model: "opencode-go/glm-5.3",
       small_model: "opencode-go/glm-5.3",
       enabled_providers: ["opencode-go"],

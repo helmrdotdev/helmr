@@ -1,5 +1,5 @@
 import { agent, image, template } from "@helmr/sdk"
-import { ClaudeHarness } from "./claude-harness"
+import { ClaudeBridge } from "./claude-bridge"
 import { agentName, introduction, model, modelKey } from "./settings"
 
 export const workspace = template({
@@ -20,7 +20,7 @@ export const assistant = agent({
   template: workspace,
   maxTurnDuration: "15m",
   async init(context) {
-    return ClaudeHarness.open("/workspace", context.session.id, process.env, { model, appendSystemPrompt: introduction })
+    return ClaudeBridge.open("/workspace", context.session.id, process.env, { model, appendSystemPrompt: introduction })
   },
   async turn(turn, { initResult }) {
     const { response, ...result } = await initResult.run(turn, turn.input)

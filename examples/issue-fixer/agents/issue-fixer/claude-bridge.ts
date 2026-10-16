@@ -12,11 +12,7 @@ import type { HumanContent } from "@helmr/sdk"
 import { conversation } from "./conversation"
 import { askNativeApproval, askNativeQuestions, nativeQuestions, claudeQuestionInput } from "./native-questions"
 
-// Model and system prompt additions chosen by the application.
-export interface ClaudeSettings {
-  readonly model?: string
-  readonly appendSystemPrompt?: string
-}
+type McpServers = NonNullable<Parameters<typeof query>[0]["options"]>["mcpServers"]
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (reason: unknown) => void
@@ -49,7 +45,7 @@ interface Operation {
 
 // The streaming query and its sole reader live across successful Turns. This
 // adapter joins SDK work; the platform owns the entire Session process tree.
-export class ClaudeHarness {
+export class ClaudeBridge {
   private readonly prompts = new Queue<SDKUserMessage>()
   private readonly lifetime = new AbortController()
   private readonly native: Query
@@ -63,13 +59,11 @@ export class ClaudeHarness {
   private pid: number | undefined
   private remember: () => Promise<void> = async () => {}
   private readonly started = deferred<void>()
-  private constructor(cwd: string, directory: string, private readonly sessionId: string, resume: boolean, environment: NodeJS.ProcessEnv, settings: ClaudeSettings) {
+  private constructor(cwd: string, directory: string, private readonly sessionId: string, resume: boolean, environment: NodeJS.ProcessEnv, mcpServers?: McpServers) {
     this.native = query({ prompt: this.prompts, options: {
-      cwd, abortController: this.lifetime, permissionMode: "default", settingSources: [], includePartialMessages: true, persistSession: true,
-      ...(settings.model === undefined ? {} : { model: settings.model }),
-      systemPrompt: { type: "preset", preset: "claude_code", ...(settings.appendSystemPrompt === undefined ? {} : { append: settings.appendSystemPrompt }) },
+      cwd, mcpServers, abortController: this.lifetime, permissionMode: "default", settingSources: [], includePartialMessages: true, persistSession: true,
       ...(resume ? { resume: sessionId } : { sessionId }),
-      env: { ...environment, CLAUDE_CONFIG_DIR: directory, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+      env: { ...environment, CLAUDE_CONFIG_DIR: directory, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1" },
       disallowedTools: ["Agent", "Task"],
       hooks: { PreToolUse: [{ hooks: [async input => {
         if (input.hook_event_name !== "PreToolUse") return {}
@@ -109,7 +103,7 @@ export class ClaudeHarness {
           let questions, request
           try {
             request = claudeQuestionInput.parse(input)
-            questions = nativeQuestions(request.questions)
+            questions = nativeQuestions("claude", request.questions)
           } catch { return { behavior: "deny", message: "Unsupported native question" } }
           const { answers, annotations } = await askNativeQuestions(operation.turn, questions, signal)
           signal.throwIfAborted()
@@ -129,8 +123,8 @@ export class ClaudeHarness {
     this.reader = this.read()
     void this.reader.catch(error => { this.broken ??= error instanceof Error ? error : new Error(String(error)); this.active?.done.reject(error); this.active?.boundary.reject(error) })
   }
-  static async open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, settings: ClaudeSettings = {}): Promise<ClaudeHarness> {
-    const saved = await conversation(cwd, sessionId)
+  static async open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, mcpServers?: McpServers): Promise<ClaudeBridge> {
+    const saved = await conversation(cwd, sessionId, "claude")
     const nativeId = z.uuid().parse(saved.candidateId ?? randomUUID())
     let resume = saved.id !== undefined
     if (!resume && saved.candidateId) {
@@ -141,10 +135,10 @@ export class ClaudeHarness {
       }
     }
     await saved.reserve(nativeId)
-    const harness = new ClaudeHarness(cwd, saved.directory, nativeId, resume, environment, settings)
-    harness.remember = () => saved.remember(nativeId)
-    try { await Promise.all([harness.native.initializationResult(), harness.started.promise]); return harness }
-    catch (error) { await harness.close(); throw error }
+    const bridge = new ClaudeBridge(cwd, saved.directory, nativeId, resume, environment, mcpServers)
+    bridge.remember = () => saved.remember(nativeId)
+    try { await Promise.all([bridge.native.initializationResult(), bridge.started.promise]); return bridge }
+    catch (error) { await bridge.close(); throw error }
   }
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }

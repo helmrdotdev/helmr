@@ -7,13 +7,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import { installSessionHttp } from "../../../runtime/typescript/src/agent-http"
-import { OpenCodeHarness } from "../agents/opencode"
+import { OpenCodeBridge } from "../agents/opencode-bridge"
 
 // This local fixture uses the same HTTP defaults as the managed Node runtime.
 after(installSessionHttp())
 
 test("native binary matches the application pin", () => {
-  assert.equal(execFileSync("opencode", ["--version"], { encoding: "utf8" }).trim(), "1.18.30")
+  assert.equal(execFileSync("opencode-bridge", ["--version"], { encoding: "utf8" }).trim(), "1.18.30")
 })
 
 for (const scenario of ["question", "permission", "delayed-permission", "deny", "large-edit", "project-config", "interrupt", "error"] as const) test(`real OpenCode: ${scenario}`, { timeout: scenario === "delayed-permission" ? 390_000 : 90_000 }, async () => {
@@ -38,7 +38,7 @@ for (const scenario of ["question", "permission", "delayed-permission", "deny", 
     res.end("data: [DONE]\n\n")
   })
   const cancel = new AbortController()
-  let harness: OpenCodeHarness | undefined
+  let bridge: OpenCodeBridge | undefined
   try {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
     const baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`
@@ -75,31 +75,31 @@ for (const scenario of ["question", "permission", "delayed-permission", "deny", 
     const runtime = new SessionRuntime({
       kind: "agent", id: "fixture", template: undefined!,
       init: async () => {
-        harness = await OpenCodeHarness.open(cwd, "same-session", {
+        bridge = await OpenCodeBridge.open(cwd, "same-session", {
           model: "fixture/fixture", small_model: "fixture/fixture", enabled_providers: ["fixture"],
           provider: { fixture: { npm: "@ai-sdk/openai-compatible", name: "Local fixture", options: { baseURL, apiKey: "not-a-real-key" }, models: { fixture: { name: "Fixture", limit: { context: 32000, output: 2048 } } } } },
         }, { PATH: process.env.PATH, HOME: cwd })
-        return harness
+        return bridge
       },
       turn: async (turn, context) => {
-        const { response, ...result } = await (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join(""))
+        const { response, ...result } = await (context.initResult as OpenCodeBridge).run(turn, turn.input.map(part => part.text).join(""))
         if (response !== undefined) await turn.respond(response)
         return result
       },
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
     const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api_key" } })
-    const pid = harness!.processId, id = harness!.conversationId
+    const pid = bridge!.processId, id = bridge!.conversationId
     if (scenario === "interrupt" || scenario === "error") {
       assert.equal(first.status, scenario === "interrupt" ? "interrupted" : "failed", JSON.stringify(first))
       assert.equal(responses.length, 0)
-      assert.equal(harness!.reusable, true)
+      assert.equal(bridge!.reusable, true)
       assert.equal(holds, 0)
       if (scenario === "interrupt") runtime.resume()
     } else assert.equal(first.status, "completed", JSON.stringify(first))
     const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-10T00:00:01Z", input: [{ type: "text", text: "second unique input" }], source: { kind: "api_key" } })
     assert.equal(second.status, "completed", JSON.stringify(second))
-    assert.equal(harness!.processId, pid)
-    assert.equal(harness!.conversationId, id)
+    assert.equal(bridge!.processId, pid)
+    assert.equal(bridge!.conversationId, id)
     assert.equal(questions, scenario === "error" || scenario === "large-edit" ? 0 : 1)
     assert.equal(holds, 0)
     assert.equal(responses.length, scenario === "interrupt" || scenario === "error" ? 1 : 2)
@@ -115,7 +115,7 @@ for (const scenario of ["question", "permission", "delayed-permission", "deny", 
     assert.equal(outputs, 0, "tool starts must not become conversation progress")
     assert.equal(runtime.idle, true)
   } finally {
-    await harness?.close()
+    await bridge?.close()
     cancel.abort()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
