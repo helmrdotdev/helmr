@@ -3,17 +3,21 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/starters"
 	"github.com/spf13/cobra"
 )
 
 func initCommand() *cobra.Command {
-	var dir string
+	var dir, templateID, provider, name string
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -24,20 +28,108 @@ func initCommand() *cobra.Command {
 			if dir != "" {
 				root = dir
 			}
-			if err := writeStarterProject(root, force); err != nil {
-				return err
+			if templateID == "" {
+				if provider != "" || name != "" {
+					return errors.New("--provider and --name need --template")
+				}
+				if err := writeStarterProject(root, force); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "created helmr.config.ts")
+				fmt.Fprintln(cmd.OutOrStdout(), "created .helmrignore")
+				fmt.Fprintln(cmd.OutOrStdout(), "created package.json")
+				fmt.Fprintln(cmd.OutOrStdout(), "created tsconfig.json")
+				fmt.Fprintln(cmd.OutOrStdout(), "created agents/hello.ts")
+				return nil
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "created helmr.config.ts")
-			fmt.Fprintln(cmd.OutOrStdout(), "created .helmrignore")
-			fmt.Fprintln(cmd.OutOrStdout(), "created package.json")
-			fmt.Fprintln(cmd.OutOrStdout(), "created tsconfig.json")
-			fmt.Fprintln(cmd.OutOrStdout(), "created agents/hello.ts")
-			return nil
+			return writeTemplateProject(cmd.OutOrStdout(), root, templateID, provider, name, force)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "Project root to initialize.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing generated files.")
+	cmd.Flags().StringVar(&templateID, "template", "", "Agent template: "+strings.Join(starters.IDs(), ", ")+".")
+	cmd.Flags().StringVar(&provider, "provider", "", "Model provider for the template. Defaults to the template's first provider.")
+	cmd.Flags().StringVar(&name, "name", "", "Agent name. Defaults to a name picked at random.")
 	return cmd
+}
+
+func writeTemplateProject(out io.Writer, root, templateID, provider, name string, force bool) error {
+	starter, ok := starters.Lookup(templateID)
+	if !ok {
+		return fmt.Errorf("unknown template %q (available: %s)", templateID, strings.Join(starters.IDs(), ", "))
+	}
+	binding, err := starter.Binding(provider)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		name = starters.RandomName()
+	} else if !starters.ValidAgentName(name) {
+		return fmt.Errorf("invalid agent name %q: use lowercase letters, digits and hyphens, starting with a letter, up to 40 characters", name)
+	}
+	paths, err := starter.ProjectFiles(name)
+	if err != nil {
+		return err
+	}
+	pkg, err := starter.PackageJSON(starterSDKVersion(), version.Node())
+	if err != nil {
+		return err
+	}
+	// Every .ts file in agents/ is a definition source, so a leftover Agent
+	// from another init would deploy beside this one.
+	existing, err := os.ReadDir(filepath.Join(root, "agents"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range existing {
+		path := "agents/" + entry.Name()
+		if strings.HasSuffix(path, ".ts") && !slices.Contains(paths, path) {
+			return fmt.Errorf("%s is not part of the %s template; run init in an empty directory", filepath.Join(root, filepath.FromSlash(path)), starter.ID)
+		}
+	}
+	if !force {
+		for _, path := range paths {
+			target := filepath.Join(root, filepath.FromSlash(path))
+			if _, err := os.Stat(target); err == nil {
+				return fmt.Errorf("%s already exists; pass --force to overwrite", target)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	agentPath := starters.AgentPath(name)
+	for _, path := range paths {
+		var contents []byte
+		switch path {
+		case starters.PackageFile:
+			contents = []byte(pkg)
+		case starters.SettingsFile:
+			contents = []byte(starters.Settings(name, binding))
+		case agentPath:
+			contents, err = fs.ReadFile(starter.Files(), starters.AgentFile)
+		default:
+			contents, err = fs.ReadFile(starter.Files(), path)
+		}
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, contents, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "created "+path)
+	}
+	agent := "Agent: " + name
+	if namesake, ok := starters.LookupNamesake(name); ok {
+		agent += " (named after " + namesake.Person + ")"
+	}
+	fmt.Fprintln(out, agent)
+	fmt.Fprintln(out, "Model: "+binding.Model+" · key from Secret "+binding.Provider.Secret+", sent only to "+binding.Provider.Origin)
+	fmt.Fprintln(out, "Next: install dependencies, then helmr deploy")
+	return nil
 }
 
 func writeStarterProject(root string, force bool) error {

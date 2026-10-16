@@ -6,7 +6,7 @@ import { Queue } from "./queue"
 
 export type NativeMessage = { id?: string | number; method: string; params?: unknown }
 
-// Small app-server wire transport. Provider policy stays in codex-harness.ts.
+// Small app-server wire transport. Provider policy stays in codex-bridge.ts.
 export function spawnCodex(home: string, environment: NodeJS.ProcessEnv = process.env): ChildProcessWithoutNullStreams {
   const require = createRequire(import.meta.url)
   const launcher = join(dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js")

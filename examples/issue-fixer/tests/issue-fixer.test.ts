@@ -13,8 +13,8 @@ const open = async (cwd: string, sessionId: string, _env: unknown, mcp: unknown)
   trace.push("setup")
   return { run: async (_turn: unknown, prompt: HumanContent) => { prompts.push(prompt); trace.push("native"); return { native: "completed" } } }
 }
-mock.module("../agents/issue-fixer/codex-harness", () => ({ CodexHarness: { open } }))
-mock.module("../agents/issue-fixer/claude-harness", () => ({ ClaudeHarness: { open } }))
+mock.module("../agents/issue-fixer/codex-bridge", () => ({ CodexBridge: { open } }))
+mock.module("../agents/issue-fixer/claude-bridge", () => ({ ClaudeBridge: { open } }))
 const { issuePrompt } = await import("../agents/issue-fixer/checks")
 mock.module("../agents/issue-fixer/checks", () => ({
   issuePrompt,

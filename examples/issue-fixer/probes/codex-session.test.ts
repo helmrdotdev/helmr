@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
-import { CodexHarness } from "../agents/issue-fixer/codex-harness"
+import { CodexBridge } from "../agents/issue-fixer/codex-bridge"
 import { conversation } from "../agents/issue-fixer/conversation"
 import { codexModel } from "./native-model"
 
@@ -21,7 +21,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
   const cancel = new AbortController()
   let questionReached!: () => void
   const questionReady = new Promise<void>(resolve => { questionReached = resolve })
-  let harness: CodexHarness | undefined
+  let bridge: CodexBridge | undefined
   let holds = 0
   let setups = 0, questions = 0, outputs = 0
   try {
@@ -53,9 +53,9 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "native-probe", template: undefined!,
-      init: async () => { setups++; harness = await CodexHarness.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return harness },
+      init: async () => { setups++; bridge = await CodexBridge.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return bridge },
       turn: async (turn: import("../../../sdk/typescript/src/agent").Turn, context) => {
-        const running = (context.initResult as CodexHarness).run(turn, turn.input.map(part => part.text).join(""))
+        const running = (context.initResult as CodexBridge).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady
@@ -73,7 +73,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
       assert.ok(Number.isSafeInteger(commandPid) && commandPid>0)
       assert.throws(() => process.kill(commandPid,0))
     }
-    const processId = harness!.processId
+    const processId = bridge!.processId
     assert.equal(first.status, (scenario === "interrupt" || scenario === "background-exec") ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
@@ -81,7 +81,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     assert.equal(second.status, "completed")
     assert.deepEqual(responses.find(value => value.turnId === "second")?.value, [{ type: "text", text: "fixture response" }])
     if (["handler-failure", "malformed"].includes(scenario)) assert.equal(responses.some(value => value.turnId === "first"), false)
-    assert.equal(harness!.processId, processId)
+    assert.equal(bridge!.processId, processId)
     assert.equal(setups, 1)
     assert.equal(holds, 0)
     assert.equal(questions, 1)
@@ -91,7 +91,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     assert.ok(history.includes("second unique input"))
   } finally {
     cancel.abort()
-    await harness?.close()
+    await bridge?.close()
     http.closeAllConnections()
     await new Promise<void>(resolve => http.close(() => resolve()))
     // Native plugin-cache helpers can finish filesystem cleanup after app-server exit.

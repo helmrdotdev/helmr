@@ -41,7 +41,7 @@ function native(definition: typeof nativeCodex) {
       let state: Awaited<ReturnType<typeof definition.init>>
       try { state = await definition.init(context) }
       finally { launches.unsubscribe(observe) }
-      const nativeProcess = children.find(child => child.pid === state.harness.processId)
+      const nativeProcess = children.find(child => child.pid === state.bridge.processId)
       assert(nativeProcess, "expected the native launcher")
       const path = `/workspace/${context.session.id}/setup-count.json`
       let setupCount = 0
@@ -98,7 +98,7 @@ function native(definition: typeof nativeCodex) {
         await unlink(stopPath)
         const gateStartedAt = Date.now()
         const marker = `/workspace/native-stop-settled-${turn.id}.json`
-        await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.harness.processId,
+        await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.bridge.processId,
           nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, commandLock }))
         await rename(`${marker}.tmp`, marker)
         // Authored cleanup deliberately waits for the external fixture to observe
