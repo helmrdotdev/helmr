@@ -27,35 +27,21 @@ func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		outcome, err := session.RuntimeFinalize(ctx, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
-		if err != nil {
-			if r.Context().Err() != nil {
-				return
-			}
-			if ctx.Err() != nil {
-				writeError(w, unavailable(errors.New("turn save is still pending")))
-				return
-			}
-			server.writeAgentAdmissionError(w, request.RequestID, err)
+	outcome, err := session.RuntimeFinalize(ctx, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
+	if err != nil {
+		if r.Context().Err() != nil {
 			return
 		}
-		if outcome != nil {
-			writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: outcome})
+		if ctx.Err() != nil {
+			writeError(w, unavailable(errors.New("turn finalization deadline elapsed")))
 			return
 		}
-		select {
-		case <-ctx.Done():
-			if r.Context().Err() != nil {
-				return
-			}
-			// Keep the retained operation unresolved. The independent save owner
-			// progresses the same cut; retry must not turn pending into failure.
-			writeError(w, unavailable(errors.New("turn save is still pending")))
-			return
-		case <-ticker.C:
-		}
+		server.writeAgentAdmissionError(w, request.RequestID, err)
+		return
 	}
+	if outcome == nil {
+		writeError(w, unavailable(codedError{code: workerapi.TurnReceiptsPending, message: "turn callback receipts pending", retryable: true}))
+		return
+	}
+	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: outcome})
 }

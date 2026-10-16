@@ -99,7 +99,6 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		return nil, err
 	}
 	client := awss3.NewFromConfig(cfg, func(options *awss3.Options) {
-		observeNativeHTTP(options, uri.Host, strings.Trim(uri.Path, "/"))
 		if endpoint := uri.Query().Get("endpoint"); endpoint != "" {
 			options.BaseEndpoint = aws.String(endpoint)
 			options.UsePathStyle = true
@@ -714,6 +713,39 @@ func (c *Store) Stat(ctx context.Context, digest string) (cas.Object, error) {
 	}, nil
 }
 
+// Verify accepts only a full-object SHA-256. Multipart composite and absent
+// checksums require a bounded full read; they are never compared as full hashes.
+func (c *Store) Verify(ctx context.Context, digest string) (cas.Object, error) {
+	key, err := c.objectKey(digest)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	output, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
+	if err != nil {
+		return cas.Object{}, storageReadFailure(ctx, err)
+	}
+	object := cas.Object{Digest: digest, SizeBytes: aws.ToInt64(output.ContentLength), Key: key, MediaType: aws.ToString(output.ContentType)}
+	checksum := aws.ToString(output.ChecksumSHA256)
+	if (output.ChecksumType == types.ChecksumTypeFullObject || output.ChecksumType == "") && checksum != "" && !strings.Contains(checksum, "-") {
+		expected, err := descriptorChecksum(digest)
+		if err != nil {
+			return cas.Object{}, err
+		}
+		if checksum != expected {
+			return cas.Object{}, cas.ErrDigestMismatch
+		}
+		return object, nil
+	}
+	if err = cas.VerifyReadback(ctx, c, object); err != nil {
+		return cas.Object{}, err
+	}
+	return object, nil
+}
+
+func (c *ImmutableStore) Verify(ctx context.Context, digest string) (cas.Object, error) {
+	return c.store.Verify(ctx, digest)
+}
+
 func (c *Store) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 	key, err := c.objectKey(digest)
 	if err != nil {
@@ -824,16 +856,21 @@ func (c *Store) Publish(
 		}
 	}
 	var object cas.Object
-	if errors.Is(uploadErr, errImmutableObjectExists) {
-		object, err = c.Stat(ctx, expected.Digest)
+	if errors.Is(uploadErr, errImmutableObjectExists) || (uploadErr == nil && expected.SizeBytes >= c.multipartThreshold()) {
+		// Multipart SHA-256 is composite; verify the completed bytes before
+		// returning evidence that can authorize local eviction.
+		object, err = c.Verify(ctx, expected.Digest)
 		if err != nil {
-			return cas.Object{}, fmt.Errorf("stat existing immutable object: %w", storageFailure(ctx, err))
+			if errors.Is(err, cas.ErrDigestMismatch) {
+				return cas.Object{}, fmt.Errorf("%w: %w", cas.ErrRemoteIntegrity, err)
+			}
+			return cas.Object{}, fmt.Errorf("verify immutable object: %w", storageFailure(ctx, err))
 		}
 		if object.SizeBytes != expected.SizeBytes ||
 			object.MediaType != expected.MediaType {
 			return cas.Object{}, fmt.Errorf(
-				"immutable object %s metadata differs from published content",
-				expected.Digest,
+				"%w: immutable object %s metadata differs from published content",
+				cas.ErrRemoteIntegrity, expected.Digest,
 			)
 		}
 	} else if uploadErr != nil {

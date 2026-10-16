@@ -280,42 +280,42 @@ func validateRuntimeManifest(
 ) error {
 	runtimeManifest := manifest.RecoveryPoint.Runtime
 	if runtimeManifest.Backend != snapshotBackend {
-		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
+		return fmt.Errorf("%w: checkpoint manifest runtime backend %q is not supported", vm.ErrInvalidCheckpointContent, runtimeManifest.Backend)
 	}
 	descriptorDigest, err := CanonicalVMRuntimeDescriptor().Digest()
 	if err != nil {
 		return err
 	}
 	if runtimeManifest.DescriptorDigest != descriptorDigest {
-		return fmt.Errorf("checkpoint manifest VM runtime descriptor digest %s does not match worker descriptor digest %s", runtimeManifest.DescriptorDigest, descriptorDigest)
+		return fmt.Errorf("%w: checkpoint manifest VM runtime descriptor digest %s does not match worker descriptor digest %s", vm.ErrInvalidCheckpointContent, runtimeManifest.DescriptorDigest, descriptorDigest)
 	}
 	workerArchitecture, err := vmplatform.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return err
 	}
 	if runtimeManifest.Arch != workerArchitecture {
-		return fmt.Errorf("checkpoint manifest runtime arch %q does not match worker arch %q", runtimeManifest.Arch, workerArchitecture)
+		return fmt.Errorf("%w: checkpoint manifest runtime arch %q does not match worker arch %q", vm.ErrInvalidCheckpointContent, runtimeManifest.Arch, workerArchitecture)
 	}
 	if runtimeManifest.Contract != vmplatform.Contract {
-		return fmt.Errorf("checkpoint manifest runtime contract %q does not match worker contract %q", runtimeManifest.Contract, vmplatform.Contract)
+		return fmt.Errorf("%w: checkpoint manifest runtime contract %q does not match worker contract %q", vm.ErrInvalidCheckpointContent, runtimeManifest.Contract, vmplatform.Contract)
 	}
 	if runtimeManifest.ID == "" {
-		return errors.New("checkpoint manifest runtime id is required")
+		return fmt.Errorf("%w: checkpoint manifest runtime id is required", vm.ErrInvalidCheckpointContent)
 	}
 	if runtimeManifest.ID != runtimeID {
-		return fmt.Errorf("checkpoint manifest runtime id %s does not match worker runtime id %s", runtimeManifest.ID, runtimeID)
+		return fmt.Errorf("%w: checkpoint manifest runtime id %s does not match worker runtime id %s", vm.ErrInvalidCheckpointContent, runtimeManifest.ID, runtimeID)
 	}
 	if runtimeManifest.KernelDigest != kernelDigest {
-		return fmt.Errorf("checkpoint manifest kernel digest %s does not match worker kernel digest %s", runtimeManifest.KernelDigest, kernelDigest)
+		return fmt.Errorf("%w: checkpoint manifest kernel digest %s does not match worker kernel digest %s", vm.ErrInvalidCheckpointContent, runtimeManifest.KernelDigest, kernelDigest)
 	}
 	if runtimeManifest.InitramfsDigest != initramfsDigest {
-		return fmt.Errorf("checkpoint manifest initramfs digest %s does not match worker initramfs digest %s", runtimeManifest.InitramfsDigest, initramfsDigest)
+		return fmt.Errorf("%w: checkpoint manifest initramfs digest %s does not match worker initramfs digest %s", vm.ErrInvalidCheckpointContent, runtimeManifest.InitramfsDigest, initramfsDigest)
 	}
 	if runtimeManifest.RootfsDigest != rootfsDigest {
-		return fmt.Errorf("checkpoint manifest rootfs digest %s does not match worker rootfs digest %s", runtimeManifest.RootfsDigest, rootfsDigest)
+		return fmt.Errorf("%w: checkpoint manifest rootfs digest %s does not match worker rootfs digest %s", vm.ErrInvalidCheckpointContent, runtimeManifest.RootfsDigest, rootfsDigest)
 	}
 	if runtimeManifest.CPUConfigDigest != expectedCPUConfigDigest {
-		return fmt.Errorf("checkpoint manifest guest CPU configuration digest %s does not match expected digest %s", runtimeManifest.CPUConfigDigest, expectedCPUConfigDigest)
+		return fmt.Errorf("%w: checkpoint manifest guest CPU configuration digest %s does not match expected digest %s", vm.ErrInvalidCheckpointContent, runtimeManifest.CPUConfigDigest, expectedCPUConfigDigest)
 	}
 	if err := validateSnapshotProgram(runtimeManifest.Program, expectedProgram); err != nil {
 		return err
@@ -333,7 +333,7 @@ func validateRuntimeManifest(
 	}
 	network := manifest.RuntimeState.Network
 	if err := validateSnapshotNetwork(network); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", vm.ErrInvalidCheckpointContent, err)
 	}
 	if err := validateRestoredNetworkConfig(snapshotNetworkConfig(cfg), network); err != nil {
 		return fmt.Errorf("checkpoint manifest network does not match VM runtime contract: %w", err)

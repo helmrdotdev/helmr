@@ -105,7 +105,7 @@ func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *
 		server.writeAllocationError(w, err)
 		return
 	}
-	response := workerapi.ComputerAllocationDelivery{Identity: allocationWireReceipt("computer", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.ChannelCredential, BaseVersion: result.BaseVersion}
+	response := workerapi.ComputerAllocationDelivery{Identity: allocationWireReceipt("computer", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.ChannelCredential, BaseVersion: result.BaseVersion, DiskOnlyRecovery: result.DiskOnlyRecovery}
 	if result.RestoredFrom != nil {
 		response.RestoredFrom = result.RestoredFrom.String()
 	}

@@ -16,8 +16,7 @@ Turn.
 | --- | --- |
 | `queued` | Admitted and waiting to run. |
 | `running` | The `turn` handler is processing. |
-| `finalizing` | The handler returned; Helmr is finishing outstanding work and saving the Computer's disk. |
-| `completed` | The handler succeeded and the post-turn disk save is stored durably. |
+| `completed` | The handler succeeded; its result and optional response are committed. Disk saving continues in the background. |
 | `failed` | The handler threw, returned an invalid result or broke the Turn contract. |
 | `interrupted` | An interrupt, `maxTurnDuration`, or process or host loss stopped the Turn before it completed. |
 | `cancelled` | Cancelling the Session cancelled this Turn. |
@@ -48,19 +47,17 @@ itself mean the Turn is `completed`.
 
 ## Finalization
 
-When the handler returns, the Turn stops accepting new messages and questions
-and enters `finalizing`. Helmr then:
+When the handler returns, the Turn stops accepting new messages and questions.
+Helmr waits for already admitted output writes, callbacks, questions and native
+work to settle. It then commits the result, optional response and `completed`
+outcome together, and requests a background disk save. The next Turn can run
+while that save is pending.
 
-1. waits for output writes, message callbacks and questions that already
-   started;
-2. lets the harness's native work settle;
-3. saves the Computer's disk and waits until the save is stored durably.
-
-Only then does the Turn become `completed`. Finish your own writes and flush
-buffers before returning so they are part of the save. If the save must be
-retried, Helmr retries the save; it does not rerun the handler. See
-[Durability](/docs/concepts/durability) for what the save does and does not
-guarantee.
+Finish your own writes and flush buffers before returning. A completed result
+does not prove those files have reached remote storage. Helmr retries failed
+saves without rerunning completed handlers. If the worker is lost first, the
+response remains available, but files and native conversation history after
+the restored save can be missing. See [Durability](/docs/concepts/durability).
 
 ## Observing the outcome
 
@@ -82,10 +79,12 @@ runs. If the harness's work cannot be stopped cleanly after the failure, the
 Session is held instead.
 
 An exact-Turn interrupt lets the next queued Turn run once processing has
-stopped. Session interruption, `maxTurnDuration`, and process or host loss hold
-the Session until someone resumes it. Helmr never replays an interrupted or
-failed Turn; retrying business work and reconciling external effects belong to
-the application.
+stopped. Session interruption, `maxTurnDuration`, and process loss hold the
+Session until someone resumes it. Worker loss restores eligible saved files;
+missing completed work requires the recovery acknowledgement described in
+[Durability](/docs/concepts/durability#worker-loss). Helmr never replays a
+completed, interrupted or failed Turn. Retrying business work and reconciling
+external effects belong to the application.
 
 ## Related
 

@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +42,8 @@ func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.CapturedVersion, 
 // Exercises the actual SDK HTTP boundary, not a running VMM.
 func liveCaptureMachine(t *testing.T, writebackFailure bool, delays ...time.Duration) (*guestMachine, *liveCaptureDevice, func() []string) {
 	t.Helper()
+	var writebackFault atomic.Bool
+	writebackFault.Store(writebackFailure)
 	previousDial := dialVsock
 	t.Cleanup(func() { dialVsock = previousDial })
 	dialVsock = func(ctx context.Context, _ string, _ uint32, _ ...vsock.DialOption) (net.Conn, error) {
@@ -69,7 +74,7 @@ func liveCaptureMachine(t *testing.T, writebackFailure bool, delays ...time.Dura
 				}
 			}
 			response := &computerv0.FlushComputerResponse{OperationId: req.OperationId}
-			if writebackFailure {
+			if writebackFault.Swap(false) {
 				response.Error = "writeback_failed"
 			}
 			_ = frameio.WriteProtoFrame(server, response)
@@ -92,6 +97,36 @@ func liveCaptureMachine(t *testing.T, writebackFailure bool, delays ...time.Dura
 	socket := serveSnapshotAPI(t, root, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/vm/config" {
 			_, _ = w.Write([]byte(`{"drives":[{"drive_id":"computer","io_engine":"Sync","cache_type":"Writeback","is_read_only":false,"path_on_host":"/computer.ext4"},{"drive_id":"scratch","io_engine":"Sync","cache_type":"Writeback","is_read_only":false,"path_on_host":"/scratch.ext4"}]}`))
+			return
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/snapshot/create" {
+			var request struct {
+				Memory string `json:"mem_file_path"`
+				State  string `json:"snapshot_path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			if err := os.WriteFile(filepath.Join(root, filepath.Base(request.Memory)), []byte("memory"), 0600); err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			state, err := os.OpenFile(filepath.Join(root, filepath.Base(request.State)), os.O_WRONLY, 0)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			_, writeErr := state.Write([]byte("state"))
+			if err := errors.Join(writeErr, state.Close()); err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(204)
 			return
 		}
 		if r.Method != http.MethodPatch || r.URL.Path != "/vm" {
@@ -130,7 +165,7 @@ func liveCaptureMachine(t *testing.T, writebackFailure bool, delays ...time.Dura
 	}
 	t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
 	device := &liveCaptureDevice{}
-	machine := &guestMachine{cfg: (Config{HealthTimeout: time.Second}).WithDefaults(), machine: sdkMachine, diskFiles: files, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4"), topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: "computer", Path: filepath.Join(root, "computer.ext4"), Device: device}}}
+	machine := &guestMachine{cfg: (Config{HealthTimeout: time.Second, JailerUID: os.Getuid(), JailerGID: os.Getgid()}).WithDefaults(), machine: sdkMachine, diskFiles: files, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4"), topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: "computer", Path: filepath.Join(root, "computer.ext4"), Device: device}}}
 	return machine, device, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), states...) }
 }
 
@@ -160,7 +195,7 @@ func TestLiveComputerCaptureNeverPausesBeforePublication(t *testing.T) {
 	}
 }
 
-func TestLiveComputerCaptureWritebackFailureRetainsFence(t *testing.T) {
+func TestLiveComputerCaptureWritebackFailureCanRetrySamePrefix(t *testing.T) {
 	s, d, _ := liveCaptureMachine(t, true)
 	if _, err := s.CaptureComputer(t.Context()); err == nil {
 		t.Fatal("accepted failed writeback")
@@ -168,9 +203,11 @@ func TestLiveComputerCaptureWritebackFailureRetainsFence(t *testing.T) {
 	if d.captures != 0 || d.releases != 0 {
 		t.Fatal("captured without guest writeback")
 	}
-	if _, err := s.CaptureComputer(t.Context()); err == nil {
-		t.Fatal("reused ambiguous source")
+	cut, err := s.CaptureComputer(t.Context())
+	if err != nil {
+		t.Fatal("retry of unreceipted online flush failed", err)
 	}
+	cut.Capture.Release()
 }
 
 func TestLiveComputerCaptureCheckpointWaitsForCut(t *testing.T) {
@@ -250,21 +287,24 @@ func TestCloseCancelsCaptureBeforeReleasingBarrier(t *testing.T) {
 	}
 }
 
-func TestLiveComputerCaptureFailureFencesWithoutPause(t *testing.T) {
+func TestLiveComputerCaptureFailureRetriesWithoutPause(t *testing.T) {
 	for _, stage := range []string{"guest flush", "device capture"} {
 		t.Run(stage, func(t *testing.T) {
 			s, d, states := liveCaptureMachine(t, stage == "guest flush")
 			if stage == "device capture" {
 				d.capture = func(context.Context) (disk.CapturedVersion, error) {
-					return nil, errors.New("device capture failed")
+					return nil, io.ErrUnexpectedEOF
 				}
 			}
 			if _, err := s.CaptureComputer(t.Context()); err == nil {
 				t.Fatal("accepted failed capture")
 			}
-			if _, err := s.CaptureComputer(t.Context()); err == nil {
-				t.Fatal("reused failed source")
+			d.capture = nil
+			cut, err := s.CaptureComputer(t.Context())
+			if err != nil {
+				t.Fatal("online capture was permanently fenced", err)
 			}
+			cut.Capture.Release()
 			if got := states(); len(got) != 0 {
 				t.Fatalf("states %v", got)
 			}
@@ -326,9 +366,11 @@ func TestLiveCaptureGuestFlushHonorsCallerDeadline(t *testing.T) {
 	if d.captures != 0 {
 		t.Fatal("captured without flush acknowledgement")
 	}
-	if _, err := s.CaptureComputer(t.Context()); err == nil {
-		t.Fatal("reused ambiguous source")
+	cut, err := s.CaptureComputer(t.Context())
+	if err != nil {
+		t.Fatal("canceled unreceipted cut fenced later capture", err)
 	}
+	cut.Capture.Release()
 }
 
 func TestCaptureContextBoundsUnboundedCaller(t *testing.T) {
@@ -504,5 +546,20 @@ func TestCheckpointFailureCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestLiveComputerCaptureCorruptionRetainsFence(t *testing.T) {
+	machine, device, states := liveCaptureMachine(t, false)
+	attempts := 0
+	device.capture = func(context.Context) (disk.CapturedVersion, error) { attempts++; return nil, blockformat.ErrIntegrity }
+	if _, err := machine.CaptureComputer(t.Context()); !errors.Is(err, blockformat.ErrIntegrity) {
+		t.Fatal(err)
+	}
+	if _, err := machine.CaptureComputer(t.Context()); err == nil {
+		t.Fatal("corrupt source reused")
+	}
+	if attempts != 1 || len(states()) != 0 {
+		t.Fatal("corruption retried physical source or paused VM")
 	}
 }

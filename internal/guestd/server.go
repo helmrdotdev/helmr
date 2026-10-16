@@ -67,9 +67,6 @@ func serveHealth(listener net.Listener, ready func() bool, logger *slog.Logger) 
 		requestID := requestSeq.Add(1)
 		started := time.Now()
 		isReady := ready()
-		if logger != nil {
-			logger.Info("guestd health request received", "request_id", requestID, "ready", isReady)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		status := "ok"
 		if !isReady {
@@ -95,9 +92,6 @@ func serveHealth(listener net.Listener, ready func() bool, logger *slog.Logger) 
 				logger.Error("guestd health response failed", "request_id", requestID, "ready", isReady, "status", status, "duration_ms", duration.Milliseconds(), "flush_duration_ms", flushDuration.Milliseconds(), "bytes", written, "error", flushErr)
 			}
 			return
-		}
-		if logger != nil {
-			logger.Info("guestd health response written", "request_id", requestID, "ready", isReady, "status", status, "duration_ms", duration.Milliseconds(), "flush_duration_ms", flushDuration.Milliseconds(), "bytes", written)
 		}
 	})
 	_ = http.Serve(listener, mux)

@@ -1,5 +1,7 @@
 package workerapi
 
+const TurnReceiptsPending = "turn_receipts_pending"
+
 // AgentOperationMethod identifies a host-to-control-plane operation. The guest
 // protobuf method is translated by the host at the transport boundary.
 type AgentOperationMethod string

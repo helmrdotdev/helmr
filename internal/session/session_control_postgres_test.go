@@ -37,7 +37,7 @@ func TestSessionInterruptPreservesFinalizingTurnQueueAndPeer(t *testing.T) {
 	if err != nil || r.HoldID == uuid.Nil() {
 		t.Fatalf("interrupt: %+v %v", r, err)
 	}
-	for id, want := range map[uuid.UUID]string{active.TurnID: "finalizing", queued.TurnID: "queued", peerActive.TurnID: "running"} {
+	for id, want := range map[uuid.UUID]string{active.TurnID: "completed", queued.TurnID: "queued", peerActive.TurnID: "running"} {
 		var status string
 		if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, id).Scan(&status); err != nil || status != want {
 			t.Fatalf("turn %s: %s, want %s: %v", id, status, want, err)
@@ -49,8 +49,8 @@ func TestSessionInterruptPreservesFinalizingTurnQueueAndPeer(t *testing.T) {
 			t.Fatalf("process %s: %s, want %s: %v", id, status, want, err)
 		}
 	}
-	// Finalizing work remains pending until its own save is published.
-	if err := session.Complete(t.Context(), f.pool, f.env, child.session, active.TurnID); !errors.Is(err, session.ErrNotReady) {
+	// A later control cannot retract an already completed result.
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, child.session, active.TurnID); err != nil {
 		t.Fatalf("premature completion: %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
 		t.Fatalf("held finalizing Turn did not complete: %v", err)
 	}
 	peerTurn, peerSave := peer.finalize(t, "peer")
@@ -223,7 +223,7 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	if err := storage.publish(t, peerSave.ID, peerCut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, peer.session, peerTurn.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, peer.session, peerTurn.TurnID); err != nil {
 		t.Fatalf("peer blocked by interrupted save: %v", err)
 	}
 }

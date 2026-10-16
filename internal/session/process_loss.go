@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"uuid"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64, members []ComputerMember, physicalStopped bool) error {
+func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64, members []ComputerMember, physicalStopped bool, disposition ComputerLossDisposition) error {
 	for _, member := range members {
 		if member.LeaseEpoch != epoch {
 			continue
@@ -33,7 +34,7 @@ func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUI
 			}
 		}
 		e := Execution{EnvironmentID: env, SessionID: member.Session, ProcessEpoch: member.Epoch, LeaseEpoch: epoch}
-		if err := LoseProcess(ctx, tx, e, physicalStopped); err != nil {
+		if err := loseProcess(ctx, tx, e, physicalStopped, disposition, computerID); err != nil {
 			return err
 		}
 	}
@@ -42,7 +43,31 @@ func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUI
 
 // The caller holds all owner/Computer locks. The failure marker makes a later
 // physical fence or checkpoint-loss reconciliation safe after explicit hold release.
+// ComputerLossDisposition distinguishes a recoverable Computer loss from an
+// independent runtime crash. Only the latter installs a generic crash hold.
+type ComputerLossDisposition bool
+
+const (
+	ComputerLossRequiresAttention ComputerLossDisposition = false
+	ComputerLossRecoverable       ComputerLossDisposition = true
+)
+
 func LoseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool) error {
+	return loseProcess(ctx, tx, e, physicalStopped, ComputerLossRequiresAttention, uuid.Nil())
+}
+
+const ComputerExecutionLost = "computer_execution_lost"
+
+// ComputerLossInterruption is an event-time fact, independent of later process
+// reconstruction, hold acknowledgment or event projection timing.
+type ComputerLossInterruption struct {
+	Reason      string    `json:"reason"`
+	ComputerID  uuid.UUID `json:"computerId"`
+	LeaseEpoch  int64     `json:"leaseEpoch"`
+	RecoveryGap bool      `json:"recoveryGap"`
+}
+
+func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool, disposition ComputerLossDisposition, lossComputer uuid.UUID) error {
 	var recorded, terminal, fenced, neverStarted bool
 	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
@@ -67,12 +92,23 @@ func LoseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 		}
 		return err
 	}
-	if !recorded && !terminal && !revocationRecorded {
+	if !recorded && !terminal && !revocationRecorded && disposition == ComputerLossRequiresAttention {
 		if err := recordSessionFailure(ctx, tx, e, "Computer execution authority lost without an eligible continuation"); err != nil {
 			return err
 		}
 	}
-	if err := interruptRunningSessionTurn(ctx, tx, e); err != nil {
+	var interruption json.RawMessage
+	if lossComputer != uuid.Nil() {
+		var gap bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND kind='recovery_gap' AND released_at IS NULL)`, e.EnvironmentID, e.SessionID).Scan(&gap); err != nil {
+			return err
+		}
+		interruption, err = json.Marshal(ComputerLossInterruption{ComputerExecutionLost, lossComputer, e.LeaseEpoch, gap})
+		if err != nil {
+			return err
+		}
+	}
+	if err := interruptRunningSessionTurnWithData(ctx, tx, e, interruption); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE session_processes SET status='lost',failure_recorded_at=COALESCE(failure_recorded_at,clock_timestamp()),

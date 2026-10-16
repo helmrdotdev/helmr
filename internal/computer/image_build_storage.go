@@ -70,58 +70,86 @@ func (p *ImageBuildPublisher) BeginCapture(ctx context.Context, host workergroup
 	}))
 }
 
-func (p *ImageBuildPublisher) Register(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor, inspection blockformat.ObjectInspection) error {
+func (p *ImageBuildPublisher) RegisterBatch(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor, input []blockformat.ObjectInspection) error {
+	inspections, err := normalizeSaveBatch(input)
+	if err != nil {
+		return err
+	}
 	return hideMissing(db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, done, err := lockImageBuildStorage(ctx, tx, host, ref)
 		if err != nil {
 			return err
 		}
-		if done {
-			return scope.verifyRegistered(ctx, tx, inspection)
+		if !done {
+			if err = scope.prepareBatchChildren(ctx, tx, inspections); err != nil {
+				return err
+			}
 		}
-		if err = scope.registerObject(ctx, tx, inspection); err != nil {
-			return err
+		for _, inspection := range inspections {
+			if done {
+				err = scope.verifyRegistered(ctx, tx, inspection)
+			} else {
+				err = scope.registerObject(ctx, tx, inspection)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if done {
+			return nil
 		}
 		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
 	}))
 }
-func (p *ImageBuildPublisher) Certify(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor, inspection blockformat.ObjectInspection) error {
-	object, err := describeSaveObject(inspection)
+
+func (p *ImageBuildPublisher) CertifyBatch(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor, input []blockformat.ObjectInspection) error {
+	inspections, err := normalizeSaveBatch(input)
 	if err != nil {
 		return err
 	}
-	var done bool
+	var committed bool
 	err = db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
-		scope, committed, err := lockImageBuildStorage(ctx, tx, host, ref)
+		scope, done, err := lockImageBuildStorage(ctx, tx, host, ref)
 		if err != nil {
 			return err
 		}
-		done = committed
-		if done {
-			return scope.verifyCertified(ctx, tx, inspection)
+		committed = done
+		for _, inspection := range inspections {
+			if done {
+				err = scope.verifyCertified(ctx, tx, inspection)
+			} else {
+				err = scope.verifyRegistered(ctx, tx, inspection)
+			}
+			if err != nil {
+				return err
+			}
 		}
-		return scope.verifyRegistered(ctx, tx, inspection)
+		return nil
 	})
-	if err != nil {
+	if err != nil || committed {
 		return hideMissing(err)
 	}
-	if done {
-		return nil
-	}
-	stored, err := p.objects.Stat(ctx, object.digest)
+	stored, err := verifySaveBatch(ctx, p.objects, inspections)
 	if err != nil {
-		return SaveStorageUnavailable(err)
+		return err
 	}
 	return hideMissing(db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, done, err := lockImageBuildStorage(ctx, tx, host, ref)
 		if err != nil {
 			return err
 		}
-		if done {
-			return scope.verifyCertified(ctx, tx, inspection)
+		for index, inspection := range inspections {
+			if done {
+				err = scope.verifyCertified(ctx, tx, inspection)
+			} else {
+				err = scope.certifyObject(ctx, tx, inspection, stored[index])
+			}
+			if err != nil {
+				return err
+			}
 		}
-		if err = scope.certifyObject(ctx, tx, inspection, stored); err != nil {
-			return err
+		if done {
+			return nil
 		}
 		return CheckImageBuildExecutor(ctx, tx, host, ref, true)
 	}))

@@ -41,7 +41,7 @@ func (g *nativePublicationGate) holdNativeCancellation(ctx context.Context, save
 	proof := nativeFinalizationCancellation{SaveID: save}
 	var valid bool
 	err := g.pool.QueryRow(ctx, `SELECT t.id,t.session_id,
- t.status='finalizing' AND t.result IS NOT NULL AND t.completion_save_id IS NULL
+ t.status='completed' AND t.result IS NOT NULL
  AND s.status='captured' AND s.root_id IS NULL AND t.seq=3
  FROM computer_saves s JOIN turns t ON(t.environment_id,t.id)=(s.environment_id,s.turn_id)
  WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&proof.TurnID, &proof.SessionID, &valid)
@@ -99,17 +99,17 @@ func (g *nativePublicationGate) observeNativeCancelledPublication(ctx context.Co
 func verifyNativeCancelledSave(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, proof nativeFinalizationCancellation, saveStatus string) error {
 	var valid bool
 	err := pool.QueryRow(ctx, `SELECT
- t.status='cancelled' AND t.result IS NOT NULL AND t.completion_save_id IS NULL AND t.seq=3
+ t.status='completed' AND t.result IS NOT NULL AND t.seq=3
  AND t.processing_closed_at IS NOT NULL AND t.result_recorded_at IS NOT NULL
- AND t.terminal_at>=s.captured_at AND s.status=$6
+ AND t.terminal_at<=s.captured_at AND s.status=$6
  AND s.capture_evidence IS NOT NULL AND s.captured_root_digest IS NOT NULL
  AND (CASE WHEN $6='captured' THEN s.root_id IS NULL AND s.publication_evidence IS NULL
       ELSE s.publication_evidence IS NOT NULL AND (s.root_id IS NOT NULL OR s.payload_retired_at IS NOT NULL) END)
  AND queued.session_id=t.session_id AND queued.seq=4 AND queued.status='cancelled'
- AND queued.started_at IS NULL AND queued.process_epoch IS NULL AND queued.completion_save_id IS NULL
- AND (SELECT count(*)=2 AND bool_and(prior.status='completed' AND prior.completion_save_id IS NOT NULL)
+ AND queued.started_at IS NULL AND queued.process_epoch IS NULL
+ AND (SELECT count(*)=2 AND bool_and(prior.status='completed')
       FROM turns prior WHERE prior.environment_id=t.environment_id AND prior.session_id=t.session_id AND prior.seq<3)
- AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.completed')
+ AND (SELECT count(*)=1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.completed')
  FROM turns t JOIN computer_saves s ON(s.environment_id,s.turn_id)=(t.environment_id,t.id)
  JOIN turns queued ON queued.environment_id=t.environment_id AND queued.id=$5
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3 AND s.id=$4`, env, proof.SessionID, proof.TurnID, proof.SaveID, proof.QueuedTurnID, saveStatus).Scan(&valid)

@@ -103,7 +103,8 @@ func (session *agentSession) renew(grant *agentv1.SessionGrant) error {
 	if !sameSessionGrantOwner(session.grant, grant) || grant.GetAuthorityGeneration() < session.grant.GetAuthorityGeneration() || grant.GetExpiresAtUnixNano() < session.grant.GetExpiresAtUnixNano() {
 		return errors.New("session renewal changed or regressed its owner")
 	}
-	if err := validateSessionGrant(session.entry, grant, session.clock()); err != nil {
+	now := session.clock()
+	if err := validateSessionGrant(session.entry, grant, now); err != nil {
 		return err
 	}
 	session.grant = proto.Clone(grant).(*agentv1.SessionGrant)

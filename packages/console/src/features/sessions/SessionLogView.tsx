@@ -417,11 +417,6 @@ function TurnGroup(props: {
         <Show when={props.turnRows && props.record?.status === "completed" && !props.record.payload_expired_at}>
           <OutcomeLines turn={props.record!} />
         </Show>
-        <Show when={props.turnRows && props.record?.status === "finalizing"}>
-          <p class="m-0 border-t border-console-border-soft py-1.5 pl-[34px] pr-3 text-body text-console-muted min-[721px]:pl-[394px]">
-            The handler has returned. Helmr is saving the required disk state before completion.
-          </p>
-        </Show>
       </Show>
     </div>
   );

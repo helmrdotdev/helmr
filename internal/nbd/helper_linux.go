@@ -282,14 +282,19 @@ func (c *claim) attach() error {
 	for _, v := range []struct {
 		op  int
 		arg uintptr
-	}{{setBlock, 4096}, {setSize, uintptr(c.cfg.Size)}, {setFlags, uintptr(flags)}, {setTimeout, 10}} {
+	}{{setBlock, 4096}, {setSize, uintptr(c.cfg.Size)}, {setFlags, uintptr(flags)}, {setTimeout, 0}} {
 		if err = ioctl(int(c.file.Fd()), v.op, v.arg); err != nil {
 			return err
 		}
 	}
 	c.driverTID = unix.Gettid()
 	c.configured <- nil
-	return ioctl(int(c.file.Fd()), doIt, 0)
+	err = ioctl(int(c.file.Fd()), doIt, 0)
+	// A terminal transport can leave queued requests behind after NBD_DO_IT
+	// returns. Complete those requests before a consumer's fsync can finish
+	// exiting. Keep the exclusive descriptor and quarantine: clearing the dead
+	// transport proves neither consumer cessation nor permission to reuse it.
+	return errors.Join(err, ioctl(int(c.file.Fd()), clearSock, 0))
 }
 func (c *claim) alive() error {
 	if c.file == nil || c.stopped {

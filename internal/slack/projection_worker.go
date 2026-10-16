@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -58,10 +59,13 @@ func ReconcileProjection(ctx context.Context, pool db.TxBeginner, config Project
 
 // RunProjection drains bounded batches without waiting for native HTTP delivery.
 // Cancellation returns only after the current transaction has finished.
-func RunProjection(ctx context.Context, pool db.TxBeginner, config ProjectionConfig, log *slog.Logger) error {
+func RunProjection(ctx context.Context, pool db.TxBeginner, config ProjectionConfig, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || log == nil || !config.valid() {
 		return errors.New("the Slack projection dependencies are required")
 	}
+
+	wake, unsubscribe := changes.Subscribe("slack_projection")
+	defer unsubscribe()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -78,6 +82,7 @@ func RunProjection(ctx context.Context, pool db.TxBeginner, config ProjectionCon
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-wake:
 		case <-ticker.C:
 		}
 	}

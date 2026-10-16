@@ -7,7 +7,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -18,7 +17,7 @@ const terminalProcessPhysicallyStopped = `s.status IN ('closed','cancelled') AND
  AND l.fenced_at IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL)`
 
-// RunSessionLifecycle owns deadline settlement, published Turn completion and accepted terminal-control convergence
+// RunSessionLifecycle owns deadline settlement and accepted terminal-control convergence
 // independently of guest connections. The process root cancels and joins it.
 func RunSessionLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
@@ -57,18 +56,15 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
    AND (idle_since IS NULL OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
     OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
   UNION
+ SELECT s.environment_id,s.id FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) WHERE s.status IN ('open','closing') AND l.fenced_at IS NULL AND l.storage_pressure_since<=clock_timestamp()-interval '30 seconds'
+  UNION
   SELECT environment_id,session_id FROM turns WHERE status='running' AND deadline_at<=clock_timestamp()
   UNION
   SELECT environment_id,session_id FROM session_processes WHERE stop_deadline_at<=clock_timestamp() AND fenced_at IS NULL AND failure_recorded_at IS NULL
   UNION
-  SELECT t.environment_id,t.session_id FROM turns t
-   JOIN computer_saves save ON save.environment_id=t.environment_id AND save.turn_id=t.id AND save.status IN ('published','failed')
-   JOIN computers c ON c.environment_id=t.environment_id AND c.id=t.computer_id
-   WHERE t.status='finalizing' AND (save.status='failed' OR c.integrity_fault_at IS NULL)
-  UNION
   SELECT environment_id,id AS session_id FROM sessions s WHERE status='closing'
    AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
-   AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running','finalizing'))
+   AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running'))
    AND (EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status='open')
     OR NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status NOT IN ('closed','cancelled')))
   UNION
@@ -98,12 +94,12 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
 			break
 		}
 		after = candidate
-		err := reconcileProcessStopDeadline(ctx, database, candidate.environment, candidate.session)
+		err := reconcileSessionStoragePressure(ctx, database, candidate.environment, candidate.session)
 		if err == nil {
-			err = expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
+			err = reconcileProcessStopDeadline(ctx, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
-			err = reconcileSessionCompletion(ctx, database, candidate.environment, candidate.session)
+			err = expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
 			err = reconcileSessionIdle(ctx, database, candidate.environment, candidate.session)
@@ -152,31 +148,6 @@ func reconcileTerminalSessionStop(ctx context.Context, pool db.TxBeginner, env, 
 		}
 		return event(attempt, tx, env, session, uuid.Nil(), "session.process_stopped")
 	})
-}
-
-// Finalization follows the Turn's committed publication or definitive absence
-// even after the source Worker disappears. Terminal controls are rechecked.
-func reconcileSessionCompletion(ctx context.Context, database db.TxDB, environment, session uuid.UUID) error {
-	var turn uuid.UUID
-	var state string
-	err := database.QueryRow(ctx, `SELECT t.id,s.status FROM turns t JOIN computer_saves s ON s.environment_id=t.environment_id AND s.turn_id=t.id WHERE t.environment_id=$1 AND t.session_id=$2 AND t.status='finalizing' AND s.status IN ('published','failed')`, environment, session).Scan(&turn, &state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if state == "failed" {
-		err = interruptFailedSaveTurn(attempt, database, environment, session, turn)
-	} else {
-		err = Complete(attempt, database, environment, session, turn)
-	}
-	if (errors.Is(err, ErrTerminal) || errors.Is(err, computer.ErrTerminal)) || (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) {
-		return nil
-	}
-	return err
 }
 
 // A wedged program cannot extend the durable stop budget through reconnection.

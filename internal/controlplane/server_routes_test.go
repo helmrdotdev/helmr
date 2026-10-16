@@ -250,6 +250,7 @@ POST /worker/v1/computer-saves/next
 POST /worker/v1/computer-saves/objects/certify
 POST /worker/v1/computer-saves/objects/register
 POST /worker/v1/computer-saves/publish
+POST /worker/v1/computer-storage/pressure
 POST /worker/v1/enrollment
 POST /worker/v1/instance/activate
 POST /worker/v1/instance/credential

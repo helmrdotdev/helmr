@@ -354,7 +354,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `closeAfterIdle` | `Retention` (`Duration` or `"never"`) |
 | `idleSince` | `string \| null` |
 | `initialTurn` | `{ id, status } \| null` |
-| `holds` | `{ id, sessionId, scope: "local" \| "subtree", reason, createdAt }[]` |
+| `holds` | `{ id, sessionId, scope: "local" \| "subtree", kind, reason, recoveryGap?, createdAt }[]` |
 | `createdAt` | `string` |
 
 ### `TurnRef`
@@ -370,9 +370,9 @@ payloads are listed in [Session events](/docs/reference/events).
 | `asks` | `TurnAsks` | Question methods. See [Questions](/docs/reference/sdk/questions#client-methods). |
 
 `TurnState` has `id`, `sessionId`, `sequence`, `status`, and optional `input`,
-`startedAt`, `terminalAt`, `completionSaveId`, `result`, `response`, `error`
+`startedAt`, `terminalAt`, `result`, `response`, `error`
 (`{ code, message? }`) and `payloadExpiredAt`. `TurnStatus` is one of `queued`,
-`running`, `finalizing`, `completed`, `failed`, `interrupted`, `cancelled`.
+`running`, `completed`, `failed`, `interrupted`, `cancelled`.
 
 `TurnOutcome` is discriminated by `status`. A completed outcome with retained
 payload has its typed `result` and optional human `response`; an expired payload

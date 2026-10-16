@@ -195,11 +195,11 @@ type preparationHTTPPublication struct {
 	store    testUploadStore
 }
 
-func (p preparationHTTPPublication) Register(ctx context.Context, inspection blockformat.ObjectInspection) error {
-	return p.client.RegisterPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspection: inspection})
+func (p preparationHTTPPublication) RegisterBatch(ctx context.Context, inspection []blockformat.ObjectInspection) error {
+	return p.client.RegisterPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspections: inspection})
 }
-func (p preparationHTTPPublication) Certify(ctx context.Context, inspection blockformat.ObjectInspection) error {
-	return p.client.CertifyPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspection: inspection})
+func (p preparationHTTPPublication) CertifyBatch(ctx context.Context, inspection []blockformat.ObjectInspection) error {
+	return p.client.CertifyPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspections: inspection})
 }
 func (p preparationHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {

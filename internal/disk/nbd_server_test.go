@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -13,6 +14,48 @@ import (
 	"testing"
 	"time"
 )
+
+func TestVersionDeviceUnalignedRequestsSurviveReopen(t *testing.T) {
+	for _, budget := range []int{1, 8, 256} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			cfg, _ := localVersionFixture(t)
+			cfg.DirtyBlocks = budget
+			p, err := CreateLocalVersion(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			device := versionDevice{p}
+			want := make([]byte, 12*4096)
+			copy(want, bytes.Repeat([]byte{1}, 4096))
+			body := bytes.Repeat([]byte{9}, 9*4096+11)
+			if n, err := device.WriteAt(t.Context(), body, 4093); err != nil || n != len(body) {
+				t.Fatalf("write: %d %v", n, err)
+			}
+			copy(want[4093:], body)
+			const trimStart, trimLength = 4101, 6*4096 + 5
+			if err := device.Trim(t.Context(), trimStart, trimLength); err != nil {
+				t.Fatal(err)
+			}
+			clear(want[trimStart : trimStart+trimLength])
+			if err := device.Flush(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := OpenLocalVersion(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			got := make([]byte, len(want))
+			if n, err := reopened.ReadAt(t.Context(), got, 0); err != nil || n != len(got) || !bytes.Equal(got, want) {
+				t.Fatalf("reopened request boundaries differ: %d %v", n, err)
+			}
+		})
+	}
+}
 
 func versionListener(t *testing.T) net.Listener {
 	t.Helper()

@@ -275,3 +275,36 @@ func TestAgentReadyWaitsForDurableObservation(t *testing.T) {
 		t.Fatalf("readiness reconciliation: %v %v ready=%v calls=%d", handled, err, owner.ready, calls)
 	}
 }
+
+func TestAgentControlsBoundedStopDeliveredBeforeReady(t *testing.T) {
+	grant := sessionTransportGrant()
+	frames := make(chan *agentv1.HostSessionMessage, 2)
+	machine := sessionTransportMachine(t, func(stream net.Conn, _ *agentv1.SessionAttach) {
+		for range 2 {
+			var frame agentv1.HostSessionMessage
+			if err := frameio.ReadProtoFrameBounded(stream, agentTransportFrameLimit, &frame); err != nil {
+				return
+			}
+			frames <- &frame
+		}
+	})
+	connection, _, err := OpenAgentSession(t.Context(), machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	turn := "blocked-turn"
+	deadline := time.Now().Add(40 * time.Second)
+	client := &terminalControlClient{prepare: func(context.Context, workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
+		return workerapi.AgentControlResponse{Sequence: 2, AuthorityGeneration: 3, Kind: "resume", ExpiresAt: time.Now().Add(time.Hour), StopSequence: 1, StopTurnID: &turn, StopDeadline: &deadline}, nil
+	}}
+	owner := &agentSessionControls{connection: connection, client: client, environment: "environment"}
+	if err = owner.apply(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	<-frames
+	control := (<-frames).GetCommand().GetControl()
+	if control.GetStopDeadlineUnixNano() != deadline.UnixNano() || control.GetStopTurnId() != turn || control.GetStopSequence() != 1 {
+		t.Fatalf("pressure stop %v", control)
+	}
+}

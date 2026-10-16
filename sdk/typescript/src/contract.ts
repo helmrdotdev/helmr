@@ -32,7 +32,12 @@ export interface SessionOperationOptions {
 }
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled"
+export interface RecoveryGap {
+ readonly holdId:string; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]; readonly affectedTurnCount:number
+}
 export interface SessionHold {
+ readonly recoveryGap?: RecoveryGap
+ readonly kind: "control" | "recovery_gap" | "storage_pressure"
   readonly id: string
   readonly sessionId: string
   readonly scope: "local" | "subtree"
@@ -67,18 +72,18 @@ export interface Session {
   readonly createdAt: string
   readonly holds: readonly SessionHold[]
 }
-export type TurnStatus = "queued" | "running" | "finalizing" | "completed" | "failed" | "interrupted" | "cancelled"
+export type TurnStatus = "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"
 type TurnIdentity = Readonly<{
   id: string; sessionId: string; sequence: number; stop?: ProcessStop; startedAt?: string
 }>
 type RetainedTurn = Readonly<{ input: JsonValue; payloadExpiredAt?: never }>
 type ExpiredTurn = Readonly<{ input?: never; payloadExpiredAt: string; result?: never; response?: never }>
 export type TurnState<O = JsonValue> = TurnIdentity & (
-  | (RetainedTurn & Readonly<{ status: "queued" | "running" | "finalizing"; terminalAt?: never; completionSaveId?: never; result?: never; response?: never; error?: never }>)
+  | (RetainedTurn & Readonly<{ status: "queued" | "running"; terminalAt?: never; result?: never; response?: never; error?: never }>)
   | (Readonly<{ terminalAt: string }> & (
-    | (Readonly<{ status: "completed"; completionSaveId: string; error?: never }> & ((RetainedTurn & Readonly<{ result: O; response?: Content }>) | ExpiredTurn))
-    | (Readonly<{ status: "failed"; completionSaveId?: never; result?: never; response?: never }> & ((RetainedTurn & Readonly<{ error?: Readonly<{ code: string; message: string }> }>) | (ExpiredTurn & Readonly<{ error?: Readonly<{ code: string; message?: never }> }>)))
-    | (Readonly<{ status: "interrupted" | "cancelled"; completionSaveId?: never; result?: never; response?: never; error?: never }> & (RetainedTurn | ExpiredTurn))
+    | (Readonly<{ status: "completed"; error?: never }> & ((RetainedTurn & Readonly<{ result: O; response?: Content }>) | ExpiredTurn))
+    | (Readonly<{ status: "failed"; result?: never; response?: never }> & ((RetainedTurn & Readonly<{ error?: Readonly<{ code: string; message: string }> }>) | (ExpiredTurn & Readonly<{ error?: Readonly<{ code: string; message?: never }> }>)))
+    | (Readonly<{ status: "interrupted" | "cancelled"; result?: never; response?: never; error?: never }> & (RetainedTurn | ExpiredTurn))
   ))
 )
 export interface TurnListQuery {
@@ -123,6 +128,12 @@ export interface MessageReceipt {
 }
 
 type EmptyEventData = Readonly<Record<string, never>>
+export interface ComputerLossInterruption {
+  readonly reason: "computer_execution_lost"
+  readonly computerId: string
+  readonly leaseEpoch: number
+  readonly recoveryGap: boolean
+}
 type ControlEventData = Readonly<{ controlId: string; holdId?: string }>
 type MessageEventData<S extends string, D extends string = S> = Readonly<{ message_id: string; status: S; delivery: D; reason?: string }>
 interface SessionEventData {
@@ -140,15 +151,16 @@ interface SessionEventData {
   "turn.output": Content
   "turn.queued": EmptyEventData
   "turn.running": EmptyEventData
-  "turn.finalizing": EmptyEventData
   "turn.completed": EmptyEventData
   "turn.failed": Readonly<{ code?: string }>
   "turn.interrupt": ControlEventData
-  "turn.interrupted": EmptyEventData
+  "turn.interrupted": (EmptyEventData & Readonly<{ reason?: never }>) | ComputerLossInterruption
   "turn.cancelled": EmptyEventData
   "session.cancelled": EmptyEventData
   "session.closed": EmptyEventData
   "session.process_stopped": EmptyEventData
+  "session.storage_pressure": Readonly<{computerId:string;leaseEpoch:number;holdId:string;state:"paused"|"resolved"|"stopped"}>
+  "session.recovery_gap": RecoveryGap
   "session.process_failed": Readonly<{ holdId: string; processEpoch: number }>
   "session.deadline": Readonly<{ holdId: string }>
   "session.interrupt": ControlEventData

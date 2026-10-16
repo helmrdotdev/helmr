@@ -153,7 +153,51 @@ func injectNativeCheckpointFault(ctx context.Context, pool *pgxpool.Pool, env uu
 	if err := os.WriteFile(observations+".fault-receipt.new", receipt, 0600); err != nil {
 		return err
 	}
-	return os.Rename(observations+".fault-receipt.new", observations+".fault-receipt")
+	if err := os.Rename(observations+".fault-receipt.new", observations+".fault-receipt"); err != nil {
+		return err
+	}
+	if mode != nativeExecutionMissingMemory {
+		return nil
+	}
+	// Keep the object unavailable through two complete failed restore owners.
+	// Repair access to the exact authenticated version, without changing the
+	// checkpoint or manufacturing any physical-stop receipt.
+	wait, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	var failed int
+	for {
+		var retained bool
+		err := pool.QueryRow(wait, `SELECT p.status IN ('ready','restoring'),
+ (SELECT count(*) FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id AND l.epoch>p.source_lease_epoch AND l.initialized_at IS NULL AND l.fenced_at IS NOT NULL AND l.restored_from_save_id=p.disk_save_id)
+ FROM checkpoints p WHERE p.environment_id=$1 AND p.id=$2`, env, request.CheckpointID).Scan(&retained, &failed)
+		if err != nil {
+			return err
+		}
+		if !retained {
+			return errors.New("missing payload invalidated retained checkpoint")
+		}
+		if failed >= 2 {
+			break
+		}
+		select {
+		case <-wait.Done():
+			return context.Cause(wait)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	marker := evidence["deleteMarkerVersionId"].(string)
+	if _, err := store.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String(uri.Host), Key: aws.String(key), VersionId: aws.String(marker)}); err != nil {
+		return err
+	}
+	repaired, err := store.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(uri.Host), Key: aws.String(key)})
+	if err != nil {
+		return err
+	}
+	if aws.ToString(repaired.VersionId) != aws.ToString(head.VersionId) || aws.ToInt64(repaired.ContentLength) != object.SizeBytes {
+		return errors.New("repair did not restore the exact retained object")
+	}
+	evidence["failedRestoreOwners"], evidence["repairedVersionId"] = failed, aws.ToString(repaired.VersionId)
+	return writeNativeHandoffFile(observations+".repair-receipt", evidence)
 }
 
 func verifyNativeCheckpointLoss(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, result []byte, evidence string) error {
@@ -164,40 +208,36 @@ func verifyNativeCheckpointLoss(ctx context.Context, pool *pgxpool.Pool, env uui
 				CheckpointID string `json:"checkpointId"`
 				SourceEpoch  int64  `json:"sourceEpoch"`
 			} `json:"checkpoint"`
-			Holds       map[string]string `json:"holds"`
-			QueuedTurns []struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"queuedTurns"`
-			HeldMs float64 `json:"heldMs"`
+			RecoveryTurnID string `json:"recoveryTurnId"`
 		} `json:"checkpointLoss"`
 	}
 	if err := json.Unmarshal(result, &receipt); err != nil {
 		return err
 	}
 	fault := receipt.CheckpointLoss
-	if len(fault.Holds) != 4 || len(fault.QueuedTurns) != 2 || fault.HeldMs < 20000 {
-		return errors.New("incomplete checkpoint loss observations")
-	}
-	for _, turn := range fault.QueuedTurns {
-		if turn.ID == "" || turn.Status != "queued" {
-			return errors.New("checkpoint loss dispatched or lost accepted input")
-		}
+	if fault.RecoveryTurnID == "" {
+		return errors.New("missing automatic disk recovery receipt")
 	}
 	var valid bool
 	var raw []byte
 	err := pool.QueryRow(ctx, `SELECT
  p.status='lost' AND p.terminal_evidence='owning worker proved checkpoint contents invalid after physical cleanup'
- AND source.fenced_at>=p.ready_at AND p.controls_reconciled_at IS NULL
- AND (SELECT count(*)=1 AND bool_and(l.fenced_at IS NOT NULL AND l.initialized_at IS NULL AND l.restored_from_save_id=p.disk_save_id)
-      FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id AND l.epoch>p.source_lease_epoch)
- AND (SELECT count(*)=4 AND bool_and(s.epoch=1 AND s.fenced_at IS NOT NULL AND s.failure_recorded_at IS NOT NULL)
-      FROM session_processes s WHERE s.environment_id=p.environment_id AND s.computer_id=p.computer_id),
+ AND source.fenced_at>=p.ready_at AND source.fenced_at<=target.delivered_at AND p.controls_reconciled_at IS NULL
+ AND recovered.status='completed' AND recovered.process_epoch=2
+ AND target.disk_only_recovery AND target.restored_from_save_id=p.disk_save_id AND target.initialized_at IS NOT NULL
+ AND (SELECT count(*)=1 AND bool_and(l.fenced_at IS NOT NULL AND l.fenced_at<=target.delivered_at AND l.initialized_at IS NULL AND l.restored_from_save_id=p.disk_save_id)
+      FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id AND l.epoch>p.source_lease_epoch AND l.epoch<target.epoch)
+ AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN sessions s ON (s.environment_id,s.id)=(h.environment_id,h.session_id) WHERE s.environment_id=p.environment_id AND s.computer_id=p.computer_id AND h.released_at IS NULL)
+ AND (SELECT count(*)=4 AND bool_and(s.epoch=1 AND s.fenced_at IS NOT NULL AND s.fenced_at<=target.delivered_at AND s.failure_recorded_at IS NOT NULL)
+      FROM session_processes s WHERE s.environment_id=p.environment_id AND s.computer_id=p.computer_id AND s.epoch=1),
  jsonb_build_object('checkpointId',p.id,'status',p.status,'terminalEvidence',p.terminal_evidence,'sourceFencedAt',source.fenced_at,
  'leases',(SELECT jsonb_agg(jsonb_build_object('epoch',l.epoch,'status',l.status,'deliveredAt',l.delivered_at,'initializedAt',l.initialized_at,'fencedAt',l.fenced_at,'fenceEvidence',l.fence_evidence)) FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id),
  'processes',(SELECT jsonb_agg(jsonb_build_object('sessionId',s.session_id,'epoch',s.epoch,'status',s.status,'fencedAt',s.fenced_at,'failureRecordedAt',s.failure_recorded_at)) FROM session_processes s WHERE s.environment_id=p.environment_id AND s.computer_id=p.computer_id))
  FROM checkpoints p JOIN computer_leases source ON (source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
- WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.id=$3 AND p.source_lease_epoch=$4`, env, receipt.ComputerID, fault.Checkpoint.CheckpointID, fault.Checkpoint.SourceEpoch).Scan(&valid, &raw)
+ JOIN turns recovered ON recovered.environment_id=p.environment_id AND recovered.id=$5
+ JOIN session_processes process ON (process.environment_id,process.session_id,process.epoch)=(recovered.environment_id,recovered.session_id,recovered.process_epoch)
+ JOIN computer_leases target ON target.environment_id=p.environment_id AND target.computer_id=p.computer_id AND target.epoch=process.computer_lease_epoch
+ WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.id=$3 AND p.source_lease_epoch=$4`, env, receipt.ComputerID, fault.Checkpoint.CheckpointID, fault.Checkpoint.SourceEpoch, fault.RecoveryTurnID).Scan(&valid, &raw)
 	if err != nil {
 		return err
 	}
@@ -205,7 +245,40 @@ func verifyNativeCheckpointLoss(ctx context.Context, pool *pgxpool.Pool, env uui
 		return err
 	}
 	if !valid {
-		return fmt.Errorf("checkpoint loss did not preserve physical fencing and held process generations: %s", raw)
+		return fmt.Errorf("checkpoint loss did not fence old generations before automatic disk recovery: %s", raw)
+	}
+	return nil
+}
+
+func verifyMissingCheckpointRepair(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, observations string) error {
+	raw, err := os.ReadFile(observations + ".repair-receipt")
+	if err != nil {
+		return err
+	}
+	var proof struct {
+		CheckpointID        uuid.UUID `json:"checkpointId"`
+		FailedRestoreOwners int       `json:"failedRestoreOwners"`
+		OriginalVersionID   string    `json:"originalVersionId"`
+		RepairedVersionID   string    `json:"repairedVersionId"`
+	}
+	if err := json.Unmarshal(raw, &proof); err != nil {
+		return err
+	}
+	if proof.FailedRestoreOwners < 2 || proof.OriginalVersionID == "" || proof.OriginalVersionID != proof.RepairedVersionID {
+		return errors.New("missing checkpoint repair proof incomplete")
+	}
+	var valid bool
+	err = pool.QueryRow(ctx, `SELECT p.status='consumed' AND p.controls_reconciled_at IS NOT NULL
+ AND target.initialized_at IS NOT NULL AND target.restored_from_save_id=p.disk_save_id
+ AND (SELECT count(*)>=2 AND bool_and(l.fenced_at IS NOT NULL AND l.fenced_at<=target.delivered_at AND l.initialized_at IS NULL AND l.restored_from_save_id=p.disk_save_id)
+ FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id AND l.epoch>p.source_lease_epoch AND l.epoch<target.epoch)
+ FROM checkpoints p JOIN computer_leases target ON (target.environment_id,target.computer_id,target.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
+ WHERE p.environment_id=$1 AND p.id=$2`, env, proof.CheckpointID).Scan(&valid)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return errors.New("repair did not resume the retained checkpoint after fencing failed targets")
 	}
 	return nil
 }

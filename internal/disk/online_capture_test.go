@@ -8,8 +8,6 @@ import (
 	"errors"
 	"sync"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
 type captureResult struct {
@@ -18,7 +16,7 @@ type captureResult struct {
 }
 
 type blockingCaptureSink struct {
-	target  blockformat.ObjectSink
+	target  captureObjectBatch
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -39,6 +37,8 @@ func (s *blockingCaptureSink) StoreObject(ctx context.Context, digest [32]byte, 
 	return s.target.StoreObject(ctx, digest, raw)
 }
 
+func (s *blockingCaptureSink) Sync(ctx context.Context) error { return s.target.Sync(ctx) }
+
 func TestOnlineCaptureAllowsRequestsDuringEncoding(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "published-cut", true: "failed-encoding"}[fail], func(t *testing.T) {
@@ -52,12 +52,12 @@ func TestOnlineCaptureAllowsRequestsDuringEncoding(t *testing.T) {
 			if _, err = device.WriteAt(t.Context(), []byte{2}, 7); err != nil {
 				t.Fatal(err)
 			}
-			reserved := p.disk.writer.Sink.(*reservedVersionSink)
-			sink := &blockingCaptureSink{target: reserved.target, entered: make(chan struct{}), release: make(chan struct{})}
+			newBatch := p.objectBatch
+			sink := &blockingCaptureSink{target: newBatch(), entered: make(chan struct{}), release: make(chan struct{})}
 			if fail {
 				sink.err = errors.New("capture encoding failed")
 			}
-			reserved.target = sink
+			p.objectBatch = func() captureObjectBatch { return sink }
 			done := make(chan captureResult, 1)
 			go func() { cut, err := p.Capture(t.Context()); done <- captureResult{cut, err} }()
 			<-sink.entered

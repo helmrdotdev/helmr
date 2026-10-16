@@ -19,7 +19,7 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 	}{
 		{"success", "completed", "2s", `"status":"settled"`, 200},
 		{"failure", "failed", "2s", `"status":"failed"`, 200},
-		{"timeout", "finalizing", "100ms", `"status":"timeout"`, 200},
+		{"timeout", "running", "100ms", `"status":"timeout"`, 200},
 		{"forbidden", "", "2s", "forbidden", 403},
 		{"unknown", "future", "2s", "unknown Turn status", 200},
 	} {
@@ -103,7 +103,7 @@ func TestSessionTurnWaitIncludesFinalizingBeforeSettlement(t *testing.T) {
 		case 1:
 			status = "queued"
 		case 2:
-			status = "finalizing"
+			status = "running"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": turn, "session_id": testSessionID, "status": status, "result": map[string]any{"done": true}})
 	}))

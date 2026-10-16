@@ -21,7 +21,7 @@ type Device struct {
 	mu         sync.Mutex
 	disk       *LocalVersion
 	attachment *nbd.Attachment
-	cancel     context.CancelFunc
+	cancel     context.CancelCauseFunc
 	done       chan struct{}
 	serveErr   error
 	closed     bool
@@ -58,12 +58,21 @@ func AttachDevice(ctx context.Context, disk *LocalVersion, cfg nbd.Config) (*Dev
 		_ = listener.Close()
 		return d, err
 	}
-	serveCtx, cancel := context.WithCancel(context.Background())
+	serveCtx, cancel := context.WithCancelCause(context.Background())
 	d.cancel, d.done = cancel, make(chan struct{})
 	go func() {
+		watchDone := make(chan struct{})
+		go func() {
+			defer close(watchDone)
+			if err := disk.watchGuestRequests(serveCtx); err != nil && serveCtx.Err() == nil {
+				cancel(err)
+			}
+		}()
 		d.serveErr = disk.ServeNBD(serveCtx, listener)
+		cancel(context.Canceled)
+		<-watchDone
 		if serveCtx.Err() != nil {
-			d.serveErr = errors.Join(serveCtx.Err(), d.serveErr)
+			d.serveErr = errors.Join(context.Cause(serveCtx), d.serveErr)
 		}
 		close(d.done)
 	}()
@@ -166,7 +175,7 @@ func (d *Device) Close(ctx context.Context) error {
 		}
 	}
 	if d.cancel != nil {
-		d.cancel()
+		d.cancel(context.Canceled)
 		select {
 		case <-d.done:
 		case <-ctx.Done():
@@ -178,4 +187,12 @@ func (d *Device) Close(ctx context.Context) error {
 	}
 	d.closed = true
 	return nil
+}
+
+func (d *Device) Changes() VersionChanges { return d.disk.Changes() }
+
+// PinCommitted bypasses the guest's stalled write/flush path. It keeps local
+// retention only; its caller must separately establish remote object backing.
+func (d *Device) PinCommitted(ctx context.Context) (RetainedVersion, error) {
+	return d.disk.PinCommitted(ctx)
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -96,6 +97,13 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 			synctest.Test(t, func(t *testing.T) {
 				owner, client, backend := preparationOwnerFixture(t)
 				var stdoutCalls, stderrCalls, stdoutACK, stderrACK atomic.Int64
+				done := make(chan struct{})
+				var finished sync.Once
+				finish := func() {
+					if stderrACK.Load() != 0 && stdoutCalls.Load() != 0 {
+						finished.Do(func() { close(done) })
+					}
+				}
 				transport := preparationLogRoundTrip(func(r *http.Request) (*http.Response, error) {
 					if r.URL.Path == "/worker/v1/instance/credential" {
 						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"credential":"fixture","expires_in_seconds":3600,"worker_epoch":7}`)), Header: make(http.Header)}, nil
@@ -107,6 +115,7 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 					}
 					if request.Stream == "stdout" {
 						stdoutCalls.Add(1)
+						finish()
 						return &http.Response{StatusCode: status, Status: strconv.Itoa(status), Body: io.NopCloser(preparationLogBrokenBody{}), Header: make(http.Header)}, nil
 					}
 					stderrCalls.Add(1)
@@ -140,6 +149,12 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 					if request.Start != nil {
 						backend.authored.Add(1)
 					}
+					if request.WaitForCompletion {
+						select {
+						case <-done:
+						case <-time.After(30 * time.Second):
+						}
+					}
 					response := &computerv0.PreparationControlResponse{State: "absent"}
 					if backend.authored.Load() != 0 {
 						response.State = "running"
@@ -151,6 +166,7 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 						} else if request.LogStream == "stderr" {
 							if request.AcknowledgedThrough != 0 {
 								stderrACK.Add(1)
+								finish()
 							} else {
 								response.Log = &computerv0.PreparationLog{Kind: "end", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: observed, Complete: true}
 							}

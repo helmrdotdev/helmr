@@ -170,51 +170,37 @@ func TestDispatchSerializesFIFO(t *testing.T) {
 	}
 }
 
-func TestCompletionRequiresOwnSaveAndMonotonicHead(t *testing.T) {
+func TestCompletionDoesNotWaitForSaveAndHeadIsMonotonic(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t)
-	first, save1 := f.finalize(t, "first")
-	second, save2 := peer.finalize(t, "second")
 	storage := newSaveStorageFixture(t, f)
+	first, save1 := f.finalize(t, "first")
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, first.TurnID); err != nil {
+		t.Fatal(err)
+	}
 	cut1, root1 := storage.cut(t, 2)
-	cut2, root2 := storage.cut(t, 3)
-	err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
-	if !errors.Is(err, computer.ErrNotReady) {
-		t.Fatalf("out of order capture: %v", err)
-	}
 	f.capture(t, save1, root1)
+	if err := storage.publish(t, save1.ID, cut1); err != nil {
+		t.Fatal(err)
+	}
+	second, save2 := f.finalize(t, "second")
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, second.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	cut2, root2 := storage.cut(t, 3)
 	f.capture(t, save2, root2)
-	if err = storage.publish(t, save2.ID, cut2); err != nil {
+	if err := storage.publish(t, save2.ID, cut2); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, first.TurnID); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("wrong save completed first: %v", err)
-	}
-	if err = session.Complete(t.Context(), f.pool, f.env, peer.session, second.TurnID); err != nil {
-		t.Fatal(err)
-	}
-	if err = storage.publish(t, save1.ID, cut1); err != nil {
-		t.Fatal(err)
-	}
-	// Loss of the original writer does not erase already verified publication.
-	_, err = f.pool.Exec(t.Context(), `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited' WHERE environment_id=$1 AND computer_id=$2; UPDATE session_processes SET status='lost',fenced_at=clock_timestamp() WHERE environment_id=$1; INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$3,$4,'local','process lost');`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.New(), f.session)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, first.TurnID); err != nil {
+	if err := storage.publisher.Publish(t.Context(), storage.ref(save1.ID), cut1, "lost publication reply"); err != nil {
 		t.Fatal(err)
 	}
 	var head uuid.UUID
-	var holds int
-	if err = f.pool.QueryRow(t.Context(), `SELECT recovery_save_id,(SELECT count(*) FROM session_holds WHERE released_at IS NULL) FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer).Scan(&head, &holds); err != nil {
-		t.Fatal(err)
-	}
-	if head != save2.ID || holds != 1 {
-		t.Fatalf("head %v holds %d", head, holds)
+	if err := f.pool.QueryRow(t.Context(), `SELECT recovery_save_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer).Scan(&head); err != nil || head != save2.ID {
+		t.Fatalf("head %s %v", head, err)
 	}
 }
 
-func TestIntegrityFaultBlocksCompletion(t *testing.T) {
+func TestIntegrityFaultCannotRetractCompletedResult(t *testing.T) {
 	f := newFixture(t)
 	a, s := f.finalize(t, "result")
 	storage := newSaveStorageFixture(t, f)
@@ -226,53 +212,22 @@ func TestIntegrityFaultBlocksCompletion(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='writeback failure' WHERE environment_id=$1 AND id=$2`, f.env, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, session.ErrNotReady) {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatalf("integrity result: %v", err)
 	}
 }
 
-func TestFinalizingCompletionSurvivesDeadlineAfterOwnerLock(t *testing.T) {
+func TestCompletedResultSurvivesLaterDeadline(t *testing.T) {
 	f := newFixture(t)
-	a, s := f.finalize(t, "result")
-	storage := newSaveStorageFixture(t, f)
-	cut, root := storage.cut(t, 5)
-	f.capture(t, s, root)
-	if err := storage.publish(t, s.ID, cut); err != nil {
+	a, _ := f.finalize(t, "result")
+	if _, err := f.pool.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.pool.Begin(t.Context())
-	if err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
-	if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, f.env, f.computer); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
-	}
-	result := make(chan error, 1)
-	go func() { result <- session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID) }()
-	// Wait for a database lock waiter, rather than relying on goroutine scheduling.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var waiting bool
-		if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid())`).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("completion did not wait for owner lock")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if _, err = tx.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, a.TurnID); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err = <-result; err != nil {
-		t.Fatalf("finalizing deadline result: %v", err)
 	}
 }
 

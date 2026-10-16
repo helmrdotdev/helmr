@@ -108,9 +108,10 @@ boundary for a retained generation or omit the nullable discriminator. The
 quickstart and standard roots round-trip this current sealed record.
 
 
-Computer storage requires explicit `computer_save_interval_seconds` and
-`computer_devices`. The interval schedules background saves; it is not an RPO or
-mandatory Turn-completion barrier. The device list is an exclusive NBD allowlist.
+Computer storage requires an explicit `computer_devices` exclusive NBD allowlist.
+Autosave follows filesystem changes with a short quiet window and bounded batching
+wait; Turn replies do not wait for publication. These scheduling delays are not
+a data-loss bound.
 Temporary API failures before save admission retry the same operation while its
 writer authority remains valid. Each request is bounded, and writer expiry or
 quiescing stops the retry. A continuing failure logs its elapsed time and attempt

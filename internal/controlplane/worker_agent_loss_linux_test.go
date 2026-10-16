@@ -31,6 +31,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -38,6 +39,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -48,17 +51,24 @@ import (
 // This fixture deliberately loses a customer process. It qualifies publication
 // disposition and retained physical custody, not transparent process recovery.
 func TestWorkerAgentAuthorityLoss(t *testing.T) {
-	testWorkerAuthorityLoss(t, false)
+	testWorkerAuthorityLoss(t, false, false)
+}
+
+func TestWorkerAgentSavePressureAndLoss(t *testing.T) {
+	if os.Getenv("HELMR_NATIVE_SAVE_PRESSURE_PROOF") != "1" {
+		t.Skip("requires explicitly selected save pressure qualification")
+	}
+	testWorkerAuthorityLoss(t, false, true)
 }
 
 func TestWorkerAgentRetainedNetworkRecovery(t *testing.T) {
 	if os.Getenv("HELMR_NATIVE_NETWORK_RECOVERY_PROOF") != "1" {
 		t.Skip("requires explicitly selected retained-network fault qualification")
 	}
-	testWorkerAuthorityLoss(t, true)
+	testWorkerAuthorityLoss(t, true, false)
 }
 
-func testWorkerAuthorityLoss(t *testing.T, networkRecovery bool) {
+func testWorkerAuthorityLoss(t *testing.T, networkRecovery, pressure bool) {
 	t.Helper()
 	if os.Getenv("HELMR_NATIVE_EXECUTION_PROOF") != "1" || os.Getenv("HELMR_NATIVE_AUTHORITY_LOSS_PROOF") != "1" {
 		t.Skip("requires an authorized disposable KVM host and isolated storage")
@@ -92,18 +102,19 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery bool) {
 	if err := os.Mkdir(input.Evidence, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
-		name      string
-		published bool
-		fault     string
-	}{{"unpublished", false, ""}, {"published", true, ""}}
+	type scenario struct {
+		name         string
+		published    bool
+		fault        string
+		stopPressure bool
+	}
+	cases := []scenario{{"unpublished", false, "", false}, {"published", true, "", false}}
+	if pressure {
+		cases = append(cases, scenario{"stop-pressure", false, "", true})
+	}
 	if networkRecovery {
-		cases = []struct {
-			name      string
-			published bool
-			fault     string
-		}{
-			{"root-policy", false, "root-policy"}, {"namespace", true, "namespace"}, {"replacement-root", false, "replacement-root"},
+		cases = []scenario{
+			{"root-policy", false, "root-policy", false}, {"namespace", true, "namespace", false}, {"replacement-root", false, "replacement-root", false},
 		}
 	}
 	for index, scenario := range cases {
@@ -123,7 +134,7 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery bool) {
 				// Preserve a full probe envelope alongside one retained owner.
 				config.WorkerEnv["WORKER_EXECUTION_SLOTS"] = "2"
 				config.WorkerEnv["WORKER_CAPACITY_VCPUS"] = "4"
-				config.WorkerEnv["WORKER_CAPACITY_MEMORY_MIB"] = "8192"
+				config.WorkerEnv["WORKER_CAPACITY_MEMORY_MIB"] = strconv.FormatInt(2*(4096+disk.VersionCacheBytes/(1<<20)), 10)
 			}
 			if len(filepath.Join(work, "jailer/firecracker", strings.Repeat("0", 36), "root/vsock.sock")) > 107 {
 				t.Fatal("fixture Unix socket path is too long")
@@ -134,7 +145,7 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery bool) {
 			if err := os.Mkdir(config.Evidence, 0700); err != nil {
 				t.Fatal(err)
 			}
-			runWorkerAuthorityLoss(t, config, scenario.published, scenario.fault)
+			runWorkerAuthorityLoss(t, config, scenario.published, scenario.fault, pressure && !scenario.published, pressure, scenario.stopPressure)
 		}) {
 			break
 		}
@@ -160,9 +171,53 @@ type authorityLossGate struct {
 	reached                          chan lossPublication
 	release                          chan struct{}
 	recovery, activation, completion atomic.Int64
+	blockObjects                     atomic.Bool
+	blockedObjects                   atomic.Int64
+	blockedBatch                     *workerapi.AgentSaveObject
 }
 
 func (g *authorityLossGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/worker/v1/computer-saves/objects/register" && g.blockObjects.Load() {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		var batch workerapi.AgentSaveObject
+		if err != nil || json.Unmarshal(raw, &batch) != nil {
+			http.Error(w, "decode blocked object batch", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		// Reused certified objects may exist only remotely. Let their ordinary
+		// admission proceed; hold new ciphertext that still needs publication.
+		var unpublished []blockformat.ObjectInspection
+		for _, inspection := range batch.Inspections {
+			object, ok := nativeBatchObject([]blockformat.ObjectInspection{inspection}, "", false)
+			if !ok {
+				http.Error(w, "invalid blocked object inspection", http.StatusBadRequest)
+				return
+			}
+			var certified bool
+			if err := g.pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM disk_objects
+ WHERE environment_id=$1 AND digest=$2 AND size_bytes=$3 AND certified)`, g.environment, object.Digest, object.SizeBytes).Scan(&certified); err != nil {
+				http.Error(w, "classify blocked object batch", http.StatusInternalServerError)
+				return
+			}
+			if !certified {
+				unpublished = append(unpublished, inspection)
+			}
+		}
+		if len(unpublished) == 0 {
+			g.next.ServeHTTP(w, r)
+			return
+		}
+		batch.Inspections = unpublished
+		g.mu.Lock()
+		if g.blockedBatch == nil {
+			g.blockedBatch = &batch
+		}
+		g.mu.Unlock()
+		g.blockedObjects.Add(1)
+		http.Error(w, "fixture storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	switch r.URL.Path {
 	case "/worker/v1/instance/recover":
 		g.recovery.Add(1)
@@ -340,9 +395,10 @@ func openLossDatabase(t *testing.T, input nativeExecutionConfig, key []byte) dbt
 	return dbtest.Database{DSN: dsn, Pool: pool}
 }
 
-func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published bool, networkFault string) {
+func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published bool, networkFault string, pressure, recoverComputer, stopPressure bool) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	caseBudget := 8 * time.Minute
+	ctx, cancel := context.WithTimeout(t.Context(), caseBudget)
 	defer cancel()
 	proof := map[string]any{"publishedBeforeLoss": published, "networkFault": networkFault}
 	defer func() {
@@ -362,7 +418,11 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	env, key, enrollment := seedNativeExecution(t, database.Pool)
+	var permissions []auth.Permission
+	if stopPressure {
+		permissions = append(permissions, auth.PermissionSessionsInterrupt)
+	}
+	env, key, enrollment := seedNativeExecution(t, database.Pool, permissions...)
 	platform, err := cass3.NewImmutable(ctx, input.PlatformURI)
 	if err != nil {
 		t.Fatal(err)
@@ -386,9 +446,14 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	cp := startNativeControlPlane(t, cancel, nativeControlPlaneInput{DSN: database.DSN, Key: keyBytes, Config: input})
 	defer cp.close()
 	gate := &authorityLossGate{pool: database.Pool, environment: env, next: cp.proxy, published: published, reached: make(chan lossPublication, 1), release: make(chan struct{})}
+	gate.blockObjects.Store(pressure)
+	defer gate.blockObjects.Store(false)
 	server := httptest.NewServer(gate)
 	defer server.Close()
-	releaseGate := sync.OnceFunc(func() { close(gate.release) })
+	releaseGate := sync.OnceFunc(func() {
+		gate.blockObjects.Store(false)
+		close(gate.release)
+	})
 	defer releaseGate()
 	apiClient, err := client.New(server.URL, client.WithBearerToken(key))
 	if err != nil {
@@ -407,6 +472,9 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	workerEnv["WORKER_ENROLLMENT_TOKEN_FILE"], workerEnv["WORKER_POOL_NAME"] = tokenPath, "native-proof"
 	workerEnv["WORKER_RESOURCE_ID"] = "loss-proof-" + uuid.NewV7().String()
 	workerEnv["CHECKPOINT_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(keyBytes)
+	if pressure || recoverComputer {
+		workerEnv["WORKER_COMPUTER_STAGING_MIB"] = "256"
+	}
 	active, err := startLossWorker(input, workerEnv, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +526,11 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if _, err := apiClient.PromoteDeployment(ctx, deployment.ID, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	started, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: json.RawMessage(`[{"type":"text","text":"hold"}]`), IdempotencyKey: "loss-original"}, client.EnvironmentScopeOptions{})
+	turnInput := json.RawMessage(`[{"type":"text","text":"\"hold\""}]`)
+	if pressure {
+		turnInput = json.RawMessage(`[{"type":"text","text":"\"hold-pressure\""}]`)
+	}
+	started, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: turnInput, IdempotencyKey: "loss-original"}, client.EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +544,13 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		case <-active.done:
 			return false, fmt.Errorf("Worker exited before authored output: %v", active.err)
 		default:
+		}
+		turn, err := apiClient.RetrieveSessionTurn(ctx, started.SessionID, started.Turn.TurnID, client.EnvironmentScopeOptions{})
+		if err != nil {
+			return false, err
+		}
+		if turn.Status != "queued" && turn.Status != "running" {
+			return false, fmt.Errorf("authored Turn ended before held output: %s, %v", turn.Status, turn.Error)
 		}
 		page, err := apiClient.ReadSessionEvents(ctx, started.SessionID, client.SessionEventReadOptions{Limit: 100})
 		if err != nil {
@@ -489,7 +568,18 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		t.Fatal("authored output before loss", err)
 	}
 	proof["publicOutputBeforeLoss"] = output
-	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`"release"`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
+	if stopPressure {
+		if err := proveNativePressureStopFailure(ctx, database.Pool, apiClient, env, started, output, gate, active, proof); err != nil {
+			t.Fatal("blocked Session stop and reconstruction", err)
+		}
+		return
+	}
+	if pressure {
+		if err := proveNativeSavePressure(ctx, database.Pool, env, started, gate, active, proof); err != nil {
+			t.Fatal("native storage pressure", err)
+		}
+	}
+	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var publication lossPublication
@@ -521,6 +611,48 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if string(beforeFields["processCount"]) != "1" {
 		t.Fatal("fixture did not establish exactly one original process")
 	}
+	if string(beforeFields["turnStatus"]) != `"completed"` {
+		t.Fatal("Turn did not complete before the held publication")
+	}
+	if pressure {
+		var result struct {
+			Verified bool  `json:"verified"`
+			Bytes    int64 `json:"bytes"`
+		}
+		if err := json.Unmarshal(beforeFields["result"], &result); err != nil || !result.Verified || result.Bytes <= 0 {
+			t.Fatalf("guest did not verify its pressure writes: %+v %v", result, err)
+		}
+		if err := awaitLossCondition(ctx, func() (bool, error) {
+			var cleared bool
+			err := database.Pool.QueryRow(ctx, `SELECT storage_pressure_since IS NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, custody.Computer, custody.Epoch).Scan(&cleared)
+			return cleared, err
+		}); err != nil {
+			t.Fatal("pressure did not clear after storage recovery", err)
+		}
+		proof["pressureClearedAt"] = time.Now().UTC()
+	}
+	var pressureTurn string
+	if recoverComputer && published {
+		// The published first Turn remains durable while a successor fills staging.
+		// Its publication response is still held, so no new save owner can evacuate
+		// that staging. Lose the actual Worker with this second Turn still blocked.
+		next, err := apiClient.EnqueueSession(ctx, started.SessionID, api.EnqueueSessionRequest{Input: json.RawMessage(`[{"type":"text","text":"\"hold-pressure\""}]`), IdempotencyKey: "loss-pressure-successor"}, client.EnvironmentScopeOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pressureTurn = next.TurnID
+		if err := awaitLossCondition(ctx, func() (bool, error) {
+			var blocked bool
+			err := database.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l JOIN session_processes p ON (p.environment_id,p.computer_id,p.computer_lease_epoch)=(l.environment_id,l.computer_id,l.epoch)
+ JOIN turns t ON (t.environment_id,t.session_id,t.process_epoch)=(p.environment_id,p.session_id,p.epoch)
+ WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND t.id=$4
+ AND l.storage_pressure_since IS NOT NULL AND l.status='active' AND p.status='ready' AND t.status='running')`, env, custody.Computer, custody.Epoch, pressureTurn).Scan(&blocked)
+			return blocked, err
+		}); err != nil {
+			t.Fatal("staging pressure before terminal owner loss", err)
+		}
+		proof["runningPressureTurnAtLoss"] = map[string]any{"turnId": pressureTurn, "observedAt": time.Now().UTC()}
+	}
 	proof["beforeLoss"] = before
 	if err := active.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -543,7 +675,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		if err := json.Unmarshal(raw, &claim); err != nil {
 			return false, err
 		}
-		return claim.Phase == "quarantined-control-lost", nil
+		return claim.Phase == "quarantined-control-lost" || claim.Phase == "quarantined-response-lost", nil
 	})
 	if err != nil {
 		t.Fatal("helper did not record control loss", err)
@@ -579,7 +711,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err != nil || !reflect.DeepEqual(retained, after) {
 		t.Fatalf("blocked restart changed retained dependencies: %v", err)
 	}
-	wantSave, wantTurn := "failed", "interrupted"
+	wantSave, wantTurn := "failed", "completed"
 	if published {
 		wantSave, wantTurn = "published", "completed"
 	}
@@ -632,6 +764,11 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		if _, err := os.Stat(custody.Cgroup); err != nil {
 			t.Fatalf("lost retained cgroup: %v", err)
 		}
+	}
+	// Terminal transport cleanup must unblock the consumers without releasing
+	// the helper's exclusive claim, even if sysfs already reports a reset device.
+	if err := nbd.VerifyIdleDevices([]string{custody.Device}); !errors.Is(err, unix.EBUSY) {
+		t.Fatalf("terminal transport cleanup released custody: %v", err)
 	}
 	proof["consumerAbsenceObservedAt"] = time.Now().UTC()
 	// This explicit fixture operation uses a pidfd retained from the known live
@@ -726,10 +863,33 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err != nil || len(page.Records) == 0 || page.Records[0].Sequence != output.Sequence || !bytes.Equal(page.Records[0].Data, output.Data) {
 		t.Fatalf("public output was not retained: %v", err)
 	}
+	if pressureTurn != "" {
+		var settled bool
+		if err := database.Pool.QueryRow(ctx, `SELECT t.status='interrupted'
+ AND (SELECT count(*) FROM session_events WHERE environment_id=$1 AND turn_id=$2 AND kind='turn.running')=1
+ AND (SELECT count(*) FROM session_events WHERE environment_id=$1 AND turn_id=$2 AND kind='turn.interrupted')=1
+ AND NOT EXISTS(SELECT 1 FROM session_events WHERE environment_id=$1 AND turn_id=$2 AND kind='turn.completed')
+ FROM turns t WHERE t.environment_id=$1 AND t.id=$2`, env, pressureTurn).Scan(&settled); err != nil || !settled {
+			t.Fatalf("blocked Turn was not interrupted exactly once: %t %v", settled, err)
+		}
+		proof["pressureTurnInterruptedWithoutReplay"] = true
+	}
+	if recoverComputer {
+		if err := proveNativeDiskRecovery(ctx, database.Pool, apiClient, env, started, publication.Save, published, beforeFields["result"], proof); err != nil {
+			t.Fatal("recover original Computer without replay", err)
+		}
+		observed, err := lossDatabaseState(ctx, database.Pool, env, started, publication.Save.SaveID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sameLossSaveEvidence(before, observed); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := retireNativeExecution(ctx, database.Pool, apiClient, env); err != nil {
 		t.Fatal("retire lost Computer", err)
 	}
-	reuse, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: json.RawMessage(`[{"type":"text","text":"reuse"}]`), IdempotencyKey: "loss-reuse"}, client.EnvironmentScopeOptions{})
+	reuse, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: json.RawMessage(`[{"type":"text","text":"\"reuse\""}]`), IdempotencyKey: "loss-reuse"}, client.EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +901,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		}
 		var complete bool
 		err := database.Pool.QueryRow(ctx, `SELECT t.status='completed' AND s.status='published' AND s.root_id IS NOT NULL
- FROM turns t LEFT JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id)
+ FROM turns t LEFT JOIN computer_saves s ON (s.environment_id,s.turn_id)=(t.environment_id,t.id)
  WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.Turn.TurnID).Scan(&complete)
 		return complete, err
 	})
@@ -750,7 +910,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	}
 	var reuseSave workerapi.AgentSave
 	reuseSave.EnvironmentID = env.String()
-	err = database.Pool.QueryRow(ctx, `SELECT s.id::text,s.computer_lease_epoch FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id) WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.Turn.TurnID).Scan(&reuseSave.SaveID, &reuseSave.LeaseEpoch)
+	err = database.Pool.QueryRow(ctx, `SELECT s.id::text,s.computer_lease_epoch FROM turns t JOIN computer_saves s ON (s.environment_id,s.turn_id)=(t.environment_id,t.id) WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.Turn.TurnID).Scan(&reuseSave.SaveID, &reuseSave.LeaseEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1119,7 +1279,7 @@ func sameLossSaveEvidence(before, after json.RawMessage) error {
 	if err := json.Unmarshal(after, &observed); err != nil {
 		return err
 	}
-	for _, field := range []string{"saveId", "rootId", "capturedRoot", "captureEvidence", "publicationEvidence", "turnId", "result"} {
+	for _, field := range []string{"saveId", "rootId", "capturedRoot", "captureEvidence", "publicationEvidence", "turnId", "turnStatus", "terminalAt", "result"} {
 		if !bytes.Equal(original[field], observed[field]) {
 			return fmt.Errorf("Worker loss changed retained %s", field)
 		}
@@ -1254,7 +1414,7 @@ func TestLossArenaInventoryPreservesDeclaredBlockNode(t *testing.T) {
 }
 
 func TestLossSaveEvidencePreservesIdentity(t *testing.T) {
-	before := json.RawMessage(`{"saveId":"save","rootId":null,"capturedRoot":"cut","captureEvidence":"capture","publicationEvidence":null,"turnId":"turn","result":{"value":1},"saveStatus":"captured"}`)
+	before := json.RawMessage(`{"saveId":"save","rootId":null,"capturedRoot":"cut","captureEvidence":"capture","publicationEvidence":null,"turnId":"turn","turnStatus":"completed","terminalAt":"2026-10-15T00:00:00Z","result":{"value":1},"saveStatus":"captured"}`)
 	var after map[string]json.RawMessage
 	if err := json.Unmarshal(before, &after); err != nil {
 		t.Fatal(err)

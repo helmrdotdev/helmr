@@ -34,6 +34,15 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
     case "slack.delivery_unavailable":
       if (data["reason"] !== "route_unavailable") throw new Error("Invalid Slack delivery event reason")
       return { reason: "route_unavailable", source_seq: sequence("source_seq") }
+    case "session.storage_pressure":
+      if (data["state"] !== "paused" && data["state"] !== "resolved" && data["state"] !== "stopped") throw new Error("Invalid storage pressure state")
+      return {computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),holdId:id("holdId"),state:data["state"]}
+    case "session.recovery_gap": {
+      if (!Array.isArray(data["affectedTurnIds"]) || !Number.isSafeInteger(data["affectedTurnCount"]) || data["affectedTurnCount"] !== data["affectedTurnIds"].length) throw new Error("Invalid recovery gap affected Turns")
+      if (data["restoredAt"] !== null && (typeof data["restoredAt"] !== "string" || Number.isNaN(Date.parse(data["restoredAt"])))) throw new Error("Invalid recovery gap restore timestamp")
+      if ((data["recoverySaveId"]===null)!==(data["restoredAt"]===null)) throw new Error("Recovery gap restore point is inconsistent")
+      return {holdId:id("holdId"),computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),recoverySaveId:data["recoverySaveId"]===null?null:id("recoverySaveId"),restoredAt:data["restoredAt"] as string|null,affectedTurnIds:data["affectedTurnIds"].map(v=>resourceID(v,"affected Turn")),affectedTurnCount:data["affectedTurnCount"] as number}
+    }
     case "session.process_failed": return { holdId: id("holdId"), processEpoch: sequence("processEpoch") }
     case "session.deadline": return { holdId: id("holdId") }
     case "session.close":
@@ -42,6 +51,10 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
     case "session.interrupt": case "session.resume": case "session.cancel": case "turn.interrupt":
       return { controlId: id("controlId"), ...(data["holdId"] === undefined ? {} : { holdId: id("holdId") }) }
     case "turn.failed": return data["code"] === undefined ? {} : { code: text("code") }
+    case "turn.interrupted":
+      if (Object.keys(data).length === 0) return {}
+      if (Object.keys(data).length !== 4 || data["reason"] !== "computer_execution_lost" || typeof data["recoveryGap"] !== "boolean") throw new Error("Invalid Computer loss interruption data")
+      return { reason: "computer_execution_lost", computerId: id("computerId"), leaseEpoch: sequence("leaseEpoch"), recoveryGap: data["recoveryGap"] }
     default:
       if (Object.keys(data).length !== 0) throw new Error("Lifecycle event.data must be empty")
       return {}

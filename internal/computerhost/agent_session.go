@@ -17,6 +17,8 @@ import (
 // process. Closing it never requests Session shutdown or re-runs customer setup.
 // The owning worker obtains grants and attachment sequences from the Control Plane.
 type AgentSessionConnection struct {
+	workWake    *allocationWake
+	localWork   allocationWake
 	stream      vm.Stream
 	identity    *agentv1.SessionIdentity
 	attachment  uint64

@@ -1903,6 +1903,7 @@ type PreparationControlRequest struct {
 	RenewOnly           bool                   `protobuf:"varint,4,opt,name=renew_only,json=renewOnly,proto3" json:"renew_only,omitempty"`
 	LogStream           string                 `protobuf:"bytes,5,opt,name=log_stream,json=logStream,proto3" json:"log_stream,omitempty"`
 	AcknowledgedThrough int64                  `protobuf:"varint,6,opt,name=acknowledged_through,json=acknowledgedThrough,proto3" json:"acknowledged_through,omitempty"`
+	WaitForCompletion   bool                   `protobuf:"varint,7,opt,name=wait_for_completion,json=waitForCompletion,proto3" json:"wait_for_completion,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1977,6 +1978,13 @@ func (x *PreparationControlRequest) GetAcknowledgedThrough() int64 {
 		return x.AcknowledgedThrough
 	}
 	return 0
+}
+
+func (x *PreparationControlRequest) GetWaitForCompletion() bool {
+	if x != nil {
+		return x.WaitForCompletion
+	}
+	return false
 }
 
 type PreparationControlResponse struct {
@@ -2203,7 +2211,7 @@ const file_computer_proto_rawDesc = "" +
 	"\x15observed_at_unix_nano\x18\x04 \x01(\x03R\x12observedAtUnixNano\x12\x12\n" +
 	"\x04data\x18\x05 \x01(\fR\x04data\x12#\n" +
 	"\rdropped_bytes\x18\x06 \x01(\x03R\fdroppedBytes\x12\x1a\n" +
-	"\bcomplete\x18\a \x01(\bR\bcomplete\"\xbc\x02\n" +
+	"\bcomplete\x18\a \x01(\bR\bcomplete\"\xec\x02\n" +
 	"\x19PreparationControlRequest\x12B\n" +
 	"\bidentity\x18\x01 \x01(\v2&.helmr.computer.v0.PreparationIdentityR\bidentity\x12/\n" +
 	"\x14expires_at_unix_nano\x18\x02 \x01(\x03R\x11expiresAtUnixNano\x129\n" +
@@ -2212,7 +2220,8 @@ const file_computer_proto_rawDesc = "" +
 	"renew_only\x18\x04 \x01(\bR\trenewOnly\x12\x1d\n" +
 	"\n" +
 	"log_stream\x18\x05 \x01(\tR\tlogStream\x121\n" +
-	"\x14acknowledged_through\x18\x06 \x01(\x03R\x13acknowledgedThrough\"\x86\x01\n" +
+	"\x14acknowledged_through\x18\x06 \x01(\x03R\x13acknowledgedThrough\x12.\n" +
+	"\x13wait_for_completion\x18\a \x01(\bR\x11waitForCompletion\"\x86\x01\n" +
 	"\x1aPreparationControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +

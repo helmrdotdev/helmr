@@ -132,7 +132,9 @@ func (f *allocationContinuationFixture) handle(stream net.Conn) {
 	receipt := &agentv1.ComputerSessionReceipt{CheckpointId: f.capture.CheckpointId, DesiredVersion: 1, Frozen: !f.activated, Installed: f.installed, ActivationStarted: f.activated, Activated: f.activated}
 	switch {
 	case request.GetCapture() != nil:
-		return // capture reply deliberately lost
+		if f.scenario != "joined-uncut" {
+			return // capture reply deliberately lost
+		}
 	case request.GetInspect() != nil:
 		f.inspections++
 		switch f.scenario {

@@ -6,6 +6,7 @@ import (
 )
 
 const AllocationClosed = "allocation_closed"
+const SaveAuthorityLost = "computer_save_authority_lost"
 
 // AllocationIdentity is custody evidence, never execution authority. Kind is
 // computer or preparation; authentication determines the Host incarnation.
@@ -43,6 +44,7 @@ type ComputerAllocationDelivery struct {
 	ChannelCredential string             `json:"channel_credential"`
 	BaseVersion       string             `json:"base_version"`
 	RestoredFrom      string             `json:"restored_from,omitempty"`
+	DiskOnlyRecovery  bool               `json:"disk_only_recovery,omitempty"`
 }
 type ComputerAllocationReady struct {
 	Identity    AllocationIdentity `json:"identity"`

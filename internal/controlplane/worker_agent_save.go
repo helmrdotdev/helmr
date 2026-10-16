@@ -30,7 +30,7 @@ func (server *Server) workerRegisterAgentSaveObject(w http.ResponseWriter, r *ht
 	}
 	ref, err := agentSavePublication(request.Save, workerFromContext(r.Context()))
 	if err == nil {
-		err = server.savePublisher.Register(r.Context(), ref, request.Inspection)
+		err = server.savePublisher.RegisterBatch(r.Context(), ref, request.Inspections)
 	}
 	if err != nil {
 		server.writeAgentSaveError(w, err)
@@ -46,7 +46,7 @@ func (server *Server) workerCertifyAgentSaveObject(w http.ResponseWriter, r *htt
 	}
 	ref, err := agentSavePublication(request.Save, workerFromContext(r.Context()))
 	if err == nil {
-		err = server.savePublisher.Certify(r.Context(), ref, request.Inspection)
+		err = server.savePublisher.CertifyBatch(r.Context(), ref, request.Inspections)
 	}
 	if err != nil {
 		server.writeAgentSaveError(w, err)
@@ -98,7 +98,16 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		server.writeAgentWorkerError(w, session.ErrInvalidInput)
 		return
 	}
-	save, err := computer.NextSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
+	var retirement *computer.SaveRetirement
+	if request.Retirement != nil {
+		id, parseErr := uuid.Parse(request.Retirement.SaveID)
+		if parseErr != nil {
+			server.writeAgentWorkerError(w, session.ErrInvalidInput)
+			return
+		}
+		retirement = &computer.SaveRetirement{SaveID: id, Root: request.Retirement.Root}
+	}
+	save, err := computer.NextSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.Admit, request.BackgroundDue, retirement)
 	if errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady) {
 		writeError(w, unavailable(errors.New("save discovery is temporarily unavailable")))
 		return
@@ -108,17 +117,19 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result := workerapi.AgentSavePending{}
-	if save != nil {
+	if save != nil && save.Claimed {
 		result.Save = &workerapi.AgentSave{EnvironmentID: request.EnvironmentID, SaveID: save.ID.String(), LeaseEpoch: save.LeaseEpoch}
 		result.Sequence = save.Sequence
+	} else if save != nil {
+		result.PendingForMillis = &save.AgeMillis
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 // A settled save cannot become publishable by retrying the same writer.
 func (server *Server) writeAgentSaveError(w http.ResponseWriter, err error) {
-	if errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal) {
-		writeError(w, conflict(errors.New("save is terminal")))
+	if errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal) || errors.Is(err, computer.ErrDenied) {
+		writeError(w, conflict(codedError{code: workerapi.SaveAuthorityLost, message: "save writer authority is unavailable"}))
 		return
 	}
 	server.writeAgentWorkerError(w, err)

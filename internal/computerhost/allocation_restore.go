@@ -70,7 +70,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	}
 	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
 	if err != nil {
-		if errors.Is(err, filepack.ErrInvalidContent) {
+		if errors.Is(err, filepack.ErrInvalidContent) || errors.Is(err, vm.ErrInvalidCheckpointContent) {
 			return invalidCheckpoint(err)
 		}
 		return err

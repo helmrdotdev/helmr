@@ -38,6 +38,7 @@ type Snapshot struct {
 }
 
 type Ledger struct {
+	changed      chan struct{}
 	mu           sync.Mutex
 	capacity     Vector
 	used         Vector
@@ -53,6 +54,7 @@ func New(capacity Vector) (*Ledger, error) {
 
 	return &Ledger{
 		capacity:     capacity,
+		changed:      make(chan struct{}),
 		reservations: make(map[Key]Vector),
 	}, nil
 }
@@ -103,6 +105,8 @@ func (l *Ledger) Release(key Key) error {
 
 	l.used = subtract(l.used, reserved)
 	delete(l.reservations, key)
+	close(l.changed)
+	l.changed = make(chan struct{})
 	return nil
 }
 
@@ -189,3 +193,6 @@ func fits(used, capacity Vector) bool {
 		used.HostDiskBytes <= capacity.HostDiskBytes &&
 		used.VMSlots <= capacity.VMSlots
 }
+
+// Changes returns the capacity-release edge to sample before attempting Reserve.
+func (l *Ledger) Changes() <-chan struct{} { l.mu.Lock(); defer l.mu.Unlock(); return l.changed }

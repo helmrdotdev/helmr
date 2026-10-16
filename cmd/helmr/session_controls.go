@@ -82,9 +82,7 @@ func sessionTurnGetCommand() *cobra.Command {
 			if len(turn.Response) > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "response: %s\n", turn.Response)
 			}
-			if turn.CompletionSaveID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "completion_save_id: %s\n", *turn.CompletionSaveID)
-			}
+
 			if turn.PayloadExpiredAt != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "payload_expired_at: %s\n", turn.PayloadExpiredAt.Format(time.RFC3339Nano))
 			}

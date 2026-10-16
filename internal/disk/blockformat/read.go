@@ -15,6 +15,21 @@ type RangeSource interface {
 	GetRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
 }
 
+// PackRangeSource opts into bounded whole-pack caching for metadata pages.
+// Segment reads continue to use RangeSource's exact requested ranges.
+type PackRangeSource interface {
+	GetPackRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
+}
+
+type metadataRangeSource struct{ RangeSource }
+
+func (s metadataRangeSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	if cached, ok := s.RangeSource.(PackRangeSource); ok {
+		return cached.GetPackRange(ctx, digest, size, offset, length)
+	}
+	return s.RangeSource.GetRange(ctx, digest, size, offset, length)
+}
+
 func readRange(ctx context.Context, source RangeSource, digest [32]byte, size, offset, length int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -44,6 +59,9 @@ func readRange(ctx context.Context, source RangeSource, digest [32]byte, size, o
 // The exact locator must come from a retained root or authenticated parent page.
 // Full pack membership/digest certification is a separate publication operation.
 func ReadPage(ctx context.Context, source RangeSource, scope string, key []byte, l Locator) ([]byte, error) {
+	if source == nil {
+		return nil, errors.New("missing metadata source")
+	}
 	h, err := Header(scope, l.Page)
 	if err != nil {
 		return nil, err
@@ -52,7 +70,7 @@ func ReadPage(ctx context.Context, source RangeSource, scope string, key []byte,
 		l.Page.Size < int64(len(h)+20) || l.Page.Size > int64(len(h)+20+MaxMetadata) || l.Offset < 8 || l.Offset > l.Pack.Size-l.Page.Size {
 		return nil, errors.New("invalid metadata page range")
 	}
-	b, err := readRange(ctx, source, l.Pack.Digest, l.Pack.Size, l.Offset, l.Page.Size)
+	b, err := readRange(ctx, metadataRangeSource{source}, l.Pack.Digest, l.Pack.Size, l.Offset, l.Page.Size)
 	if err != nil {
 		return nil, err
 	}

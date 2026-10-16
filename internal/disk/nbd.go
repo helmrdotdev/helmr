@@ -9,6 +9,7 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 )
 
@@ -31,12 +32,30 @@ func versionDeviceError(err error) error {
 	return err
 }
 
-// Split at block boundaries so any admitted dirty budget can serve the export.
-// Buffer pressure commits locally and retries the unapplied block once; staged
-// storage exhaustion remains an error. No remote publication is triggered.
+// Admit a complete request when it fits, avoiding repeated whole-overlay budget
+// calculations. Otherwise split at block boundaries so any admitted budget can
+// serve the export. Rejected admission leaves the request bytes unchanged.
+// Buffer pressure commits locally; staging pressure waits for the publication
+// owner to reclaim authenticated retained bytes. Waiting releases the request
+// gate, so maintenance never depends on this stalled guest request. Such a
+// partial request cannot certify Turn coverage without a later guest flush.
 func (d versionDevice) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
 	d.request.Lock()
 	defer d.request.Unlock()
+	d.beginGuestRequest()
+	ctx = d.guestRequestContext(ctx)
+	defer d.endGuestRequest()
+	if len(b) > 4096-int(off%4096) && len(b) <= blockformat.MaxReadBytes {
+		n, err := d.LocalVersion.write(ctx, b, off, len(b), false)
+		if err == nil {
+			d.advanceGuestRequest()
+			d.disk.clearPressure()
+			return n, nil
+		}
+		if !errors.Is(err, ErrVersionBufferFull) && !errors.Is(err, ErrVersionStagingFull) {
+			return n, versionDeviceError(err)
+		}
+	}
 	total := 0
 	for len(b) > 0 {
 		n := min(len(b), 4096-int(off%4096))
@@ -46,18 +65,46 @@ func (d versionDevice) WriteAt(ctx context.Context, b []byte, off int64) (int, e
 				_, err = d.LocalVersion.WriteAt(ctx, b[:n], off)
 			}
 		}
+		var pressure *StagingPressure
+		if errors.As(err, &pressure) {
+			d.request.Unlock()
+			select {
+			case <-ctx.Done():
+				d.request.Lock()
+				return total, ctx.Err()
+			case <-pressure.Wake:
+			}
+			d.request.Lock()
+			continue
+		}
 		if err != nil {
 			return total, versionDeviceError(err)
 		}
+		d.advanceGuestRequest()
 		total += n
 		off += int64(n)
 		b = b[n:]
 	}
+	d.disk.clearPressure()
 	return total, nil
 }
 func (d versionDevice) Trim(ctx context.Context, off int64, n int) error {
 	d.request.Lock()
 	defer d.request.Unlock()
+	d.beginGuestRequest()
+	ctx = d.guestRequestContext(ctx)
+	defer d.endGuestRequest()
+	if n > 4096-int(off%4096) && n <= blockformat.MaxReadBytes {
+		_, err := d.LocalVersion.write(ctx, nil, off, n, false)
+		if err == nil {
+			d.advanceGuestRequest()
+			d.disk.clearPressure()
+			return nil
+		}
+		if !errors.Is(err, ErrVersionBufferFull) && !errors.Is(err, ErrVersionStagingFull) {
+			return versionDeviceError(err)
+		}
+	}
 	for n > 0 {
 		length := min(n, 4096-int(off%4096))
 		err := d.LocalVersion.Trim(ctx, off, length)
@@ -66,19 +113,52 @@ func (d versionDevice) Trim(ctx context.Context, off int64, n int) error {
 				err = d.LocalVersion.Trim(ctx, off, length)
 			}
 		}
+		var pressure *StagingPressure
+		if errors.As(err, &pressure) {
+			d.request.Unlock()
+			select {
+			case <-ctx.Done():
+				d.request.Lock()
+				return ctx.Err()
+			case <-pressure.Wake:
+			}
+			d.request.Lock()
+			continue
+		}
 		if err != nil {
 			return versionDeviceError(err)
 		}
+		d.advanceGuestRequest()
 		n -= length
 		off += int64(length)
 	}
+	d.disk.clearPressure()
 	return nil
 }
 func (d versionDevice) Flush(ctx context.Context) error {
 	d.request.Lock()
 	defer d.request.Unlock()
-	_, err := d.LocalVersion.Flush(ctx)
-	return versionDeviceError(err)
+	d.beginGuestRequest()
+	ctx = d.guestRequestContext(ctx)
+	defer d.endGuestRequest()
+	for {
+		_, err := d.LocalVersion.Flush(ctx)
+		var pressure *StagingPressure
+		if !errors.As(err, &pressure) {
+			if err == nil {
+				d.disk.clearPressure()
+			}
+			return versionDeviceError(err)
+		}
+		d.request.Unlock()
+		select {
+		case <-ctx.Done():
+			d.request.Lock()
+			return ctx.Err()
+		case <-pressure.Wake:
+		}
+		d.request.Lock()
+	}
 }
 
 // ServeNBD owns a private listener for one exclusive device connection, including
@@ -89,4 +169,11 @@ func (p *LocalVersion) ServeNBD(ctx context.Context, listener net.Listener) erro
 	size := p.head.Root.LogicalBytes
 	p.life.RUnlock()
 	return nbd.ServeOnce(ctx, listener, versionDevice{p}, size)
+}
+
+func (d versionDevice) ReadAt(ctx context.Context, b []byte, off int64) (int, error) {
+	d.beginGuestRequest()
+	ctx = d.guestRequestContext(ctx)
+	defer d.endGuestRequest()
+	return d.LocalVersion.ReadAt(ctx, b, off)
 }

@@ -506,7 +506,7 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 		return ErrNotReady
 	}
 	var process int64
-	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running','finalizing') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
+	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
 	if err == nil {
 		if process != e.ProcessEpoch {
 			return ErrNotReady
@@ -515,6 +515,13 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	var pressure bool
+	if err = tx.QueryRow(ctx, `SELECT storage_pressure_since IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, e.EnvironmentID, o.computer, e.LeaseEpoch).Scan(&pressure); err != nil {
+		return err
+	}
+	if pressure {
+		return ErrNotReady
 	}
 	// Existing work may be observed, but a new Turn needs the current applied
 	// run control and proof that the previous target has ceased execution.

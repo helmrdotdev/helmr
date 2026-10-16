@@ -64,7 +64,8 @@ The Agent keeps two kinds of state:
   as the Session's process.
 - `/workspace/log.txt` is a file on the Computer's disk. Helmr saves the disk
   periodically while the Computer runs and after a Turn's handler returns
-  successfully. The Turn becomes `completed` once that final save is stored.
+  successfully. The Turn becomes `completed` when its result and response are
+  committed; its disk save finishes in the background.
 
 `closeAfterIdle` closes the Session after a day without work, and
 `maxTurnDuration` limits each Turn. See [Agents](/docs/concepts/agents).
@@ -129,8 +130,9 @@ On the next input Helmr starts a new process on the same Computer and runs
 counter starts again at 1, while the log file still has every entry the disk
 kept. That is the rule to design for: keep anything that must survive
 reconstruction on disk or in your own store, and make external effects safe to
-repeat. Losing the worker of a running Computer is different: that Computer
-cannot be recovered. See [Durability](/docs/concepts/durability).
+repeat. Losing the worker of a running Computer restores the latest eligible
+saved disk, which can predate completed requests. Helmr explains any gap and
+requires acknowledgement before continuing. See [Durability](/docs/concepts/durability).
 
 ## Interrupt and resume
 

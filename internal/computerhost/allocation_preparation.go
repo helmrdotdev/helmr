@@ -43,6 +43,7 @@ type AllocatedPreparationClient interface {
 // PreparationAllocationOwner is the single owner of a private preparation VM.
 // Run may retry cleanup but never reruns authored code after physical startup.
 type PreparationAllocationOwner struct {
+	workWake   allocationWake
 	machines   *PreparedMachines
 	client     AllocatedPreparationClient
 	identity   workerapi.AllocationIdentity
@@ -149,7 +150,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		}
 		capacity.HostDiskBytes += bytes
 	}
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity); err != nil {
+	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity, &o.workWake); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}

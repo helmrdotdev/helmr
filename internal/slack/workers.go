@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/errgroup"
 )
@@ -17,13 +18,16 @@ import (
 // block independent threads. Durable claims and installation pacing remain the
 // send authority across workers and dispatcher processes. Cancellation joins all
 // in-flight workers before returning to the process supervisor.
-func RunDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, log *slog.Logger) error {
+func RunDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || client == nil || log == nil {
 		return errors.New("the Slack delivery dependencies are required")
 	}
 	var workers errgroup.Group
 	for range 8 {
 		workers.Go(func() error {
+			wake, unsubscribe := changes.Subscribe("slack_delivery")
+			defer unsubscribe()
+
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for {
@@ -37,6 +41,7 @@ func RunDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, log
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-wake:
 				case <-ticker.C:
 				}
 			}

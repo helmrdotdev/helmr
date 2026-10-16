@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -14,6 +15,7 @@ import (
 )
 
 type versionTestPublication struct {
+	mu         sync.Mutex
 	remote     *cas.File
 	registered map[string]blockformat.ObjectInspection
 	certified  map[string]blockformat.ObjectInspection
@@ -55,6 +57,8 @@ func (p *versionTestPublication) Register(_ context.Context, e blockformat.Objec
 	return nil
 }
 func (p *versionTestPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if _, ok := p.registered[d.Digest]; !ok {
 		return cas.Object{}, errors.New("upload before registration")
 	}
@@ -209,3 +213,20 @@ func TestInitialVersionAdmissionAndCancellation(t *testing.T) {
 }
 
 func digestOf(d [32]byte) string { return "sha256:" + hex.EncodeToString(d[:]) }
+
+func (p *versionTestPublication) RegisterBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
+	for _, i := range inspections {
+		if err := p.Register(ctx, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (p *versionTestPublication) CertifyBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
+	for _, i := range inspections {
+		if err := p.Certify(ctx, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}

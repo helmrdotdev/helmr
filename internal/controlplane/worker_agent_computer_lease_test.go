@@ -65,7 +65,7 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 		t.Fatalf("physical observation missing %v %v", fenced, err)
 	}
 	var holds int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("physical stop retries duplicated holds %d %v", holds, err)
 	}
 }

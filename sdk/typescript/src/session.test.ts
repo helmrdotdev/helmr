@@ -25,7 +25,6 @@ const turnState = {
   interrupt_requested: false,
   accepts_messages: false,
   terminal_at: createdAt,
-  completion_save_id: holdId,
 }
 function transport(responses: unknown[]) {
   const requests: Array<{ url: string; init?: RequestInit }> = []
@@ -148,6 +147,35 @@ describe("Session lifecycle client", () => {
     expect(page.records.map(event => event.turnId)).toEqual(records.map(event => event.turn_id))
     expect(page.nextAfter).toBe(13)
   })
+  test("event pages retain ordinary and Computer loss interruption data together", async () => {
+    const data = [
+      {},
+      { reason: "computer_execution_lost", computerId: holdId, leaseEpoch: 1, recoveryGap: false },
+      { reason: "computer_execution_lost", computerId: holdId, leaseEpoch: 2, recoveryGap: true },
+    ]
+    const records = data.map((value, index) => ({ session_id: sessionId, turn_id: turnId, sequence: index + 1, created_at: createdAt, kind: "turn.interrupted", data: value }))
+    const { client } = transport([{ records, next_after: 3, has_more: false, retained_after: 0 }])
+    const page = await client.sessions.ref(sessionId).events.list()
+    expect(page.records.map(event => event.kind)).toEqual(["turn.interrupted", "turn.interrupted", "turn.interrupted"])
+    expect(page.records.map(event => event.data)).toEqual(data)
+    expect(page.nextAfter).toBe(3)
+    const invalid = { ...records[1]!, data: { ...data[1], recoveryGap: "false" } }
+    const malformed = transport([{ records: [invalid], next_after: 2, has_more: false, retained_after: 0 }])
+    await expect(malformed.client.sessions.ref(sessionId).events.list()).rejects.toThrow("interruption data")
+  })
+  test("event stream advances its cursor across ordinary and Computer loss stops", async () => {
+    const values = [{},
+      { reason: "computer_execution_lost", computerId: holdId, leaseEpoch: 1, recoveryGap: false },
+      { reason: "computer_execution_lost", computerId: holdId, leaseEpoch: 2, recoveryGap: true }]
+    const { client, requests } = transport(values.map((data, index) => ({
+      records: [{ session_id: sessionId, turn_id: turnId, sequence: index + 1, created_at: createdAt, kind: "turn.interrupted", data }],
+      next_after: index + 1, has_more: index < 2, retained_after: 0,
+    })))
+    const stream = client.sessions.ref(sessionId).events.stream({ after: 0, limit: 1 })
+    for (const data of values) expect((await stream.next()).value?.data).toEqual(data)
+    await stream.return()
+    expect(requests.map(request => new URL(request.url).searchParams.get("after"))).toEqual(["0", "1", "2"])
+  })
   test("Turn retrieval distinguishes expired payload from an explicit null result", async () => {
     const { input: _, ...expired } = turnState
     const { client } = transport([{ ...expired, payload_expired_at: createdAt }, { ...turnState, result: null }])
@@ -156,13 +184,12 @@ describe("Session lifecycle client", () => {
     expect(await ref.get()).toMatchObject({
       result: null,
       terminalAt: createdAt,
-      completionSaveId: holdId,
     })
     expect(() => parseTurnState(turnState)).toThrow("result is required")
     expect(() => parseTurnState({ ...turnState, result: undefined })).toThrow()
   })
   test("Turn retrieval exposes immutable application failure", async () => {
-    const failed = { ...turnState, status: "failed", completion_save_id: undefined, error: { code: "application_error", message: "fixture" } }
+    const failed = { ...turnState, status: "failed", error: { code: "application_error", message: "fixture" } }
     const { client } = transport([failed])
     expect(await client.sessions.ref(sessionId).turns.ref(turnId).get()).toMatchObject({ status: "failed", error: failed.error })
     expect(() => parseTurnState({ ...failed, error: { code: "", message: "fixture" } })).toThrow()
@@ -185,12 +212,12 @@ describe("Session lifecycle client", () => {
         created_at: createdAt,
         updated_at: createdAt,
         active_turn_id: null,
-        holds: [{id:holdId,session_id:sessionId,scope:"local",reason:"recovery_required",created_at:createdAt}],
+        holds: [{id:holdId,session_id:sessionId,scope:"local",kind:"control",reason:"recovery_required",created_at:createdAt}],
       },
     ])
     expect(await client.sessions.get(sessionId)).toMatchObject({
       status: "closing",
-      holds: [{ id:holdId,scope:"local",reason:"recovery_required" }],
+      holds: [{ id:holdId,scope:"local",kind:"control",reason:"recovery_required" }],
     })
   })
   test("controls carry exact target identities", async () => {
@@ -251,4 +278,14 @@ test("process diagnostics are not exposed by the public client", () => {
   expect("preparationLogs" in client.computers).toBe(false)
   expect("preparationLogStreams" in client.computers).toBe(false)
   expect(requests).toHaveLength(0)
+})
+
+test("pending process stop retains its deadline", async () => {
+  const deadline = createdAt
+  const { client } = transport([{ ...turnState, status: "interrupted", stop: { process_epoch: 1, turn_id: turnId, state: "requested", deadline } }])
+  const turn = await client.sessions.ref(sessionId).turns.ref(turnId).get()
+  expect(turn.stop).toEqual({ processEpoch: 1, turnId, state: "requested", deadline })
+  for (const invalid of [null, undefined]) {
+    expect(() => parseTurnState({ ...turnState, result: null, stop: { process_epoch: 1, turn_id: turnId, state: "requested", deadline: invalid } })).toThrow()
+  }
 })

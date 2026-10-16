@@ -20,7 +20,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 	for _, finalizing := range []bool{false, true} {
 		name := "running"
 		if finalizing {
-			name = "finalizing"
+			name = "completed"
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
@@ -52,7 +52,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			}
 			if finalizing {
 				var unchanged bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT t.status='finalizing' AND t.result_recorded_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$2) AND EXISTS(SELECT 1 FROM computer_saves WHERE id=$3 AND status='requested') FROM turns t WHERE t.id=$1`, active.TurnID, f.session, save.ID).Scan(&unchanged); err != nil || !unchanged {
+				if err := f.pool.QueryRow(t.Context(), `SELECT t.status='completed' AND t.result_recorded_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$2) AND EXISTS(SELECT 1 FROM computer_saves WHERE id=$3 AND status='requested') FROM turns t WHERE t.id=$1`, active.TurnID, f.session, save.ID).Scan(&unchanged); err != nil || !unchanged {
 					t.Fatalf("deadline altered recorded result: %v %v", unchanged, err)
 				}
 				return
@@ -109,7 +109,7 @@ func TestSessionDeadlineDoesNotChangeCompletedOutcome(t *testing.T) {
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
@@ -173,7 +173,7 @@ func TestSessionLifecycleClosesAfterRecordedResultSettles(t *testing.T) {
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
@@ -400,7 +400,7 @@ func TestSessionLifecycleClosesLargeOwnedTree(t *testing.T) {
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	started := time.Now()

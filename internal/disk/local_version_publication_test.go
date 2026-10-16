@@ -265,3 +265,12 @@ func TestLocalVersionPublicationRejectsMissingUnpublishedSegment(t *testing.T) {
 		t.Fatal("incomplete root certified")
 	}
 }
+
+func (p *blockedVersionPublication) RegisterBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
+	for _, i := range inspections {
+		if err := p.Register(ctx, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -15,6 +15,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -40,6 +41,7 @@ type allocationOwnerTestClient struct {
 	loseStop                               atomic.Bool
 	failRenew                              atomic.Bool
 	closeProcesses                         atomic.Bool
+	dirty                                  atomic.Bool
 }
 
 func (c *allocationOwnerTestClient) DeliverComputerAllocation(context.Context, workerapi.AllocationIdentity) (workerapi.ComputerAllocationDelivery, error) {
@@ -196,13 +198,18 @@ func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocation
 	if err != nil {
 		t.Fatal(err)
 	}
-	machines := &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: preparationOwnerStore{ranges}, ComputerRanges: ranges, ComputerHelper: "/test/nbd-helper", ComputerDevices: []string{"/dev/nbd-test"}, Backend: backend, Reservations: ledger, ComputerStagingBytes: 1 << 20, ComputerSaveEvery: time.Minute, TempDir: t.TempDir()}
+	machines := &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: preparationOwnerStore{ranges}, ComputerRanges: ranges, ComputerHelper: "/test/nbd-helper", ComputerDevices: []string{"/dev/nbd-test"}, Backend: backend, Reservations: ledger, ComputerStagingBytes: 1 << 20, TempDir: t.TempDir()}
 	owner, err := NewComputerAllocationOwner(machines, client, identity, uuid.NewV7().String(), 7, func(context.Context) error { return nil }, func() {}, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner.attachDevice = func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
-		device := &failingCloseComputerDevice{}
+		device := &failingCloseComputerDevice{changes: func() disk.VersionChanges {
+			if client.dirty.Load() {
+				return disk.VersionChanges{Generation: 1, ChangedAt: time.Now().Add(-time.Second)}
+			}
+			return disk.VersionChanges{}
+		}}
 		machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{{id: identity.AllocationID, epoch: identity.Epoch}: device}
 		return device, nil
 	}
@@ -308,12 +315,10 @@ func TestComputerAllocationRenewsShortDeliveryAndRecoversBeforeExpiry(t *testing
 }
 
 func TestComputerAllocationRejectsMissingDeviceConfigurationBeforeDelivery(t *testing.T) {
-	for _, missing := range []string{"helper", "devices", "source", "save-interval"} {
+	for _, missing := range []string{"helper", "devices", "source"} {
 		t.Run(missing, func(t *testing.T) {
 			o, client, _ := allocationOwnerFixture(t)
 			switch missing {
-			case "save-interval":
-				o.machines.ComputerSaveEvery = 0
 			case "helper":
 				o.machines.ComputerHelper = "relative-helper"
 			case "devices":
@@ -529,6 +534,7 @@ func TestComputerAllocationStopsOnProcessDiscoveryClosure(t *testing.T) {
 			t.Fatal("allocation did not reach healthy service")
 		}
 		client.closeProcesses.Store(true)
+		owner.Wake()
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 		select {
@@ -573,10 +579,10 @@ func TestComputerAllocationKeyFaultReleasesUnstartedOwners(t *testing.T) {
 	}
 }
 
-func TestComputerAllocationStopsAfterBackgroundCaptureFailure(t *testing.T) {
+func TestComputerAllocationRetainsRequestDuringCaptureAmbiguity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		owner, client, backend := allocationOwnerFixture(t)
-		owner.machines.ComputerSaveEvery = time.Second
+		client.dirty.Store(true)
 		failure := errors.New("uncertain optional capture")
 		backend.machine.captureError = failure
 		requests := 0
@@ -592,11 +598,20 @@ func TestComputerAllocationStopsAfterBackgroundCaptureFailure(t *testing.T) {
 				t.Error("fenced before physical cleanup")
 			}
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		if err := owner.Run(ctx); !errors.Is(err, failure) {
-			t.Fatalf("capture failure: %v", err)
+		done := make(chan error, 1)
+		go func() { done <- owner.Run(ctx) }()
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if owner.Finished() || backend.machine.closes.Load() != 0 || requests != 1 {
+			t.Fatal("capture retry ended live allocation or rediscovered its prefix")
 		}
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("capture cancellation: %v", err)
+		}
+
 		if requests != 1 || backend.starts.Load() != 1 || backend.machine.closes.Load() != 1 || client.stops.Load() != 1 || !owner.Finished() {
 			t.Fatalf("optional failure did not close exact source: requests=%d starts=%d closes=%d stops=%d finished=%v", requests, backend.starts.Load(), backend.machine.closes.Load(), client.stops.Load(), owner.Finished())
 		}

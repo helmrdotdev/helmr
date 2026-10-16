@@ -28,14 +28,20 @@ func lockRuntimeOperationOwnerState(ctx context.Context, tx pgx.Tx, host workerg
 	if err := lockRuntimeHost(ctx, tx, Caller{Kind: "session", ID: original.SessionID, Execution: original, Host: &host}); err != nil {
 		return err
 	}
-	if _, err := lockSession(ctx, tx, original.EnvironmentID, original.SessionID); err != nil {
+	return lockRuntimeOperationOwnerWithHostLocked(ctx, tx, original, allowStopped)
+}
+
+// The caller holds supply claims before taking any Slack/Session owner locks.
+func lockRuntimeOperationOwnerWithHostLocked(ctx context.Context, tx pgx.Tx, original Execution, allowStopped bool) error {
+	owner, err := lockSession(ctx, tx, original.EnvironmentID, original.SessionID)
+	if err != nil {
 		return err
 	}
 	current := original
 	if err := tx.QueryRow(ctx, `SELECT computer_lease_epoch FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, original.EnvironmentID, original.SessionID, original.ProcessEpoch).Scan(&current.LeaseEpoch); err != nil {
 		return err
 	}
-	_, err := lockRuntimeProcessAuthority(ctx, tx, host, current, allowStopped)
+	_, err = runtimeProcessAuthorityWithOwnerLocked(ctx, tx, current, allowStopped, owner)
 	return err
 }
 
@@ -58,7 +64,7 @@ func RuntimeCloseProcessing(ctx context.Context, pool db.TxBeginner, host worker
 var errResultDrainPending = errors.Join(ErrNotReady, errors.New("callback receipts pending"))
 
 // RuntimeFinalize records the original result or observes its exact terminal
-// outcome. Nil means callback receipts or the mandatory own save are pending, never success.
+// outcome. Nil means callback receipts are still pending.
 func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (json.RawMessage, error) {
 	digest, err := digestJSON(result)
 	if err != nil {
@@ -69,7 +75,14 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 	}
 	var outcome json.RawMessage
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
+		if err := lockRuntimeHost(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e, Host: &host}); err != nil {
+			return err
+		}
+		publication, err := lockSlackPublication(ctx, tx, e.EnvironmentID, e.SessionID)
+		if err != nil {
+			return err
+		}
+		if err := lockRuntimeOperationOwnerWithHostLocked(ctx, tx, e, false); err != nil {
 			return err
 		}
 		if err := expireSessionDeadlineTx(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
@@ -92,16 +105,30 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 			if err != nil {
 				return err
 			}
-			return lockRuntimeOperationOwner(ctx, tx, host, e)
+			return lockRuntimeOperationOwnerWithHostLocked(ctx, tx, e, false)
 		}
 		if prior != nil {
-			return lockRuntimeOperationOwner(ctx, tx, host, e)
+			return lockRuntimeOperationOwnerWithHostLocked(ctx, tx, e, false)
 		}
 		var save computer.SaveRequest
-		err := recordResult(ctx, tx, e, turn, result, digest, evidence, &save)
+		err = recordResult(ctx, tx, e, turn, result, digest, evidence, &save)
 		if errors.Is(err, errResultDrainPending) {
 			return nil
 		}
+		if err != nil {
+			return err
+		}
+		var sequence int64
+		var responseID *uuid.UUID
+		if err = tx.QueryRow(ctx, `SELECT s.next_event_seq-1,t.response_id,t.response FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3`, e.EnvironmentID, e.SessionID, turn).Scan(&sequence, &responseID, &response); err != nil {
+			return err
+		}
+		if responseID != nil {
+			if err = publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence); err != nil {
+				return err
+			}
+		}
+		outcome, err = runtimeTurnOutcome("completed", result, nil, nil, response)
 		return err
 	})
 	if err != nil {

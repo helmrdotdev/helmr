@@ -15,14 +15,14 @@ type preparationPublisher struct {
 	objects  versionObjectPublisher
 }
 
-func (p preparationPublisher) Register(ctx context.Context, inspection blockformat.ObjectInspection) error {
+func (p preparationPublisher) RegisterBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
 	return retryPreparation(ctx, func(ctx context.Context) error {
-		return p.client.RegisterPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspection: inspection})
+		return p.client.RegisterPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspections: inspections})
 	})
 }
-func (p preparationPublisher) Certify(ctx context.Context, inspection blockformat.ObjectInspection) error {
+func (p preparationPublisher) CertifyBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
 	return retryPreparation(ctx, func(ctx context.Context) error {
-		return p.client.CertifyPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspection: inspection})
+		return p.client.CertifyPreparationObject(ctx, workerapi.PreparationObject{Executor: p.executor, Inspections: inspections})
 	})
 }
 func (p preparationPublisher) Upload(ctx context.Context, descriptor cas.Descriptor, file *os.File) (cas.Object, error) {

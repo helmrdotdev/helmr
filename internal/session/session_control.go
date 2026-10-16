@@ -184,10 +184,13 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		case "resume":
-			var issuer, scope string
+			var issuer, scope, holdKind string
 			var issuerID *uuid.UUID
-			if err = tx.QueryRow(ctx, `SELECT issuer_kind,issuer_id,scope FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, req.HoldID).Scan(&issuer, &issuerID, &scope); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT issuer_kind,issuer_id,scope,kind FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, req.HoldID).Scan(&issuer, &issuerID, &scope, &holdKind); err != nil {
 				return err
+			}
+			if holdKind == "storage_pressure" {
+				return ErrNotReady
 			}
 			if (issuer == "user" && caller.Kind != "user") ||
 				(caller.Kind == "session" && (issuer != "session" || issuerID == nil || *issuerID != caller.ID)) {
@@ -293,7 +296,7 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 		if _, err = tx.Exec(ctx, `UPDATE sessions child SET status='closing'
  FROM sessions parent WHERE child.environment_id=$1 AND parent.environment_id=$1 AND parent.id=$2
  AND child.parent_session_id=parent.id AND parent.status='closing' AND child.status='open'
- AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=parent.id AND status IN ('queued','running','finalizing'))`, env, id); err != nil {
+ AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=parent.id AND status IN ('queued','running'))`, env, id); err != nil {
 			return err
 		}
 	}
@@ -303,7 +306,7 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 	for _, id := range ordered {
 		tag, err := tx.Exec(ctx, `UPDATE sessions s SET status='closed',authority_generation=authority_generation+1
  WHERE environment_id=$1 AND id=$2 AND status='closing'
- AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=s.id AND status IN ('queued','running','finalizing'))
+ AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=s.id AND status IN ('queued','running'))
  AND NOT EXISTS(SELECT 1 FROM sessions c WHERE c.environment_id=$1 AND c.parent_session_id=s.id AND c.status NOT IN ('closed','cancelled'))`, env, id)
 		if err != nil {
 			return err
@@ -400,7 +403,7 @@ func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 		status = "cancelled"
 	}
 	rows, err := tx.Query(ctx, `UPDATE turns SET status=$3,terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
- WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued','finalizing')) OR ($5 AND status='queued'))
+ WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued')) OR ($5 AND status='queued'))
  RETURNING id,session_id,process_epoch`, env, ids, status, cancel, interruptQueued)
 	if err != nil {
 		return err
@@ -472,8 +475,6 @@ func (e TurnNotInterruptibleError) Reason() string {
 	switch e.Status {
 	case "queued":
 		return "not_started"
-	case "finalizing":
-		return "handler_finished"
 	default:
 		return "already_terminal"
 	}

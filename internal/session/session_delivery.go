@@ -146,7 +146,7 @@ func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host wo
  control_error=CASE WHEN control_acknowledged_at IS NULL THEN NULLIF($8,'') ELSE control_error END,
  stop_turn_id=CASE WHEN $8='' AND $7<>'shutdown' AND stop_turn_id IS NOT NULL THEN NULL ELSE stop_turn_id END,
  stop_deadline_at=CASE WHEN $8='' AND $7<>'shutdown' AND stop_turn_id IS NOT NULL THEN NULL ELSE stop_deadline_at END
- WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND attachment_sequence=$4 AND control_attachment=$4 AND control_sequence=$5 AND control_generation=$6 AND control_kind=$7 AND ($8<>'' OR $7='shutdown' OR stop_deadline_at IS NULL OR (stop_sequence=$9 AND stop_turn_id IS NOT NULL AND stop_deadline_at>clock_timestamp()))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, attachment, sequence, generation, kind, failure, stopSequence)
+ WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND attachment_sequence=$4 AND control_attachment=$4 AND control_sequence=$5 AND control_generation=$6 AND control_kind=$7 AND ($8<>'' OR $7='shutdown' OR (stop_deadline_at IS NULL) OR (stop_sequence=$9 AND stop_turn_id IS NOT NULL AND stop_deadline_at>clock_timestamp()))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, attachment, sequence, generation, kind, failure, stopSequence)
 		if err != nil {
 			return err
 		}

@@ -11,11 +11,26 @@ import { CodexHarness } from "../agents/issue-fixer/codex-harness"
 import { conversation } from "../agents/issue-fixer/conversation"
 import { codexModel } from "./native-model"
 
-for (const scenario of ["answer", "malformed", "handler-failure", "background-exec", "interrupt"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
+for (const scenario of ["answer", "malformed", "handler-failure", "background-exec", "yielded-exec", "interrupt"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-session-"))
   const requests: any[] = []
   const responses: { turnId: string; value: unknown }[] = []
-  const http = codexModel(requests, false, false, scenario === "background-exec" ? (_body,index) => index === 1
+  let commandDone = false, commandCall = "owned-command", yielded = false
+  const http = codexModel(requests, false, false, scenario === "yielded-exec" ? (body, index) => {
+    if (commandDone) return undefined
+    if (index === 1) return { type: "function_call", id: commandCall, call_id: commandCall, name: "exec_command", arguments: JSON.stringify({ cmd: "sleep 2; printf completed-command", yield_time_ms: 100, max_output_tokens: 100 }) }
+    const result = body.input?.findLast((item: any) => item.type === "function_call_output" && item.call_id === commandCall)
+    assert(result && typeof result.output === "string", "missing exact command output")
+    const running = /Process running with session ID (\d+)/.exec(result.output)
+    if (running) {
+      yielded = true
+      commandCall = `poll-${index}`
+      return { type: "function_call", id: commandCall, call_id: commandCall, name: "write_stdin", arguments: JSON.stringify({ session_id: Number(running[1]), chars: "", yield_time_ms: 1000, max_output_tokens: 100 }) }
+    }
+    assert.match(result.output, /Process exited with code 0/)
+    commandDone = true
+    return undefined
+  } : scenario === "background-exec" ? (_body,index) => index === 1
     ? { type:"function_call",id:"fc_exec",call_id:"call_exec",name:"exec_command",arguments:JSON.stringify({cmd:"sh -c 'echo $$ > owned-command.pid; exec sleep 60'",yield_time_ms:100}) }
     : index === 2 ? { type:"function_call",id:"fc_question",call_id:"call_question",name:"request_user_input",arguments:JSON.stringify({questions:[{id:"choice",header:"Choice",question:"Continue?",options:[{label:"A",description:"First"},{label:"B",description:"Second"}]}]}) } : undefined : undefined)
   const cancel = new AbortController()
@@ -75,6 +90,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     }
     const processId = harness!.processId
     assert.equal(first.status, (scenario === "interrupt" || scenario === "background-exec") ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
+    if (scenario === "yielded-exec") { assert.equal(yielded, true); assert.equal(commandDone, true) }
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
     const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api_key" } })
@@ -84,7 +100,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "background-ex
     assert.equal(harness!.processId, processId)
     assert.equal(setups, 1)
     assert.equal(holds, 0)
-    assert.equal(questions, 1)
+    assert.equal(questions, scenario === "yielded-exec" ? 0 : 1)
     assert.equal(runtime.idle, true)
     const history = JSON.stringify(requests.at(-1).input)
     assert.ok(history.includes("first unique input"))

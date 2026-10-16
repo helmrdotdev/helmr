@@ -23,3 +23,7 @@ func (c *Client) NextAgentSave(ctx context.Context, request workerapi.AgentSaveD
 	err := c.postWorkerJSON(ctx, "/worker/v1/computer-saves/next", request, &result)
 	return result, err
 }
+
+func (c *Client) ReportAgentStoragePressure(ctx context.Context, request workerapi.AgentStoragePressure) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/computer-storage/pressure", request, nil)
+}

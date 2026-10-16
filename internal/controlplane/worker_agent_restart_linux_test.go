@@ -36,6 +36,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -63,7 +64,26 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	pool, err := pgxpool.New(ctx, input.DSN)
+	observations, err := os.OpenFile(filepath.Join(input.Config.Evidence, "native-db-observations.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observations.Close()
+	observer, err := newNativeDBObserver(ctx, input.DSN, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := observer.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	poolConfig, err := pgxpool.ParseConfig(input.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolConfig.ConnConfig.Tracer = observer
+	pool, err := dbpool.New(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,13 +130,15 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allocationWake, stopAllocationWake := cfg.Changes.Subscribe("dispatch")
+	defer stopAllocationWake()
 	listenerFile := os.NewFile(3, "control-plane-listener")
 	listener, err := net.FileListener(listenerFile)
 	listenerFile.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{Handler: nativeStorageFaultHandler(handler), ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Handler: observer.Handler(nativeStorageFaultHandler(handler)), ReadHeaderTimeout: 10 * time.Second}
 	var jobs sync.WaitGroup
 	reclaimer, err := computer.NewCASReclaimer(pool, store, log)
 	if err != nil {
@@ -130,11 +152,13 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err := reclaimer.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	failures := make(chan error, 8)
+	failures := make(chan error, 10)
 	for _, run := range []func(context.Context) error{
+		observer.Failure,
+		func(ctx context.Context) error { return cfg.Changes.Run(ctx, pool.Config().ConnConfig, log) },
 		reclaimer.Run,
 		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
-		func(ctx context.Context) error { return allocator.Run(ctx, log) },
+		func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) },
 		func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) },
 		func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) },

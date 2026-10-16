@@ -9,6 +9,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -141,5 +143,75 @@ func TestVersionDeviceWritesBeyondDirtyBudget(t *testing.T) {
 	defer reopened.Close()
 	if _, err := reopened.ReadAt(t.Context(), got, 3); err != nil || !bytes.Equal(got, make([]byte, len(got))) {
 		t.Fatal("trim not durable", err)
+	}
+}
+
+// Certification authorizes reclamation, but cannot mask later remote loss on
+// actual guest reads. The export must terminate before returning unsafe bytes.
+func TestTransmissionFailsClosedAfterCertifiedRemoteLoss(t *testing.T) {
+	for _, failure := range []string{"missing", "corrupt"} {
+		t.Run(failure, func(t *testing.T) {
+			cfg, remotePath := localVersionFixture(t)
+			pub := adoptionPublisher(t, cfg)
+			p, err := CreateLocalVersion(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			c := adoptedRetirementCapture(t, p, pub)
+			var segmentPath string
+			for _, inspection := range pub.certified {
+				if inspection.Segment == nil {
+					continue
+				}
+				segment := inspection.Segment
+				local, err := versionObjectLocal(t.Context(), p.store, segment.Digest, segment.Size)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if local {
+					descriptor := inspectionDescriptor(inspection)
+					segmentPath = filepath.Join(remotePath, "sha256", descriptor.Digest[len("sha256:"):])
+					break
+				}
+			}
+			if segmentPath == "" {
+				t.Fatal("fixture has no newly certified segment")
+			}
+			if n, err := p.Collect(t.Context(), 1000); err != nil || n == 0 {
+				t.Fatalf("collect: %d %v", n, err)
+			}
+			c.Release()
+			p.reads.clear()
+			if failure == "missing" {
+				err = os.Remove(segmentPath)
+			} else {
+				var contents []byte
+				contents, err = os.ReadFile(segmentPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range contents {
+					contents[i] ^= 0xff
+				}
+				err = os.WriteFile(segmentPath, contents, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reply bytes.Buffer
+			stream := struct {
+				io.Reader
+				io.Writer
+			}{bytes.NewReader(request(0, 0, 0, 4096, nil)), &reply}
+			err = p.ServeNBDTransmission(t.Context(), stream)
+			var fatal *DeviceFailure
+			if !errors.As(err, &fatal) {
+				t.Fatalf("remote loss did not terminate export: %v", err)
+			}
+			if reply.Len() != 0 {
+				t.Fatalf("failed read returned %d reply bytes", reply.Len())
+			}
+		})
 	}
 }

@@ -125,7 +125,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	checkpointRetry := mode == nativeExecutionCheckpointRetry
 	sessionDiscovery := mode == nativeExecutionDiscovery
 	secretBindings := mode == nativeExecutionSecrets
-	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings
+	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory
 	checkpointFault := ""
 	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionMissingMemory {
 		checkpointFault = string(mode)
@@ -151,13 +151,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			t.Fatal("performance case requires one exact workload and no publication-owner restart")
 		}
 		performanceKind = input.Performance.Kind
-		expectedInterval := "1h"
-		if input.Performance.Background {
-			expectedInterval = "5s"
-		}
-		if input.WorkerEnv["WORKER_COMPUTER_SAVE_EVERY"] != expectedInterval {
-			t.Fatal("performance save interval does not match selected policy")
-		}
+
 	} else if input.Performance != nil {
 		t.Fatal("performance configuration requires the performance test")
 	}
@@ -166,12 +160,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			t.Fatal("fixture paths must be absolute")
 		}
 	}
-	if backgroundSaves {
-		interval, err := time.ParseDuration(input.WorkerEnv["WORKER_COMPUTER_SAVE_EVERY"])
-		if err != nil || interval != 30*time.Second {
-			t.Fatal("background proof requires the fixture's 30-second interval")
-		}
-	}
+
 	workRoot := filepath.Join(filepath.Dir(input.Evidence), "w")
 	if input.WorkerEnv["WORKER_WORK_DIR"] != workRoot || input.WorkerEnv["JAILER_CHROOT_DIR"] != filepath.Join(workRoot, "jailer") || input.WorkerEnv["WORKER_HOST_SECRET_PATH"] != filepath.Join(workRoot, "host-secret.json") {
 		t.Fatal("worker state must use the fixture's new owned working directory")
@@ -600,13 +589,18 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		} `json:"nativeLosses"`
 		Turns []struct {
 			ID   string `json:"id"`
-			Save string `json:"completionSaveId"`
+			Save string `json:"-"`
 		} `json:"turns"`
 	}
 	if err := json.Unmarshal(result.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if checkpointFault != "" {
+	if mode == nativeExecutionMissingMemory {
+		if err := verifyMissingCheckpointRepair(ctx, database.Pool, env, checkpointObservations); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mode == nativeExecutionCorruptConfig {
 		if err := verifyNativeCheckpointLoss(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
 			t.Fatal(err)
 		}
@@ -657,7 +651,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			}
 			var valid bool
 			err := database.Pool.QueryRow(ctx, `SELECT
- lost.status='interrupted' AND lost.result IS NULL AND lost.completion_save_id IS NULL
+ lost.status='interrupted' AND lost.result IS NULL
  AND recovered.status='completed' AND recovered.process_epoch=lost.process_epoch+1
  AND h.scope='local' AND h.issuer_kind='system' AND h.reason=$6 AND h.released_at IS NOT NULL
  AND recovered.started_at>=h.released_at
@@ -677,17 +671,47 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if len(receipt.Turns) != expectedTurns {
 		t.Fatalf("native completion count: %d", len(receipt.Turns))
 	}
+	// Reply completion precedes autosave admission/publication. Wait for the
+	// final returned Turns too, before resolving their immutable covering saves.
+	turnIDs := make([]string, 0, len(receipt.Turns))
+	for _, turn := range receipt.Turns {
+		turnIDs = append(turnIDs, turn.ID)
+	}
+	if performanceCase {
+		err = awaitNativePerformancePublications(ctx, database.Pool, env, turnIDs, input)
+		// Keep resource coverage through publication collection, including a slow
+		// tail. Retain measured and still-pending samples before failing the case.
+		performanceFinished = time.Now()
+		evidenceCtx, stopEvidence := context.WithTimeout(t.Context(), 30*time.Second)
+		retainErr := retainNativePerformance(evidenceCtx, database.Pool, env, result.Bytes(), input)
+		stopEvidence()
+		if retainErr != nil {
+			t.Errorf("retain native performance: %v", retainErr)
+		}
+	} else {
+		publicationCtx, stopPublicationWait := context.WithTimeout(ctx, 30*time.Second)
+		err = awaitNativeTurnPublications(publicationCtx, database.Pool, env, turnIDs)
+		stopPublicationWait()
+	}
+	if err != nil {
+		t.Fatalf("native final Turn publication: %v", err)
+	}
+	for i := range receipt.Turns {
+		if err := database.Pool.QueryRow(ctx, `SELECT COALESCE(covered_by_save_id,id)::text FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, env, receipt.Turns[i].ID).Scan(&receipt.Turns[i].Save); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var saveTimelines []json.RawMessage
 	for _, turn := range receipt.Turns {
 		var valid bool
 		var saveEvidence json.RawMessage
-		err := database.Pool.QueryRow(ctx, `SELECT t.status='completed' AND s.status='published' AND s.turn_id=t.id AND s.computer_id=t.computer_id
+		err := database.Pool.QueryRow(ctx, `SELECT t.status='completed' AND s.status='published' AND s.computer_id=t.computer_id AND t.terminal_at<=s.captured_at
    AND octet_length(s.captured_root_digest)=32 AND ((s.root_id IS NOT NULL) <> (s.payload_retired_at IS NOT NULL))
    AND s.capture_evidence IS NOT NULL AND s.publication_evidence IS NOT NULL,
    jsonb_build_object('turnId',t.id,'saveId',s.id,'turnStatus',t.status,'saveStatus',s.status,
     'capturedRootDigest',encode(s.captured_root_digest,'hex'),'rootRetained',s.root_id IS NOT NULL,'payloadRetiredAt',s.payload_retired_at,
     'captureRecorded',s.capture_evidence IS NOT NULL,'publicationRecorded',s.publication_evidence IS NOT NULL)
-   FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id)
+   FROM turns t JOIN computer_saves requested ON (requested.environment_id,requested.turn_id)=(t.environment_id,t.id) JOIN computer_saves s ON (s.environment_id,s.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id))
    WHERE t.environment_id=$1 AND t.id=$2 AND s.id=$3 AND t.computer_id=$4`, env, turn.ID, turn.Save, receipt.ComputerID).Scan(&valid, &saveEvidence)
 		if err != nil || !valid {
 			// Retain the remaining independent acceptance checks after a bad receipt.
@@ -697,7 +721,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		err = database.Pool.QueryRow(ctx, `WITH save AS (
  SELECT t.id AS turn_id,t.processing_closed_at,t.result_recorded_at,t.terminal_at,
         s.id AS save_id,s.requested_at,s.flush_acknowledged_at,s.captured_at,s.captured_root_digest,s.root_id,s.payload_retired_at
- FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id)
+ FROM turns t JOIN computer_saves requested ON (requested.environment_id,requested.turn_id)=(t.environment_id,t.id) JOIN computer_saves s ON (s.environment_id,s.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id))
  WHERE t.environment_id=$1 AND t.id=$2 AND s.id=$3
 ), peer AS (
  SELECT e.created_at FROM session_events e,save s
@@ -772,13 +796,15 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 		if err := gate.performance.verify(saves); err != nil {
 			t.Fatal(err)
 		}
-		if err := retainNativePerformance(ctx, database.Pool, env, result.Bytes(), input); err != nil {
-			t.Fatal(err)
-		}
-		if err := gate.performance.retainStorageObservations(input, saves); err != nil {
-			t.Fatal(err)
-		}
 		return
+	}
+	// Coverage can legitimately coalesce concurrent native results. Qualify
+	// every Turn above and count distinct covering publications here.
+	if err := database.Pool.QueryRow(ctx, `SELECT count(DISTINCT COALESCE(save.covered_by_save_id,save.id)) FROM computer_saves save JOIN turns t ON (t.environment_id,t.id)=(save.environment_id,save.turn_id) JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id) WHERE t.environment_id=$1 AND t.status='completed' AND a.key IN ('codex','claude','deadline')`, env).Scan(&expectedSaves); err != nil {
+		t.Fatal(err)
+	}
+	if !gate.clientReconnect {
+		expectedSaves = 0 // Per-Turn publication and checkpoint assertions above still apply.
 	}
 	gate.mu.Lock()
 	defer gate.mu.Unlock()
@@ -789,6 +815,27 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 		t.Fatalf("publication gate evidence: %d saves, %v", len(gate.observed), gate.errors)
 	}
 
+}
+
+func awaitNativeTurnPublications(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, turns []string) error {
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var published int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM computer_saves requested
+ JOIN computer_saves covering ON (covering.environment_id,covering.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id))
+ WHERE requested.environment_id=$1 AND requested.turn_id=ANY($2::uuid[]) AND covering.status='published'`, env, turns).Scan(&published); err != nil {
+			return err
+		}
+		if published == len(turns) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("published %d of %d final Turn saves: %w", published, len(turns), context.Cause(ctx))
+		case <-tick.C:
+		}
+	}
 }
 
 // Requests retirement through public owners even if the driver failed before
@@ -1123,6 +1170,24 @@ func (g *nativePublicationGate) ServeHTTP(w http.ResponseWriter, r *http.Request
 	} else {
 		g.next.ServeHTTP(w, r)
 	}
+	if save != "" && g.evidence != "" {
+		rows, err := g.pool.Query(r.Context(), `SELECT requested.turn_id FROM computer_saves requested JOIN computer_saves covering ON (covering.environment_id,covering.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id)) WHERE covering.environment_id=$1 AND covering.id=$2 AND covering.status='published' AND requested.turn_id IS NOT NULL`, g.environment, save)
+		if err == nil {
+			turnIDs, collectErr := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+			err = collectErr
+			for _, turn := range turnIDs {
+				if err != nil {
+					break
+				}
+				err = writeNativeHandoffFile(filepath.Join(g.evidence, "turn-published-"+turn.String()+".json"), map[string]string{"turnId": turn.String(), "saveId": save})
+			}
+		}
+		if err != nil {
+			g.mu.Lock()
+			g.errors = append(g.errors, err)
+			g.mu.Unlock()
+		}
+	}
 	if save != "" {
 		g.mu.Lock()
 		if observation, ok := g.observed[save]; ok {
@@ -1143,6 +1208,12 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 	if observed {
 		return nil
 	}
+	// Ordinary idle-continuation cases may finish their peer before the quiet
+	// save deadline. Only the interactive publication case deliberately holds
+	// a save while that peer runs and the client reconnects.
+	if !g.clientReconnect {
+		return nil
+	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1157,7 +1228,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 	var peer, turn, session uuid.UUID
 	var sequence int64
 	var result json.RawMessage
-	err := g.pool.QueryRow(ctx, `SELECT a.key IN ('codex','claude'), t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
+	err := g.pool.QueryRow(ctx, `SELECT a.key IN ('codex','claude'), t.status='completed' AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
   FROM computer_saves s JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id) JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id) JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id) WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&native, &valid, &turn, &session, &sequence, &result)
 	if err != nil {
 		return err
@@ -1166,7 +1237,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 		return nil
 	}
 	if !valid {
-		return errors.New("native save was not captured and finalizing before publication")
+		return errors.New("native save was not captured after completion before publication")
 	}
 	g.restartMu.Lock()
 	var early *nativeEarlyRecovery
@@ -1227,16 +1298,16 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 		err := g.pool.QueryRow(ctx, `SELECT COALESCE(max(((convert_from(e.data,'UTF8')::jsonb->0->>'text')::jsonb->>'count')::bigint),0) FROM session_events e JOIN turns t ON(t.environment_id,t.id)=(e.environment_id,e.turn_id) WHERE e.environment_id=$1 AND e.session_id=$2 AND e.kind='turn.output' AND t.status='running'`, g.environment, peer).Scan(&n)
 		return n, err
 	}
-	stillFinalizing := func() error {
+	stillCompleted := func() error {
 		var valid bool
-		err := g.pool.QueryRow(ctx, `SELECT t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL
+		err := g.pool.QueryRow(ctx, `SELECT t.status='completed' AND s.status='captured' AND s.root_id IS NULL
       FROM computer_saves s JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id)
       WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&valid)
 		if err != nil {
 			return err
 		}
 		if !valid {
-			return errors.New("native Turn settled while publication was held")
+			return errors.New("completed native Turn changed while publication was held")
 		}
 		return nil
 	}
@@ -1258,12 +1329,12 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					return err
 				}
-				if err == nil && status != "queued" {
-					return errors.New("follow-up did not remain queued during predecessor saving")
+				if err == nil && status != "queued" && status != "running" && status != "completed" {
+					return errors.New("accepted follow-up became terminal without success")
 				}
 				observation.QueuedFollowup = err == nil
 			}
-			if err := stillFinalizing(); err != nil {
+			if err := stillCompleted(); err != nil {
 				return err
 			}
 			after, err := count()
@@ -1296,16 +1367,16 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 					if receipt.SessionID != session.String() || receipt.TurnID != turn.String() || receipt.SaveID != save {
 						return errors.New("client reconnect receipt changed publication identity")
 					}
-					if err := g.pool.QueryRow(ctx, `SELECT status='queued' AND started_at IS NULL FROM turns WHERE environment_id=$1 AND session_id=$2 AND seq=2 AND id=$3`, g.environment, session, receipt.FollowingID).Scan(&clientReady); err != nil {
+					if err := g.pool.QueryRow(ctx, `SELECT status IN ('queued','running','completed') FROM turns WHERE environment_id=$1 AND session_id=$2 AND seq=2 AND id=$3`, g.environment, session, receipt.FollowingID).Scan(&clientReady); err != nil {
 						return err
 					}
 					if !clientReady {
-						return errors.New("client follow-up started before publication release")
+						return errors.New("client follow-up receipt was not retained")
 					}
 				}
 			}
 			if advances >= 5 && clientReady && (sequence != 1 || observation.QueuedFollowup) {
-				if err := stillFinalizing(); err != nil {
+				if err := stillCompleted(); err != nil {
 					return err
 				}
 				g.mu.Lock()
@@ -1320,5 +1391,22 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 				return nil
 			}
 		}
+	}
+}
+
+func TestNativeHealthyPublicationDoesNotWaitForRunningPeer(t *testing.T) {
+	calls := 0
+	gate := nativePublicationGate{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	raw, err := json.Marshal(workerapi.AgentSavePublication{Save: workerapi.AgentSave{SaveID: uuid.NewV7().String()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	gate.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/worker/v1/computer-saves/publish", bytes.NewReader(raw)))
+	if calls != 1 || response.Code != http.StatusNoContent || len(gate.errors) != 0 || len(gate.observed) != 0 {
+		t.Fatalf("normal publication blocked: calls=%d status=%d errors=%v", calls, response.Code, gate.errors)
 	}
 }

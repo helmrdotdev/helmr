@@ -175,10 +175,10 @@ func ReadImageBuildAllocation(ctx context.Context, q db.DBTX, env, preparation u
 func ReadLeaseAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (computer.ComputerAllocation, error) {
 	r := computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}}
 	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
- l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at,l.channel_credential_digest
+ l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.disk_only_recovery,l.initialized_at,l.channel_credential_digest
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computerID, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
-		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.BaseVersion, &r.RestoredFrom, &r.InitializedAt, &r.CredentialDigest)
+		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.BaseVersion, &r.RestoredFrom, &r.DiskOnlyRecovery, &r.InitializedAt, &r.CredentialDigest)
 	return r, err
 }
 
@@ -291,7 +291,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		return computer.ComputerAllocation{}, ErrInvalidInput
 	}
 	if prior, err := ReadLeaseAllocation(ctx, a.database, env, computerID, epoch); err == nil {
-		if prior.RestoredFrom != nil {
+		if prior.RestoredFrom != nil || prior.DiskOnlyRecovery {
 			return computer.ComputerAllocation{}, ErrConflict
 		}
 		return prior, nil
@@ -316,7 +316,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 			return err
 		}
 		if prior, err := ReadLeaseAllocation(ctx, tx, env, computerID, epoch); err == nil {
-			if prior.RestoredFrom != nil {
+			if prior.RestoredFrom != nil || prior.DiskOnlyRecovery {
 				return ErrConflict
 			}
 			result = prior
@@ -374,7 +374,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		return computer.ComputerAllocation{}, allocationError(err)
 	}
 	if r, err := ReadLeaseAllocation(ctx, a.database, env, computerID, epoch); err == nil {
-		if r.RestoredFrom == nil || *r.RestoredFrom != save {
+		if r.DiskOnlyRecovery || r.RestoredFrom == nil || *r.RestoredFrom != save {
 			return computer.ComputerAllocation{}, ErrConflict
 		}
 		return r, nil
@@ -399,7 +399,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 			return err
 		}
 		if r, err := ReadLeaseAllocation(ctx, tx, env, computerID, epoch); err == nil {
-			if r.RestoredFrom == nil || *r.RestoredFrom != save {
+			if r.DiskOnlyRecovery || r.RestoredFrom == nil || *r.RestoredFrom != save {
 				return ErrConflict
 			}
 			result = r

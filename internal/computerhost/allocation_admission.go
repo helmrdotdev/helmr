@@ -10,8 +10,10 @@ import (
 
 // waitAllocationCapacity stays inside the delivered, renewing grant. Custody
 // retries must not replace that grant when health or local capacity is temporary.
-func waitAllocationCapacity(ctx context.Context, admit func(context.Context) error, ledger *reservation.Ledger, key reservation.Key, request reservation.Vector) error {
+func waitAllocationCapacity(ctx context.Context, admit func(context.Context) error, ledger *reservation.Ledger, key reservation.Key, request reservation.Vector, wake *allocationWake) error {
 	for {
+		hostWake := wake.snapshot()
+		capacityWake := ledger.Changes()
 		if err := ctx.Err(); err != nil {
 			return context.Cause(ctx)
 		}
@@ -29,8 +31,17 @@ func waitAllocationCapacity(ctx context.Context, admit func(context.Context) err
 		} else if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			return err
 		}
-		if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
+		timer := time.NewTimer(15 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return context.Cause(ctx)
+		case <-hostWake:
+			timer.Stop()
+		case <-capacityWake:
+			timer.Stop()
+		case <-timer.C:
 		}
+
 	}
 }

@@ -180,3 +180,68 @@ func TestRuntimeDiskDescriptorsHaveOneOwner(t *testing.T) {
 		t.Fatalf("closed owner used for capture: %v", err)
 	}
 }
+
+func TestCheckpointSnapshotPrecedesComputerCutAndFailsClosed(t *testing.T) {
+	for _, scenario := range []string{"success", "configuration", "snapshot-failed", "snapshot-uncertain", "cancelled", "descriptor-failed", "inode-changed"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, d, states := liveCaptureMachine(t, false)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if scenario == "configuration" {
+				s.topology.Computer.Path += ".wrong"
+			}
+			snapshots := 0
+			cut, err := s.captureCheckpointComputer(ctx, func() error {
+				snapshots++
+				if got := states(); len(got) != 1 || got[0] != "Paused" {
+					t.Fatalf("snapshot without acknowledged pause: %v", got)
+				}
+				if d.captures != 0 {
+					t.Fatal("Computer cut preceded snapshot")
+				}
+				switch scenario {
+				case "snapshot-failed":
+					return errors.New("snapshot rejected")
+				case "snapshot-uncertain":
+					return &snapshotAPIUncertainError{cause: errors.New("lost response")}
+				case "cancelled":
+					cancel()
+				case "descriptor-failed":
+					// Identity validation succeeds before the snapshot; the retained
+					// descriptor then fails post-snapshot identity validation.
+					if err := s.diskFiles["computer"].Close(); err != nil {
+						t.Fatal(err)
+					}
+				case "inode-changed":
+					if err := os.Remove(s.topology.Computer.Path); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(s.topology.Computer.Path, []byte("replacement"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil
+			})
+			if scenario == "success" {
+				if err != nil || cut == nil || d.captures != 1 || snapshots != 1 {
+					t.Fatalf("cut=%v err=%v captures=%d snapshots=%d", cut, err, d.captures, snapshots)
+				}
+				cut.Capture.Release()
+				return
+			}
+			if err == nil || cut != nil || d.captures != 0 {
+				t.Fatalf("failed checkpoint certified cut: cut=%v err=%v captures=%d", cut, err, d.captures)
+			}
+			wantSnapshots := 1
+			if scenario == "configuration" {
+				wantSnapshots = 0
+			}
+			if snapshots != wantSnapshots {
+				t.Fatalf("snapshots=%d want=%d", snapshots, wantSnapshots)
+			}
+			if scenario == "descriptor-failed" && !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("descriptor error lost: %v", err)
+			}
+		})
+	}
+}

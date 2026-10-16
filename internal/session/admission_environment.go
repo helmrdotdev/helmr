@@ -18,7 +18,7 @@ func computerLimits(p org.AdmissionPolicy) computer.Limits {
 // Turns, which this owner keeps.
 func consumeAdmission(ctx context.Context, tx pgx.Tx, env uuid.UUID, p org.AdmissionPolicy) error {
 	var outstanding int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing')`, env).Scan(&outstanding); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running')`, env).Scan(&outstanding); err != nil {
 		return err
 	}
 	if outstanding >= p.MaxOutstanding {

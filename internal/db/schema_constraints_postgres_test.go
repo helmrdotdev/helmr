@@ -32,7 +32,7 @@ func schemaTurn(t *testing.T, f sessiontest.Fixture, tx pgx.Tx) uuid.UUID {
 	return id
 }
 
-func TestSchemaTurnCompletionRequiresRecordedResultAndPublishedSave(t *testing.T) {
+func TestSchemaTurnCompletionRequiresRecordedResultAndIndependentSave(t *testing.T) {
 	f := sessiontest.New(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -45,13 +45,13 @@ func TestSchemaTurnCompletionRequiresRecordedResultAndPublishedSave(t *testing.T
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE turns SET status='running',started_at=clock_timestamp(),process_epoch=1 WHERE environment_id=$1 AND id=$2`, f.Environment, turn)
 	rejectSchemaRow(t, tx, "23514", `UPDATE turns SET status='finalizing' WHERE environment_id=$1 AND id=$2`, f.Environment, turn)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE turns SET status='finalizing',processing_closed_at=clock_timestamp(),result_recorded_at=clock_timestamp(),result_digest=decode(repeat('02',32),'hex'),result='null',drain_evidence='drained' WHERE environment_id=$1 AND id=$2`, f.Environment, turn)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE turns SET status='completed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),result_recorded_at=clock_timestamp(),result_digest=decode(repeat('02',32),'hex'),result='null',drain_evidence='drained' WHERE environment_id=$1 AND id=$2`, f.Environment, turn)
 	save := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id) VALUES($1,$2,$3,1,1,$4)`, f.Environment, save, f.Computer, turn)
-	rejectSchemaRow(t, tx, "23503", `UPDATE turns SET status='completed',terminal_at=clock_timestamp(),completion_save_id=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, turn, save)
+	rejectSchemaRow(t, tx, "23514", `UPDATE computer_saves SET coverage_max_seq=0 WHERE environment_id=$1 AND id=$2`, f.Environment, save)
+	rejectSchemaRow(t, tx, "23514", `UPDATE computer_saves SET status='superseded' WHERE environment_id=$1 AND id=$2`, f.Environment, save)
 	rejectSchemaRow(t, tx, "23514", `UPDATE computer_saves SET status='published',publication_evidence='published' WHERE environment_id=$1 AND id=$2`, f.Environment, save)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_saves SET status='published',flush_acknowledged_at=clock_timestamp(),captured_at=clock_timestamp(),captured_root_digest=decode(repeat('03',32),'hex'),capture_evidence='captured',publication_evidence='published',root_id=(SELECT initial_root_id FROM computers WHERE environment_id=$1 AND id=$3) WHERE environment_id=$1 AND id=$2`, f.Environment, save, f.Computer)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE turns SET status='completed',terminal_at=clock_timestamp(),completion_save_id=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, turn, save)
+
 }
 
 func TestSchemaPhysicalStopAndCheckpointRejectPartialEvidence(t *testing.T) {
@@ -72,4 +72,16 @@ func TestSchemaPhysicalStopAndCheckpointRejectPartialEvidence(t *testing.T) {
 	rejectSchemaRow(t, tx, "23503", `UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE checkpoints SET status='lost',terminal_evidence='host fenced',capture_request=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, checkpoint)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
+}
+
+func TestSchemaTurnStopRequiresDeadline(t *testing.T) {
+	f := sessiontest.New(t)
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	turn := schemaTurn(t, f, tx)
+	rejectSchemaRow(t, tx, "23514", `UPDATE session_processes SET stop_sequence=1,stop_turn_id=$3 WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session, turn)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE session_processes SET stop_sequence=1,stop_turn_id=$3,stop_deadline_at=clock_timestamp()+interval '40 seconds' WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session, turn)
 }

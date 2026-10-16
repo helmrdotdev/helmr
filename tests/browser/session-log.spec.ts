@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addEvent, appendOutput, askID, longSession, makeTurn, serveSession, sessionURL, sessionWith, settleTurn, turnID } from "./fixtures/session-log";
+import { addEvent, appendOutput, askID, longSession, makeTurn, serveSession, sessionURL, sessionWith, settleTurn, turnID, notifySessionChanged } from "./fixtures/session-log";
 
 const shots = process.env.HELMR_SESSION_LOG_SHOTS;
 // Turns start closed; live specs open the running Turn (#41) to watch it.
@@ -40,7 +40,7 @@ test("a Session loads its whole history with every Turn on the timeline", async 
   if (shots) await failed.screenshot({ path: `${shots}/payload.png` });
 });
 
-test("new events arrive below while the Session is open, and polling stops when it closes", async ({ page }) => {
+test("change notifications refresh events even while the Session record is unchanged", async ({ page }) => {
   await page.clock.install();
   const data = longSession();
   const requests = await serveSession(page, data);
@@ -50,13 +50,12 @@ test("new events arrive below while the Session is open, and polling stops when 
   await openTurn(page, 41);
   const before = requests.events.length;
   appendOutput(data, ["Rebased on main.", "Waiting for review."]);
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByText('"Waiting for review."')).toBeVisible();
   expect(requests.events.slice(before)).toEqual([`?after=${data.events.length - 2}&limit=1000`]);
   data.session["status"] = "closed";
-  // The poll that sees "closed" still syncs once; after that nothing is read.
-  await expect.poll(async () => { await page.clock.runFor(1_000); return page.getByText("Closed", { exact: true }).count(); }).toBeGreaterThan(0);
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
+  await expect(page.getByText("Closed", { exact: true })).toBeVisible();
   const settled = requests.events.length;
   await page.clock.runFor(30_000);
   expect(requests.events.length).toBe(settled);
@@ -85,7 +84,7 @@ test("a Turn whose events continue after the next Turn was queued keeps its reco
   data.turns.push(makeTurn(2, { input: [{ type: "text", text: "follow-up" }] }));
   addEvent(data, 2, "turn.queued", {});
   for (let index = 0; index < 300; index++) addEvent(data, 1, "turn.output", [{ type: "text", text: `step ${index}` }]);
-  settleTurn(data, 1, { status: "completed", terminal_at: new Date().toISOString(), completion_save_id: turnID(1), result: { done: true } });
+  settleTurn(data, 1, { status: "completed", terminal_at: new Date().toISOString(), result: { done: true } });
   await serveSession(page, data);
   await page.goto(sessionURL);
   const first = page.locator(`#turn-${turnID(1)}`);
@@ -94,7 +93,7 @@ test("a Turn whose events continue after the next Turn was queued keeps its reco
   await expect(first.locator("[data-turn-header]")).toContainText("long first task");
 });
 
-test("following drains bursts over 1000 events and retries a failed read on the next poll", async ({ page }) => {
+test("following drains bursts over 1000 events and retries a failed read on the next notification", async ({ page }) => {
   await page.clock.install();
   const data = longSession();
   const requests = await serveSession(page, data);
@@ -103,18 +102,18 @@ test("following drains bursts over 1000 events and retries a failed read on the 
   await expect(log.getByText(/^42 turns · \d+ events/)).toBeVisible();
   await openTurn(page, 41);
   appendOutput(data, Array.from({ length: 1500 }, (_, index) => `burst ${index}`));
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByText('"burst 1499"')).toHaveCount(1);
   data.failEvents = 1;
   appendOutput(data, ["after failure"]);
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByRole("alert")).toBeVisible();
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByText('"after failure"')).toBeVisible();
   // Settled Turn records already held are not read again.
   const turnReads = requests.turns.length;
   appendOutput(data, ["one more"]);
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByText('"one more"')).toBeVisible();
   expect(requests.turns.slice(turnReads).every(query => query.includes("cursor=40"))).toBe(true);
 });
@@ -130,7 +129,7 @@ test("an open payload stays open when new events arrive", async ({ page }) => {
   await failed.getByRole("button", { name: /json \{shard: 3/ }).first().click();
   await expect(failed.getByRole("figure").first()).toContainText("durations");
   appendOutput(data, ["later output"]);
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(page.getByText('"later output"')).toBeVisible();
   await expect(failed.getByRole("figure").first()).toContainText("durations");
 });
@@ -146,7 +145,7 @@ test("a sync that fails as the Session closes still settles", async ({ page }) =
   appendOutput(data, ["final words"]);
   data.session["status"] = "closed";
   data.failEvents = 1;
-  await page.clock.runFor(3_100);
+  await notifySessionChanged(page);
   await expect(log.getByRole("alert")).toBeVisible();
   await page.clock.runFor(2_100);
   await expect(log.getByText('"final words"')).toBeVisible();
@@ -162,7 +161,7 @@ test("a pending question after more than a page of answered ones is found", asyn
   await expect(page.getByText("Turn #41 is waiting on a question", { exact: false })).toBeVisible();
 });
 
-test("a failed first open on a live Session is retried even when polls succeed", async ({ page }) => {
+test("a failed first open on a live Session is retried on a change notification", async ({ page }) => {
   await page.clock.install();
   const data = longSession();
   data.failEvents = 1;
@@ -170,8 +169,8 @@ test("a failed first open on a live Session is retried even when polls succeed",
   await page.goto(sessionURL);
   const log = page.getByRole("region", { name: "Log" });
   await expect(log.getByRole("alert")).toBeVisible();
-  // A Session poll (3s) can land before the 2s retry timer would; either way the open is retried.
-  await page.clock.runFor(3_100);
+  // The next notification retries the failed initial read before its backoff.
+  await notifySessionChanged(page);
   await expect(log.getByText(/^42 turns · \d+ events/)).toBeVisible();
   await expect(log.getByRole("alert")).toHaveCount(0);
 });

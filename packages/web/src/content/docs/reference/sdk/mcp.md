@@ -223,7 +223,7 @@ Result: `{ "id", "turnId" }`, where `id` is the message ID.
 Interrupt exactly one running Turn in an owned descendant Session. Takes required
 `sessionId`, `turnId`, and `idempotencyKey`. Returns
 `{ id, sessionId, turnId, status: "accepted" }`. It creates no hold and does not
-interrupt the target Session's children. Queued, finalizing, and settled Turns
+interrupt the target Session's children. Queued and settled Turns
 return `turn_not_interruptible`, with the target status and rejection reason.
 Acceptance does not prove the handler has stopped; dispatch waits for stop
 acknowledgement. Failure to stop isolates the Session for explicit recovery.
@@ -294,7 +294,7 @@ the `inspect_session` shape.
 | `turnId` | string | Required. |
 
 Result: `{ "id", "sessionId", "status", "waitBlocked"?, "result"?, "response"?, "error"?, "payloadExpiredAt"? }`.
-`status` is one of `queued`, `running`, `finalizing`, `completed`, `failed`,
+`status` is one of `queued`, `running`, `completed`, `failed`,
 `interrupted`, `cancelled`. `error` is `{ code, message? }`.
 
 ### `wait_turn`

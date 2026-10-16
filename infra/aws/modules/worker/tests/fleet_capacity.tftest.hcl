@@ -21,26 +21,25 @@ mock_provider "aws" {
 }
 
 variables {
-  computer_save_interval_seconds = 60
-  computer_devices               = ["/dev/nbd0", "/dev/nbd1"]
-  name                           = "helmr-test-worker"
-  worker_pool_name               = "execution-v1"
-  network_blocked_ipv4_cidrs     = ["10.0.0.0/8", "169.254.0.0/16"]
-  network_link_pool              = "169.254.64.0/18"
-  network_translation_pool       = "100.96.0.0/16"
-  vpc_id                         = "vpc-00000000000000000"
-  subnet_ids                     = ["subnet-00000000000000000"]
-  ami_id                         = "ami-00000000000000000"
-  worker_controlplane_url        = "https://controlplane.example.test"
-  cas_uri                        = "s3://helmr-test-cas"
-  cas_bucket_arn                 = "arn:aws:s3:::helmr-test-cas"
-  kms_key_arn                    = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri             = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn      = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn     = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  min_size                       = 0
-  max_size                       = 1
-  root_volume_size_gb            = 120
+  computer_devices           = ["/dev/nbd0", "/dev/nbd1"]
+  name                       = "helmr-test-worker"
+  worker_pool_name           = "execution-v1"
+  network_blocked_ipv4_cidrs = ["10.0.0.0/8", "169.254.0.0/16"]
+  network_link_pool          = "169.254.64.0/18"
+  network_translation_pool   = "100.96.0.0/16"
+  vpc_id                     = "vpc-00000000000000000"
+  subnet_ids                 = ["subnet-00000000000000000"]
+  ami_id                     = "ami-00000000000000000"
+  worker_controlplane_url    = "https://controlplane.example.test"
+  cas_uri                    = "s3://helmr-test-cas"
+  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
+  kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+  platform_store_uri         = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  min_size                   = 0
+  max_size                   = 1
+  root_volume_size_gb        = 120
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
     worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
@@ -80,7 +79,6 @@ run "execution_worker_is_immutable_and_launch_gated" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=/usr/local/bin/worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=execution-v1") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_COMPUTER_SAVE_EVERY=60s") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_COMPUTER_DEVICES=/dev/nbd0 /dev/nbd1") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "modprobe nbd nbds_max='2' max_part=0") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "test ! -e '/sys/block/nbd1/pid'") &&
@@ -93,7 +91,7 @@ run "execution_worker_is_immutable_and_launch_gated" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "EnvironmentFile=/etc/helmr/worker.env\nExecStart=/usr/local/bin/helmr-asg-lifecycle watch") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "EnvironmentFile=/etc/helmr/worker-base.env\nExecStart=/usr/local/bin/helmr-asg-lifecycle watch") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "load_worker_env")
     )
     error_message = "lifecycle commands must inherit systemd-parsed environment values, including space-separated device paths"
@@ -164,11 +162,6 @@ run "additional_worker_environment_is_rendered" {
   }
 }
 
-run "reject_zero_save_interval" {
-  command = plan
-  variables { computer_save_interval_seconds = 0 }
-  expect_failures = [var.computer_save_interval_seconds]
-}
 run "reject_duplicate_computer_device" {
   command = plan
   variables { computer_devices = ["/dev/nbd0", "/dev/nbd0"] }
@@ -351,4 +344,52 @@ run "reject_disk_ceiling_above_root_volume" {
     computer_staging_mib    = 65536
   }
   expect_failures = [terraform_data.network_preconditions]
+}
+
+run "stopped_standby_uses_caller_size_without_recycling_workers" {
+  command = apply
+  variables { warm_pool_size = 1 }
+  assert {
+    condition = (
+      aws_autoscaling_group.worker.warm_pool[0].pool_state == "Stopped" &&
+      aws_autoscaling_group.worker.warm_pool[0].min_size == 1 &&
+      aws_autoscaling_group.worker.warm_pool[0].max_group_prepared_capacity == 1 &&
+      !aws_autoscaling_group.worker.warm_pool[0].instance_reuse_policy[0].reuse_on_scale_in &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "systemctl disable 'helmr-worker'") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "ExecCondition=")
+    )
+    error_message = "standby must use the caller size, stay stopped and never recycle enrolled Workers"
+  }
+}
+
+run "slot_memory_funds_guest_and_caches" {
+  command = plan
+  variables {
+    worker_execution_slots     = 2
+    vm_memory_mib              = 2048
+    worker_capacity_memory_mib = 4128
+  }
+  assert {
+    condition     = local.worker_slot_memory_mib == 2064
+    error_message = "slot memory must include both bounded 8-MiB disk caches"
+  }
+}
+
+run "slot_memory_rejects_one_mib_short" {
+  command = plan
+  variables {
+    worker_execution_slots     = 2
+    vm_memory_mib              = 2048
+    worker_capacity_memory_mib = 4127
+  }
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "caller_can_provision_multiple_standby_instances" {
+  command = plan
+  variables { warm_pool_size = 2 }
+  assert {
+    condition     = aws_autoscaling_group.worker.warm_pool[0].min_size == 2 && aws_autoscaling_group.worker.warm_pool[0].max_group_prepared_capacity == 2
+    error_message = "the generic module must provision caller capacity without a Managed Cloud policy"
+  }
 }

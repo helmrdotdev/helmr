@@ -3,7 +3,7 @@
 ), posts AS (
  SELECT p.id,p.turn_id,p.role,p.seq,p.status,p.presentation_path,p.stream_state,
  p.desired_revision,p.confirmed_revision,p.suppressed_revision,p.payload_expired_at IS NOT NULL AS payload_expired,
- p.created_at,p.posted_at,p.closed_at,p.inflight_method,p.attempt_count,
+ p.created_at,p.posted_at,p.confirmed_at,p.closed_at,p.inflight_method,p.attempt_count,
  p.next_attempt_at,p.claimed_until,p.message_ts,p.error,p.delivery_disposed_at,p.reconciliation_paused_at
  FROM slack_posts p JOIN target s ON s.id=p.thread_source_id ORDER BY p.seq DESC LIMIT 100
 )
@@ -16,6 +16,6 @@ SELECT jsonb_build_object(
  'delivery_error',t.delivery_error,'deleted_at',t.deleted_at) FROM slack_threads t JOIN target s ON s.thread_id=t.id),
  'installation', (SELECT jsonb_build_object('id',i.id,'credential_revision',i.credential_revision,'credential_expires_at',i.credential_expires_at,
  'authorized_at',i.authorized_at,'refresh_next_at',i.refresh_next_at,'refresh_error',i.refresh_error,
- 'authorization_lost_at',i.authorization_lost_at,'disconnected_at',i.disconnected_at,'delivery_next_at',i.delivery_next_at)
+ 'authorization_lost_at',i.authorization_lost_at,'disconnected_at',i.disconnected_at)
  FROM slack_installations i JOIN slack_channel_bindings c ON c.installation_id=i.id JOIN slack_threads t ON t.slack_channel_binding_id=c.id JOIN target s ON s.thread_id=t.id),
  'posts', COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.seq) FROM posts p),'[]'::jsonb));

@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -57,6 +58,7 @@ type SecretManager interface {
 }
 
 type Server struct {
+	changes                    *dbnotify.Hub
 	slackConfig                *SlackConfig
 	diagnosticDB               db.TxDB
 	diagnosticBounds           diagnostic.Bounds
@@ -101,6 +103,7 @@ const (
 )
 
 type ServerConfig struct {
+	Changes                    *dbnotify.Hub
 	Slack                      *SlackConfig
 	DiagnosticDB               db.TxDB
 	DiagnosticBounds           diagnostic.Bounds
@@ -151,6 +154,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
+	}
+	if cfg.Changes == nil {
+		return nil, errors.New("database notification hub is required")
 	}
 	if cfg.DB == nil {
 		return nil, errors.New("control plane database is required")
@@ -237,6 +243,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("allocation owner is required")
 	}
 	server := &Server{
+		changes:                    cfg.Changes,
 		slackConfig:                cfg.Slack,
 		allocator:                  cfg.Allocator,
 		environmentExecutionLimits: cfg.EnvironmentExecutionLimits,
@@ -484,6 +491,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}", s.getAgentSessionHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery", s.sessionSlackDelivery)
 		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}", s.sessionSlackDelivery)
+		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/updates", s.streamSessionUpdates)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/events", s.listAgentEventsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns", s.listAgentTurnsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}", s.getAgentTurnHTTP)
@@ -618,7 +626,9 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.With(limitRequestBody(1048576)).Post("/allocations/image-build/objects/certify", s.workerCertifyPreparationObject)
 			r.With(limitRequestBody(8192)).Post("/allocations/image-build/capture", s.workerRecordPreparationCapture)
 			r.With(limitRequestBody(8192)).Post("/allocations/image-build/publish", s.workerPublishPreparation)
+			r.Get("/updates", s.streamWorkerUpdates)
 			r.With(limitRequestBody(4096)).Post("/computer-saves/next", s.workerNextAgentSave)
+			r.With(limitRequestBody(4096)).Post("/computer-storage/pressure", s.workerAgentStoragePressure)
 			r.With(limitRequestBody(1048576)).Post("/computer-saves/objects/register", s.workerRegisterAgentSaveObject)
 			r.With(limitRequestBody(1048576)).Post("/computer-saves/objects/certify", s.workerCertifyAgentSaveObject)
 			r.With(limitRequestBody(8192)).Post("/computer-saves/capture", s.workerCaptureAgentSave)

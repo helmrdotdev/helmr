@@ -19,6 +19,8 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -94,8 +96,9 @@ var _ interface {
 } = (*guestMachine)(nil)
 
 // CaptureComputer flushes the retained guest filesystem and takes an ordered
-// online disk cut. It does not pause the VM, processes or filesystem. Any error
-// fences further captures until the owner stops the unsafe source.
+// online disk cut. It does not pause the VM, processes or filesystem. Failed
+// online cuts can be repeated for the same admitted save until a receipt exists;
+// authenticated corruption retains a terminal fence.
 func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
@@ -105,7 +108,6 @@ func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	if s.computerCaptureBlocked {
 		return nil, errors.New("computer capture is fenced")
 	}
-	s.computerCaptureBlocked = true
 	ctx, done, err := s.captureContext(ctx)
 	if err != nil {
 		return nil, err
@@ -116,13 +118,16 @@ func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	}
 	started := time.Now()
 	if err := s.flushGuestComputer(ctx); err != nil {
-		return nil, err
+		return nil, &vm.ComputerCaptureError{Phase: "guest writeback", Cause: err}
 	}
 	slog.Info("Computer guest flush completed", "computer_id", s.topology.Computer.ComputerID, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
 	started = time.Now()
 	capture, err := s.topology.Computer.Device.Capture(ctx)
 	if err != nil {
-		return nil, err
+		var fatal interface{ FatalDeviceError() bool }
+		var source *disk.SourceFailure
+		s.computerCaptureBlocked = (errors.As(err, &fatal) && fatal.FatalDeviceError()) || errors.As(err, &source) || errors.Is(err, blockformat.ErrIntegrity) || errors.Is(err, blockformat.ErrAuthentication)
+		return nil, &vm.ComputerCaptureError{Phase: "local cut", Cause: err}
 	}
 	// Includes device drainage, the request boundary, encoding and local
 	// persistence; it is not a measurement of cut synchronization alone.
@@ -161,6 +166,51 @@ func (s *guestMachine) flushGuestComputer(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// captureCheckpointComputer owns the stock snapshot boundary before the local
+// immutable cut. API failure or uncertain completion cannot certify a cut. The
+// outer checkpoint owner retains this call through join after caller timeout.
+// The stock API can log flush errors without returning them; retained backing
+// descriptors and the local disk boundary supply the required error checks.
+func (s *guestMachine) captureCheckpointComputer(ctx context.Context, snapshot func() error) (*vm.ComputerSnapshot, error) {
+	if snapshot == nil || s.topology.Computer == nil || s.topology.Computer.Device == nil {
+		return nil, errors.New("checkpoint requires a snapshot operation and owned Computer device")
+	}
+	if err := s.machine.PauseVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) }); err != nil {
+		return nil, fmt.Errorf("pause checkpoint vm: %w", err)
+	}
+	backings, err := s.inspectPausedDiskBackings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := snapshot(); err != nil {
+		return nil, err
+	}
+	if err := s.syncPausedDiskBackings(ctx, backings); err != nil {
+		return nil, err
+	}
+	capture, err := s.topology.Computer.Device.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &vm.ComputerSnapshot{ComputerID: s.topology.Computer.ComputerID, Capture: capture}, nil
+}
+
+func (s *guestMachine) syncPausedDiskBackings(ctx context.Context, backings map[string]string) error {
+	for _, id := range []string{"computer", scratchDriveID} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		source := s.scratchDisk
+		if id == "computer" {
+			source = s.topology.Computer.Path
+		}
+		if err := syncPausedBacking(s.diskFiles[id], source, backings[id]); err != nil {
+			return fmt.Errorf("sync paused %s backing file: %w", id, err)
+		}
+	}
+	return nil
+}
+
 func (s *guestMachine) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	if err := s.machine.PauseVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) }); err != nil {
 		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
@@ -184,26 +234,36 @@ func (s *guestMachine) capturePausedComputer(ctx context.Context) (*vm.ComputerS
 // the actual device configuration, including restored devices, before relying on
 // it. Snapshot API success does not report backing-file synchronization errors.
 func (s *guestMachine) syncPausedDisks(ctx context.Context) error {
+	backings, err := s.inspectPausedDiskBackings(ctx)
+	if err != nil {
+		return err
+	}
+	return s.syncPausedDiskBackings(ctx, backings)
+}
+
+// Inspect owned backing identities before snapshot serialization. Validation
+// alone does not certify a disk cut.
+func (s *guestMachine) inspectPausedDiskBackings(ctx context.Context) (map[string]string, error) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", s.machine.Cfg.SocketPath)
 	}}
 	defer transport.CloseIdleConnections()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/vm/config", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return fmt.Errorf("inspect paused device configuration: %w", err)
+		return nil, fmt.Errorf("inspect paused device configuration: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("device configuration API returned HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("device configuration API returned HTTP %d", response.StatusCode)
 	}
 	const limit = 64 << 10
 	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil || len(raw) > limit {
-		return errors.Join(errors.New("read bounded device configuration"), err)
+		return nil, errors.Join(errors.New("read bounded device configuration"), err)
 	}
 	var config struct {
 		Drives []struct {
@@ -215,30 +275,30 @@ func (s *guestMachine) syncPausedDisks(ctx context.Context) error {
 		} `json:"drives"`
 	}
 	if err := json.Unmarshal(raw, &config); err != nil {
-		return fmt.Errorf("decode device configuration: %w", err)
+		return nil, fmt.Errorf("decode device configuration: %w", err)
 	}
 	if s.topology.Computer == nil {
-		return errors.New("paused Computer disk is missing")
+		return nil, errors.New("paused Computer disk is missing")
 	}
 	expected := map[string]string{"computer": s.topology.Computer.Path, scratchDriveID: s.scratchDisk}
 	seen := make(map[string]bool)
 	backings := make(map[string]string)
 	for _, drive := range config.Drives {
 		if drive.ID == "" || seen[drive.ID] || drive.Engine != blockIOEngine || drive.ReadOnly == nil {
-			return errors.New("paused devices require distinct identities and synchronous I/O")
+			return nil, errors.New("paused devices differ from their declared I/O engines or identities")
 		}
 		seen[drive.ID] = true
 		path, writable := expected[drive.ID]
 		if !writable {
 			if !*drive.ReadOnly {
-				return errors.New("unexpected writable paused device")
+				return nil, errors.New("unexpected writable paused device")
 			}
 			continue
 		}
 		// API paths belong to the VMM jail, not the Worker's host root.
 		actual := filepath.Join(s.jailRoot, strings.TrimPrefix(drive.Path, "/"))
 		if drive.Cache != writableBlockCache {
-			return fmt.Errorf("paused %s device requires writeback cache", drive.ID)
+			return nil, fmt.Errorf("paused %s device requires writeback cache", drive.ID)
 		}
 		jailedName := filepath.Base(path)
 		if drive.ID == scratchDriveID {
@@ -247,27 +307,34 @@ func (s *guestMachine) syncPausedDisks(ctx context.Context) error {
 			jailedName = scratchDiskName
 		}
 		if *drive.ReadOnly || strings.TrimPrefix(drive.Path, "/") != jailedName {
-			return fmt.Errorf("paused %s device does not match its owned backing file", drive.ID)
+			return nil, fmt.Errorf("paused %s device does not match its owned backing file", drive.ID)
 		}
 		backings[drive.ID] = actual
 	}
 	for _, id := range []string{"computer", scratchDriveID} {
 		if !seen[id] {
-			return fmt.Errorf("paused %s device is missing", id)
+			return nil, fmt.Errorf("paused %s device is missing", id)
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
-		if err := syncPausedBacking(s.diskFiles[id], expected[id], backings[id]); err != nil {
-			return fmt.Errorf("sync paused %s backing file: %w", id, err)
+		if err := validatePausedBacking(s.diskFiles[id], expected[id], backings[id]); err != nil {
+			return nil, fmt.Errorf("validate paused %s backing file: %w", id, err)
 		}
 	}
-	return nil
+	return backings, nil
 }
 
 // The descriptor predates guest execution so its writeback error cursor cannot
 // skip a failure already observed by another file description in the VMM.
 func syncPausedBacking(file *os.File, source, backing string) error {
+	if err := validatePausedBacking(file, source, backing); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func validatePausedBacking(file *os.File, source, backing string) error {
 	if file == nil {
 		return errors.New("retained backing descriptor is missing")
 	}
@@ -281,7 +348,7 @@ func syncPausedBacking(file *os.File, source, backing string) error {
 			return errors.Join(errors.New("paused device backing inode changed"), err)
 		}
 	}
-	return file.Sync()
+	return nil
 }
 
 func openRuntimeDiskFiles(scratch, computer string) (files map[string]*os.File, retErr error) {

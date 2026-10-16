@@ -4,8 +4,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -23,7 +21,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, admission.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, admission.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	// Deletion may be accepted after the Session process ends while its physical
@@ -66,7 +64,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	}
 	var retired, receipt bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT c.initial_root_id IS NULL AND c.initial_payload_retired_at IS NOT NULL AND c.recovery_save_id IS NULL AND octet_length(c.initial_root_digest)=32 AND c.storage_reservation_bytes IS NULL,
- s.root_id IS NULL AND s.payload_retired_at IS NOT NULL AND t.status='completed' AND t.completion_save_id=s.id
+ s.root_id IS NULL AND s.payload_retired_at IS NOT NULL AND t.status='completed' AND s.turn_id=t.id
  FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$3 JOIN turns t ON t.environment_id=c.environment_id AND t.id=s.turn_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer, save.ID).Scan(&retired, &receipt); err != nil || !retired || !receipt {
 		t.Fatalf("roots retired=%v receipt=%v error=%v", retired, receipt, err)
 	}

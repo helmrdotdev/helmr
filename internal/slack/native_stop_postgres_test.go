@@ -126,3 +126,27 @@ func TestSlackNativeStopAuthenticatesAndRejectsMalformedEventsBeforeSQL(t *testi
 		}
 	}
 }
+
+func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	stale := f.reply(t, "before-recovery", false)
+	gap, other := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_gap) VALUES($1,$2,$3,'local','Recovery acknowledgement required','recovery_gap',jsonb_build_object('holdId',$2::uuid::text,'computerId',$4::uuid::text,'leaseEpoch',1,'recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb,'affectedTurnCount',0))`, f.Environment, gap, f.Session, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','Independent operator hold')`, f.Environment, other, f.Session)
+	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), stale); err != nil {
+		t.Fatal(err)
+	}
+	var held bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT released_at IS NULL FROM session_holds WHERE id=$1`, gap).Scan(&held); err != nil || !held {
+		t.Fatalf("old mention acknowledged new loss: %v %v", held, err)
+	}
+	fresh := f.reply(t, "after-recovery", false)
+	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), fresh); err != nil {
+		t.Fatal(err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT h.released_at IS NOT NULL AND o.released_at IS NULL AND r.status='accepted' AND t.status='queued' FROM session_holds h JOIN session_holds o ON o.id=$2 JOIN slack_requests r ON r.id=$3 JOIN turns t ON t.id=r.turn_id WHERE h.id=$1`, gap, other, fresh).Scan(&exact); err != nil || !exact {
+		t.Fatalf("recovery acknowledgement scope: %v %v", exact, err)
+	}
+}

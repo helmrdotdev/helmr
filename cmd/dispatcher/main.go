@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/slack"
@@ -97,7 +98,9 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure diagnostic exporter: %w", err)
 	}
 
+	changes := dbnotify.New()
 	runners := []dispatcherRunner{
+		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Agent triggers", run: func(ctx context.Context) error { return agent.RunTriggers(ctx, pool, secretStore, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
@@ -120,11 +123,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		projection := slack.ProjectionConfig{PublicURL: publicURL, ControlKey: controlKey}
 		runners = append(runners,
 			dispatcherRunner{name: "Slack requests", run: func(ctx context.Context) error {
-				return slack.RunRequests(ctx, pool, secretStore, projection, client, log)
+				return slack.RunRequests(ctx, pool, secretStore, projection, client, log, changes)
 			}},
-			dispatcherRunner{name: "Slack projection", run: func(ctx context.Context) error { return slack.RunProjection(ctx, pool, projection, log) }},
+			dispatcherRunner{name: "Slack projection", run: func(ctx context.Context) error { return slack.RunProjection(ctx, pool, projection, log, changes) }},
 			dispatcherRunner{name: "Slack credentials", run: func(ctx context.Context) error { return credentials.RunCredentials(ctx, nil, log) }},
-			dispatcherRunner{name: "Slack delivery", run: func(ctx context.Context) error { return slack.RunDelivery(ctx, pool, client, log) }},
+			dispatcherRunner{name: "Slack delivery", run: func(ctx context.Context) error { return slack.RunDelivery(ctx, pool, client, log, changes) }},
 		)
 	}
 	log.Info("Helmr dispatcher running")

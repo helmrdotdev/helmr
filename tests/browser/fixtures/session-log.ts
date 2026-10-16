@@ -9,10 +9,10 @@ export const base = `/api/projects/${projectID}/environments/${environmentID}`;
 export const sessionPath = `${base}/sessions/${sessionID}`;
 export const sessionURL = `/sessions/${sessionID}?project=${projectID}&environment=${environmentID}`;
 
-type Status = "queued" | "running" | "finalizing" | "completed" | "failed" | "interrupted" | "cancelled";
+type Status = "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled";
 export type Turn = {
   id: string; session_id: string; sequence: number; status: Status; input?: unknown; result?: unknown; response?: unknown;
-  error?: { code: string; message?: string }; started_at?: string; terminal_at?: string; completion_save_id?: string; payload_expired_at?: string;
+  error?: { code: string; message?: string }; started_at?: string; terminal_at?: string; payload_expired_at?: string;
 };
 export type Event = { session_id: string; turn_id: string | null; sequence: number; kind: string; data: unknown; created_at: string };
 export type Ask = Record<string, unknown> & { id: string; turn_id: string; status: string };
@@ -79,7 +79,7 @@ export function longSession(options: { turns?: number; expired?: boolean } = {})
       turn.status = "running";
     } else if (!queued) {
       push(sequence, "turn.completed", {});
-      Object.assign(turn, { status: "completed", terminal_at: at(clock), completion_save_id: id(40_000 + sequence), result: { merged: false, checks: 14 }, response: [{ type: "text", text: `Done with step ${sequence}. All shards passed after the retry.` }] });
+      Object.assign(turn, { status: "completed", terminal_at: at(clock), result: { merged: false, checks: 14 }, response: [{ type: "text", text: `Done with step ${sequence}. All shards passed after the retry.` }] });
     }
     turns.push(turn);
   }
@@ -121,6 +121,17 @@ export function appendOutput(data: SessionData, texts: string[]) {
 export type Requests = { events: string[]; turns: string[]; asks: string[] };
 
 export async function serveSession(page: Page, data: SessionData, permissions: string[] = ["sessions.read", "sessions.interrupt", "sessions.cancel"]): Promise<Requests> {
+  await page.addInitScript(() => {
+    const streams = new Set<EventTarget>();
+    class FixtureEventSource extends EventTarget {
+      constructor(_url: string) { super(); streams.add(this); }
+      close() { streams.delete(this); }
+    }
+    Object.defineProperty(window, "EventSource", { value: FixtureEventSource });
+    Object.defineProperty(window, "sessionChanged", { value: () => {
+      for (const stream of streams) stream.dispatchEvent(new Event("change"));
+    } });
+  });
   const requests: Requests = { events: [], turns: [], asks: [] };
   const environment = { environment: environmentID, project: projectID, name: "Demo", color_hex: "#315fce", is_default: true, created_at: at(0), updated_at: at(0) };
   const project = { project: projectID, name: "Console demo", default_region_id: "local", is_default: true, environments: [environment], created_at: at(0), updated_at: at(0) };
@@ -217,4 +228,8 @@ export async function expandTurns(page: Page) {
   await log.locator("[data-turn-header]").first().waitFor({ timeout: 5_000 }).catch(() => undefined);
   const closed = log.locator('[data-turn-header] button[aria-expanded="false"]');
   while (await closed.count()) await closed.first().click();
+}
+
+export async function notifySessionChanged(page: Page) {
+  await page.evaluate(() => (window as unknown as { sessionChanged(): void }).sessionChanged());
 }

@@ -180,7 +180,7 @@ func (s *demoLog) output(t *demoTurn, parts ...any) {
 	s.event(t, "turn.output", parts)
 }
 
-// complete records the result, the published completion Save and the response.
+// complete records the outcome before the asynchronous filesystem save.
 func (s *demoLog) complete(t *demoTurn, response []byte, result any) int64 {
 	t.closedAt = s.at
 	t.recordedAt = s.at
@@ -188,13 +188,12 @@ func (s *demoLog) complete(t *demoTurn, response []byte, result any) int64 {
 	if response != nil {
 		t.response, t.responseID = response, demoUUID(6000+demoTurnNumber(t.id))
 	}
-	t.status = "finalizing"
-	s.event(t, "turn.finalizing", nil)
+	t.status, t.terminalAt = "completed", s.at
+	completed := s.event(t, "turn.completed", nil)
 	t.saveRequestedAt = s.at
 	t.saveID = demoUUID(2000 + demoTurnNumber(t.id))
 	t.savedAt = s.wait(3 * time.Second)
-	t.status, t.terminalAt = "completed", s.at
-	return s.event(t, "turn.completed", nil)
+	return completed
 }
 
 func (s *demoLog) fail(t *demoTurn, code, message string) {
@@ -328,8 +327,8 @@ func (h *demoHistory) expire(session string, at time.Time) {
 	}
 }
 
-// write inserts the history in foreign-key order. Completed Turns are written
-// without their Save first because the Save requires the recorded result.
+// write inserts the history in foreign-key order: the completed result exists
+// before its filesystem save is published.
 func (h *demoHistory) write(ctx context.Context, tx pgx.Tx, environment string, saveRetiredAt time.Time) error {
 	var saves []*demoTurn
 	for _, t := range h.turns {
@@ -358,9 +357,6 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 	}
 	for _, t := range h.turns {
 		status := t.status
-		if status == "completed" {
-			status = "interrupted"
-		}
 		var responseDigest []byte
 		if t.responseID != "" {
 			responseDigest = demoSHA(t.responseID)
@@ -408,7 +404,6 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19
 		b.Queue(`INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id,status,requested_at,flush_acknowledged_at,captured_at,captured_root_digest,capture_evidence,publication_evidence,payload_retired_at)
 VALUES($1,$2,$3,$4,$5,$6,'published',$7,$8,$8,$9,'Turn completion captured','Turn completion published',$10)`,
 			environment, t.saveID, t.computer, t.leaseEpoch, t.saveSeq, t.id, t.saveRequestedAt, t.savedAt, demoSHA("root:"+t.id), saveRetiredAt)
-		b.Queue(`UPDATE turns SET status='completed',completion_save_id=$3 WHERE environment_id=$1 AND id=$2`, environment, t.id, t.saveID)
 	}
 	b.Queue(`UPDATE computers SET next_save_seq=$3 WHERE environment_id=$1 AND id=$2`, environment, demoSeedHistoryComputerID, len(saves)+1)
 	for _, e := range h.events {

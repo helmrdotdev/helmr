@@ -71,6 +71,8 @@ export type {
   TurnState,
   TurnListQuery,
   SessionHold,
+  RecoveryGap,
+  ComputerLossInterruption,
   AskState,
   AskAnswerReceipt,
   AskQuery,

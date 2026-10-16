@@ -1,6 +1,6 @@
 import { useParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { computerHref } from "../features/computers/navigation";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -17,6 +17,9 @@ import {
   askConsolePath,
   cancelSession,
   getSession,
+  watchSession,
+  recoveryGapNotice,
+  resumeSession,
   interruptSession,
   interruptTurn,
   listAsks,
@@ -75,31 +78,45 @@ function SessionDetailContent() {
     queryFn: () => getSession(address()),
     enabled: enabled(),
     retry: false,
-    refetchInterval: (query) =>
-      ["open", "closing"].includes(query.state.data?.status ?? "")
-        ? 3_000
-        : false,
   }));
   const live = () => ["open", "closing"].includes(session.data?.status ?? "");
   const missing = (error: unknown) => isMissingSessionRead(error, can("sessions.read"));
   const notFound = () => !session.data && session.isError && missing(session.error);
-  const log = createSessionLog({ address, session: () => session.data });
+  const log = createSessionLog({ address });
+  const refresh = () => Promise.all([session.refetch(), log.refresh(), queryClient.invalidateQueries({ queryKey: ["session-active-ask"] })]);
+  createEffect(() => {
+    if (!enabled()) return;
+    let refreshing = false;
+    let again = false;
+    const changed = async () => {
+      if (refreshing) { again = true; return; }
+      refreshing = true;
+      try {
+        do {
+          again = false;
+          await refresh();
+        } while (again);
+      } finally { refreshing = false; }
+    };
+    onCleanup(watchSession(address(), () => { void changed(); }));
+  });
   const [receipt, setReceipt] = createSignal<string>();
-  type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string };
+  type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string } | { kind: "resume"; holdID: string };
   const [control, setControl] = createSignal<Control>();
   const controlKeys = new Map<string, string>();
-  const controlLabels = { interrupt: "Interrupt session", cancel: "Cancel session", turn_interrupt: "Interrupt turn" };
+  const controlLabels = { interrupt: "Interrupt session", cancel: "Cancel session", turn_interrupt: "Interrupt turn", resume: "Resume" };
   const performControl = async (operation: Control) => {
-    const operationKey = operation.kind === "turn_interrupt" ? `${operation.kind}:${operation.turnID}` : operation.kind;
+    const operationKey = operation.kind === "turn_interrupt" ? `${operation.kind}:${operation.turnID}` : operation.kind === "resume" ? `resume:${operation.holdID}` : operation.kind;
     const key = controlKeys.get(operationKey) ?? crypto.randomUUID();
     controlKeys.set(operationKey, key);
     const input = { idempotency_key: key };
-    if (operation.kind === "turn_interrupt") await interruptTurn(address(), operation.turnID, input);
+    if (operation.kind === "resume") await resumeSession(address(), { ...input, hold_id: operation.holdID });
+    else if (operation.kind === "turn_interrupt") await interruptTurn(address(), operation.turnID, input);
     else if (operation.kind === "interrupt") await interruptSession(address(), input);
     else await cancelSession(address(), input);
-    setReceipt(`${controlLabels[operation.kind]} requested. The log shows when work stops; results already being saved can finish.`);
+    setReceipt(operation.kind === "resume" ? "Resume requested. Completed requests will not run again. Other reasons for pausing remain in place." : `${controlLabels[operation.kind]} requested. The log shows when work stops. Completed results remain available.`);
     controlKeys.delete(operationKey);
-    await Promise.all([session.refetch(), queryClient.invalidateQueries({ queryKey: ["sessions"] })]);
+    await Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: ["sessions"] })]);
   };
   return (
     <Page>
@@ -129,7 +146,7 @@ function SessionDetailContent() {
           {(current) => (
             <div class="flex flex-col gap-3">
               <SessionProperties session={current()} />
-              <NeedsYou session={current()} log={log} address={address()} />
+              <NeedsYou session={current()} log={log} address={address()} canResume={can("sessions.resume")} onResume={holdID => setControl({ kind: "resume", holdID })} />
               <Show when={receipt()}>
                 {(text) => <Notice tone="info" onDismiss={() => setReceipt(undefined)}>{text()}</Notice>}
               </Show>
@@ -169,7 +186,10 @@ function SessionDetailContent() {
             onConfirm={() => performControl(operation)}
           >
             <Show when={operation.kind === "interrupt"}>
-              Request running work and initialization in this session and its owned children to stop, and hold queued work. Results already being saved can finish. Interrupted turns do not restart when the hold is released.
+              Request running work and initialization in this session and its owned children to stop, and hold queued work. Completed results remain available. Interrupted turns do not restart when the hold is released.
+            </Show>
+            <Show when={operation.kind === "resume"}>
+              Continue from the restored Computer state. Completed requests will not run again. Other reasons for pausing remain in place.
             </Show>
             <Show when={operation.kind === "turn_interrupt"}>
               Request this running turn to stop. Queued work can proceed after stopping is confirmed. Existing session holds remain in force.
@@ -233,7 +253,7 @@ function Property(props: { label: string; children: JSX.Element }) {
 
 // What needs a person now: a running Turn waiting on a question, holds and a
 // stopped or failed process. Nothing renders when nothing waits.
-function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAddress }) {
+function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAddress; canResume: boolean; onResume: (holdID: string) => void }) {
   // The active Turn comes from the timeline, so the notice does not depend on
   // which part of the log is loaded.
   const active = () => props.log.activeTurn();
@@ -269,9 +289,15 @@ function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAd
         {hold => (
           <Notice tone="warning" role="status">
             <span>
-              Held: {hold.reason || "paused"} ({hold.scope === "subtree" ? "this session and its children" : "this session"}).
+              <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id} fallback={<>Held: {hold.reason || "paused"} ({hold.scope === "subtree" ? "this session and its children" : "this session"}).</>}>
+                {hold.recovery_gap ? recoveryGapNotice(hold.recovery_gap) : hold.reason}
+              </Show>
               <Show when={hold.session_id !== props.session.id}> Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} />.</Show>
-              {" "}Resume held work from the CLI.
+              <Show when={hold.kind === "storage_pressure"}>{" "}Queued work resumes when space is available. Stopped requests will not restart automatically.</Show>
+              <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume}>
+                {" "}<button type="button" class={ui.secondaryButton} onClick={() => props.onResume(hold.id)}>Resume</button>
+              </Show>
+              <Show when={hold.kind !== "storage_pressure" && !(hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume)}>{" "}Resume held work from the CLI.</Show>
             </span>
           </Notice>
         )}

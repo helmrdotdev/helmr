@@ -50,3 +50,23 @@ func newAllocationConsumer(machines *computerhost.PreparedMachines, client *work
 func unexpectedAllocationEvent(_ context.Context, message *agentv1.GuestSessionMessage) error {
 	return fmt.Errorf("unhandled allocation Session event %T", message.GetMessage())
 }
+
+func watchAllocationUpdates(ctx context.Context, client *workerclient.Client, allocations *worker.AllocationConsumer) error {
+	for {
+		err := client.WatchUpdates(ctx, allocations.Wake)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var rejected workerclient.HostAuthorityRejectedError
+		if errors.As(err, &rejected) {
+			return err
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}

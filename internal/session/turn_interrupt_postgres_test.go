@@ -144,7 +144,7 @@ func TestExactInterruptRejectsStateAndPreservesOwnedChildren(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = session.ControlSession(t.Context(), f.pool, f.caller(), request)
-	if !errors.As(err, &rejection) || rejection.Status != "finalizing" || rejection.Reason() != "handler_finished" {
+	if !errors.As(err, &rejection) || rejection.Status != "completed" || rejection.Reason() != "already_terminal" {
 		t.Fatalf("finalizing rejection: %v", err)
 	}
 	var unchanged bool

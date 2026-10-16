@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -53,6 +54,8 @@ type ComputerAllocationOwner struct {
 	operation                sync.Mutex
 	machine                  vm.CheckpointableMachine
 	saves                    *agentComputerSaves
+	saveWake                 chan struct{}
+	workWake                 allocationWake
 	checkpoint               *computercheckpoint.Manifest
 	checkpointCut            disk.CapturedVersion
 	checkpointRetryAt        time.Time
@@ -66,7 +69,7 @@ type ComputerAllocationOwner struct {
 }
 
 func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComputerClient, identity workerapi.AllocationIdentity, hostID string, hostEpoch int64, admitStart func(context.Context) error, checkpointKeyUnavailable func(), observe func(context.Context, *agentv1.GuestSessionMessage) error) (*ComputerAllocationOwner, error) {
-	if machines == nil || machines.Backend == nil || machines.Reservations == nil || client == nil || admitStart == nil || checkpointKeyUnavailable == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || hostEpoch <= 0 || machines.ComputerStagingBytes <= 0 || machines.ComputerSaveEvery <= 0 {
+	if machines == nil || machines.Backend == nil || machines.Reservations == nil || client == nil || admitStart == nil || checkpointKeyUnavailable == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || hostEpoch <= 0 || machines.ComputerStagingBytes <= 0 {
 		return nil, errors.New("computer allocation requires its physical backend, capacity, client and observer")
 	}
 	if !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || machines.ComputerRanges == nil || machines.ComputerObjects == nil || machines.CheckpointCipher == nil {
@@ -77,7 +80,7 @@ func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComp
 			return nil, errors.New("invalid Computer allocation identity")
 		}
 	}
-	return &ComputerAllocationOwner{machines: machines, client: client, identity: identity, hostID: hostID, hostEpoch: hostEpoch, admitStart: admitStart, checkpointKeyUnavailable: checkpointKeyUnavailable, observe: observe, attachDevice: machines.prepareAllocationDevice}, nil
+	return &ComputerAllocationOwner{machines: machines, client: client, identity: identity, hostID: hostID, hostEpoch: hostEpoch, admitStart: admitStart, checkpointKeyUnavailable: checkpointKeyUnavailable, observe: observe, attachDevice: machines.prepareAllocationDevice, saveWake: make(chan struct{}, 1)}, nil
 }
 
 func (o *ComputerAllocationOwner) leaseRequest() workerapi.AgentComputerLeaseRequest {
@@ -127,10 +130,12 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		}
 	}()
 	jobs.Go(func() { o.renew(ctx, cancel, delivery.ExpiresAt) })
+	phaseStarted := time.Now()
 	source, err := o.client.ComputerAllocationSource(ctx, o.identity)
 	if err != nil {
 		return err
 	}
+	o.phaseCompleted("source_fetch", phaseStarted)
 	defer source.Disk.Clear()
 	if source.Disk.VersionID != delivery.BaseVersion {
 		return errors.New("computer source differs from admitted base version")
@@ -162,7 +167,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		request.HostDiskBytes += extra
 	}
 
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request); err != nil {
+	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}
@@ -171,6 +176,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	// From this point the owner can retain filesystem/device/VM effects. Every
 	// later invocation only retries physical cleanup; this instance never boots twice.
 	o.closing = true
+	phaseStarted = time.Now()
 	device, err := o.attachDevice(ctx, o.identity, source)
 	// The local disk takes its own key copies. Do not retain the transport's
 	// plaintext for the potentially long lifetime of this Computer.
@@ -178,7 +184,9 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	if delivery.RestoredFrom != "" {
+	o.phaseCompleted("device_attach", phaseStarted)
+	phaseStarted = time.Now()
+	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
 		err = o.restore(ctx, delivery, source, device)
 	} else {
 		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
@@ -189,6 +197,8 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if o.machine == nil {
 		return errors.New("computer backend returned no machine")
 	}
+	o.phaseCompleted("vm_boot", phaseStarted)
+	phaseStarted = time.Now()
 	jobs.Go(func() {
 		err := o.machine.Wait(ctx)
 		if err == nil {
@@ -196,7 +206,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		}
 		cancel(err)
 	})
-	if delivery.RestoredFrom != "" {
+	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
 		if err := o.activateRestore(ctx, delivery); err != nil {
 			return err
 		}
@@ -228,6 +238,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		authority := commandAuthority{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, ComputerInstanceID: o.identity.AllocationID, WriterGeneration: o.identity.Epoch, GuestChannelCredential: delivery.ChannelCredential}
 		cancel((commandService{LogLimits: o.machines.CommandLogLimits}).Serve(ctx, o.machine, authority, o.client))
 	})
+	o.phaseCompleted("agent_ready", phaseStarted)
 	live, ok := o.machine.(liveCaptureMachine)
 	if !ok {
 		return errors.New("computer allocation requires live disk capture")
@@ -243,7 +254,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		done := sessionDone
 		jobs.Go(func() {
 			defer close(done)
-			err := o.machines.ServeAllocatedSessions(sessionCtx, o.machine, delivery, o.hostID, o.client, o.observe)
+			err := o.machines.serveAllocatedSessions(sessionCtx, o.machine, delivery, o.hostID, o.client, o.observe, &o.workWake)
 			if sessionCtx.Err() == nil {
 				cancel(err)
 			}
@@ -259,7 +270,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 			}
 		}
 	}
-	o.saves = &agentComputerSaves{client: o.client, objects: o.machines.ComputerObjects, identity: o.identity, machine: live, every: o.machines.ComputerSaveEvery,
+	o.saves = &agentComputerSaves{client: o.client, objects: o.machines.ComputerObjects, identity: o.identity, machine: live, changes: device.Changes, pinCommitted: device.PinCommitted, wake: o.saveWake,
 		idle: func(ctx context.Context) error { return o.captureIdle(ctx, delivery, suspend) }}
 	// This loop serializes disk and VM cuts; returning joins attachment and lease
 	// jobs in the parent defer before physical cleanup releases capture retention.
@@ -346,4 +357,17 @@ func (o *ComputerAllocationOwner) cleanup() error {
 	}
 	o.finished.Store(true)
 	return nil
+}
+
+// WakeSaves coalesces authenticated control-plane notifications for this exact
+// allocation. The save owner rereads durable requests after the edge.
+func (o *ComputerAllocationOwner) WakeSaves() {
+	select {
+	case o.saveWake <- struct{}{}:
+	default:
+	}
+}
+
+func (o *ComputerAllocationOwner) phaseCompleted(phase string, started time.Time) {
+	slog.Info("Computer allocation phase completed", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
 }

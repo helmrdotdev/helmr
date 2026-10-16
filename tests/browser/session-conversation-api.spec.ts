@@ -17,7 +17,7 @@ async function conversation(page: Page, kind: "text" | "choice" = "text") {
   expect(response.ok(), await response.text()).toBeTruthy();
   const { session_id: sessionID, turn: { turn_id: turnID } } = await response.json() as { session_id: string; turn: { turn_id: string } };
   const askID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
-  const seed = (mode: "text" | "choice" | "finalizing" | "output" | "disable-member" | "restore-member" | "expose-secret", referenceID = askID) => {
+  const seed = (mode: "text" | "choice" | "completed" | "output" | "disable-member" | "restore-member" | "expose-secret", referenceID = askID) => {
     execFileSync("bash", ["tests/browser/fixtures/session-conversation.sh", catalog.environmentInternalID, sessionID, turnID, referenceID, mode], { cwd: process.cwd() });
   };
   seed(kind);
@@ -31,7 +31,7 @@ async function conversation(page: Page, kind: "text" | "choice" = "text") {
   };
 }
 
-test("real API shows ordered progress while saving keeps response and result private", async ({ page }, testInfo) => {
+test("real API shows ordered progress and completed result while its save is pending", async ({ page }, testInfo) => {
   const f = await conversation(page);
   await page.goto(f.askURL);
   await expect(page.getByLabel("Answer through CLI")).toBeVisible();
@@ -46,7 +46,7 @@ test("real API shows ordered progress while saving keeps response and result pri
   expect(recorded.answer).toBe("");
   expect(recorded.answered_by_user_id).toBe(me.user_id);
   f.seed("output");
-  f.seed("finalizing");
+  f.seed("completed");
   await page.goto(f.sessionURL);
   await expandTurns(page);
   await expect(page.getByText('"First visible progress"', { exact: false })).toBeVisible();
@@ -55,27 +55,27 @@ test("real API shows ordered progress while saving keeps response and result pri
   expect(await progress.allTextContents()).toEqual([
     expect.stringContaining("First visible progress"), expect.stringContaining("Second visible progress"),
   ]);
-  await expect(page.getByText("The handler has returned. Helmr is saving the required disk state before completion.", { exact: false })).toBeVisible();
-  await expect(page.getByText("RESPONSE_REQUIRES_OWN_SAVE")).toHaveCount(0);
-  await expect(page.getByText("PRIVATE_RETURN")).toHaveCount(0);
+  await expect(page.getByText("Helmr is saving", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Log" }).getByRole("button", { name: /^(\S+ )?response / })).toContainText("COMPLETED_RESPONSE");
+  await expect(page.getByText("COMPLETED_RESULT", { exact: false })).toBeVisible();
   const before = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json();
-  expect(before.turns[0].status).toBe("finalizing");
-  expect(JSON.stringify(before)).not.toContain("RESPONSE_REQUIRES_OWN_SAVE");
-  expect(JSON.stringify(before)).not.toContain("PRIVATE_RETURN");
+  expect(before.turns[0].status).toBe("completed");
+  expect(JSON.stringify(before)).toContain("COMPLETED_RESPONSE");
+  expect(JSON.stringify(before)).toContain("COMPLETED_RESULT");
   const enqueue = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, { data: { input: [{ type: "text", text: "kept while saving" }], idempotency_key: crypto.randomUUID() } });
   expect(enqueue.ok(), await enqueue.text()).toBeTruthy();
   await page.reload();
   await expandTurns(page);
-  await expect(page.getByText("kept while saving", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "Log" }).getByRole("button", { name: /^(\S+ )?input kept while saving/ })).toBeVisible();
   await page.reload();
   await expandTurns(page);
   await expect(page.getByText('"Second visible progress"', { exact: false })).toBeVisible();
   await expect(page.getByRole("region", { name: "Log" }).locator("[data-log-line]").filter({ hasText: "ask.answered" })).toContainText("answered by a user");
   const after = await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json();
   expect(after.turns.map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
-    ["finalizing", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "kept while saving" }]],
+    ["completed", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "kept while saving" }]],
   ]);
-  await page.screenshot({ path: testInfo.outputPath("real-api-saving-progress.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("real-api-completed-progress.png"), fullPage: true });
 });
 
 test("Console records one externally retried choice with its exact values", async ({ page }) => {

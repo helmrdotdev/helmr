@@ -83,8 +83,8 @@ WITH RECURSIVE held AS (
     SELECT c.environment_id,c.computer_id,x.secret_id FROM secret_exposures x
     JOIN commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked') revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
- AND ((cp.id IS NOT NULL) OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
-  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.initialized_at IS NOT NULL)))
+ AND ((cp.id IS NOT NULL) OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published') OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
+  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)))
  AND (EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing')
   AND (cp.id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued'))

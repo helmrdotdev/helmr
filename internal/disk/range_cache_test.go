@@ -122,3 +122,34 @@ func TestVersionRangeCacheBoundsAndConcurrentReads(t *testing.T) {
 		t.Fatal("cache retained after close")
 	}
 }
+
+func TestVersionRangeCacheSharesCompletePackAcrossPages(t *testing.T) {
+	calls := 0
+	raw := bytes.Repeat([]byte{71}, 1<<20)
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, size, offset, length int64) (io.ReadCloser, error) {
+		calls++
+		if size != 1<<20 || offset != 0 || length != size {
+			t.Errorf("metadata fetch was not a complete bounded pack: %d %d %d", size, offset, length)
+		}
+		return io.NopCloser(bytes.NewReader(raw)), nil
+	}))
+	for _, offset := range []int64{32, 12345, 500000} {
+		reader, err := c.GetPackRange(t.Context(), "pack", 1<<20, offset, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(reader)
+		if err = errors.Join(err, reader.Close()); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(b, raw[offset:offset+4096]) {
+			t.Fatal("wrong pack page")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("pack downloaded %d times", calls)
+	}
+	if got := readCachedRange(t, c, "pack", 1<<20, 99, 100); !bytes.Equal(got, raw[99:199]) || calls != 1 {
+		t.Fatal("range did not reuse full pack")
+	}
+}

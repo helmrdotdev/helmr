@@ -35,7 +35,7 @@ func (g *nativePublicationGate) observeBackgroundPublication(ctx context.Context
 	err := g.pool.QueryRow(ctx, `SELECT
  c.recovery_save_id=s.id AND s.status='published' AND s.root_id IS NOT NULL
  AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()
- AND t.completion_save_id IS NULL,
+,
  jsonb_build_object('saveId',s.id,'computerId',s.computer_id,'leaseEpoch',s.computer_lease_epoch,
  'sequence',s.seq,'peerSessionId',p.id,'peerTurnId',t.id,
  'requestedAt',s.requested_at,'capturedAt',s.captured_at,'observedAt',clock_timestamp(),

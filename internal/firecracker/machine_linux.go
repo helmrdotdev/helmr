@@ -259,7 +259,21 @@ func (s *guestMachine) createCheckpointSnapshot(ctx context.Context, request vm.
 		phases = append(phases, vm.Phase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
-	capturedComputer, err := s.capturePausedComputer(ctx)
+	capturedComputer, err := s.captureCheckpointComputer(ctx, func() error {
+		snapshotStarted := time.Now()
+		err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID)
+		recordPhase("firecracker_create_snapshot", snapshotStarted)
+		if err != nil {
+			var uncertain *snapshotAPIUncertainError
+			if ctx.Err() == nil && !errors.As(err, &uncertain) {
+				// The producer and drain have joined. Backings were validated,
+				// and the final disk cut below has not been attempted.
+				err = errors.Join(vm.ErrCheckpointUncut, err)
+			}
+			return fmt.Errorf("create Firecracker snapshot: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
@@ -269,12 +283,7 @@ func (s *guestMachine) createCheckpointSnapshot(ctx context.Context, request vm.
 			capturedComputer.Capture.Release()
 		}
 	}()
-	recordPhase("pause_and_sync_disks", started)
-	started = time.Now()
-	if err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
-		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
-	}
-	recordPhase("firecracker_create_snapshot", started)
+	recordPhase("pause_snapshot_sync_and_capture", started)
 	vmPlatform := s.vmPlatform
 	expectedRuntimeID, err := vmPlatform.ExpectedID()
 	if err != nil {

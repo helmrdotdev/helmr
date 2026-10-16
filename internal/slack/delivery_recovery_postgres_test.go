@@ -422,10 +422,7 @@ func TestSlackDeliveryAbandonmentLeavesUnprojectedQuestionsAndResponseIndependen
 				if _, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`null`), "callbacks drained"); err != nil {
 					t.Fatal(err)
 				}
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_saves s SET status='published',flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),captured_root_digest=c.initial_root_digest,root_id=c.initial_root_id,capture_evidence='fixture cut',publication_evidence='fixture publication' FROM computers c WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.turn_id=$1`, turn)
-				if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
-					t.Fatal(err)
-				}
+
 			} else {
 				ask := uuid.NewV7()
 				if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"type":"text"}`)); err != nil {

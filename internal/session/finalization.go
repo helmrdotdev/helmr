@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -73,11 +71,11 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	if pending {
 		return errResultDrainPending
 	}
-	_, err = tx.Exec(ctx, `UPDATE turns SET status='finalizing',result=$3,result_digest=$4,drain_evidence=$5,result_recorded_at=clock_timestamp(),deadline_at=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, result, digest[:], drainEvidence)
+	_, err = tx.Exec(ctx, `UPDATE turns SET status='completed',terminal_at=clock_timestamp(),result=$3,result_digest=$4,drain_evidence=$5,result_recorded_at=clock_timestamp(),deadline_at=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, result, digest[:], drainEvidence)
 	if err != nil {
 		return err
 	}
-	// The save may reference only a finalizing Turn. The Session lock above
+	// The save references the committed result. The Session lock above
 	// already holds the Computer row, so recording the save here takes no new
 	// lock out of order.
 	requested, err := computer.RequestSave(ctx, tx, e.EnvironmentID, o.computer, e.LeaseEpoch, turn)
@@ -85,66 +83,5 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 		return err
 	}
 	*save = requested
-	return event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.finalizing")
-}
-
-// Complete reconciles the Turn's own published save, even after source loss.
-// A newer recovery head cannot stand in for that save. Cancellation and
-// integrity failure still win until this transaction commits.
-func Complete(ctx context.Context, pool db.TxBeginner, env, session, turn uuid.UUID) error {
-	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		publication, err := lockSlackPublication(ctx, tx, env, session)
-		if err != nil {
-			return err
-		}
-		o, err := lockSession(ctx, tx, env, session)
-		if err != nil {
-			return err
-		}
-		var state string
-		if err = tx.QueryRow(ctx, `SELECT status FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, env, session, turn).Scan(&state); err != nil {
-			return err
-		}
-		if state == "completed" {
-			return nil
-		}
-		if state != "finalizing" {
-			return ErrTerminal
-		}
-		if o.lifecycle == "cancelled" {
-			return ErrTerminal
-		}
-		var now time.Time
-		var fault *time.Time
-		if err = tx.QueryRow(ctx, `SELECT clock_timestamp(),integrity_fault_at FROM computers WHERE environment_id=$1 AND id=$2`, env, o.computer).Scan(&now, &fault); err != nil {
-			return err
-		}
-		if fault != nil {
-			return ErrNotReady
-		}
-		var save uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND turn_id=$3 AND status='published'`, env, o.computer, turn).Scan(&save)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotReady
-		}
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE turns SET status='completed',terminal_at=clock_timestamp(),completion_save_id=$3 WHERE environment_id=$1 AND id=$2`, env, turn, save)
-		if err != nil {
-			return err
-		}
-		if err = event(ctx, tx, env, session, turn, "turn.completed"); err != nil {
-			return err
-		}
-		var sequence int64
-		var response bool
-		if err = tx.QueryRow(ctx, `SELECT s.next_event_seq-1,t.response_id IS NOT NULL FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3`, env, session, turn).Scan(&sequence, &response); err != nil {
-			return err
-		}
-		if response {
-			return publication.accept(ctx, tx, env, session, turn, sequence)
-		}
-		return nil
-	})
+	return event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.completed")
 }

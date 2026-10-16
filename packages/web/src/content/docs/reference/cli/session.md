@@ -117,9 +117,9 @@ records are available. Event kinds are listed in
 | Command | Description |
 | --- | --- |
 | `turn list` | One page of Turns in admission order. `--limit` 1–100, default 50. |
-| `turn get` | Status, result or error, response, completion save and payload expiry when available. |
+| `turn get` | Status, result or error, response and payload expiry when available. |
 | `turn wait` | Observes the Turn until it settles or `--timeout` elapses. |
-| `turn interrupt` | Interrupts exactly one running Turn without adding a hold or affecting owned Sessions. A queued, finalizing or settled Turn is rejected. |
+| `turn interrupt` | Interrupts exactly one running Turn without adding a hold or affecting owned Sessions. A queued or settled Turn is rejected. |
 | `turn send` | Sends a message to exactly this Turn. It is never redirected to another Turn. |
 
 `turn wait` requires a positive `--timeout` such as `30s` or `10m`. A timeout

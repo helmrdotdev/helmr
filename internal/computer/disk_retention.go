@@ -103,12 +103,17 @@ func ReconcileDiskRetention(ctx context.Context, database db.TxDB) error {
 
 // A source's physical closure also joins its upload work. Neither an expired
 // writer nor an unresolved publication is a retention clock. Completed Turns
-// retain their own save identity without retaining every old disk version.
-const retirableSave = `s.status IN ('published','failed')
+// retain their own save identity without retaining every old disk version. The
+// separate live-writer branch requires an adopted floor and stays behind the
+// oldest unresolved receipt, including checkpoint cuts and superseded sequences.
+const retirableSave = `s.status IN ('published','failed','superseded')
  AND (s.root_id IS NOT NULL OR EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id))
- AND EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=s.computer_lease_epoch AND l.fenced_at IS NOT NULL)
+ AND (EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=s.computer_lease_epoch AND l.fenced_at IS NOT NULL)
+ OR EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=s.computer_lease_epoch
+ AND s.seq<l.save_retirement_seq
+ AND NOT EXISTS(SELECT 1 FROM computer_saves pending WHERE pending.environment_id=s.environment_id AND pending.computer_id=s.computer_id AND pending.computer_lease_epoch=s.computer_lease_epoch AND pending.status IN ('requested','captured') AND pending.seq<=s.seq)))
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=s.environment_id AND c.recovery_save_id=s.id)
- AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.id=s.turn_id AND t.status IN ('running','finalizing'))
+ AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.id=s.turn_id AND t.status IN ('running'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.restored_from_save_id=s.id AND l.disk_released_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM checkpoints k WHERE k.environment_id=s.environment_id AND k.disk_save_id=s.id AND (k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL))`
 

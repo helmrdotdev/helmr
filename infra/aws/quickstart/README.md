@@ -143,7 +143,6 @@ worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768
 worker_computer_staging_mib           = 65536
-worker_computer_save_interval_seconds = 60
 worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
 

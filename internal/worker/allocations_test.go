@@ -333,3 +333,38 @@ func TestAllocationHealthObservationRecoversWithoutDeliveredOwner(t *testing.T) 
 		t.Fatal("stale pause prevented new delivery after health recovery")
 	}
 }
+
+func (o *allocationOwnerTest) Wake()   {}
+func (o *cleanupAdmissionOwner) Wake() {}
+
+type wakingAllocationOwner struct {
+	allocationOwnerTest
+	woke chan struct{}
+}
+
+func (o *wakingAllocationOwner) Wake() { o.woke <- struct{}{} }
+
+func TestAllocationWakeDoesNotWaitForDiscoveryLock(t *testing.T) {
+	owner := &wakingAllocationOwner{woke: make(chan struct{}, 1)}
+	consumer, err := NewAllocationConsumer(&allocationDiscoveryTest{}, 1, time.Second, func(workerapi.AllocationIdentity, func(context.Context) error) (AllocationOwner, error) {
+		return owner, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer.entries[allocationTestIdentity("computer")] = owner
+	consumer.mu.Lock()
+	defer consumer.mu.Unlock()
+	done := make(chan struct{})
+	go func() { consumer.Wake(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("wake waited behind allocation discovery")
+	}
+	select {
+	case <-owner.woke:
+	default:
+		t.Fatal("owner was not woken")
+	}
+}

@@ -79,11 +79,11 @@ func TestRetainedWorkReads(t *testing.T) {
 	}
 }
 
-func TestFinalizingReadDoesNotPublishResult(t *testing.T) {
+func TestCompletedReadPublishesResultBeforeSave(t *testing.T) {
 	f := newFixture(t)
 	admission, _ := f.finalize(t, "prepared")
 	turn, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, admission.TurnID)
-	if err != nil || turn.Status != "finalizing" || len(turn.Result) != 0 || turn.CompletionSaveID != nil {
+	if err != nil || turn.Status != "completed" || len(turn.Result) == 0 {
 		t.Fatalf("provisional result escaped: %+v %v", turn, err)
 	}
 }

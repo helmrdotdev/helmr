@@ -24,7 +24,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 		t.Fatal(err)
 	}
 	result := json.RawMessage(`{"answer":42}`)
-	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
+	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
 		t.Fatalf("prepared result reported terminal: %s %v", outcome, err)
 	}
 	var save computer.SaveRequest
@@ -36,7 +36,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 		t.Fatalf("close replay: %v", err)
 	}
 	for range 2 {
-		if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
+		if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
 			t.Fatalf("pending replay: %s %v", outcome, err)
 		}
 	}
@@ -54,7 +54,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained")
@@ -105,7 +105,7 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	cp := checkpointStorageForSaveFixture(t, s)

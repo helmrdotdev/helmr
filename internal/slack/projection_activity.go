@@ -63,8 +63,6 @@ func (t activityTask) presentation() (string, string) {
 		return "in_progress", "Queued."
 	case "running":
 		return "in_progress", "Working."
-	case "finalizing":
-		return "in_progress", "Saving work."
 	}
 	return "in_progress", "Status unavailable."
 }
@@ -81,7 +79,7 @@ func projectActivity(ctx context.Context, tx pgx.Tx, o projectionOwner, authoriz
  FROM slack_thread_sources src JOIN sessions s ON (s.environment_id,s.id)=(src.environment_id,src.session_id)
  JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id) JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  LEFT JOIN session_processes p ON (p.environment_id,p.session_id,p.epoch)=(s.environment_id,s.id,t.process_epoch) AND p.fenced_at IS NULL
- WHERE src.thread_id=$1 AND s.parent_session_id=$2 AND (t.created_at>=$3 OR t.status IN ('queued','running','finalizing')) ORDER BY t.created_at,t.id`, o.thread, o.front, authorized)
+ WHERE src.thread_id=$1 AND s.parent_session_id=$2 AND (t.created_at>=$3 OR t.status IN ('queued','running')) ORDER BY t.created_at,t.id`, o.thread, o.front, authorized)
 	if err != nil {
 		return err
 	}

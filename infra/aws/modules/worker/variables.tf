@@ -435,15 +435,6 @@ variable "tags" {
   default     = {}
 }
 
-variable "computer_save_interval_seconds" {
-  description = "Explicit background Computer save interval; not a maximum data-loss guarantee."
-  type        = number
-  validation {
-    condition     = var.computer_save_interval_seconds > 0 && var.computer_save_interval_seconds <= 9223372036 && floor(var.computer_save_interval_seconds) == var.computer_save_interval_seconds
-    error_message = "computer_save_interval_seconds must be a positive whole number fitting a Go duration."
-  }
-}
-
 variable "computer_devices" {
   description = "Dedicated NBD device allowlist owned exclusively by this Worker."
   type        = list(string)
@@ -460,5 +451,15 @@ variable "computer_staging_mib" {
   validation {
     condition     = var.computer_staging_mib > 0 && floor(var.computer_staging_mib) == var.computer_staging_mib && var.computer_staging_mib <= 8796093022207
     error_message = "computer_staging_mib must be a positive whole MiB size representable in int64 bytes."
+  }
+}
+
+variable "warm_pool_size" {
+  description = "Caller-provisioned stopped standby count. Used Workers never return to standby."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.warm_pool_size >= 0 && floor(var.warm_pool_size) == var.warm_pool_size
+    error_message = "warm_pool_size must be a non-negative integer."
   }
 }

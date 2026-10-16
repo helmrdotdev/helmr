@@ -59,11 +59,13 @@ const sessionActivityColumn = `jsonb_build_object(
  FROM session_processes p WHERE p.environment_id=sessions.environment_id AND p.session_id=sessions.id ORDER BY p.epoch DESC LIMIT 1))`
 
 type HoldView struct {
-	ID        uuid.UUID
-	SessionID uuid.UUID
-	Scope     string
-	Reason    string
-	CreatedAt time.Time
+	RecoveryGap *RecoveryGap
+	Kind        string
+	ID          uuid.UUID
+	SessionID   uuid.UUID
+	Scope       string
+	Reason      string
+	CreatedAt   time.Time
 }
 
 type TurnView struct {
@@ -79,7 +81,6 @@ type TurnView struct {
 	Error            *TurnError
 	StartedAt        *time.Time
 	TerminalAt       *time.Time
-	CompletionSaveID *uuid.UUID
 }
 
 type SessionListRequest struct {
@@ -158,7 +159,7 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
  (WITH RECURSIVE ancestors AS (
    SELECT s.id,s.parent_session_id FROM sessions s WHERE s.environment_id=sessions.environment_id AND s.id=sessions.id
    UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=sessions.environment_id
-  ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
+  ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Kind',h.kind,'RecoveryGap',h.recovery_gap,'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
   FROM session_holds h JOIN ancestors a ON a.id=h.session_id
   WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since,` + sessionActivityColumn
 
@@ -244,15 +245,14 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
 	return result, nil
 }
 
-// A prepared result is not a successful outcome. Expose it only after the own-save
-// transaction has committed completion; finalizing remains explicitly unfinished.
-const turnViewColumns = `id,session_id,seq,status,input,CASE WHEN status='completed' THEN result END,CASE WHEN status='completed' THEN response END,error_code,error_message,started_at,terminal_at,completion_save_id,payload_expired_at,(SELECT ` + processStopFields + ` FROM session_processes p WHERE p.environment_id=turns.environment_id AND p.session_id=turns.session_id AND p.stop_deadline_at IS NOT NULL AND (p.stop_turn_id=turns.id OR turns.status='queued') AND NOT EXISTS(SELECT 1 FROM session_processes newer WHERE newer.environment_id=p.environment_id AND newer.session_id=p.session_id AND newer.epoch>p.epoch))`
+// Result and response become visible atomically with the completion commit.
+const turnViewColumns = `id,session_id,seq,status,input,CASE WHEN status='completed' THEN result END,CASE WHEN status='completed' THEN response END,error_code,error_message,started_at,terminal_at,payload_expired_at,(SELECT ` + processStopFields + ` FROM session_processes p WHERE p.environment_id=turns.environment_id AND p.session_id=turns.session_id AND p.stop_deadline_at IS NOT NULL AND (p.stop_turn_id=turns.id OR turns.status='queued') AND NOT EXISTS(SELECT 1 FROM session_processes newer WHERE newer.environment_id=p.environment_id AND newer.session_id=p.session_id AND newer.epoch>p.epoch))`
 
 func scanTurn(row pgx.Row) (TurnView, error) {
 	var v TurnView
 	var code *string
 	var message, stop []byte
-	err := row.Scan(&v.ID, &v.SessionID, &v.Sequence, &v.Status, &v.Input, &v.Result, &v.Response, &code, &message, &v.StartedAt, &v.TerminalAt, &v.CompletionSaveID, &v.PayloadExpiredAt, &stop)
+	err := row.Scan(&v.ID, &v.SessionID, &v.Sequence, &v.Status, &v.Input, &v.Result, &v.Response, &code, &message, &v.StartedAt, &v.TerminalAt, &v.PayloadExpiredAt, &stop)
 	if err == nil && stop != nil {
 		err = json.Unmarshal(stop, &v.Stop)
 	}

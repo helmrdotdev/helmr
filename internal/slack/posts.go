@@ -59,8 +59,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		}
 		var credential int64
 		var authorized time.Time
-		var budget bool
-		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at,delivery_next_at<=clock_timestamp() FROM slack_installations WHERE id=$1`, installation).Scan(&credential, &authorized, &budget); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at FROM slack_installations WHERE id=$1`, installation).Scan(&credential, &authorized); err != nil {
 			return err
 		}
 		var root *string
@@ -110,7 +109,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 			stream.suppressed = true
 		}
 		isOpening := role == "opening" && opening != nil && *opening == publication && ordinal == 0
-		if !due || !budget || (root == nil && !isOpening) {
+		if !due || (root == nil && !isOpening) {
 			return nil
 		}
 		var blocked bool
@@ -174,6 +173,11 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		if statusAffectingStream(selected) && !deleted && statusBusy {
 			return nil
 		}
+		final := selected == "chat.stopStream" || (selected == "chat.update" && (role == "response" || stream.closed))
+		allowed, err := reserveDelivery(ctx, tx, installation, slackChannel, selected, final)
+		if err != nil || !allowed {
+			return err
+		}
 		digest := sha256.Sum256(frozen)
 		c := &PostClaim{TeamID: team, ChannelID: slackChannel, PostID: post, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Method: selected, Payload: frozen}
 		if err = tx.QueryRow(ctx, `UPDATE slack_posts SET status='sending',attempt_count=attempt_count+1,claim_epoch=claim_epoch+1,
@@ -185,9 +189,6 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 			if err = claimStreamLane(ctx, tx, c, env); err != nil {
 				return err
 			}
-		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_installations SET delivery_next_at=clock_timestamp()+interval '3 seconds' WHERE id=$1`, installation); err != nil {
-			return err
 		}
 		claim = c
 		return nil
@@ -257,7 +258,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		_, err := tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN 'failed' WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'suppressed' WHEN presentation_path='stream' AND inflight_method<>'chat.stopStream' AND closed_at IS NOT NULL THEN 'pending' WHEN desired_revision=inflight_revision THEN 'posted' ELSE 'pending' END,
  stream_state=CASE WHEN presentation_path='stream' THEN CASE WHEN inflight_method='chat.stopStream' THEN 'stopped' ELSE 'open' END ELSE stream_state END,
  confirmed_stream_text=COALESCE(inflight_stream_text,confirmed_stream_text),inflight_stream_text=NULL,
- confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,
+ confirmed_revision=inflight_revision,confirmed_at=clock_timestamp(),message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END
  WHERE id=$1`, claim.PostID, timestamp)
 		if err != nil {
@@ -274,8 +275,11 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET status='pending',claimed_until=NULL,next_attempt_at=clock_timestamp()+$2*interval '1 second',error='rate_limited' WHERE id=$1`, claim.PostID, retry.Seconds()); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE slack_installations SET delivery_next_at=GREATEST(delivery_next_at,clock_timestamp()+$2*interval '1 second') WHERE id=$1`, claim.InstallationID, retry.Seconds())
-		return err
+		method := claim.Method
+		if result.RateLimitMethod != "" {
+			method = result.RateLimitMethod
+		}
+		return recordMethodBackoff(ctx, tx, claim.InstallationID, method, retry)
 	case NotIssued:
 		code := result.Code
 		if code == "" {

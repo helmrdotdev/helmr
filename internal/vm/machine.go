@@ -68,6 +68,11 @@ const (
 	GuestControlActivation
 )
 
+// ErrCheckpointUncut proves a joined snapshot failure before any disk cut was
+// attempted, with the source hold retained. It permits source reconciliation,
+// never direct execution or inference from a caller timeout.
+var ErrCheckpointUncut = errors.New("checkpoint failed before disk cut")
+
 // CheckpointCapture owns one reversible VM hold. ResumeGuestControl permits only
 // guest control processing: the caller must keep member cgroups sealed until it
 // installs the Control Plane's exact abort grants. CompleteAbort releases the
@@ -152,6 +157,8 @@ type ComputerDisk struct {
 // Wait must return when its context is canceled. A rejected bind leaves ownership
 // with the caller; successful binding retains ownership even if launch fails.
 type ComputerDevice interface {
+	Changes() disk.VersionChanges
+	PinCommitted(context.Context) (disk.RetainedVersion, error)
 	Capture(context.Context) (disk.CapturedVersion, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
@@ -309,6 +316,11 @@ func (e *CleanupUnprovenError) Unwrap() error {
 	}
 	return e.Cause
 }
+
+// ErrInvalidCheckpointContent identifies a proven format/integrity failure or
+// intrinsic incompatibility after matching the checkpoint to its runtime. Target
+// placement, capacity, transport and startup failures must not use this marker.
+var ErrInvalidCheckpointContent = errors.New("checkpoint content is unusable")
 
 type CheckpointIdentity struct {
 	RuntimeBackend    string

@@ -36,7 +36,8 @@ func (f *saveHostFixture) Publish(context.Context, cas.Descriptor, *os.File) (ca
 
 type saveHostCapture struct{ f *saveHostFixture }
 
-func (c saveHostCapture) Root() disk.VersionRoot { return c.f.root }
+func (c saveHostCapture) Changes() disk.VersionChanges { return disk.VersionChanges{Generation: 1} }
+func (c saveHostCapture) Root() disk.VersionRoot       { return c.f.root }
 func (c saveHostCapture) Publish(ctx context.Context, _ disk.ContinuationPublication) error {
 	if c.f.blocked != nil {
 		close(c.f.blocked)
@@ -52,6 +53,10 @@ func (c saveHostCapture) Publish(ctx context.Context, _ disk.ContinuationPublica
 	}
 	return nil
 }
-func (c saveHostCapture) Adopt(context.Context, int) error            { return c.f.step("adopt") }
+func (c saveHostCapture) Adopt(context.Context) error                 { return c.f.step("adopt") }
 func (c saveHostCapture) Collect(context.Context, int) (int64, error) { return 0, nil }
 func (c saveHostCapture) Release()                                    { _ = c.f.step("release") }
+
+func (c saveHostCapture) ReadyForRetirement() bool { return true }
+
+func (c saveHostCapture) BackRemotely(context.Context, int) error { return c.f.step("back_remotely") }

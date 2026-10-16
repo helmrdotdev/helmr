@@ -324,10 +324,13 @@ func TestLocalVersionExhaustedBudgetReopens(t *testing.T) {
 	if _, err = p.Flush(t.Context()); err != nil {
 		t.Fatal("unchanged flush", err)
 	}
-	if _, err = p.WriteAt(t.Context(), []byte{3}, 7); err != nil {
-		t.Fatal(err)
+	if _, err = p.WriteAt(t.Context(), []byte{3}, 7); !errors.Is(err, ErrVersionStagingFull) {
+		t.Fatal("unreserved dirty write accepted", err)
 	}
-	if _, err = p.Flush(t.Context()); !errors.Is(err, ErrVersionStagingFull) {
+	if localByte(t, p) != 2 {
+		t.Fatal("rejected write changed acknowledged bytes")
+	}
+	if _, err = p.Flush(t.Context()); err != nil {
 		t.Fatal("new staging accepted", err)
 	}
 }

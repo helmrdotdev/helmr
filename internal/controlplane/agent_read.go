@@ -177,7 +177,7 @@ func agentSessionResponse(v session.SessionView) api.AgentSession {
 		result.InitialTurn = &api.AgentSessionInitialTurn{ID: v.InitialTurnID.String(), Status: *v.InitialTurnStatus}
 	}
 	for _, h := range v.Holds {
-		result.Holds = append(result.Holds, api.AgentSessionHold{ID: h.ID.String(), SessionID: h.SessionID.String(), Scope: h.Scope, Reason: h.Reason, CreatedAt: h.CreatedAt.UTC()})
+		result.Holds = append(result.Holds, api.AgentSessionHold{ID: h.ID.String(), SessionID: h.SessionID.String(), Scope: h.Scope, Kind: h.Kind, RecoveryGap: agentRecoveryGapResponse(h.RecoveryGap), Reason: h.Reason, CreatedAt: h.CreatedAt.UTC()})
 	}
 	return result
 }
@@ -189,7 +189,7 @@ func agentTurnResponse(v session.TurnView) api.AgentTurn {
 	if failure != nil && v.PayloadExpiredAt != nil {
 		failure.Message = nil
 	}
-	return api.AgentTurn{Stop: agentStopResponse(v.Stop), PayloadExpiredAt: agentUTCTime(v.PayloadExpiredAt), Error: failure, ID: v.ID.String(), SessionID: v.SessionID.String(), Sequence: v.Sequence, Status: v.Status, Input: v.Input, Result: v.Result, Response: v.Response, StartedAt: agentUTCTime(v.StartedAt), TerminalAt: agentUTCTime(v.TerminalAt), CompletionSaveID: agentOptionalID(v.CompletionSaveID)}
+	return api.AgentTurn{Stop: agentStopResponse(v.Stop), PayloadExpiredAt: agentUTCTime(v.PayloadExpiredAt), Error: failure, ID: v.ID.String(), SessionID: v.SessionID.String(), Sequence: v.Sequence, Status: v.Status, Input: v.Input, Result: v.Result, Response: v.Response, StartedAt: agentUTCTime(v.StartedAt), TerminalAt: agentUTCTime(v.TerminalAt)}
 }
 
 func agentUTCTime(value *time.Time) *time.Time {
@@ -299,4 +299,15 @@ func parseSessionListCursor(r *http.Request, env uuid.UUID) (uuid.UUID, string, 
 	}
 	before, err := ids.Parse(cursor.Before)
 	return before, filter, err
+}
+
+func agentRecoveryGapResponse(v *session.RecoveryGap) *api.AgentRecoveryGap {
+	if v == nil {
+		return nil
+	}
+	ids := make([]string, len(v.AffectedTurnIDs))
+	for i, id := range v.AffectedTurnIDs {
+		ids[i] = id.String()
+	}
+	return &api.AgentRecoveryGap{HoldID: v.HoldID.String(), ComputerID: v.ComputerID.String(), LeaseEpoch: v.LeaseEpoch, RecoverySaveID: agentOptionalID(v.RecoverySaveID), RestoredAt: agentUTCTime(v.RestoredAt), AffectedTurnIDs: ids, AffectedTurnCount: v.AffectedTurnCount}
 }

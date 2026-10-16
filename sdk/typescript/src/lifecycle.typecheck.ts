@@ -1,4 +1,4 @@
-import type { CommandCancelReceipt, CommandRef, CommandInfo, Computer, Duration, Retention, Message, TurnOutcome, SessionEvent, SessionRef, ComputerRef } from "./index"
+import type { CommandCancelReceipt, CommandRef, CommandInfo, Computer, ComputerLossInterruption, Duration, Retention, Message, TurnOutcome, SessionEvent, SessionRef, ComputerRef } from "./index"
 import { isHelmrError, ContentError } from "./index"
 
 export function lifecycleTypes(outcome: TurnOutcome<{ count: number }>, command: CommandInfo, computer: Computer, event: SessionEvent, message: Message, error: unknown, session: SessionRef, ref: ComputerRef) {
@@ -21,6 +21,13 @@ export function lifecycleTypes(outcome: TurnOutcome<{ count: number }>, command:
   if (command.status === "cancelled") { const kind: "cancelled" = command.outcome.kind; void kind }
   if (computer.residency === "unavailable") { const reason: string = computer.error.code; void reason }
   if (event.kind === "turn.output") { const text = event.data[0]; void text }
+  if (event.kind === "turn.interrupted" && event.data.reason === "computer_execution_lost") {
+    const cause: ComputerLossInterruption = event.data
+    const recoveryGap: boolean = cause.recoveryGap
+    // @ts-expect-error Computer loss cannot be narrowed to a different reason.
+    const reason: "user_cancelled" = cause.reason
+    void recoveryGap; void reason
+  }
   if (event.kind === "message.rejected") { const delivery: "uncertain" | "not_delivered" = event.data.delivery; void delivery }
   if (message.source.kind === "session") { const id: string = message.source.requesterSessionId; void id }
   if (isHelmrError(error)) { const code: string = error.code; void code }

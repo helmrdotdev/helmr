@@ -29,11 +29,12 @@ const (
 )
 
 type DeliveryResult struct {
-	Disposition Disposition
-	ViewID      string
-	Timestamp   string
-	Code        string
-	RetryAfter  time.Duration
+	Disposition     Disposition
+	ViewID          string
+	Timestamp       string
+	Code            string
+	RetryAfter      time.Duration
+	RateLimitMethod string
 }
 
 // WebClient makes one exact request. It never retries content mutations, even

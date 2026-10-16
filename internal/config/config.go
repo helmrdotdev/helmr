@@ -96,7 +96,6 @@ type Worker struct {
 	LogChunkBytes             int64
 	LogBufferBytes            int64
 	LogBufferRecords          int64
-	ComputerSaveEvery         time.Duration
 	ComputerDevices           []string
 	ComputerStagingMiB        int64
 	ControlPlaneURL           string

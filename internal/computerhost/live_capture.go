@@ -22,12 +22,12 @@ func captureComputerSave(ctx context.Context, machine liveCaptureMachine, comput
 		return nil, err
 	}
 	if snapshot == nil || snapshot.Capture == nil {
-		return nil, errors.New("live Computer capture is missing")
+		return nil, &saveProtocolError{errors.New("live Computer capture is missing")}
 	}
 	capture, ok := snapshot.Capture.(computerSaveCapture)
 	if !ok || snapshot.ComputerID != computerID {
 		snapshot.Capture.Release()
-		return nil, errors.New("live Computer capture differs from save owner")
+		return nil, &saveProtocolError{errors.New("live Computer capture differs from save owner")}
 	}
 	return capture, nil
 }

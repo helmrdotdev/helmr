@@ -17,7 +17,7 @@ import (
 
 var ErrResponseAlreadyStaged = errors.New("response already staged")
 
-// Output is durable progress, independent of the result's mandatory own save.
+// Output is durable progress, independent of background Computer saves.
 // The same operation returns its original sequence, including after settlement.
 func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, operation uuid.UUID, raw json.RawMessage) (int64, error) {
 	value, err := content.Content(raw, true)

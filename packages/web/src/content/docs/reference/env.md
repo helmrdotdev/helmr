@@ -54,7 +54,7 @@ no implicit defaults. Set positive integer values appropriate for your deploymen
 | `ENVIRONMENT_MAX_CPU_MILLIS` | Bound on physical whole-vCPU reservations, in millicores. A fractional request rounds up: `cpu: 0.5` reserves 1000 millicores. A non-multiple of 1000 leaves its remainder unusable. Rejects fresh Computers that cannot fit; aggregate allocation enforcement is pending. |
 | `ENVIRONMENT_MAX_MEMORY_BYTES` | Rejects a Computer larger than this memory bound; aggregate allocation enforcement is pending. |
 | `ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES` | Bound on reserved logical Computer storage. Each Computer reserves 32 GiB; a lower bound rejects fresh Computer creation. |
-| `ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS` | Maximum queued, running and finalizing Turns. |
+| `ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS` | Maximum queued and running Turns. |
 | `ENVIRONMENT_MAX_CAUSAL_DEPTH` | Maximum immutable requester ancestry for created Sessions. |
 | `ENVIRONMENT_ADMISSION_RATE_PER_SECOND` | Refill rate for new Turn admission tokens. |
 | `ENVIRONMENT_ADMISSION_BURST` | Maximum admission tokens; one new Turn consumes one token. |

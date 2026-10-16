@@ -110,6 +110,7 @@ type saveObjectScope struct {
 	allowedKeys      map[string]bool
 	writeKey         string
 	baseRoot         pgtype.UUID
+	children         map[string]saveChild
 }
 
 func saveStorageInput(message string) error { return fmt.Errorf("%w: %s", ErrInvalidInput, message) }
@@ -215,9 +216,6 @@ func (s saveObjectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspectio
 		return err
 	}
 	if !row.Certified.Bool {
-		if err = s.recordGraph(ctx, tx, object); err != nil {
-			return err
-		}
 		q := db.New(tx)
 		if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: s.orgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
 			return err
@@ -376,6 +374,16 @@ func (s saveObjectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object 
 }
 
 func (s saveObjectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
+	if s.children != nil {
+		child, ok := s.children[digest]
+		if !ok {
+			return blockformat.ObjectInspection{}, ErrNotReady
+		}
+		if child.size != size || child.rank != rank {
+			return blockformat.ObjectInspection{}, saveObjectConflict("child object geometry differs from its reference")
+		}
+		return child.inspection, nil
+	}
 	var raw []byte
 	var storedSize int64
 	var storedRank int
@@ -419,7 +427,8 @@ func (s saveObjectScope) requireAdmittedObject(ctx context.Context, tx pgx.Tx, d
 	}
 	var admitted bool
 	err := tx.QueryRow(ctx, `WITH RECURSIVE retained(digest,rank) AS (
-      SELECT pack_digest,pack_rank FROM disk_roots WHERE environment_id=$1 AND id=$5
+      SELECT pack_digest,pack_rank FROM disk_roots WHERE environment_id=$1 AND
+ (id=$5 OR id IN (SELECT root_id FROM computer_saves WHERE environment_id=$1 AND computer_id=$3 AND computer_lease_epoch=$4 AND status='published' AND root_id IS NOT NULL))
     ), ancestors(digest) AS (
       SELECT $2::text UNION SELECT e.parent_digest FROM disk_object_edges e JOIN ancestors a ON e.child_digest=a.digest WHERE e.environment_id=$1
     ), source(digest,rank) AS (

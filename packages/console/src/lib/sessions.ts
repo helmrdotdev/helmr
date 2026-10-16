@@ -26,6 +26,8 @@ export type Session = {
     session_id: string;
     scope: "local" | "subtree";
     reason: string;
+    kind: "control" | "recovery_gap" | "storage_pressure";
+    recovery_gap?: RecoveryGap;
     created_at: string;
   }[];
 };
@@ -37,7 +39,6 @@ export type SessionTurn = {
   status:
     | "queued"
     | "running"
-    | "finalizing"
     | "completed"
     | "failed"
     | "interrupted"
@@ -49,7 +50,6 @@ export type SessionTurn = {
   response?: import("../../../../sdk/typescript/src/content").Content;
   started_at?: string;
   terminal_at?: string;
-  completion_save_id?: string;
 };
 type SessionTurnPage = { turns: SessionTurn[]; next_cursor?: string };
 export type SessionEvent = {
@@ -207,4 +207,40 @@ export function messageDeliveryNotice(event: SessionEvent): string | undefined {
 
 export function interruptTurn(address: SessionAddress, turnID: string, input: { idempotency_key: string }): Promise<SessionReceipt> {
   return postJson(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}/interrupt`, input);
+}
+
+// Reconnection always refreshes durable snapshots; hints need no event cursor.
+export function watchSession(address: SessionAddress, changed: () => void): () => void {
+  const source = new EventSource(`${sessionAPIPath(address)}/updates`, { withCredentials: true });
+  source.addEventListener("change", changed);
+  return () => source.close();
+}
+
+export type RecoveryGap = {
+  holdId: string;
+  computerId: string;
+  leaseEpoch: number;
+  recoverySaveId: string | null;
+  restoredAt: string | null;
+  affectedTurnIds: string[];
+  affectedTurnCount: number;
+};
+
+export function recoveryGapNotice(gap: RecoveryGap): string {
+  const point = gap.restoredAt ? new Date(gap.restoredAt).toLocaleString() : "the initial work environment";
+  return `This Computer was restored to ${point}. File changes and native conversation history for ${gap.affectedTurnCount} completed requests in this conversation may be missing. Replies remain available. Completed requests will not run again.`;
+}
+
+export function resumeSession(address: SessionAddress, input: { idempotency_key: string; hold_id: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/resume`, input);
+}
+
+export function storagePressureNotice(event: SessionEvent): string | undefined {
+  if (event.kind !== "session.storage_pressure" || event.data === null || typeof event.data !== "object" || Array.isArray(event.data)) return undefined;
+  switch ("state" in event.data ? event.data["state"] : undefined) {
+    case "paused": return "Work was paused while storage was full.";
+    case "stopped": return "The request was stopped because storage stayed full. Local changes are retained while this environment remains available; recovery may omit changes not yet saved.";
+    case "resolved": return "Storage recovered and queued work was allowed to continue. Stopped requests were not restarted automatically.";
+    default: return undefined;
+  }
 }

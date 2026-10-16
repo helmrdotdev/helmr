@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,10 +51,12 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	done := make(chan error, 3)
-	go func() { done <- RunRequests(ctx, f.Pool, nil, config, client, log) }()
-	go func() { done <- RunProjection(ctx, f.Pool, config, log) }()
-	go func() { done <- RunDelivery(ctx, f.Pool, client, log) }()
+	changes := dbnotify.New()
+	done := make(chan error, 4)
+	go func() { done <- changes.Run(ctx, f.Pool.Config().ConnConfig, log) }()
+	go func() { done <- RunRequests(ctx, f.Pool, nil, config, client, log, changes) }()
+	go func() { done <- RunProjection(ctx, f.Pool, config, log, changes) }()
+	go func() { done <- RunDelivery(ctx, f.Pool, client, log, changes) }()
 	defer func() {
 		if t.Failed() {
 			var state string
@@ -61,7 +64,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 			t.Log("pipeline state", state, err)
 		}
 		cancel()
-		for range 3 {
+		for range 4 {
 			if err := <-done; !errors.Is(err, context.Canceled) {
 				t.Errorf("worker did not join cancellation: %v", err)
 			}

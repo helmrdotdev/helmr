@@ -29,18 +29,33 @@ interrupted Turn is never replayed for it but may be retried by a person. See
 
 | Moment | What is saved |
 | --- | --- |
-| After a Turn's handler returns | The Computer's disk. The Turn becomes `completed` only after this save is stored durably. |
-| Periodically while the Computer runs | The Computer's disk, on an interval the operator configures. This can happen in the middle of a Turn. |
+| After the Computer's files change | A background save is scheduled after a short quiet period, with a maximum scheduling wait while changes continue. This also runs during a Turn or Command. |
+| After a Turn completes | Its completed result is tracked until a background save covers its file changes. The reply does not wait for saving. |
 | When an idle Session hibernates | The Computer's memory, processes and disk. |
 
-A Turn that returns moves to `finalizing` while its save is written, then to
-`completed`. If the save cannot be stored, the Turn ends `interrupted` instead.
-A Turn that throws ends `failed` without a save of its own; its disk changes
-are kept on the running Computer and saved by the next save.
+A completed Turn retains its result and response independently of disk saves.
+Helmr retries a failed save while work continues, as long as local staging has
+room. A save failure does not change a completed Turn to interrupted. A Turn
+that throws ends `failed` without a save of its own; its disk changes remain on
+the running Computer and can be included in a later save.
 
-A [Command](/docs/concepts/computers#commands) does not trigger a save when it
-finishes. Its changes are saved by the next periodic save, Turn save or
-hibernation.
+If local storage fills, new requests wait while Helmr keeps saving. While the
+execution environment remains healthy and authorized, a continuous storage pause
+is shown after 30 seconds and a running request is stopped after five minutes.
+Blocking I/O can cause execution to be lost earlier; those cases follow the
+process or Computer recovery rules below. Stopped requests are not replayed.
+
+Cooperative stops retain their normal time limits while storage is blocked.
+A process that cannot stop within its limit requires reconstruction and
+acknowledgement. Local changes remain available only while that environment is
+retained; recovery can omit changes that have not been saved. A manual Resume
+does not bypass a storage pause. When storage clears on a healthy environment,
+queued work can continue automatically.
+
+A [Command](/docs/concepts/computers#commands) does not trigger a separate save
+when it finishes. Its file changes use the same background autosave. Autosave
+does not periodically flush idle Computers. A newly completed Turn still needs
+a save receipt even when it made no file changes.
 
 Saves are stored encrypted. Each save replaces the previous one as the
 Computer's current state; there is no history of earlier saves to roll back to.
@@ -119,12 +134,31 @@ export const coder = agent({
 A Computer that is hibernated when its worker is lost keeps its saved memory,
 processes and disk and resumes normally.
 
-If the worker is lost while the Computer is running, the running Turn ends
-`interrupted` and the Session is held, as with process loss. The Computer
-reports `unavailable` residency with the error code
-`computer_recovery_required`, and Sessions on it cannot run again: this release
-has no operation that brings such a Computer back. Start new work on a new
-Computer.
+If the worker is lost while the Computer is running, Helmr physically fences
+the old writer before restoring the latest eligible saved disk into a new
+allocation. It starts new Session processes, so `init` runs again; memory and
+live process state are not reconstructed from a disk save. If no eligible
+save has ever been published, Helmr can use that Computer's retained initial
+work environment. An unavailable newer save is not replaced with an older or
+initial image.
+
+If completed requests were not covered by the restored save, Helmr holds every
+attached conversation and shows the restore point and the number of affected
+completed requests in that conversation. Their file changes and native
+conversation history may be missing; their committed results and replies
+remain available. Choose Resume in Console, resume the exact hold through the
+SDK or CLI, or send a new Slack mention after the recovery notice. This
+acknowledges only the recovery hold for that conversation; other holds remain.
+Completed handlers never run again automatically.
+
+When no completed work is missing, restoration needs no recovery-gap
+acknowledgement and queued requests continue automatically. A request that was
+still running ends as interrupted. Its Slack thread receives one message asking
+you to mention the agent again; Console shows the interrupted outcome. If a
+recovery-gap notice already explains that loss, Helmr does not send a second
+interruption notice. Interrupted work is never replayed. If the retained disk or
+its encryption keys are unavailable, the Computer remains unavailable rather
+than silently using a different environment.
 
 ## Limits
 

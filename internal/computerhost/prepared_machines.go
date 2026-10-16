@@ -44,7 +44,6 @@ type PreparedMachines struct {
 	ComputerHelper       string
 	ComputerDevices      []string
 	ComputerStagingBytes int64
-	ComputerSaveEvery    time.Duration
 	TempDir              string
 	Log                  *slog.Logger
 	Reservations         *reservation.Ledger

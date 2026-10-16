@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -119,6 +120,8 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 	}
 
 	switch e.kind {
+	case "session.recovery_gap", "session.storage_pressure":
+		return projectRecoveryNotice(ctx, tx, o, e)
 	case "message.rejected":
 		return projectMessageFailure(ctx, tx, o, e)
 	case "turn.output":
@@ -130,7 +133,7 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 		if e.turn == nil {
 			return errors.New("the Slack completion has no Turn")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate'`, o.participant, *e.turn); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()),next_attempt_at=CASE WHEN error='rate_limited' THEN next_attempt_at ELSE LEAST(next_attempt_at,clock_timestamp()) END WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate'`, o.participant, *e.turn); err != nil {
 			return err
 		}
 		var response []byte
@@ -142,7 +145,7 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 		}
 		return projectContent(ctx, tx, o, e, "response", response, true, nil)
 	case "ask.created":
-		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate'`, o.participant, e.turn); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()),next_attempt_at=CASE WHEN error='rate_limited' THEN next_attempt_at ELSE LEAST(next_attempt_at,clock_timestamp()) END WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate'`, o.participant, e.turn); err != nil {
 			return err
 		}
 		if o.session != o.front {
@@ -162,13 +165,25 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 	case "ask.answered", "ask.cancelled":
 		return projectQuestionState(ctx, tx, o, e)
 	case "turn.failed", "turn.interrupted", "turn.cancelled", "session.closed", "session.cancelled":
-		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND role='intermediate' AND ($2::uuid IS NULL OR turn_id=$2)`, o.participant, e.turn); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()),next_attempt_at=CASE WHEN error='rate_limited' THEN next_attempt_at ELSE LEAST(next_attempt_at,clock_timestamp()) END WHERE thread_source_id=$1 AND role='intermediate' AND ($2::uuid IS NULL OR turn_id=$2)`, o.participant, e.turn); err != nil {
 			return err
 		}
-		if e.kind != "turn.failed" {
+		text := "Execution failed. View details in Console."
+		if e.kind == "turn.interrupted" {
+			var cause session.ComputerLossInterruption
+			if err := json.Unmarshal(e.data, &cause); err != nil {
+				return err
+			}
+			// The event-time gap fact survives acknowledgement before projection.
+			// Its existing notice already asks the user to continue.
+			if cause.Reason != session.ComputerExecutionLost || cause.RecoveryGap {
+				return nil
+			}
+			text = "This request was interrupted because its work environment was lost. Mention me to try again."
+		} else if e.kind != "turn.failed" {
 			return nil
 		}
-		content, _ := json.Marshal([]map[string]string{{"type": "text", "text": "Execution failed. View details in Console."}})
+		content, _ := json.Marshal([]map[string]string{{"type": "text", "text": text}})
 		return projectContent(ctx, tx, o, e, "lifecycle", content, false, nil)
 	}
 	return nil
@@ -324,7 +339,7 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 			return err
 		}
 		if ordinal < len(rendered)-1 {
-			if _, err = tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND post_key=$2 AND continuation_ordinal=$3`, o.participant, key, ordinal); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()),next_attempt_at=CASE WHEN error='rate_limited' THEN next_attempt_at ELSE LEAST(next_attempt_at,clock_timestamp()) END WHERE thread_source_id=$1 AND post_key=$2 AND continuation_ordinal=$3`, o.participant, key, ordinal); err != nil {
 				return err
 			}
 		}

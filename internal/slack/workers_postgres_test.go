@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
 	"net/http"
@@ -59,7 +60,9 @@ func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- RunDelivery(ctx, f.Pool, client, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	go func() {
+		done <- RunDelivery(ctx, f.Pool, client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
+	}()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -67,7 +70,7 @@ func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.
 	}
 	peer.post(t, 1, "peer", "lifecycle", nil)
 	// Advance only the durable pacing gate; the first claim remains live.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1`, f.installation)
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1`, f.installation)
 	select {
 	case <-progressed:
 	case <-time.After(5 * time.Second):

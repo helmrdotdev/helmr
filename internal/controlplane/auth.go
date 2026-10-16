@@ -333,3 +333,5 @@ func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
 	writeError(w, unauthorized(errors.New("worker authentication is required")))
 	return true
 }
+
+func (w *sessionRefreshResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

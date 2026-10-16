@@ -328,6 +328,11 @@ func TestPreparationOutputOutageDoesNotBlockPublication(t *testing.T) {
 				backend.authored.Add(1)
 				expires.Store(request.ExpiresAtUnixNano)
 			}
+			// The guest long-poll waits for completion or its 30-second
+			// observation deadline; a hot fake loop would freeze synctest time.
+			if request.WaitForCompletion {
+				time.Sleep(min(30*time.Second, max(0, 70*time.Second-time.Since(startedAt))))
+			}
 			response := &computerv0.PreparationControlResponse{State: "absent"}
 			if backend.authored.Load() != 0 {
 				if !time.Unix(0, expires.Load()).After(time.Now()) {

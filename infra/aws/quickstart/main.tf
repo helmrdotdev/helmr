@@ -16,8 +16,7 @@ locals {
     nested_virtualization = var.worker_enable_nested_virtualization
     supply = {
       computer = {
-        save_interval_seconds = var.worker_computer_save_interval_seconds
-        devices               = var.worker_computer_devices
+        devices = var.worker_computer_devices
       }
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
@@ -213,9 +212,8 @@ module "controlplane" {
 module "worker_group" {
   for_each = var.create_worker ? toset(keys(local.worker_generation_specs)) : toset([])
 
-  source                         = "../modules/worker"
-  computer_save_interval_seconds = local.worker_generations[each.key].generation_inputs.supply.computer.save_interval_seconds
-  computer_devices               = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  source           = "../modules/worker"
+  computer_devices = local.worker_generations[each.key].generation_inputs.supply.computer.devices
 
   name                                            = local.worker_generations[each.key].provider_name
   worker_pool_name                                = each.key

@@ -1,3 +1,4 @@
+import { performanceCommandTimeout } from "./performance-model"
 import { interruptNativeTurn } from "./native-stop-driver"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 import assert from "node:assert/strict"
@@ -12,6 +13,9 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 // They only observe checkpoint readiness and ordinary Worker physical-stop
 // receipts; the driver never manufactures an allocation or a source fence.
 export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
+ const soakMS = Number(process.env["HELMR_NATIVE_PERFORMANCE_SOAK_MS"] ?? "0")
+ assert(Number.isSafeInteger(soakMS) && soakMS >= 0 && soakMS <= 900000, "performance soak must be 0–900000 milliseconds")
+ assert(!soakMS || options.performanceKind === "no-op", "performance soak uses the no-op native workload")
  const signal = AbortSignal.timeout(options.timeoutMs)
  const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
  const sessions: SessionRef[] = []
@@ -152,7 +156,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       // Claude may remove a redundant cd to its configured Session cwd before
       // asking. Accept only these two spellings of the same isolated workload.
       assert(input["command"] === command || input["command"] === `cd /workspace/${nativeSessions[provider]} && ${command}`)
-      assert.deepEqual(input, { command: input["command"], timeout: 120000, description: "Run the isolated performance workload" })
+      assert.deepEqual(input, { command: input["command"], timeout: performanceCommandTimeout(options.performanceKind), description: "Run the isolated performance workload" })
      } else {
       assert.equal(value["toolName"], "mcp__helmr__enqueue")
       assert.deepEqual(value["input"], { sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}` })
@@ -167,8 +171,9 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const timing = clientTimings.get(turn.id)
    if (timing) timing.settlementObservedMS = performance.now() - timing.requestStartedMS
    assert.equal(waiting.outcome.status, "completed", JSON.stringify(waiting.outcome))
+   const state = await turn.get({ signal })
+   assert.equal(state.status, "completed")
    assert.equal(answered.size, provider === "claude" ? 1 : 0)
-   const state = await turn.get({ signal }); assert(state.completionSaveId)
    await observeEvents(client.sessions.ref(turn.sessionId))
    if (options.performanceKind) {
     assert(timing && timing.runningObservedMS !== undefined && timing.firstOutputObservedMS !== undefined, "native client timing is incomplete")
@@ -231,6 +236,16 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    await finish(queued, provider, 2)
    }
   }
+  if (soakMS) {
+   // Keep the existing peer overwriting and verifying its fixed-size file while
+   // normal save/retention/reclamation loops run. Do not accelerate their clocks.
+   const startedAt = new Date().toISOString(), started = performance.now()
+   process.stderr.write(JSON.stringify({ performanceSoakStarted: { startedAt, requestedMS: soakMS } }) + "\n")
+   await delay(soakMS, undefined, { signal })
+   assert.equal((await holding.get({ signal })).status, "running")
+   for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
+   process.stderr.write(JSON.stringify({ performanceSoakCompleted: { startedAt, finishedAt: new Date().toISOString(), requestedMS: soakMS, elapsedMS: performance.now() - started } }) + "\n")
+  }
   let priorCheckpoint = ""
   let priorPeer: Record<string, unknown> | undefined
   for (let cycle = 1; cycle <= 2; cycle++) {
@@ -278,7 +293,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     assert.equal(handoff.sourceObservationExpired, true)
     process.stderr.write(JSON.stringify({ crossHostHandoff: handoff }) + "\n")
    }
-   if (options.checkpointFault) {
+   if (options.checkpointFault && cycle === 1) {
     await writeFile(options.checkpointObservations + ".fault-request.new", JSON.stringify({ checkpointId: checkpoint.checkpointId }), { flag: "wx", mode: 0o600 })
     await rename(options.checkpointObservations + ".fault-request.new", options.checkpointObservations + ".fault-request")
     let fault: { checkpointId: string; kind: string; role: string; originalDigest: string; corruptedDigest?: string; deleteMarkerVersionId?: string; observedAbsent?: boolean }
@@ -295,34 +310,22 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      assert(fault.corruptedDigest)
      assert.notEqual(fault.originalDigest, fault.corruptedDigest)
     } else { assert(fault.deleteMarkerVersionId); assert.equal(fault.observedAbsent, true) }
-    const queued = await Promise.all(["codex", "claude"].map(provider => native[provider]!.session.enqueue(fixtureInput(`${provider} held after checkpoint loss`), undefined, { signal })))
-    const holds: Record<string, string> = {}
-    for (const session of sessions) {
-     for (;;) {
-      const state = await session.get({ signal })
-      if (state.holds.length) {
-       assert.equal(state.holds.length, 1)
-       const hold = state.holds[0]!
-       assert.equal(hold.scope, "local")
-       assert.equal(hold.reason, "Computer execution authority lost without an eligible continuation")
-       holds[session.id] = hold.id
-       break
-      }
-      await delay(100, undefined, { signal })
-     }
-    }
-    // Observe the held state for a bounded 20-second window. Never resume the holds:
-    // this case proves no automatic reconstruction or accepted-input replay.
-    const heldAt = performance.now()
-    for (let sample = 0; sample < 20; sample++) {
-     for (const turn of queued) assert.equal((await turn.get({ signal })).status, "queued")
-     for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds.map(hold => hold.id), [holds[session.id]])
+    if (options.checkpointFault === "corrupt-config") {
+     const recovery = await peer.session.enqueue(fixtureInput("recover-check"), undefined, { signal })
+     assert.equal((await recovery.wait({ signal })).status, "completed")
+     const recovered = await recovery.get({ signal })
+     const value = recovered.result as Record<string, unknown>
+     assert.notEqual(value["nonce"], peerState["nonce"], "disk recovery reused lost RAM state")
+     assert.equal(value["count"], 0)
+     const retained = value["retained"] as Record<string, unknown>
+     assert.equal(retained["nonce"], peerState["nonce"])
+     assert.equal(retained["count"], peerState["count"])
+     for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds, [])
      for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
-     await delay(1000, undefined, { signal })
-    }
-    process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns,
-     checkpointLoss: { checkpoint, fault, holds, queuedTurns: await Promise.all(queued.map(turn => turn.get({ signal }))), heldMs: performance.now() - heldAt } }) + "\n")
+     process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns,
+      checkpointLoss: { checkpoint, fault, recoveryTurnId: recovered.id, recovered: value } }) + "\n")
     return
+    }
    }
    // The long-idle case observes two hours with no unfenced lease before resuming.
    const releaseRequestToCheckpointObservedMS = performance.now() - releaseStartedMS
@@ -445,7 +448,6 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   } else {
    await holding.send(fixtureInput("release"), undefined, { signal }); peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
   }
-  assert.equal(new Set(turns.map(turn => turn.completionSaveId)).size, turns.length)
   for (const state of turns) {
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)

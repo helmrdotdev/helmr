@@ -41,11 +41,11 @@ func verifyNativeSessionControls(ctx context.Context, pool *pgxpool.Pool, env uu
 	var valid bool
 	var observed json.RawMessage
 	err := pool.QueryRow(ctx, `SELECT COALESCE((
- interrupted.status='interrupted' AND interrupted.result IS NULL AND interrupted.completion_save_id IS NULL
- AND resumed.status='completed' AND resumed.completion_save_id IS NOT NULL
+ interrupted.status='interrupted' AND interrupted.result IS NULL
+ AND resumed.status='completed'
  AND resumed.process_epoch=interrupted.process_epoch
- AND exact.status='interrupted' AND exact.result IS NULL AND exact.completion_save_id IS NULL
- AND following.status='completed' AND following.completion_save_id IS NOT NULL
+ AND exact.status='interrupted' AND exact.result IS NULL
+ AND following.status='completed'
  AND following.process_epoch=exact.process_epoch AND exact.process_epoch=interrupted.process_epoch
  AND following.started_at>=exact.terminal_at
  AND h.scope='subtree' AND h.issuer_kind='session' AND h.issuer_id=$3

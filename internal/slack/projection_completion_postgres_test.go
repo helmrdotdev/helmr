@@ -3,7 +3,6 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,14 +52,15 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind != "failed" {
-				if outcome, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome != nil {
+				if outcome, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome == nil {
 					t.Fatalf("finalize: %s %v", outcome, err)
 				}
-				if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); !errors.Is(err, session.ErrNotReady) {
-					t.Fatalf("unpublished completion=%v", err)
+				// Completion and delivery intent are committed while the save
+				// remains requested. No storage fixture publication is needed.
+				var requested bool
+				if err := f.Pool.QueryRow(t.Context(), `SELECT status='requested' FROM computer_saves WHERE turn_id=$1`, turn).Scan(&requested); err != nil || !requested {
+					t.Fatal("save did not remain pending", requested, err)
 				}
-				f.projectAll(t)
-				assertResponses(0)
 			}
 			if kind == "failed" {
 				if _, err := session.RuntimeFail(t.Context(), f.Pool, host, execution, turn, session.TurnError{Code: "application_failure", Message: "PRIVATE_FAILURE"}, "callbacks drained"); err != nil {
@@ -70,20 +70,11 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				// Certified storage is fixture state here; the real Complete API remains
-				// responsible for the own-save gate, event and publication transaction.
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_saves s SET status='published',flush_acknowledged_at=statement_timestamp(),captured_at=statement_timestamp(),captured_root_digest=c.initial_root_digest,root_id=c.initial_root_id,capture_evidence='fixture cut',publication_evidence='fixture publication' FROM computers c WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.turn_id=$1`, turn)
-				for range 2 {
-					if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, turn); err != nil {
-						t.Fatal(err)
-					}
-				}
 			}
 			f.projectAll(t)
 			f.projectAll(t)
 			want := 1
-			if kind == "quiet" || kind == "cancelled" || kind == "failed" {
+			if kind == "quiet" || kind == "failed" {
 				want = 0
 			}
 			assertResponses(want)
@@ -111,7 +102,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 			})
 			settled := false
 			for range 20 {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp(); UPDATE slack_posts SET next_attempt_at=clock_timestamp(); UPDATE slack_threads SET next_attempt_at=clock_timestamp()`, pgx.QueryExecModeSimpleProtocol)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp(); UPDATE slack_method_limits SET retry_after=clock_timestamp(); UPDATE slack_posts SET next_attempt_at=clock_timestamp(); UPDATE slack_threads SET next_attempt_at=clock_timestamp()`, pgx.QueryExecModeSimpleProtocol)
 				if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 64); err != nil {
 					t.Fatal(err)
 				}
@@ -126,7 +117,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 				t.Fatalf("delivery did not settle: %v", calls)
 			}
 			joined := []byte(fmt.Sprint(calls))
-			if (kind == "quiet" || kind == "cancelled" || kind == "failed") && bytes.Contains(joined, []byte("committed answer")) {
+			if (kind == "quiet" || kind == "failed") && bytes.Contains(joined, []byte("committed answer")) {
 				t.Fatal("uncommitted response sent")
 			}
 			if (kind == "text" || kind == "stream" || kind == "stream-status-warning") && !bytes.Contains(joined, []byte("committed answer")) {

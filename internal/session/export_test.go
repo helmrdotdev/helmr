@@ -18,7 +18,6 @@ var (
 	LockSession                  = lockSession
 	ProcessStopTimeout           = processStopTimeout
 	ReconcileProcessStopDeadline = reconcileProcessStopDeadline
-	ReconcileSessionCompletion   = reconcileSessionCompletion
 	ReconcileSessionIdle         = reconcileSessionIdle
 	ReconcileSessionLifecycle    = reconcileSessionLifecycle
 	ReconcileTerminalSessionStop = reconcileTerminalSessionStop
