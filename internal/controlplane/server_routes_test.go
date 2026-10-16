@@ -78,6 +78,7 @@ GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turn
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/updates
 GET /api/projects/{project}/environments/{environment}/templates
 GET /api/projects/{project}/environments/{environment}/templates/{template}
 GET /api/projects/{project}/environments/{environment}/triggers
@@ -121,6 +122,7 @@ GET /v1/templates/{template}
 GET /v1/triggers
 GET /v1/triggers/{triggerID}
 GET /worker/v1/instance
+GET /worker/v1/updates
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/members/{userID}
