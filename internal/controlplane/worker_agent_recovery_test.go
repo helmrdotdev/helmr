@@ -77,8 +77,8 @@ func TestWorkerAgentStartupRecoveryFencesOnlyReportedPriorAllocations(t *testing
 		}
 	}
 	assertLease(true)
-	var holds int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
+	var holds, attention int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER (WHERE session_id=$1 AND scope='local' AND kind='control' AND released_at IS NULL AND recovery_computer_id IS NULL AND recovery_lease_epoch IS NULL) FROM session_holds`, f.Session).Scan(&holds, &attention); err != nil || holds != 1 || attention != 1 {
 		t.Fatalf("failure reconciliation %d %v", holds, err)
 	}
 	if row, err := q.ActivateWorkerHost(t.Context(), activation); err != nil || row.Status != "active" {

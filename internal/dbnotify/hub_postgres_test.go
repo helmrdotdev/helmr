@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestCommitRollbackAndListenerReconnect(t *testing.T) {
@@ -34,7 +36,7 @@ func TestCommitRollbackAndListenerReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `SELECT pg_notify('helmr_changes','session:example')`); err != nil {
+	if err := Notify(t.Context(), tx, "session:example"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -50,7 +52,7 @@ func TestCommitRollbackAndListenerReconnect(t *testing.T) {
 		t.Fatal("rollback notified")
 	case <-time.After(40 * time.Millisecond):
 	}
-	if _, err := database.Pool.Exec(t.Context(), `SELECT pg_notify('helmr_changes','session:example')`); err != nil {
+	if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error { return Notify(t.Context(), tx, "session:example") }); err != nil {
 		t.Fatal(err)
 	}
 	wait()
@@ -58,7 +60,7 @@ func TestCommitRollbackAndListenerReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait() // Reconnected listener wakes even if all offline notifications were lost.
-	if _, err := database.Pool.Exec(t.Context(), `SELECT pg_notify('helmr_changes','session:example')`); err != nil {
+	if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error { return Notify(t.Context(), tx, "session:example") }); err != nil {
 		t.Fatal(err)
 	}
 	wait()

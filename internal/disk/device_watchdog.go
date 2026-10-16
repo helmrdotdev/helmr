@@ -12,7 +12,7 @@ import (
 
 // ErrDeviceHung distinguishes an unresponsive operation from a deliberately
 // parked staging-pressure request. Kernel NBD timeouts cannot make this distinction.
-var ErrDeviceHung = errors.New("Computer device request made no progress")
+var ErrDeviceHung = errors.New("computer device request made no progress")
 
 const guestRequestHangLimit = 10 * time.Second
 

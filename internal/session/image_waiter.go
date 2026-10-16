@@ -89,6 +89,9 @@ func ExpireImageWaiter(ctx context.Context, pool db.TxBeginner, env, computerID 
 		if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, env, computerID); err != nil {
 			return err
 		}
+		if err = notifySessionsChanged(ctx, tx, env, after...); err != nil {
+			return err
+		}
 		return drainClosingSessions(ctx, tx, env, after)
 	}))
 }

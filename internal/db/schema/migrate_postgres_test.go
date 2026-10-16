@@ -267,8 +267,8 @@ func assertDatabaseConstraintBoundaries(
 	`).Scan(&triggerCount); err != nil {
 		t.Fatal(err)
 	}
-	if triggerCount != 13 {
-		t.Fatalf("application-owned PostgreSQL notification triggers = %d, want 13", triggerCount)
+	if triggerCount != 0 {
+		t.Fatalf("application-owned PostgreSQL triggers = %d, want 0", triggerCount)
 	}
 
 	var functionCount int
@@ -288,8 +288,8 @@ func assertDatabaseConstraintBoundaries(
 	`).Scan(&functionCount); err != nil {
 		t.Fatal(err)
 	}
-	if functionCount != 1 {
-		t.Fatalf("application-owned PostgreSQL notification functions = %d, want 1", functionCount)
+	if functionCount != 0 {
+		t.Fatalf("application-owned PostgreSQL functions = %d, want 0", functionCount)
 	}
 
 	var viewCount int

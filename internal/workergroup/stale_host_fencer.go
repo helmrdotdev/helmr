@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -342,7 +343,7 @@ func (transactions pgxStaleHostFenceTransactions) withinStaleHostFenceTransactio
 		return fmt.Errorf("begin stale worker fence transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if err := fn(db.New(tx)); err != nil {
+	if err := fn(notifyingStaleHostQueries{Queries: db.New(tx), tx: tx}); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -375,4 +376,18 @@ func staleHostFenceFailureBackoff(every, maximum time.Duration, failures int) ti
 		delay *= 2
 	}
 	return min(delay, maximum)
+}
+
+// The transition and its discovery hint share the fence transaction.
+type notifyingStaleHostQueries struct {
+	*db.Queries
+	tx pgx.Tx
+}
+
+func (q notifyingStaleHostQueries) RecheckAndFenceStaleWorkerHost(ctx context.Context, params db.RecheckAndFenceStaleWorkerHostParams) (db.RecheckAndFenceStaleWorkerHostRow, error) {
+	row, err := q.Queries.RecheckAndFenceStaleWorkerHost(ctx, params)
+	if err != nil {
+		return row, err
+	}
+	return row, dbnotify.Notify(ctx, q.tx, "dispatch")
 }

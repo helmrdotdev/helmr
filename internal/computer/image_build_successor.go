@@ -105,6 +105,9 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 		if !live {
 			return ErrNotReady
 		}
+		if err = notifyImageBuildChanged(ctx, tx, env, id); err != nil {
+			return err
+		}
 		result, err = ReadImageBuild(ctx, tx, env, id)
 		return err
 	})

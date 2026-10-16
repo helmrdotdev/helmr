@@ -89,11 +89,17 @@ func ReconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 			}
 			// A hibernated logical process may retain an already-fenced source lease.
 			// Reuse that exact evidence after its continuation becomes ineligible.
-			if _, err = tx.Exec(ctx, `UPDATE session_processes p SET status=CASE WHEN l.fenced_at IS NOT NULL THEN 'lost' WHEN p.status IN ('starting','ready') THEN 'stopping' ELSE p.status END,
+			changed, err := tx.Exec(ctx, `UPDATE session_processes p SET status=CASE WHEN l.fenced_at IS NOT NULL THEN 'lost' WHEN p.status IN ('starting','ready') THEN 'stopping' ELSE p.status END,
  fenced_at=COALESCE(p.fenced_at,l.fenced_at)
  FROM computer_leases l WHERE (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
- AND p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3`, env, e.SessionID, e.ProcessEpoch); err != nil {
+ AND p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND (p.status IN ('starting','ready') OR l.fenced_at IS NOT NULL)`, env, e.SessionID, e.ProcessEpoch)
+			if err != nil {
 				return err
+			}
+			if changed.RowsAffected() > 0 {
+				if err = notifySessionsChanged(ctx, tx, env, e.SessionID); err != nil {
+					return err
+				}
 			}
 		}
 		// Queued input remains admitted and inspectable. Image eligibility prevents

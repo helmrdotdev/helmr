@@ -94,7 +94,6 @@ func (p *LocalVersion) Capture(ctx context.Context) (*LocalCapture, error) {
 		}
 		p.request.Unlock()
 		lockGuestIO(ctx, &p.commit)
-		//lint:ignore SA2001 Wait for the preceding commit outside the request gate.
 		p.commit.Unlock()
 	}
 	defer p.commit.Unlock()

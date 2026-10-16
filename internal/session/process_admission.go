@@ -84,7 +84,10 @@ func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch
 	if err != nil {
 		return false, err
 	}
-	return changed.RowsAffected() == 1, nil
+	if changed.RowsAffected() == 0 {
+		return false, nil
+	}
+	return true, notifySessionsChanged(ctx, tx, env, session)
 }
 
 // LockInitialSessions discovers roots before the Computer lock. The
@@ -153,8 +156,8 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 			return err
 		}
 		var currentAttachment int64
-		var stopPending bool
-		if err := tx.QueryRow(ctx, `SELECT attachment_sequence,stop_deadline_at IS NOT NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment, &stopPending); err != nil {
+		var stopPending, alreadyReady bool
+		if err := tx.QueryRow(ctx, `SELECT attachment_sequence,stop_deadline_at IS NOT NULL,status='ready' FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment, &stopPending, &alreadyReady); err != nil {
 			return err
 		}
 		if currentAttachment != attachment {
@@ -184,6 +187,12 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 		// needed to finish restoration. Recheck that control authority after the
 		// process write; Dispatch still requires active physical authority.
 		_, err = lockRuntimeAuthority(ctx, tx, host, e)
-		return err
+		if err != nil {
+			return err
+		}
+		if alreadyReady {
+			return nil
+		}
+		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}))
 }

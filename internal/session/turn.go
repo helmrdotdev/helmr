@@ -152,7 +152,13 @@ func eventData(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, kin
         UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_event_seq-1 AS seq
     ) INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data)
       SELECT $1,$2,seq,$3,$4,$5 FROM allocated`, env, session, nullableID(turn), kind, data)
-	return err
+	if err != nil {
+		return err
+	}
+	if kind == "turn.output" {
+		return notifySessionReaders(ctx, tx, session)
+	}
+	return notifySessionsChanged(ctx, tx, env, session)
 }
 
 func digestJSON(input json.RawMessage) ([32]byte, error) {

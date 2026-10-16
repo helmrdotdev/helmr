@@ -70,6 +70,9 @@ func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.Hos
 		if err != nil {
 			return err
 		}
+		if err = notifySessionReaders(ctx, tx, e.SessionID); err != nil {
+			return err
+		}
 		if !slackContentNonempty(value) {
 			return nil
 		}

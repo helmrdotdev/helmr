@@ -99,6 +99,9 @@ func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 		if err != nil {
 			return err
 		}
+		if err := notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+			return err
+		}
 		return publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence)
 	}))
 }

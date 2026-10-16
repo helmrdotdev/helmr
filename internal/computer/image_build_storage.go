@@ -256,7 +256,10 @@ func (p *ImageBuildPublisher) Publish(ctx context.Context, host workergroup.Host
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='succeeded' WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID)
-		return err
+		if err != nil {
+			return err
+		}
+		return notifyImageBuildChanged(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 	}))
 }
 

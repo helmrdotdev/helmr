@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 )
@@ -26,7 +27,10 @@ func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, spec uuid.UU
 	if err != nil {
 		return false, err
 	}
-	return changed.RowsAffected() == 1, nil
+	if changed.RowsAffected() == 0 {
+		return false, nil
+	}
+	return true, notifyImageBuildChanged(ctx, tx, a.EnvironmentID, a.OwnerID)
 }
 
 // RecordImageBuildProxyTrust stores the attempt-scoped proxy CA of a build.
@@ -52,7 +56,10 @@ func DeliverImageBuild(ctx context.Context, tx pgx.Tx, env, build, spec uuid.UUI
 // TerminateImageBuild ends a build with an error code and wipes its proxy CA.
 func TerminateImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, code string) error {
 	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, build, code)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyImageBuildChanged(ctx, tx, env, build)
 }
 
 // FailRevokedImageBuild ends a live build that has exposed a revoked Secret.
@@ -61,7 +68,10 @@ func FailRevokedImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID)
    WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
     SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`, env, build)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyImageBuildChanged(ctx, tx, env, build)
 }
 
 // InsertLease records a new lease allocation in the acquiring state.
@@ -69,7 +79,10 @@ func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation) error {
 	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,status,
  reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,restored_from_save_id,disk_only_recovery)
  VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14,$15)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, r.CredentialDigest, r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom, r.DiskOnlyRecovery)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, r.EnvironmentID, r.OwnerID)
 }
 
 // DeliverLease records the first delivery of a lease to its host. It returns
@@ -89,27 +102,44 @@ func InitializeLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, ep
 	if err != nil {
 		return false, err
 	}
-	return changed.RowsAffected() == 1, nil
+	if changed.RowsAffected() == 0 {
+		return false, nil
+	}
+	return true, notifyComputerChanged(ctx, tx, env, computer)
 }
 
 // ActivateRestoredLease records the restore target lease as active once the
 // restore has committed.
 func ActivateRestoredLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
 	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, env, computer)
 }
 
 // MarkLeaseLost ends an unfenced lease whose physical owner is gone; only
 // physical proof may fence it later.
 func MarkLeaseLost(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
 	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, env, computer)
 }
 
 // FenceLease records physical proof that the lease's VM has stopped.
 func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64, evidence string) error {
-	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch, evidence)
-	return err
+	var host uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT worker_host_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch).Scan(&host)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch, evidence)
+	if err != nil {
+		return err
+	}
+	return dbnotify.Notify(ctx, tx, "dispatch", "worker:"+host.String())
 }
 
 // LoseLeaseCheckpoints settles the unfinished checkpoints owned by a lease
@@ -167,7 +197,7 @@ func CreateCheckpoint(ctx context.Context, tx pgx.Tx, c CheckpointStart) error {
 			return err
 		}
 	}
-	return nil
+	return notifyComputerChanged(ctx, tx, c.EnvironmentID, c.ComputerID)
 }
 
 // SealCheckpoint records that every captured member is frozen.
@@ -188,7 +218,10 @@ func CancelUnsealedCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint, s
 		return ErrConflict
 	}
 	_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySaveChanged(ctx, tx, env, save)
 }
 
 // BeginRestore advances the Computer's control version and records the
@@ -247,7 +280,10 @@ func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint
 // FailSave records why a save can no longer publish.
 func FailSave(ctx context.Context, tx pgx.Tx, env, save uuid.UUID, evidence string) error {
 	_, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2`, env, save, evidence)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySaveChanged(ctx, tx, env, save)
 }
 
 // RequestSave reserves the next save sequence of the Computer and records a
@@ -258,7 +294,10 @@ func RequestSave(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch 
 		return SaveRequest{}, err
 	}
 	err := tx.QueryRow(ctx, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING requested_at`, env, save.ID, computer, epoch, save.Sequence, turn).Scan(&save.RequestedAt)
-	return save, err
+	if err != nil {
+		return save, err
+	}
+	return save, notifyComputerChanged(ctx, tx, env, computer)
 }
 
 // MarkPreparationFailed records that a Computer's image never became ready

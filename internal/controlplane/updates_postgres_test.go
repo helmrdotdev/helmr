@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
@@ -82,6 +83,20 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 	scanner := bufio.NewScanner(response.Body)
 	if !scanner.Scan() || scanner.Text() != "event: change" {
 		t.Fatal("initial durable refresh missing", scanner.Text(), scanner.Err())
+	}
+	// A connected stream refreshes from a real operation's committed notification.
+	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stream-control"}); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := false
+	for scanner.Scan() {
+		if scanner.Text() == "event: change" {
+			refreshed = true
+			break
+		}
+	}
+	if !refreshed {
+		t.Fatalf("committed control did not refresh connected stream: %v", scanner.Err())
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM org_members WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	if _, err := f.Pool.Exec(t.Context(), `SELECT pg_notify('helmr_changes',$1)`, "session:"+f.Session.String()); err != nil {

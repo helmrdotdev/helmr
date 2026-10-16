@@ -117,5 +117,8 @@ func observeSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason s
 	}
 	// This is stop intent, never evidence that the physical process is absent.
 	_, err = tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 }

@@ -182,7 +182,6 @@ CASE
 END
 column computer_leases.save_retirement_seq bigint
 column computer_leases.status text not null
-column computer_leases.storage_pressure_observed_since timestamp with time zone
 column computer_leases.storage_pressure_since timestamp with time zone
 column computer_leases.vm_platform_id text not null
 column computer_leases.vm_vcpu_count integer not null
@@ -603,7 +602,9 @@ column session_holds.issuer_id uuid
 column session_holds.issuer_kind text not null default 'system'::text
 column session_holds.kind text not null default 'control'::text
 column session_holds.reason text not null
+column session_holds.recovery_computer_id uuid
 column session_holds.recovery_gap jsonb
+column session_holds.recovery_lease_epoch bigint
 column session_holds.released_at timestamp with time zone
 column session_holds.scope text not null
 column session_holds.session_id uuid not null
@@ -1532,12 +1533,17 @@ constraint session_events f FOREIGN KEY (environment_id, session_id, turn_id) RE
 constraint session_events p PRIMARY KEY (environment_id, session_id, seq)
 constraint session_events u UNIQUE (environment_id, session_id, turn_id, operation_id)
 constraint session_holds c CHECK ((issuer_kind = 'system'::text) = (issuer_id IS NULL))
+constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_computer_id IS NOT NULL))
 constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_gap IS NOT NULL))
+constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_lease_epoch IS NOT NULL))
 constraint session_holds c CHECK (issuer_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'system'::text]))
 constraint session_holds c CHECK (kind = ANY (ARRAY['control'::text, 'recovery_gap'::text, 'storage_pressure'::text]))
 constraint session_holds c CHECK (octet_length(reason) <= 4096)
+constraint session_holds c CHECK (recovery_lease_epoch > 0)
 constraint session_holds c CHECK (scope = ANY (ARRAY['local'::text, 'subtree'::text]))
+constraint session_holds f FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint session_holds f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
+constraint session_holds f FOREIGN KEY (environment_id, session_id, recovery_computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint session_holds p PRIMARY KEY (environment_id, id)
 constraint session_holds u UNIQUE (environment_id, session_id, id)
 constraint session_processes c CHECK (NOT stderr_end_complete OR stderr_ended)

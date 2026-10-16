@@ -248,7 +248,10 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
           AND (c.recovery_save_id IS NULL OR s.seq>(SELECT old.seq FROM computer_saves old WHERE old.environment_id=c.environment_id AND old.id=c.recovery_save_id))`, scope.environmentID, scope.computerID, scope.saveID); err != nil {
 			return err
 		}
-		return scope.requireWriter(ctx, tx, ref.Host)
+		if err = scope.requireWriter(ctx, tx, ref.Host); err != nil {
+			return err
+		}
+		return notifyComputerChanged(ctx, tx, pgvalue.MustUUIDValue(scope.environmentID), pgvalue.MustUUIDValue(scope.computerID))
 	}))
 }
 
@@ -389,7 +392,10 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 		return ErrNotReady
 	}
 	_, err = tx.Exec(ctx, `WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at) UPDATE computer_saves SET status='captured',flush_acknowledged_at=observed.at,captured_at=observed.at,captured_root_digest=decode(substring($3::text from 8),'hex'),capture_evidence=$4 FROM observed WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID, c.DiskRoot, c.Evidence)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, c.EnvironmentID, computer)
 }
 
 // The caller holds the supply and Computer locks and has irrevocably ended this
@@ -399,5 +405,8 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 func SettleLostSaves(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
 	_, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence='publication absent after writer authority ended'
  WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch=$3 AND status IN ('requested','captured')`, env, computer, epoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, env, computer)
 }

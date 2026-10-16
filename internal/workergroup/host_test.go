@@ -190,7 +190,7 @@ func TestFenceHostRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
 	for _, reason := range []string{"future_diagnostic", "worker_runtime_invalid", "capture_source_reclaimed", ""} {
 		t.Run(reason, func(t *testing.T) {
 			var input InputError
-			if err := FenceHost(t.Context(), db.New(nil), HostPrincipal{}, reason); !errors.As(err, &input) {
+			if err := FenceHost(t.Context(), nil, HostPrincipal{}, reason); !errors.As(err, &input) {
 				t.Fatalf("error = %v, want InputError", err)
 			}
 		})

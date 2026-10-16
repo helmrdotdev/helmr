@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -78,6 +79,9 @@ func receiveGesture(ctx context.Context, pool db.TxBeginner, gesture inboundGest
 		}
 		if !bytes.Equal(retained, digest[:]) {
 			return errGestureConflict
+		}
+		if result.ID == candidate && code == "" {
+			return dbnotify.Notify(ctx, tx, "slack_requests")
 		}
 		return nil
 	})

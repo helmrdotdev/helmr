@@ -93,6 +93,9 @@ func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
     VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "computer:"+computer.String(), deadline); err != nil {
 			return result, err
 		}
+		if err = notifyImageBuildChanged(ctx, tx, env, attempt); err != nil {
+			return result, err
+		}
 	} else if err != nil {
 		return result, err
 	}
@@ -338,7 +341,10 @@ func FailImageBuild(ctx context.Context, pool db.TxBeginner, host workergroup.Ho
 		}
 		_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3
    WHERE environment_id=$1 AND id=$2 AND status='running'`, ref.EnvironmentID, ref.ImageBuildID, code)
-		return err
+		if err != nil {
+			return err
+		}
+		return notifyImageBuildChanged(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 	}))
 }
 
@@ -384,5 +390,8 @@ func RecordImageBuildStopped(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, 
 	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,fenced_at=COALESCE(fenced_at,clock_timestamp()),fence_evidence=COALESCE(fence_evidence,$3),
   status=CASE WHEN status IN ('queued','running') THEN 'failed' ELSE status END,
   error_code=CASE WHEN status IN ('queued','running') THEN 'executor_stopped' ELSE error_code END WHERE environment_id=$1 AND id=$2 AND worker_host_id IS NOT NULL`, env, id, evidence)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyImageBuildChanged(ctx, tx, env, id)
 }

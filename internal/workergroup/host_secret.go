@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -70,7 +71,20 @@ type HostCredential struct {
 // are locked by the single authenticating statement. The host credential is
 // issued at now() read after that statement returns, so waiting for its locks
 // does not shorten the lifetime the host credential advertises.
-func IssueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
+func IssueHostCredential(ctx context.Context, txb db.TxBeginner, cfg HostAuthConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
+	var result HostCredential
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		var err error
+		result, err = issueHostCredential(ctx, db.New(tx), cfg, exchange, now)
+		if err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch")
+	})
+	return result, err
+}
+
+func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
 	if exchange.HostID == "" {
 		return HostCredential{}, invalidInput("worker_host_id is required")
 	}

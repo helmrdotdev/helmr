@@ -966,7 +966,6 @@ CREATE TABLE computer_leases (
     disk_only_recovery boolean NOT NULL DEFAULT false,
     save_retirement_seq bigint CHECK (save_retirement_seq > 0),
     storage_pressure_since timestamptz,
-    storage_pressure_observed_since timestamptz,
     delivered_at timestamptz,
     initialized_at timestamptz,
     reserved_cpu_millis bigint NOT NULL CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
@@ -1539,7 +1538,15 @@ CREATE TABLE session_holds (
     scope text NOT NULL CHECK (scope IN ('local', 'subtree')),
     reason text NOT NULL CHECK (octet_length(reason) <= 4096),
     kind text NOT NULL DEFAULT 'control' CHECK (kind IN ('control','recovery_gap','storage_pressure')),
+    recovery_computer_id uuid,
+    recovery_lease_epoch bigint CHECK (recovery_lease_epoch > 0),
     recovery_gap jsonb,
+    CHECK ((kind='recovery_gap') = (recovery_computer_id IS NOT NULL)),
+    CHECK ((kind='recovery_gap') = (recovery_lease_epoch IS NOT NULL)),
+    FOREIGN KEY (environment_id, session_id, recovery_computer_id)
+        REFERENCES sessions(environment_id, id, computer_id),
+    FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch)
+        REFERENCES computer_leases(environment_id, computer_id, epoch),
     CHECK ((kind='recovery_gap') = (recovery_gap IS NOT NULL)),
     issuer_kind text NOT NULL DEFAULT 'system' CHECK (issuer_kind IN ('user', 'api_key', 'session', 'system')),
     issuer_id uuid,
@@ -2176,90 +2183,3 @@ CREATE TABLE slack_method_limits (
     retry_after timestamptz NOT NULL,
     PRIMARY KEY (installation_id, method)
 );
-
--- Notifications are transaction-commit hints. Consumers subscribe before their
--- durable scan and repeat the scan after reconnecting; payloads carry no data.
-CREATE FUNCTION notify_work_change() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE host uuid; conversation uuid; env uuid; machine uuid; watched text[];
-BEGIN
-    IF TG_OP='UPDATE' THEN
-        watched := CASE TG_TABLE_NAME
-            WHEN 'sessions' THEN ARRAY['status','computer_id','authority_generation']
-            WHEN 'turns' THEN ARRAY['status']
-            WHEN 'session_holds' THEN ARRAY['released_at']
-            WHEN 'session_processes' THEN ARRAY['status','control_sequence','stop_sequence','control_acknowledged_at','fenced_at']
-            WHEN 'computer_saves' THEN ARRAY['status']
-            WHEN 'computer_leases' THEN ARRAY['status','fenced_at']
-            WHEN 'computers' THEN ARRAY['initial_root_id','recovery_save_id']
-            WHEN 'image_builds' THEN ARRAY['status','worker_host_id']
-            WHEN 'worker_hosts' THEN ARRAY['status','current_epoch']
-            WHEN 'slack_posts' THEN ARRAY['desired_revision','closed_at']
-            WHEN 'slack_threads' THEN ARRAY['desired_revision','thread_ts']
-        END;
-        IF NOT EXISTS (SELECT 1 FROM unnest(watched) AS k WHERE to_jsonb(OLD)->k IS DISTINCT FROM to_jsonb(NEW)->k) THEN
-            RETURN NEW;
-        END IF;
-    END IF;
-    IF TG_TABLE_NAME='slack_requests' THEN
-        PERFORM pg_notify('helmr_changes','slack_requests');
-        RETURN NEW;
-    ELSIF TG_TABLE_NAME IN ('slack_posts','slack_threads') THEN
-        PERFORM pg_notify('helmr_changes','slack_delivery');
-        RETURN NEW;
-    ELSIF TG_TABLE_NAME='worker_hosts' THEN
-        PERFORM pg_notify('helmr_changes','dispatch');
-        RETURN NEW;
-    ELSIF TG_TABLE_NAME='image_builds' THEN
-        PERFORM pg_notify('helmr_changes','dispatch');
-        IF NEW.worker_host_id IS NOT NULL THEN
-            PERFORM pg_notify('helmr_changes','worker:'||NEW.worker_host_id::text);
-        END IF;
-        RETURN NEW;
-    END IF;
-    IF TG_TABLE_NAME='session_events' THEN
-      IF NEW.kind='turn.output' THEN
-        -- Output wakes its readers, not execution or save discovery. Other
-        -- events, including message admission, still wake the owning worker.
-        PERFORM pg_notify('helmr_changes','session:'||NEW.session_id::text);
-        PERFORM pg_notify('helmr_changes','slack_projection');
-        RETURN NEW;
-      END IF;
-    END IF;
-    env := NEW.environment_id;
-    IF TG_TABLE_NAME='sessions' THEN
-        conversation := NEW.id;
-        machine := NEW.computer_id;
-    ELSIF TG_TABLE_NAME IN ('turns','session_events','session_processes','session_holds') THEN
-        conversation := NEW.session_id;
-        SELECT computer_id INTO machine FROM sessions WHERE environment_id=env AND id=conversation;
-    ELSIF TG_TABLE_NAME IN ('computer_saves','computer_leases') THEN
-        machine := NEW.computer_id;
-    ELSIF TG_TABLE_NAME='computers' THEN
-        machine := NEW.id;
-    END IF;
-    PERFORM pg_notify('helmr_changes','dispatch');
-    IF conversation IS NOT NULL THEN
-        PERFORM pg_notify('helmr_changes','session:'||conversation::text);
-        PERFORM pg_notify('helmr_changes','slack_projection');
-    END IF;
-    FOR host IN SELECT DISTINCT worker_host_id FROM computer_leases
-        WHERE environment_id=env AND computer_id=machine AND fenced_at IS NULL
-    LOOP
-        PERFORM pg_notify('helmr_changes','worker:'||host::text);
-    END LOOP;
-    RETURN NEW;
-END;
-$$;
-CREATE TRIGGER session_event_wake AFTER INSERT ON session_events FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER session_wake AFTER INSERT OR UPDATE OF status,computer_id,authority_generation ON sessions FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER turn_wake AFTER INSERT OR UPDATE OF status ON turns FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER hold_wake AFTER INSERT OR UPDATE OF released_at ON session_holds FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER process_wake AFTER INSERT OR UPDATE OF status,control_sequence,stop_sequence,control_acknowledged_at,fenced_at ON session_processes FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER save_wake AFTER INSERT OR UPDATE OF status ON computer_saves FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER lease_wake AFTER INSERT OR UPDATE OF status,fenced_at ON computer_leases FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER computer_wake AFTER UPDATE OF initial_root_id,recovery_save_id ON computers FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER image_build_wake AFTER INSERT OR UPDATE OF status,worker_host_id ON image_builds FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER host_wake AFTER INSERT OR UPDATE OF status,current_epoch ON worker_hosts FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER slack_request_wake AFTER INSERT ON slack_requests FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER slack_post_wake AFTER INSERT OR UPDATE OF desired_revision,closed_at ON slack_posts FOR EACH ROW EXECUTE FUNCTION notify_work_change();
-CREATE TRIGGER slack_thread_wake AFTER INSERT OR UPDATE OF desired_revision,thread_ts ON slack_threads FOR EACH ROW EXECUTE FUNCTION notify_work_change();

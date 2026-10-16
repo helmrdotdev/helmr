@@ -76,5 +76,3 @@ DROP TABLE IF EXISTS
     regions,
     organizations;
 DROP TYPE IF EXISTS org_member_role, magic_link_purpose;
-
-DROP FUNCTION IF EXISTS notify_work_change();

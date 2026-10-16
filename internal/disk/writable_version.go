@@ -573,31 +573,6 @@ func (d *WritableVersion) reserveRangeLocked(first, last uint64, reportPressure 
 	}
 	return err
 }
-func (d *WritableVersion) admitRange(ctx context.Context, offset int64, length int) error {
-	lockGuestIO(ctx, &d.mu)
-	defer d.mu.Unlock()
-	if err := d.bounds(offset, length); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if length == 0 {
-		return nil
-	}
-	first, last := uint64(offset/blockformat.BlockSize), uint64((offset+int64(length)-1)/blockformat.BlockSize)
-	additional := 0
-	for block := first; block <= last; block++ {
-		if _, ok := d.dirty[block]; !ok {
-			additional++
-		}
-	}
-	if len(d.dirty)+len(d.frozen)+additional > d.limit {
-		return ErrVersionBufferFull
-	}
-	return d.reserveRangeLocked(first, last, true)
-}
-
 func (s *reservedVersionSink) chargeGeneration() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

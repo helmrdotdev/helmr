@@ -90,7 +90,10 @@ func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 		if physicalStopped {
 			_, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}
 	if !recorded && !terminal && !revocationRecorded && disposition == ComputerLossRequiresAttention {
 		if err := recordSessionFailure(ctx, tx, e, "Computer execution authority lost without an eligible continuation"); err != nil {
@@ -114,5 +117,8 @@ func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 	_, err = tx.Exec(ctx, `UPDATE session_processes SET status='lost',failure_recorded_at=COALESCE(failure_recorded_at,clock_timestamp()),
  fenced_at=CASE WHEN $4 THEN COALESCE(fenced_at,clock_timestamp()) ELSE fenced_at END
  WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, physicalStopped)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 }

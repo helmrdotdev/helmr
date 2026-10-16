@@ -79,6 +79,9 @@ func PrepareSessionDelivery(ctx context.Context, pool db.TxBeginner, host worker
 			if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID); err != nil {
 				return err
 			}
+			if err = notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+				return err
+			}
 			acknowledged, failure = nil, nil
 		}
 		// A process-row wait may consume the remaining physical lease lifetime.
@@ -141,6 +144,13 @@ func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host wo
 		if generation != authority.Generation || kind != currentKind {
 			return ErrConflict
 		}
+		var acknowledged *time.Time
+		var previousError *string
+		var stoppedTurn *uuid.UUID
+		if err = tx.QueryRow(ctx, `SELECT control_acknowledged_at,control_error,stop_turn_id FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&acknowledged, &previousError, &stoppedTurn); err != nil {
+			return err
+		}
+		changed := failure == "" && (acknowledged == nil || kind != "shutdown" && stoppedTurn != nil) || failure != "" && acknowledged == nil && (previousError == nil || *previousError != failure)
 		tag, err := tx.Exec(ctx, `UPDATE session_processes SET
  control_acknowledged_at=CASE WHEN $8='' THEN COALESCE(control_acknowledged_at,clock_timestamp()) ELSE control_acknowledged_at END,
  control_error=CASE WHEN control_acknowledged_at IS NULL THEN NULLIF($8,'') ELSE control_error END,
@@ -154,7 +164,13 @@ func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host wo
 			return ErrConflict
 		}
 		_, err = lockRuntimeAuthority(ctx, tx, host, e)
-		return err
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return nil
+		}
+		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}))
 }
 

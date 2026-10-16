@@ -92,7 +92,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 			case "provider drift":
 				_, err = MarkHostLost(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, "host", 1)
 			case "worker fence":
-				err = FenceHost(t.Context(), q, HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1}, "provider_termination")
+				err = FenceHost(t.Context(), f.Pool, HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1}, "provider_termination")
 			case "stale observation":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, f.Worker)
 				_, err = q.RecheckAndFenceStaleWorkerHost(t.Context(), db.RecheckAndFenceStaleWorkerHostParams{ID: pgvalue.UUID(f.Worker), WorkerGroupID: pgvalue.UUID(f.Group), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, RegistrationStaleBefore: pgvalue.Timestamptz(time.Now()), ObservationFreshnessSeconds: ObservationFreshnessSeconds})

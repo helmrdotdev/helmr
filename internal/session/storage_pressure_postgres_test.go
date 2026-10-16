@@ -29,7 +29,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	}
 	report(&source)
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT storage_pressure_since>clock_timestamp()-interval '5 seconds' AND storage_pressure_observed_since=$1 FROM computer_leases`, source).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT storage_pressure_since>clock_timestamp()-interval '5 seconds' FROM computer_leases`).Scan(&valid); err != nil || !valid {
 		t.Fatalf("server budget %v %v", valid, err)
 	}
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution()); err == nil {

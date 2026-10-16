@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -71,6 +72,9 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if oldStatus != status {
 			revision++
 			if _, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2,desired_revision=$3 WHERE id=$1`, thread, status, revision); err != nil {
+				return err
+			}
+			if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
 				return err
 			}
 		}

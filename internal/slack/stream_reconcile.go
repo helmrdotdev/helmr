@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"strings"
 	"uuid"
 
@@ -236,7 +237,7 @@ func confirmStreamMessage(ctx context.Context, pool db.TxBeginner, installation,
 			return err
 		}
 		confirmed = true
-		return nil
+		return dbnotify.Notify(ctx, tx, "slack_delivery")
 	})
 	return confirmed, err
 }

@@ -113,7 +113,7 @@ func NextSave(ctx context.Context, database db.TxBeginner, host workergroup.Host
 		}
 		save.Claimed = true
 		result = &save
-		return nil
+		return notifyComputerChanged(ctx, tx, identity.EnvironmentID, identity.ComputerID)
 	})
 	return result, notReadyOnLock(err)
 }

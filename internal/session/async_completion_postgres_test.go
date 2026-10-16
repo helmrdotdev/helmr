@@ -192,6 +192,8 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
+	// Descriptive JSON cannot change the identity of an acknowledged loss.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET recovery_gap=recovery_gap || jsonb_build_object('computerId',$2::uuid::text,'leaseEpoch',0) WHERE id=$1`, hold, uuid.NewV7())
 	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +251,7 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	if err := f.pool.QueryRow(t.Context(), `SELECT
  (SELECT released_at IS NOT NULL FROM session_holds WHERE id=$1)
  AND (SELECT count(*)=2 FROM session_holds WHERE session_id=$2 AND kind='recovery_gap')
- AND (SELECT count(*)=1 FROM session_holds WHERE session_id=$2 AND kind='recovery_gap' AND released_at IS NULL AND recovery_gap->>'leaseEpoch'='2' AND recovery_gap->'affectedTurnIds'=jsonb_build_array($3::uuid::text))
+ AND (SELECT count(*)=1 FROM session_holds WHERE session_id=$2 AND kind='recovery_gap' AND released_at IS NULL AND recovery_lease_epoch=2 AND recovery_gap->'affectedTurnIds'=jsonb_build_array($3::uuid::text))
  AND (SELECT count(*)=2 FROM session_events WHERE session_id=$2 AND kind='session.recovery_gap')`, hold, f.session, queued.TurnID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("new epoch loss suppressed or duplicated %v %v", valid, err)
 	}
@@ -456,7 +458,7 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 		t.Fatalf("durable gap view %+v %v", view, err)
 	}
 	metadata := view.Holds[0].RecoveryGap
-	if metadata.RecoverySaveID != nil || metadata.RestoredAt != nil || metadata.AffectedTurnCount != 1 || len(metadata.AffectedTurnIDs) != 1 || metadata.AffectedTurnIDs[0] != lost.TurnID {
+	if metadata.HoldID != view.Holds[0].ID || metadata.ComputerID != f.computer || metadata.LeaseEpoch != 1 || metadata.RecoverySaveID != nil || metadata.RestoredAt != nil || metadata.AffectedTurnCount != 1 || len(metadata.AffectedTurnIDs) != 1 || metadata.AffectedTurnIDs[0] != lost.TurnID {
 		t.Fatalf("initial environment metadata %+v", metadata)
 	}
 	var notices int
@@ -483,7 +485,7 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, admitted.SessionID)
-	if err != nil || len(joined.Holds) != 1 || joined.Holds[0].RecoveryGap == nil || joined.Holds[0].RecoveryGap.AffectedTurnCount != 0 {
+	if err != nil || len(joined.Holds) != 1 || joined.Holds[0].RecoveryGap == nil || joined.Holds[0].RecoveryGap.AffectedTurnCount != 0 || joined.Holds[0].RecoveryGap.HoldID != joined.Holds[0].ID || joined.Holds[0].RecoveryGap.ComputerID != f.computer || joined.Holds[0].RecoveryGap.LeaseEpoch != 1 {
 		t.Fatalf("joined gap %+v %v", joined, err)
 	}
 	recovered, err := allocator.AllocateRecoveredLease(t.Context(), f.env, f.computer, 2, f.worker)

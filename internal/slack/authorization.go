@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -54,7 +55,10 @@ func suppressInstallationPosts(ctx context.Context, tx pgx.Tx, installation uuid
 	// Closing existing publications and disposing the unread prefix here prevents
 	// a later cumulative update from carrying bytes across reauthorization.
 	// Repeat this at reauthorization to exclude content accepted during the outage.
-	return slackroute.SkipInstallationProjection(ctx, tx, installation)
+	if err = slackroute.SkipInstallationProjection(ctx, tx, installation); err != nil {
+		return err
+	}
+	return dbnotify.Notify(ctx, tx, "slack_delivery")
 }
 
 // These responses establish that the rejected mutation did not execute. Missing

@@ -79,7 +79,7 @@ func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	credential, err := workergroup.IssueHostCredential(r.Context(), s.db, s.hostAuth, workergroup.HostCredentialRequest{
+	credential, err := workergroup.IssueHostCredential(r.Context(), s.tx, s.hostAuth, workergroup.HostCredentialRequest{
 		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
 	}, time.Now)
 	if err != nil {
@@ -225,7 +225,7 @@ func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker fence request JSON: %w", err))
 		return
 	}
-	if err := workergroup.FenceHost(r.Context(), s.db, workerFromContext(r.Context()), request.ReasonCode); err != nil {
+	if err := workergroup.FenceHost(r.Context(), s.tx, workerFromContext(r.Context()), request.ReasonCode); err != nil {
 		s.writeWorkerHostError(w, "fence worker", err)
 		return
 	}

@@ -332,7 +332,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if hasInput {
 			return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
 		}
-		return nil
+		return notifySessionsChanged(ctx, tx, req.EnvironmentID, result.SessionID)
 	}()
 	return result, pin, err
 }

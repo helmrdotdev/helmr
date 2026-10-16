@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"net/http"
 	"net/url"
@@ -153,7 +154,7 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 			return err
 		}
 		matched = true
-		return nil
+		return dbnotify.Notify(ctx, tx, "slack_delivery")
 	})
 	return matched, err
 }

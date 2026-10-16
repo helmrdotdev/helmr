@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -218,6 +219,9 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 	}
 	if !matches {
 		return nil
+	}
+	if err := dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
+		return err
 	}
 	if err := finishStreamLane(ctx, tx, claim, result); err != nil {
 		return err

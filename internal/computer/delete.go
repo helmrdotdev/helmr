@@ -106,5 +106,5 @@ func deleteLocked(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, deleted boo
 	if _, err = tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, id); err != nil {
 		return err
 	}
-	return nil
+	return notifyComputerChanged(ctx, tx, env, id)
 }

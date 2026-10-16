@@ -11,9 +11,14 @@ import (
 
 // RecoveryGap is retained with its hold independently of event/payload expiry.
 type RecoveryGap struct {
-	HoldID            uuid.UUID   `json:"holdId"`
-	ComputerID        uuid.UUID   `json:"computerId"`
-	LeaseEpoch        int64       `json:"leaseEpoch"`
+	HoldID     uuid.UUID `json:"holdId"`
+	ComputerID uuid.UUID `json:"computerId"`
+	LeaseEpoch int64     `json:"leaseEpoch"`
+	recoveryGapDetails
+}
+
+// recoveryGapDetails is the descriptive snapshot; hold and lease identity live in typed columns.
+type recoveryGapDetails struct {
 	RecoverySaveID    *uuid.UUID  `json:"recoverySaveId"`
 	RestoredAt        *time.Time  `json:"restoredAt"`
 	AffectedTurnIDs   []uuid.UUID `json:"affectedTurnIds"`
@@ -24,7 +29,7 @@ type RecoveryGap struct {
 // Sessions and the Computer are locked. Failed rows remain historical evidence;
 // newer publications cannot erase the gap or release an existing hold.
 func RecordComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64) error {
-	if err := computer.RecordLeaseStoragePressure(ctx, tx, env, computerID, epoch, nil); err != nil {
+	if err := computer.RecordLeaseStoragePressure(ctx, tx, env, computerID, epoch, false); err != nil {
 		return err
 	}
 	if err := reconcileStoragePressureTx(ctx, tx, env, computerID, epoch); err != nil {
@@ -56,7 +61,7 @@ func RecordComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, computerID u
 		// Expiry can expose the loss before physical fencing. Acknowledgment
 		// remains valid when that same loss is later settled by the worker.
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND kind='recovery_gap'
- AND (released_at IS NULL OR (recovery_gap->>'computerId'=$3::text AND (recovery_gap->>'leaseEpoch')::bigint >= $4)))`, env, id, computerID, epoch).Scan(&held); err != nil {
+ AND (released_at IS NULL OR (recovery_computer_id=$3 AND recovery_lease_epoch >= $4)))`, env, id, computerID, epoch).Scan(&held); err != nil {
 			return err
 		}
 		if held {
@@ -74,14 +79,19 @@ func RecordComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, computerID u
 			affected = []uuid.UUID{}
 		}
 		hold := uuid.NewV7()
-		data, err := json.Marshal(RecoveryGap{hold, computerID, epoch, recovery, restoredAt, affected, len(affected)})
+		details := recoveryGapDetails{recovery, restoredAt, affected, len(affected)}
+		stored, err := json.Marshal(details)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_gap) VALUES($1,$2,$3,'local','Computer restored with unpreserved file changes','recovery_gap',$4)`, env, hold, id, data); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'local','Computer restored with unpreserved file changes','recovery_gap',$4,$5,$6)`, env, hold, id, computerID, epoch, stored); err != nil {
 			return err
 		}
 		if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{id}); err != nil {
+			return err
+		}
+		data, err := json.Marshal(RecoveryGap{hold, computerID, epoch, details})
+		if err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, env, id, uuid.Nil(), "session.recovery_gap", data); err != nil {
@@ -98,27 +108,31 @@ func inheritComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, id, compute
 		return nil
 	}
 	var data []byte
-	err := tx.QueryRow(ctx, `SELECT h.recovery_gap FROM session_holds h JOIN sessions s ON (s.environment_id,s.id)=(h.environment_id,h.session_id)
- WHERE h.environment_id=$1 AND s.computer_id=$2 AND h.kind='recovery_gap' AND h.released_at IS NULL ORDER BY h.created_at DESC LIMIT 1`, env, computerID).Scan(&data)
+	var value RecoveryGap
+	err := tx.QueryRow(ctx, `SELECT h.recovery_computer_id,h.recovery_lease_epoch,h.recovery_gap FROM session_holds h JOIN sessions s ON (s.environment_id,s.id)=(h.environment_id,h.session_id)
+ WHERE h.environment_id=$1 AND s.computer_id=$2 AND h.kind='recovery_gap' AND h.released_at IS NULL ORDER BY h.created_at DESC LIMIT 1`, env, computerID).Scan(&value.ComputerID, &value.LeaseEpoch, &data)
 	if err == pgx.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var value RecoveryGap
-	if err = json.Unmarshal(data, &value); err != nil {
+	if err = json.Unmarshal(data, &value.recoveryGapDetails); err != nil {
 		return err
 	}
 	hold := uuid.NewV7()
 	value.HoldID = hold
 	value.AffectedTurnIDs = []uuid.UUID{}
 	value.AffectedTurnCount = 0
-	encoded, err := json.Marshal(value)
+	stored, err := json.Marshal(value.recoveryGapDetails)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_gap) VALUES($1,$2,$3,'local','Computer restored with unpreserved file changes','recovery_gap',$4)`, env, hold, id, encoded); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'local','Computer restored with unpreserved file changes','recovery_gap',$4,$5,$6)`, env, hold, id, value.ComputerID, value.LeaseEpoch, stored); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
 		return err
 	}
 	return eventData(ctx, tx, env, id, uuid.Nil(), "session.recovery_gap", encoded)

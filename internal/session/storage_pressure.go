@@ -32,7 +32,7 @@ func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host wor
 		if !valid {
 			return computer.ErrDenied
 		}
-		if err := computer.RecordLeaseStoragePressure(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, observedSince); err != nil {
+		if err := computer.RecordLeaseStoragePressure(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, observedSince != nil); err != nil {
 			return err
 		}
 		return reconcileStoragePressureTx(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)

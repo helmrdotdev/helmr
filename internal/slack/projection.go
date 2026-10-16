@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -72,7 +73,10 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 					return err
 				}
 				progressed, err = projectControlState(ctx, tx, o, authorized)
-				return err
+				if err != nil || !progressed {
+					return err
+				}
+				return dbnotify.Notify(ctx, tx, "slack_delivery")
 			}
 			// Inactive sources still dispose observed control state so they cannot
 			// occupy discovery batches forever or replay it after reauthorization.
@@ -107,7 +111,10 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 		// this cursor; they cannot be reconsidered after a route or authority edit.
 		err = slackroute.AdvanceProjection(ctx, tx, participant, e.sequence)
 		progressed = err == nil
-		return err
+		if err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "slack_delivery")
 	})
 	return progressed, err
 }

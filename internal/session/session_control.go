@@ -227,8 +227,18 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			}
 			// Idle processes must also stop on cancellation; independent peers
 			// sharing their Computer are not included in this ownership set.
-			if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=ANY($2) AND fenced_at IS NULL AND status IN ('starting','ready')`, req.EnvironmentID, ids); err != nil {
+			stoppingRows, err := tx.Query(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=ANY($2) AND fenced_at IS NULL AND status IN ('starting','ready') RETURNING session_id`, req.EnvironmentID, ids)
+			if err != nil {
 				return err
+			}
+			stopping, err := pgx.CollectRows(stoppingRows, pgx.RowTo[uuid.UUID])
+			if err != nil {
+				return err
+			}
+			if len(stopping) > 0 {
+				if err = notifySessionsChanged(ctx, tx, req.EnvironmentID, stopping...); err != nil {
+					return err
+				}
 			}
 		case "close":
 			if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND id=$2 AND status='open'`, req.EnvironmentID, req.SessionID); err != nil {
@@ -293,11 +303,21 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 		return err
 	}
 	for _, id := range ordered {
-		if _, err = tx.Exec(ctx, `UPDATE sessions child SET status='closing'
+		rows, err := tx.Query(ctx, `UPDATE sessions child SET status='closing'
  FROM sessions parent WHERE child.environment_id=$1 AND parent.environment_id=$1 AND parent.id=$2
  AND child.parent_session_id=parent.id AND parent.status='closing' AND child.status='open'
- AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=parent.id AND status IN ('queued','running'))`, env, id); err != nil {
+ AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=parent.id AND status IN ('queued','running')) RETURNING child.id`, env, id)
+		if err != nil {
 			return err
+		}
+		changed, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if len(changed) > 0 {
+			if err := notifySessionsChanged(ctx, tx, env, changed...); err != nil {
+				return err
+			}
 		}
 	}
 	// Close leaves first. Lifecycle closure requests process stop; it does not
@@ -392,7 +412,10 @@ func lockControlTree(ctx context.Context, tx pgx.Tx, env, target uuid.UUID, call
 
 func advanceControlAuthority(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE sessions SET authority_generation=authority_generation+1,idle_since=NULL WHERE environment_id=$1 AND id=ANY($2)`, env, ids)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySessionsChanged(ctx, tx, env, ids...)
 }
 
 // Turn-bound saves remain ordered Computer cuts owned by save reconciliation,

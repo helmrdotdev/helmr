@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -113,6 +114,9 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,recipient_team_id,recipient_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser)
 	if err != nil {
+		return err
+	}
+	if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
 		return err
 	}
 	source, err := slackroute.AddMember(ctx, tx, env, thread, session)

@@ -46,6 +46,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 			var p *agentv1.ComputerSessionInstallation
 			var activated, installed atomic.Bool
 			var attachments, controls atomic.Int32
+			var concurrentRejection atomic.Bool
 			renewed := make(chan struct{})
 			commitEntered := make(chan struct{})
 			receiptEntered := make(chan struct{})
@@ -108,6 +109,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 					if r.URL.Path == "/worker/v1/sessions/control" && scenario == "control-failure-concurrent-rejection" {
 						select {
 						case <-receiptEntered:
+							concurrentRejection.Store(true)
 							w.WriteHeader(http.StatusConflict)
 							return
 						default:
@@ -249,7 +251,13 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				t.Fatal(err)
 			}
 			defer owner.Close()
-			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			timeout := 15 * time.Second
+			if scenario == "control-failure-concurrent-rejection" {
+				// This isolated continuation has no allocation-owner wake; a
+				// concurrent rejection arrives on the 15-second fallback scan.
+				timeout = 45 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 
 			if scenario == "request-cancel" || scenario == "close-before-activation" {
@@ -358,6 +366,10 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				var failed computerhost.SessionControlFailedError
 				if !errors.As(err, &failed) || attachments.Load() != 1 || controls.Load() != 1 {
 					t.Fatalf("failed control retried: attachments=%d controls=%d error=%v", attachments.Load(), controls.Load(), err)
+				}
+
+				if scenario == "control-failure-concurrent-rejection" && !concurrentRejection.Load() {
+					t.Fatal("failed control did not race with authority rejection")
 				}
 
 				if failed.Session.SessionID != f.Session.String() || failed.Session.ProcessEpoch != 1 {

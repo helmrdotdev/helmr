@@ -120,7 +120,7 @@ func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) 
 	if changed.RowsAffected() != 1 {
 		return result, ErrNotReady
 	}
-	return result, nil
+	return result, notifyComputerChanged(ctx, tx, env, computer)
 }
 
 // Lock even revoked owners: receipt reads remain valid, while eligibility denies

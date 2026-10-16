@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"strings"
 	"uuid"
 
@@ -114,10 +115,14 @@ func claimStreamLane(ctx context.Context, tx pgx.Tx, claim *PostClaim, environme
 		return err
 	}
 	digest := sha256.Sum256(claim.Payload)
-	return tx.QueryRow(ctx, `UPDATE slack_threads SET desired_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,desired_status=$2,
+	err = tx.QueryRow(ctx, `UPDATE slack_threads SET desired_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,desired_status=$2,
  status_confirmation='unknown',stream_status_repair=true,inflight_method=$3,inflight_payload=$4,inflight_digest=$5,
  inflight_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,inflight_attempt_id=$6,
  claim_epoch=claim_epoch+1,claimed_until=$7 WHERE id=$1 RETURNING claim_epoch`, claim.ThreadID, status, claim.Method, claim.Payload, digest[:], claim.AttemptID, claim.ExpiresAt).Scan(&claim.StatusEpoch)
+	if err != nil {
+		return err
+	}
+	return dbnotify.Notify(ctx, tx, "slack_delivery")
 }
 
 func streamContext(post uuid.UUID, body []byte) ([]any, error) {

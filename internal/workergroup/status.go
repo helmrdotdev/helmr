@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -201,6 +202,9 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, gro
 			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
 				return err
 			}
+		}
+		if row.TransitionApplied {
+			return dbnotify.Notify(ctx, tx, "dispatch")
 		}
 		return nil
 	})
