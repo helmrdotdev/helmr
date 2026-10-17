@@ -65,13 +65,13 @@ func TestAgentSaveMaintenanceKeepsOnlyConfirmedSuccessor(t *testing.T) {
 			if err := s.step(t.Context()); err == nil {
 				t.Fatal("publication uncertainty was not exercised")
 			}
-			if first.releases != releases || len(s.maintenance) != 1 || s.maintenance[0].capture != first || second.releases != 0 {
+			if first.releases != releases || s.maintenance == nil || s.maintenance.capture != first || second.releases != 0 {
 				t.Fatal("uncertain publication replaced maintenance")
 			}
 			if err := s.step(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if first.releases != releases+1 || len(s.maintenance) != 1 || s.maintenance[0].capture != second || s.retirementCandidate != candidate || s.retirement != floor {
+			if first.releases != releases+1 || s.maintenance == nil || s.maintenance.capture != second || s.retirementCandidate != candidate || s.retirement != floor {
 				t.Fatal("confirmed successor did not replace only local maintenance")
 			}
 			if state == "interrupted collection" {
@@ -91,7 +91,7 @@ func TestAgentSaveMaintenanceKeepsOnlyConfirmedSuccessor(t *testing.T) {
 			if err := s.maintain(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if first.adoptions != adoptions || first.collections != collections || second.adoptions != 1 || second.collections != 1 || len(s.maintenance) != 0 {
+			if first.adoptions != adoptions || first.collections != collections || second.adoptions != 1 || second.collections != 1 || s.maintenance != nil {
 				t.Fatal("superseded maintenance ran again")
 			}
 			if s.retirement != floor || s.retirementCandidate == nil || s.retirementCandidate.capture != second {
@@ -111,7 +111,7 @@ func TestAgentSaveMaintenanceRemainsBoundedWithoutAdoption(t *testing.T) {
 		if err := s.step(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if len(s.maintenance) != 1 || s.maintenance[0].capture != capture || capture.releases != 0 || capture.adoptions != 0 {
+		if s.maintenance == nil || s.maintenance.capture != capture || capture.releases != 0 || capture.adoptions != 0 {
 			t.Fatal("maintenance retained more than the latest publication")
 		}
 		if previous != nil && (previous.releases != 1 || previous.adoptions != 0) {

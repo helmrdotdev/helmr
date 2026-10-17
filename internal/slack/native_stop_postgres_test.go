@@ -132,7 +132,7 @@ func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T
 	f.link(t)
 	stale := f.reply(t, "before-recovery", false)
 	gap, other := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'local','Recovery acknowledgement required','recovery_gap',$4,1,jsonb_build_object('recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb,'affectedTurnCount',0))`, f.Environment, gap, f.Session, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'local','Recovery acknowledgement required','recovery_gap',$4,1,jsonb_build_object('recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb))`, f.Environment, gap, f.Session, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','Independent operator hold')`, f.Environment, other, f.Session)
 	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), stale); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import { environmentChip } from "../features/projects/display";
 import { createSessionLog, type SessionLog } from "../features/sessions/sessionLog";
 import { SessionLogView } from "../features/sessions/SessionLogView";
 import { SessionDelivery } from "../features/slack/SessionDelivery";
+import { ApiError } from "../lib/api";
 import { hasPermission } from "../lib/auth";
 import { agentHref } from "../lib/definitions";
 import { errorMessage, loadError } from "../lib/error";
@@ -78,6 +79,12 @@ function SessionDetailContent() {
     queryFn: () => getSession(address()),
     enabled: enabled(),
     retry: false,
+    // Recover a failed read without another hint, keeping the visible error state.
+    // Successful reads and permanent API errors need no periodic refresh.
+    refetchInterval: query => {
+      const error = query.state.error;
+      return error instanceof TypeError || error instanceof ApiError && (error.status >= 500 || error.status === 408 || error.status === 429) ? 5_000 : false;
+    },
   }));
   const live = () => ["open", "closing"].includes(session.data?.status ?? "");
   const missing = (error: unknown) => isMissingSessionRead(error, can("sessions.read"));

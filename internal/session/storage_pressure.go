@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -13,8 +12,8 @@ import (
 )
 
 // ReportStoragePressure retains the first server observation for this physical
-// writer. Worker wall time is diagnostic only; retries cannot reset the budget.
-func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, observedSince *time.Time) error {
+// writer. Retries cannot reset the server-owned budget.
+func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, active bool) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -32,7 +31,7 @@ func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host wor
 		if !valid {
 			return computer.ErrDenied
 		}
-		if err := computer.RecordLeaseStoragePressure(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, observedSince != nil); err != nil {
+		if err := computer.RecordLeaseStoragePressure(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, active); err != nil {
 			return err
 		}
 		return reconcileStoragePressureTx(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)

@@ -33,7 +33,7 @@ export interface SessionOperationOptions {
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled"
 export interface RecoveryGap {
- readonly holdId:string; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]; readonly affectedTurnCount:number
+ readonly holdId:string; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]
 }
 export interface SessionHold {
  readonly recoveryGap?: RecoveryGap

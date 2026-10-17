@@ -118,7 +118,7 @@ func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	}
 	started := time.Now()
 	if err := s.flushGuestComputer(ctx); err != nil {
-		return nil, &vm.ComputerCaptureError{Phase: "guest writeback", Cause: err}
+		return nil, fmt.Errorf("computer guest writeback failed before capture receipt: %w", err)
 	}
 	slog.Info("Computer guest flush completed", "computer_id", s.topology.Computer.ComputerID, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
 	started = time.Now()
@@ -127,7 +127,7 @@ func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 		var fatal interface{ FatalDeviceError() bool }
 		var source *disk.SourceFailure
 		s.computerCaptureBlocked = (errors.As(err, &fatal) && fatal.FatalDeviceError()) || errors.As(err, &source) || errors.Is(err, blockformat.ErrIntegrity) || errors.Is(err, blockformat.ErrAuthentication)
-		return nil, &vm.ComputerCaptureError{Phase: "local cut", Cause: err}
+		return nil, fmt.Errorf("computer local cut failed before capture receipt: %w", err)
 	}
 	// Includes device drainage, the request boundary, encoding and local
 	// persistence; it is not a measurement of cut synchronization alone.

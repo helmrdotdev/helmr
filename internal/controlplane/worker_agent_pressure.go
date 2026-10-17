@@ -18,7 +18,7 @@ func (s *Server) workerAgentStoragePressure(w http.ResponseWriter, r *http.Reque
 	}
 	identity, err := allocationIdentity(request.AllocationIdentity)
 	if err == nil {
-		err = session.ReportStoragePressure(r.Context(), s.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), request.PressureSince)
+		err = session.ReportStoragePressure(r.Context(), s.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), request.Active)
 	}
 	if err != nil {
 		s.writeAgentSaveError(w, err)

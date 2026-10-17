@@ -39,14 +39,14 @@ func TestStoragePressureResolutionReconcilesUncertainActiveReport(t *testing.T) 
 	saves.client = uncertainPressureClient{report: func(r workerapi.AgentStoragePressure) error {
 		calls++
 		if calls == 1 {
-			if r.PressureSince == nil {
+			if !r.Active {
 				t.Fatal("first report was not active")
 			}
 			active.Store(false)
 			wake <- struct{}{}
 			return io.ErrUnexpectedEOF
 		}
-		if r.PressureSince != nil {
+		if r.Active {
 			t.Fatal("resolved state retained active pressure")
 		}
 		cancel()

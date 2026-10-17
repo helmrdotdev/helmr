@@ -25,8 +25,7 @@ func pressureStopFixture(t *testing.T) (fixture, int64, session.SessionDelivery)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	if err = session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), &now); err != nil {
+	if err = session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '31 seconds'`)
@@ -44,12 +43,7 @@ func pressureStopFixture(t *testing.T) (fixture, int64, session.SessionDelivery)
 }
 func pressureReport(t *testing.T, f fixture, pressured bool) {
 	t.Helper()
-	var since *time.Time
-	if pressured {
-		now := time.Now()
-		since = &now
-	}
-	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), since); err != nil {
+	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), pressured); err != nil {
 		t.Fatal(err)
 	}
 }

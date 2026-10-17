@@ -54,7 +54,7 @@ func TestAgentSavePreemptsAdoptionForNewCapture(t *testing.T) {
 	if err := saves.step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(saves.maintenance) != 1 || saves.pending != nil {
+	if saves.maintenance == nil || saves.pending != nil {
 		t.Fatal("published capture was not queued for local maintenance")
 	}
 	done := make(chan error, 1)
@@ -71,10 +71,10 @@ func TestAgentSavePreemptsAdoptionForNewCapture(t *testing.T) {
 	if err := saves.step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if first.attempts.Load() != 1 || len(saves.maintenance) != 1 {
+	if first.attempts.Load() != 1 || saves.maintenance == nil {
 		t.Fatal("new save waited behind old adoption")
 	}
-	for len(saves.maintenance) > 0 {
+	for saves.maintenance != nil {
 		if err := saves.maintain(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestAgentSaveGeneralHintsDoNotRestartMaintenance(t *testing.T) {
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
-			if capture.attempts.Load() != 1 || len(saves.maintenance) != 0 || len(base.requests) != 2 {
+			if capture.attempts.Load() != 1 || saves.maintenance != nil || len(base.requests) != 2 {
 				t.Fatal("unrelated work starved adoption or caused another capture")
 			}
 			saves.release()

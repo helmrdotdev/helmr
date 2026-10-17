@@ -3,7 +3,6 @@ package session_test
 import (
 	"errors"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -19,15 +18,14 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 		t.Fatal(err)
 	}
 	queued := peer.enqueue(t, "queued")
-	// An arbitrarily old worker wall clock cannot advance the server's budget.
-	source := time.Unix(1, 0)
-	report := func(value *time.Time) {
+	// Pressure reports carry no worker clock; elapsed time belongs to the server.
+	report := func(value bool) {
 		t.Helper()
 		if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), value); err != nil {
 			t.Fatal(err)
 		}
 	}
-	report(&source)
+	report(true)
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT storage_pressure_since>clock_timestamp()-interval '5 seconds' FROM computer_leases`).Scan(&valid); err != nil || !valid {
 		t.Fatalf("server budget %v %v", valid, err)
@@ -40,7 +38,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '31 seconds'`)
 	for range 2 {
-		report(&source)
+		report(true)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 FROM session_events WHERE kind='session.storage_pressure' AND convert_from(data,'UTF8')::jsonb->>'state'='paused'`).Scan(&valid); err != nil || !valid {
 		t.Fatalf("duplicate pressure notice %v %v", valid, err)
@@ -72,8 +70,8 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
  AND (SELECT reason='Waiting for saving to recover' FROM session_holds WHERE session_id=$4 AND kind='storage_pressure' AND released_at IS NULL)`, running.TurnID, queued.TurnID, pressureHold, peer.session).Scan(&valid); err != nil || !valid {
 		t.Fatalf("pressure timeout custody %v %v", valid, err)
 	}
-	report(nil)
-	report(nil)
+	report(false)
+	report(false)
 	if err := f.pool.QueryRow(t.Context(), `SELECT
  NOT EXISTS(SELECT 1 FROM session_holds WHERE kind='storage_pressure' AND released_at IS NULL)
  AND (SELECT released_at IS NULL FROM session_holds WHERE id=$1)
@@ -97,8 +95,7 @@ func TestStoragePressureCannotPreemptLostExecutionOutcome(t *testing.T) {
 				t.Fatal(err)
 			}
 			queued := f.enqueue(t, "queued")
-			now := time.Now()
-			if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), &now); err != nil {
+			if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds'`)
@@ -134,8 +131,7 @@ func TestStoragePressureLossClearsHoldWithoutRecoveryPromise(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), &now); err != nil {
+	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '31 seconds'`)

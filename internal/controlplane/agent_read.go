@@ -309,5 +309,5 @@ func agentRecoveryGapResponse(v *session.RecoveryGap) *api.AgentRecoveryGap {
 	for i, id := range v.AffectedTurnIDs {
 		ids[i] = id.String()
 	}
-	return &api.AgentRecoveryGap{HoldID: v.HoldID.String(), ComputerID: v.ComputerID.String(), LeaseEpoch: v.LeaseEpoch, RecoverySaveID: agentOptionalID(v.RecoverySaveID), RestoredAt: agentUTCTime(v.RestoredAt), AffectedTurnIDs: ids, AffectedTurnCount: v.AffectedTurnCount}
+	return &api.AgentRecoveryGap{HoldID: v.HoldID.String(), ComputerID: v.ComputerID.String(), LeaseEpoch: v.LeaseEpoch, RecoverySaveID: agentOptionalID(v.RecoverySaveID), RestoredAt: agentUTCTime(v.RestoredAt), AffectedTurnIDs: ids}
 }

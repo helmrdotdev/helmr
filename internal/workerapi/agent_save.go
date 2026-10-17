@@ -3,7 +3,6 @@ package workerapi
 import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"time"
 )
 
 // AgentSave identifies the durable request issued for one Computer lease.
@@ -39,10 +38,10 @@ type AgentSavePending struct {
 	PendingForMillis *int64     `json:"pending_for_millis,omitempty"`
 }
 
-// PressureSince is diagnostic worker time. The server owns the elapsed budget.
+// The worker reports presence; the server owns the elapsed pressure budget.
 type AgentStoragePressure struct {
 	AllocationIdentity
-	PressureSince *time.Time `json:"pressure_since,omitempty"`
+	Active bool `json:"active"`
 }
 
 // AgentSaveRetirement identifies an exact published and durably adopted cut.

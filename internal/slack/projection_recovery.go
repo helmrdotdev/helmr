@@ -16,7 +16,7 @@ func recoveryNotice(kind string, data []byte) (string, string, error) {
 	var value struct {
 		HoldID     string     `json:"holdId"`
 		RestoredAt *time.Time `json:"restoredAt"`
-		Affected   int        `json:"affectedTurnCount"`
+		Affected   []string   `json:"affectedTurnIds"`
 		State      string     `json:"state"`
 	}
 	if err := json.Unmarshal(data, &value); err != nil {
@@ -30,7 +30,7 @@ func recoveryNotice(kind string, data []byte) (string, string, error) {
 		if value.RestoredAt != nil {
 			point = value.RestoredAt.UTC().Format("2006-01-02 15:04:05 UTC")
 		}
-		text := fmt.Sprintf("This Computer was restored to %s. File changes and native conversation history for %d completed requests in this conversation may be missing. Replies remain available. Mention me to continue, or choose Resume in Console. Completed requests will not run again.", point, value.Affected)
+		text := fmt.Sprintf("This Computer was restored to %s. File changes and native conversation history for %d completed requests in this conversation may be missing. Replies remain available. Mention me to continue, or choose Resume in Console. Completed requests will not run again.", point, len(value.Affected))
 		return "recovery:" + value.HoldID, text, nil
 	}
 	text := ""

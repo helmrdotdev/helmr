@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -31,18 +30,17 @@ func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID
 	return rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, false, "turn_closed")
 }
 
-func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string, save *computer.SaveRequest) error {
+func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string) error {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {
 		return err
 	}
 	var state string
-	var prior []byte
 	var epoch *int64
 	var closed *time.Time
 	var expired bool
-	err = tx.QueryRow(ctx, `SELECT status,result_digest,process_epoch,processing_closed_at,COALESCE(deadline_at<=clock_timestamp(),false) FROM turns
-          WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, turn).Scan(&state, &prior, &epoch, &closed, &expired)
+	err = tx.QueryRow(ctx, `SELECT status,process_epoch,processing_closed_at,COALESCE(deadline_at<=clock_timestamp(),false) FROM turns
+          WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, turn).Scan(&state, &epoch, &closed, &expired)
 	if err != nil {
 		return err
 	}
@@ -54,12 +52,6 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	}
 	if err = executionReady(ctx, tx, e, o); err != nil {
 		return err
-	}
-	if prior != nil {
-		if !bytes.Equal(prior, digest[:]) {
-			return ErrConflict
-		}
-		return tx.QueryRow(ctx, `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	}
 	if state != "running" || closed == nil || expired {
 		return ErrNotReady
@@ -78,10 +70,9 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	// The save references the committed result. The Session lock above
 	// already holds the Computer row, so recording the save here takes no new
 	// lock out of order.
-	requested, err := computer.RequestSave(ctx, tx, e.EnvironmentID, o.computer, e.LeaseEpoch, turn)
+	_, err = computer.RequestSave(ctx, tx, e.EnvironmentID, o.computer, e.LeaseEpoch, turn)
 	if err != nil {
 		return err
 	}
-	*save = requested
 	return event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.completed")
 }

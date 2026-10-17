@@ -155,9 +155,6 @@ func eventData(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, kin
 	if err != nil {
 		return err
 	}
-	if kind == "turn.output" {
-		return notifySessionReaders(ctx, tx, session)
-	}
 	return notifySessionsChanged(ctx, tx, env, session)
 }
 

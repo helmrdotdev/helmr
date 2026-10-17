@@ -236,8 +236,7 @@ func (relay *agentRelay) handleHostMessage(connection programConnection, sequenc
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
 	if relay.connection != connection || relay.attachment != sequence || message.GetAttachmentSequence() != sequence {
-		err := errors.New("superseded Session connection")
-		return err
+		return errors.New("superseded Session connection")
 	}
 	switch value := message.GetMessage().(type) {
 	case *agentv1.HostSessionMessage_Acknowledged:
@@ -525,8 +524,7 @@ func (relay *agentRelay) expiryLoop() {
 	for {
 		relay.mu.Lock()
 		relay.session.mu.Lock()
-		grant := proto.Clone(relay.session.grant).(*agentv1.SessionGrant)
-		expires := time.Unix(0, grant.GetExpiresAtUnixNano())
+		expires := time.Unix(0, relay.session.grant.GetExpiresAtUnixNano())
 		now := relay.session.clock()
 		terminal := relay.session.terminal
 		relay.session.mu.Unlock()

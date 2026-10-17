@@ -45,7 +45,7 @@ func TestAgentSavePressureAdmitsEvenBeforeRejectedWriteChangesGeneration(t *test
 	if err := saves.step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.discoveries) != 1 || !client.discoveries[0].BackgroundDue || saves.pending != nil || len(saves.maintenance) != 1 {
+	if len(client.discoveries) != 1 || !client.discoveries[0].BackgroundDue || saves.pending != nil || saves.maintenance == nil {
 		t.Fatal("pressure could not acquire object-retention authority before dirty admission")
 	}
 	saves.release()
@@ -116,7 +116,7 @@ func TestAgentSaveIdleWaitsForScheduledCompletionProof(t *testing.T) {
 		saves.wake = nil
 		saves.changes = func() disk.VersionChanges { return disk.VersionChanges{} }
 		saves.idle = func(context.Context) error {
-			if !client.published || len(saves.maintenance) != 0 || len(base.requests) != 2 || !time.Now().Equal(first.Add(autosaveQuiet)) {
+			if !client.published || saves.maintenance != nil || len(base.requests) != 2 || !time.Now().Equal(first.Add(autosaveQuiet)) {
 				t.Fatal("idle bypassed scheduled completion proof or delayed after its maintenance")
 			}
 			return errComputerHibernated

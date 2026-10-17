@@ -67,7 +67,7 @@ func TestAgentSaveMaintenanceCatchupOnlyPreemptsForPending(t *testing.T) {
 				saves.client, saves.wake = client, make(chan struct{})
 				saves.changes = func() disk.VersionChanges { return disk.VersionChanges{} }
 				capture := &hintMaintenanceCapture{phase: "adopt", saveHostCapture: saveHostCapture{base.fixture}, entered: make(chan struct{}), release: make(chan struct{}), canceled: make(chan struct{})}
-				saves.maintenance = []*saveMaintenance{{capture: capture, saveID: base.save.SaveID}}
+				saves.maintenance = &saveMaintenance{capture: capture, saveID: base.save.SaveID}
 				defer saves.release()
 				done := make(chan error, 1)
 				go func() { done <- saves.maintain(t.Context()) }()

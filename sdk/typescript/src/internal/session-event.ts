@@ -38,10 +38,10 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
       if (data["state"] !== "paused" && data["state"] !== "resolved" && data["state"] !== "stopped") throw new Error("Invalid storage pressure state")
       return {computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),holdId:id("holdId"),state:data["state"]}
     case "session.recovery_gap": {
-      if (!Array.isArray(data["affectedTurnIds"]) || !Number.isSafeInteger(data["affectedTurnCount"]) || data["affectedTurnCount"] !== data["affectedTurnIds"].length) throw new Error("Invalid recovery gap affected Turns")
+      if (!Array.isArray(data["affectedTurnIds"])) throw new Error("Invalid recovery gap affected Turns")
       if (data["restoredAt"] !== null && (typeof data["restoredAt"] !== "string" || Number.isNaN(Date.parse(data["restoredAt"])))) throw new Error("Invalid recovery gap restore timestamp")
       if ((data["recoverySaveId"]===null)!==(data["restoredAt"]===null)) throw new Error("Recovery gap restore point is inconsistent")
-      return {holdId:id("holdId"),computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),recoverySaveId:data["recoverySaveId"]===null?null:id("recoverySaveId"),restoredAt:data["restoredAt"] as string|null,affectedTurnIds:data["affectedTurnIds"].map(v=>resourceID(v,"affected Turn")),affectedTurnCount:data["affectedTurnCount"] as number}
+      return {holdId:id("holdId"),computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),recoverySaveId:data["recoverySaveId"]===null?null:id("recoverySaveId"),restoredAt:data["restoredAt"] as string|null,affectedTurnIds:data["affectedTurnIds"].map(v=>resourceID(v,"affected Turn"))}
     }
     case "session.process_failed": return { holdId: id("holdId"), processEpoch: sequence("processEpoch") }
     case "session.deadline": return { holdId: id("holdId") }

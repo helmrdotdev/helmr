@@ -223,12 +223,11 @@ export type RecoveryGap = {
   recoverySaveId: string | null;
   restoredAt: string | null;
   affectedTurnIds: string[];
-  affectedTurnCount: number;
 };
 
 export function recoveryGapNotice(gap: RecoveryGap): string {
   const point = gap.restoredAt ? new Date(gap.restoredAt).toLocaleString() : "the initial work environment";
-  return `This Computer was restored to ${point}. File changes and native conversation history for ${gap.affectedTurnCount} completed requests in this conversation may be missing. Replies remain available. Completed requests will not run again.`;
+  return `This Computer was restored to ${point}. File changes and native conversation history for ${gap.affectedTurnIds.length} completed requests in this conversation may be missing. Replies remain available. Completed requests will not run again.`;
 }
 
 export function resumeSession(address: SessionAddress, input: { idempotency_key: string; hold_id: string }): Promise<SessionReceipt> {

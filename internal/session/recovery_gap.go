@@ -19,10 +19,9 @@ type RecoveryGap struct {
 
 // recoveryGapDetails is the descriptive snapshot; hold and lease identity live in typed columns.
 type recoveryGapDetails struct {
-	RecoverySaveID    *uuid.UUID  `json:"recoverySaveId"`
-	RestoredAt        *time.Time  `json:"restoredAt"`
-	AffectedTurnIDs   []uuid.UUID `json:"affectedTurnIds"`
-	AffectedTurnCount int         `json:"affectedTurnCount"`
+	RecoverySaveID  *uuid.UUID  `json:"recoverySaveId"`
+	RestoredAt      *time.Time  `json:"restoredAt"`
+	AffectedTurnIDs []uuid.UUID `json:"affectedTurnIds"`
 }
 
 // RecordComputerRecoveryGap settles acknowledged file exposure while all open
@@ -79,7 +78,7 @@ func RecordComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, computerID u
 			affected = []uuid.UUID{}
 		}
 		hold := uuid.NewV7()
-		details := recoveryGapDetails{recovery, restoredAt, affected, len(affected)}
+		details := recoveryGapDetails{recovery, restoredAt, affected}
 		stored, err := json.Marshal(details)
 		if err != nil {
 			return err
@@ -123,7 +122,6 @@ func inheritComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, id, compute
 	hold := uuid.NewV7()
 	value.HoldID = hold
 	value.AffectedTurnIDs = []uuid.UUID{}
-	value.AffectedTurnCount = 0
 	stored, err := json.Marshal(value.recoveryGapDetails)
 	if err != nil {
 		return err

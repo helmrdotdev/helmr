@@ -35,11 +35,7 @@ func (s *agentComputerSaves) runPressure(ctx context.Context) error {
 		active := !state.PressureSince.IsZero()
 		var stepErr error
 		if active != wasActive || (active && !reported) || uncertain {
-			request := workerapi.AgentStoragePressure{AllocationIdentity: s.identity}
-			if active {
-				since := state.PressureSince
-				request.PressureSince = &since
-			}
+			request := workerapi.AgentStoragePressure{AllocationIdentity: s.identity, Active: active}
 			reportCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			stepErr = s.client.ReportAgentStoragePressure(reportCtx, request)
 			cancel()

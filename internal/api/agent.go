@@ -80,13 +80,12 @@ type AgentSessionInitialTurn struct {
 	Status string `json:"status"`
 }
 type AgentRecoveryGap struct {
-	HoldID            string     `json:"holdId"`
-	ComputerID        string     `json:"computerId"`
-	LeaseEpoch        int64      `json:"leaseEpoch"`
-	RecoverySaveID    *string    `json:"recoverySaveId"`
-	RestoredAt        *time.Time `json:"restoredAt"`
-	AffectedTurnIDs   []string   `json:"affectedTurnIds"`
-	AffectedTurnCount int        `json:"affectedTurnCount"`
+	HoldID          string     `json:"holdId"`
+	ComputerID      string     `json:"computerId"`
+	LeaseEpoch      int64      `json:"leaseEpoch"`
+	RecoverySaveID  *string    `json:"recoverySaveId"`
+	RestoredAt      *time.Time `json:"restoredAt"`
+	AffectedTurnIDs []string   `json:"affectedTurnIds"`
 }
 type AgentSessionHold struct {
 	RecoveryGap *AgentRecoveryGap `json:"recovery_gap,omitempty"`

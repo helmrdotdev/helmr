@@ -79,7 +79,7 @@ func TestAgentSaveRetryRetainsExactCut(t *testing.T) {
 					}
 				}
 			}
-			if (s.capture == nil || s.pending == nil) && len(s.maintenance) == 0 {
+			if (s.capture == nil || s.pending == nil) && s.maintenance == nil {
 				t.Fatal("uncertain cut was discarded")
 			}
 			if err := saveTestStep(s, t.Context()); err != nil {
@@ -184,7 +184,7 @@ func TestAgentSaveStorageOutageRetriesWhileOwnerLives(t *testing.T) {
 			defer cancel()
 			capture := &retryAgentSaveCapture{saveHostCapture: saveHostCapture{c.fixture}, stage: stage}
 			s.machine.(*agentSaveTestMachine).capture = capture
-			s.client = &retryAgentSaveClient{agentSaveTestClient: c, cancel: cancel, settled: func() bool { return len(s.maintenance) == 0 }}
+			s.client = &retryAgentSaveClient{agentSaveTestClient: c, cancel: cancel, settled: func() bool { return s.maintenance == nil }}
 			if err := s.run(ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("save loop stopped during storage outage: %v", err)
 			}
@@ -269,13 +269,13 @@ func saveTestStep(s *agentComputerSaves, ctx context.Context) error {
 	wake := s.wake
 	s.wake = nil
 	defer func() { s.wake = wake }()
-	if len(s.maintenance) > 0 {
+	if s.maintenance != nil {
 		return s.maintain(ctx)
 	}
 	if err := s.step(ctx); err != nil {
 		return err
 	}
-	for len(s.maintenance) > 0 {
+	for s.maintenance != nil {
 		if err := s.maintain(ctx); err != nil {
 			return err
 		}

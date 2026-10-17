@@ -34,31 +34,31 @@ type AgentSaveClient interface {
 // Save requests serially, retaining the same local cut through uncertain replies.
 // On failure the allocation must close the VM before releasing an unresolved cut.
 type agentComputerSaves struct {
-	client                        AgentSaveClient
-	objects                       versionObjectPublisher
-	identity                      workerapi.AllocationIdentity
-	machine                       liveCaptureMachine
-	pending                       *workerapi.AgentSavePublication
-	capture                       computerSaveCapture
-	captured, uploaded, published bool
-	requested                     *workerapi.AgentSave
-	discovered                    *workerapi.AgentSavePending
-	idle                          func(context.Context) error
-	changes                       func() disk.VersionChanges
-	wake                          <-chan struct{}
-	savedGeneration               uint64
-	retryDelay                    time.Duration
-	pinCommitted                  func(context.Context) (disk.RetainedVersion, error)
-	pressureMu                    sync.Mutex
-	pressureGate                  sync.Mutex
-	pressureSave                  *workerapi.AgentSave
-	pressureRequest               chan struct{}
-	maintenance                   []*saveMaintenance
-	retirement                    *workerapi.AgentSaveRetirement
-	retirementCandidate           *saveMaintenance
-	accountingDue                 time.Time
-	admissionRetryAt              time.Time
-	phase                         string
+	client              AgentSaveClient
+	objects             versionObjectPublisher
+	identity            workerapi.AllocationIdentity
+	machine             liveCaptureMachine
+	pending             *workerapi.AgentSavePublication
+	capture             computerSaveCapture
+	captured, uploaded  bool
+	requested           *workerapi.AgentSave
+	discovered          *workerapi.AgentSavePending
+	idle                func(context.Context) error
+	changes             func() disk.VersionChanges
+	wake                <-chan struct{}
+	savedGeneration     uint64
+	retryDelay          time.Duration
+	pinCommitted        func(context.Context) (disk.RetainedVersion, error)
+	pressureMu          sync.Mutex
+	pressureGate        sync.Mutex
+	pressureSave        *workerapi.AgentSave
+	pressureRequest     chan struct{}
+	maintenance         *saveMaintenance
+	retirement          *workerapi.AgentSaveRetirement
+	retirementCandidate *saveMaintenance
+	accountingDue       time.Time
+	admissionRetryAt    time.Time
+	phase               string
 }
 
 func (s *agentComputerSaves) run(ctx context.Context) error {
@@ -91,7 +91,7 @@ func (s *agentComputerSaves) run(ctx context.Context) error {
 			attempt++
 			started := time.Now()
 			previousGeneration := s.savedGeneration
-			previousMaintenance := len(s.maintenance)
+			previousMaintenance := s.maintenance
 			err := s.step(ctx)
 			nextDiscovery = time.Now().Add(saveDiscoveryCatchupEvery)
 			if errors.Is(err, errSavePreempted) {
@@ -127,12 +127,12 @@ func (s *agentComputerSaves) run(ctx context.Context) error {
 				continue
 			}
 			attempt, s.retryDelay = 0, 0
-			if s.savedGeneration != previousGeneration || (previousMaintenance > 0 && len(s.maintenance) == 0) {
+			if s.savedGeneration != previousGeneration || (previousMaintenance != nil && s.maintenance == nil) {
 				discover = true
 				continue
 			}
 		}
-		if len(s.maintenance) > 0 {
+		if s.maintenance != nil {
 			discover = true
 			continue
 		}
@@ -188,7 +188,7 @@ func (s *agentComputerSaves) nextSaveTime(state disk.VersionChanges, now time.Ti
 	due = earlierTime(due, s.accountingDue)
 	// A published clean cut already has the authority needed for adoption and
 	// collection. Let that maintenance free space before admitting another cut.
-	if !state.PressureSince.IsZero() && (dirty || len(s.maintenance) == 0) {
+	if !state.PressureSince.IsZero() && (dirty || s.maintenance == nil) {
 		due = now
 	}
 	if !due.IsZero() {
@@ -322,30 +322,27 @@ func (s *agentComputerSaves) step(ctx context.Context) error {
 		}
 		s.uploaded = true
 	}
-	if !s.published {
-		started := time.Now()
-		s.phase = "publish_save"
-		err := s.client.PublishAgentSave(ctx, *s.pending)
-		attributes := []any{}
-		if first := s.capture.Changes().ChangedAt; !first.IsZero() {
-			attributes = append(attributes, "oldest_change_age_ms", float64(time.Since(first))/float64(time.Millisecond))
-		}
-		s.phaseFinished(s.pending.Save.SaveID, s.capture.Changes().Generation, "publish_save", started, err, attributes...)
-		if err != nil {
-			return err
-		}
-		s.published = true
+	started := time.Now()
+	s.phase = "publish_save"
+	err := s.client.PublishAgentSave(ctx, *s.pending)
+	attributes := []any{}
+	if first := s.capture.Changes().ChangedAt; !first.IsZero() {
+		attributes = append(attributes, "oldest_change_age_ms", float64(time.Since(first))/float64(time.Millisecond))
+	}
+	s.phaseFinished(s.pending.Save.SaveID, s.capture.Changes().Generation, "publish_save", started, err, attributes...)
+	if err != nil {
+		return err
 	}
 	s.savedGeneration = s.capture.Changes().Generation
 	// Prior maintenance has returned and joined its consumers. A newer published
 	// cut supersedes that local work; releasing its pin does not retire remote
 	// custody or advance the adopted head. Keep existing retirement receipts.
-	for _, task := range s.maintenance {
-		task.capture.Release()
+	if s.maintenance != nil {
+		s.maintenance.capture.Release()
 	}
-	s.maintenance = []*saveMaintenance{{capture: s.capture, saveID: s.pending.Save.SaveID}}
+	s.maintenance = &saveMaintenance{capture: s.capture, saveID: s.pending.Save.SaveID}
 	s.capture, s.pending, s.requested = nil, nil, nil
-	s.captured, s.uploaded, s.published = false, false, false
+	s.captured, s.uploaded = false, false
 	return nil
 }
 
@@ -358,10 +355,10 @@ type saveMaintenance struct {
 }
 
 func (s *agentComputerSaves) maintain(ctx context.Context) error {
-	if len(s.maintenance) == 0 {
+	if s.maintenance == nil {
 		return nil
 	}
-	task := s.maintenance[0]
+	task := s.maintenance
 	operationCtx, cancel := context.WithCancel(ctx)
 	joined := make(chan struct{})
 	var pending *workerapi.AgentSavePending
@@ -441,7 +438,7 @@ func (s *agentComputerSaves) maintain(ctx context.Context) error {
 	cancel()
 	<-joined
 	if err == nil {
-		s.maintenance = s.maintenance[1:]
+		s.maintenance = nil
 	}
 	if discoveryErr != nil {
 		return discoveryErr
@@ -469,13 +466,13 @@ func (s *agentComputerSaves) release() {
 	if s.capture != nil {
 		s.capture.Release()
 	}
-	for _, task := range s.maintenance {
-		task.capture.Release()
+	if s.maintenance != nil {
+		s.maintenance.capture.Release()
 	}
 	s.maintenance = nil
 	s.retirementCandidate, s.retirement = nil, nil
 	s.capture, s.pending, s.requested = nil, nil, nil
-	s.captured, s.uploaded, s.published = false, false, false
+	s.captured, s.uploaded = false, false
 }
 
 type agentSavePublisher struct {

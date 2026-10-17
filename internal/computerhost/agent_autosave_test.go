@@ -166,7 +166,7 @@ func TestAutosaveMaintenanceObservesDirtyDeadline(t *testing.T) {
 		changes := disk.VersionChanges{Generation: 1, ChangedAt: first, LastChangedAt: first}
 		saves.changes = func() disk.VersionChanges { return changes }
 		capture := &hintMaintenanceCapture{phase: "adopt", saveHostCapture: saveHostCapture{base.fixture}, entered: make(chan struct{}), release: make(chan struct{}), canceled: make(chan struct{})}
-		saves.maintenance = []*saveMaintenance{{capture: capture, saveID: base.save.SaveID}}
+		saves.maintenance = &saveMaintenance{capture: capture, saveID: base.save.SaveID}
 		done := make(chan error, 1)
 		go func() { done <- saves.maintain(t.Context()) }()
 		<-capture.entered

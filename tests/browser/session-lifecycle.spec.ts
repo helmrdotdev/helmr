@@ -232,7 +232,7 @@ test("recovery notice reports this conversation and Resume releases only its rec
   const operatorHold = { id: "operator-hold", session_id: owner, scope: "local", kind: "control", reason: "Operator pause", created_at: now };
   const data = sessionWith({ holds: [operatorHold, {
     id: recoveryHold, session_id: owner, scope: "local", kind: "recovery_gap", reason: "Recovery confirmation required", created_at: now,
-    recovery_gap: { holdId: recoveryHold, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [turnID(1)], affectedTurnCount: 1 },
+    recovery_gap: { holdId: recoveryHold, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [turnID(1)] },
   }] }, [makeTurn(1, { status: "completed", terminal_at: now, response: [{ type: "text", text: "Previously delivered answer" }], result: null })]);
   await serveSession(page, data, ["sessions.read", "sessions.resume"]);
   const mutations: unknown[] = [];
@@ -253,6 +253,59 @@ test("recovery notice reports this conversation and Resume releases only its rec
   await expect(page.getByText("This Computer was restored", { exact: false })).toHaveCount(0);
   await expect(page.getByText("Operator pause", { exact: false })).toBeVisible();
   expect(mutations).toEqual([{ hold_id: recoveryHold, idempotency_key: expect.any(String) }]);
+});
+
+test("a failed first Session read shows Retry while automatic recovery remains active", async ({ page }) => {
+  await page.clock.install();
+  const data = sessionWith({}, [makeTurn(1, { status: "completed", terminal_at: now, result: null })]);
+  await serveSession(page, data);
+  let reads = 0;
+  await page.route(`**${sessionPath}`, async route => {
+    reads++;
+    if (reads === 1) return route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Temporarily unavailable" } } });
+    return route.fallback();
+  });
+  await page.goto(sessionURL);
+  const failure = page.getByRole("alert").filter({ hasText: "Could not load this session." });
+  await expect(failure).toBeVisible();
+  await expect(failure.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await page.clock.runFor(5_100);
+  await expect(page.getByText("CLI or API", { exact: true })).toBeVisible();
+  await expect(failure).toHaveCount(0);
+  expect(reads).toBe(2);
+});
+
+test("a failed Session snapshot retries without another change notification", async ({ page }) => {
+  await page.clock.install();
+  const data = sessionWith({}, [makeTurn(1, { status: "completed", terminal_at: now, result: null })]);
+  await serveSession(page, data, ["sessions.read", "sessions.resume"]);
+  await page.goto(sessionURL);
+  await expect(page.getByText("CLI or API", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
+  const hold = "00000000-0000-7000-8000-000000000712";
+  data.session["holds"] = [{
+    id: hold, session_id: data.session["id"], scope: "local", kind: "recovery_gap", reason: "Recovery confirmation required", created_at: now,
+    recovery_gap: { holdId: hold, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [turnID(1)] },
+  }];
+  let reads = 0;
+  await page.route(`**${sessionPath}`, async route => {
+    reads++;
+    if (reads <= 4) return route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Temporarily unavailable" } } });
+    return route.fallback();
+  });
+  // The stream stays connected and delivers only this one hint.
+  await notifySessionChanged(page);
+  await expect.poll(() => reads).toBe(1);
+  await expect(page.getByRole("alert").filter({ hasText: "Could not load this session." })).toBeVisible();
+  for (let index = 0; index < 4; index++) {
+    await page.clock.runFor(5_100);
+    await expect.poll(() => reads).toBe(index + 2);
+  }
+  await expect(page.getByText("native conversation history for 1 completed requests", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Could not load this session." })).toHaveCount(0);
+  await page.clock.runFor(60_000);
+  expect(reads).toBe(5);
 });
 
 test("current storage hold stays authoritative across paginated pressure history", async ({ page }) => {

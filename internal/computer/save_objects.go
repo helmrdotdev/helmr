@@ -1,7 +1,6 @@
 package computer
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -300,8 +299,8 @@ func (r saveObjectRetention) requireRetained(ctx context.Context, tx pgx.Tx, obj
 // recordGraph resolves every physical reference of an uncertified object,
 // including unselected pages, to an admitted certified child and
 // records the edges and the object's direct keys. Missing dependencies fail
-// before certification. Co-packed child pages share one read, and only one
-// child's decoded evidence is retained at a time.
+// before certification. Batch preparation already admitted and retained the
+// child objects; each physical node reference is checked against that evidence.
 func (s saveObjectScope) recordGraph(ctx context.Context, tx pgx.Tx, object saveObject) error {
 	for _, key := range object.keys {
 		if key != s.writeKey {
@@ -313,7 +312,7 @@ func (s saveObjectScope) recordGraph(ctx context.Context, tx pgx.Tx, object save
 		packs[child.Locator.Pack] = append(packs[child.Locator.Pack], child)
 	}
 	for ref, children := range packs {
-		evidence, err := s.loadChild(ctx, tx, saveObjectDigest(ref.Digest), ref.Size, ref.Rank)
+		evidence, err := s.loadChild(saveObjectDigest(ref.Digest), ref.Size, ref.Rank)
 		if err != nil {
 			return err
 		}
@@ -334,7 +333,7 @@ func (s saveObjectScope) recordGraph(ctx context.Context, tx pgx.Tx, object save
 		segments[child] = struct{}{}
 	}
 	for child := range segments {
-		evidence, err := s.loadChild(ctx, tx, saveObjectDigest(child.Digest), child.Size, 0)
+		evidence, err := s.loadChild(saveObjectDigest(child.Digest), child.Size, 0)
 		if err != nil {
 			return err
 		}
@@ -373,40 +372,15 @@ func (s saveObjectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object 
 	return rows.Err()
 }
 
-func (s saveObjectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
-	if s.children != nil {
-		child, ok := s.children[digest]
-		if !ok {
-			return blockformat.ObjectInspection{}, ErrNotReady
-		}
-		if child.size != size || child.rank != rank {
-			return blockformat.ObjectInspection{}, saveObjectConflict("child object geometry differs from its reference")
-		}
-		return child.inspection, nil
-	}
-	var raw []byte
-	var storedSize int64
-	var storedRank int
-	var certified bool
-	// KEY SHARE prevents collection until the edge's restrictive FK takes over.
-	err := tx.QueryRow(ctx, `SELECT inspection,size_bytes,rank,certified FROM disk_objects WHERE environment_id=$1 AND digest=$2 FOR KEY SHARE`, s.environmentID, digest).Scan(&raw, &storedSize, &storedRank, &certified)
-	if err != nil {
-		return blockformat.ObjectInspection{}, saveObjectMissing(err)
-	}
-	if storedSize != size || storedRank != rank {
-		return blockformat.ObjectInspection{}, saveObjectConflict("child object geometry differs from its reference")
-	}
-	if !certified {
+func (s saveObjectScope) loadChild(digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
+	child, ok := s.children[digest]
+	if !ok {
 		return blockformat.ObjectInspection{}, ErrNotReady
 	}
-	if err = s.requireAdmittedObject(ctx, tx, digest); err != nil {
-		return blockformat.ObjectInspection{}, err
+	if child.size != size || child.rank != rank {
+		return blockformat.ObjectInspection{}, saveObjectConflict("child object geometry differs from its reference")
 	}
-	var evidence blockformat.ObjectInspection
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&evidence)
-	return evidence, err
+	return child.inspection, nil
 }
 
 func (s saveObjectScope) insertEdge(ctx context.Context, tx pgx.Tx, parent saveObject, digest string, rank int) error {

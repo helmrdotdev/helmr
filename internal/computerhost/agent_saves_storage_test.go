@@ -95,7 +95,7 @@ func TestAgentSaveRepeatedCutsReuseStagingBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := saveTestStep(s, t.Context()); stage != "" {
-			if !errors.Is(err, cas.ErrUnavailable) || len(s.maintenance) == 0 {
+			if !errors.Is(err, cas.ErrUnavailable) || s.maintenance == nil {
 				t.Fatalf("%s read outage did not retain cut: %v", stage, err)
 			}
 			pending := c.requests[len(c.requests)-1]

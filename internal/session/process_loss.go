@@ -52,6 +52,8 @@ const (
 	ComputerLossRecoverable       ComputerLossDisposition = true
 )
 
+// LoseProcess exposes independent runtime loss to cross-package fixtures.
+// Production Computer loss uses LoseLeaseProcesses and its explicit disposition.
 func LoseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool) error {
 	return loseProcess(ctx, tx, e, physicalStopped, ComputerLossRequiresAttention, uuid.Nil())
 }

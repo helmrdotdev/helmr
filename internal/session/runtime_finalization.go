@@ -9,8 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -110,8 +108,7 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 		if prior != nil {
 			return lockRuntimeOperationOwnerWithHostLocked(ctx, tx, e, false)
 		}
-		var save computer.SaveRequest
-		err = recordResult(ctx, tx, e, turn, result, digest, evidence, &save)
+		err = recordResult(ctx, tx, e, turn, result, digest, evidence)
 		if errors.Is(err, errResultDrainPending) {
 			return nil
 		}
