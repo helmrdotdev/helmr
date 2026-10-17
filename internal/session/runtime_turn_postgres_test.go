@@ -81,8 +81,8 @@ func TestRuntimeTurnReceiptMatchesPublishedResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := json.RawMessage(`{"status":"completed","result":{"result":1}}`)
-	if _, err := session.ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome); err == nil {
-		t.Fatal("prepared result acknowledged as completed")
+	if _, err := session.ObserveRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, a.TurnID, outcome); err != nil {
+		t.Fatal(err)
 	}
 	root, _ := s.cut(t, 8)
 	if err := s.publisher.Capture(t.Context(), s.ref(save.ID), root, "owned cut"); err != nil {
@@ -91,7 +91,7 @@ func TestRuntimeTurnReceiptMatchesPublishedResult(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	// Current physical ownership may observe a prior outcome after a hold changes

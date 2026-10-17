@@ -43,13 +43,19 @@ func (c *versionRangeCache) GetRange(ctx context.Context, digest string, size, o
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Large sequential reads already amortize transport overhead. Keep small
-	// index pages, segment headers and frequently requested block ranges bounded.
-	if length <= 0 || length > 64<<10 || offset < 0 || size < length || offset > size-length {
+	// Keep complete metadata packs and small segment ranges within one budget.
+	if length <= 0 || (length > 64<<10 && (offset != 0 || length != size || size > 4<<20)) || offset < 0 || size < length || offset > size-length {
 		return c.source.GetRange(ctx, digest, size, offset, length)
 	}
 	key := versionRangeKey{digest, size, offset, length}
 	c.mu.Lock()
+	// A full-pack fetch also serves every later page in that exact object.
+	if full := c.entries[versionRangeKey{digest, size, 0, size}]; full != nil {
+		c.recent.MoveToFront(full)
+		data := full.Value.(versionCachedRange).data[offset : offset+length]
+		c.mu.Unlock()
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
 	if e := c.entries[key]; e != nil {
 		c.recent.MoveToFront(e)
 		data := e.Value.(versionCachedRange).data
@@ -99,4 +105,25 @@ func (c *versionRangeCache) clear() {
 	clear(c.entries)
 	c.recent.Init()
 	c.bytes = 0
+}
+
+// GetPackRange explicitly fetches a bounded metadata pack. Segment reads keep
+// their ordinary range semantics and do not amplify a single block into a pack.
+func (c *versionRangeCache) GetPackRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	if size < 8 || size > 4<<20 || offset < 0 || length <= 0 || offset > size-length {
+		return nil, errors.New("invalid cached pack range")
+	}
+	r, err := c.GetRange(ctx, digest, size, 0, size)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = io.CopyN(io.Discard, r, offset); err != nil {
+		return nil, errors.Join(err, r.Close())
+	}
+	return &packRangeReader{Reader: io.LimitReader(r, length), Closer: r}, nil
+}
+
+type packRangeReader struct {
+	io.Reader
+	io.Closer
 }

@@ -31,11 +31,11 @@ type saveHTTPPublication struct {
 	store  testUploadStore
 }
 
-func (p saveHTTPPublication) Register(ctx context.Context, i blockformat.ObjectInspection) error {
-	return p.client.RegisterAgentSaveObject(ctx, workerapi.AgentSaveObject{Save: p.save, Inspection: i})
+func (p saveHTTPPublication) RegisterBatch(ctx context.Context, i []blockformat.ObjectInspection) error {
+	return p.client.RegisterAgentSaveObject(ctx, workerapi.AgentSaveObject{Save: p.save, Inspections: i})
 }
-func (p saveHTTPPublication) Certify(ctx context.Context, i blockformat.ObjectInspection) error {
-	return p.client.CertifyAgentSaveObject(ctx, workerapi.AgentSaveObject{Save: p.save, Inspection: i})
+func (p saveHTTPPublication) CertifyBatch(ctx context.Context, i []blockformat.ObjectInspection) error {
+	return p.client.CertifyAgentSaveObject(ctx, workerapi.AgentSaveObject{Save: p.save, Inspections: i})
 }
 func (p saveHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {
@@ -67,7 +67,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
-	next, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation})
+	next, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Admit: true})
 	if err != nil || next.Save == nil || next.Save.SaveID != save.ID.String() || next.Sequence != save.Sequence {
 		t.Fatalf("durable request: %+v %v", next, err)
 	}
@@ -119,7 +119,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err := client.PublishAgentSave(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-	background, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, BackgroundDue: true})
+	background, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Admit: true, BackgroundDue: true})
 	if err != nil || background.Save == nil || background.Save.SaveID == next.Save.SaveID || background.Sequence != next.Sequence+1 {
 		t.Fatalf("background HTTP admission: %+v %v", background, err)
 	}
@@ -133,16 +133,31 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err := client.PublishAgentSave(t.Context(), backgroundRequest); err != nil {
 		t.Fatal(err)
 	}
+	retirement := &workerapi.AgentSaveRetirement{SaveID: background.Save.SaveID, Root: root}
+	for range 2 {
+		if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Retirement: retirement}); err != nil {
+			t.Fatalf("exact retirement retry through authenticated HTTP: %v", err)
+		}
+	}
+	var retirementFloor int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT save_retirement_seq FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.Environment, f.Computer).Scan(&retirementFloor); err != nil || retirementFloor != background.Sequence {
+		t.Fatalf("retirement HTTP floor: %d %v", retirementFloor, err)
+	}
+	invalidRetirement := *retirement
+	invalidRetirement.SaveID = uuid.NewV7().String()
+	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Retirement: &invalidRetirement}); err == nil {
+		t.Fatal("HTTP accepted unknown retirement save")
+	}
+	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: wrongAllocation, Retirement: retirement}); err == nil {
+		t.Fatal("HTTP accepted foreign allocation retirement")
+	}
 	var backgroundHead bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT c.recovery_save_id=$2 AND s.turn_id IS NULL AND t.status='finalizing' AND t.completion_save_id IS NULL FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$2 JOIN turns t ON t.environment_id=c.environment_id AND t.id=$3 WHERE c.environment_id=$1 AND c.id=$4`, f.Environment, background.Save.SaveID, a.TurnID, f.Computer).Scan(&backgroundHead); err != nil || !backgroundHead {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.recovery_save_id=$2 AND s.turn_id IS NULL AND t.status='completed' FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$2 JOIN turns t ON t.environment_id=c.environment_id AND t.id=$3 WHERE c.environment_id=$1 AND c.id=$4`, f.Environment, background.Save.SaveID, a.TurnID, f.Computer).Scan(&backgroundHead); err != nil || !backgroundHead {
 		t.Fatalf("optional publication completed Turn: %v %v", backgroundHead, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.Environment)
 	if err := client.PublishAgentSave(t.Context(), request); err != nil {
 		t.Fatalf("committed receipt after expiry: %v", err)
-	}
-	if err := session.Complete(t.Context(), f.Pool, f.Environment, f.Session, a.TurnID); err != nil {
-		t.Fatal(err)
 	}
 	tree, err := blockformat.OpenTree(t.Context(), store, f.Environment.String(), map[string][]byte{keyID.String(): key}, locator)
 	if err != nil {
@@ -172,13 +187,13 @@ func TestWorkerSaveDiscoveryContentionIsTemporary(t *testing.T) {
 		t.Fatal(err)
 	}
 	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
-	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation}); !httpclient.IsStatus(err, http.StatusServiceUnavailable) {
+	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Admit: true}); !httpclient.IsStatus(err, http.StatusServiceUnavailable) {
 		t.Fatalf("contention must be temporary: %v", err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation}); err != nil || result.Save != nil {
+	if result, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation, Admit: true}); err != nil || result.Save != nil {
 		t.Fatalf("unblocked discovery: %+v %v", result, err)
 	}
 }

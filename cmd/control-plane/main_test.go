@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
 	"net"
@@ -54,6 +55,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		Changes:                        dbnotify.New(),
 		Allocator:                      allocator,
 		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
 		ComputerKeys:                   computerKeys,

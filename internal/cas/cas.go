@@ -72,6 +72,9 @@ type PresignedUpload struct {
 
 var (
 	ErrDigestMismatch = errors.New("cas object digest mismatch")
+	// ErrRemoteIntegrity distinguishes rejected stored bytes from corrupt local
+	// upload input. Callers must retain their local copy until reconciliation.
+	ErrRemoteIntegrity = errors.New("stored object integrity check failed")
 	// ErrUnavailable marks a transient provider failure, preserving the original cause.
 	ErrUnavailable    = errors.New("object storage is temporarily unavailable")
 	errStageClosed    = errors.New("cas stage is closed")

@@ -43,7 +43,10 @@ func retireDeletedComputerRoots(ctx context.Context, database db.TxDB) error {
 				return nil
 			}
 			_, err := tx.Exec(ctx, `UPDATE computers SET initial_payload_retired_at=CASE WHEN initial_root_id IS NOT NULL THEN clock_timestamp() ELSE initial_payload_retired_at END,initial_root_id=NULL,recovery_save_id=NULL WHERE environment_id=$1 AND id=$2`, c.environment, c.computer)
-			return err
+			if err != nil {
+				return err
+			}
+			return notifyComputerChanged(ctx, tx, c.environment, c.computer)
 		})
 		if err != nil {
 			failures = append(failures, err)

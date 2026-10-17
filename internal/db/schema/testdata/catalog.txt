@@ -162,6 +162,7 @@ column computer_leases.channel_credential_digest bytea not null
 column computer_leases.computer_id uuid not null
 column computer_leases.cpu_config_digest text not null
 column computer_leases.delivered_at timestamp with time zone
+column computer_leases.disk_only_recovery boolean not null default false
 column computer_leases.disk_released_at timestamp with time zone
 column computer_leases.environment_id uuid not null
 column computer_leases.epoch bigint not null
@@ -179,7 +180,9 @@ CASE
     WHEN (disk_released_at IS NULL) THEN base_root_id
     ELSE NULL::uuid
 END
+column computer_leases.save_retirement_seq bigint
 column computer_leases.status text not null
+column computer_leases.storage_pressure_since timestamp with time zone
 column computer_leases.vm_platform_id text not null
 column computer_leases.vm_vcpu_count integer not null
 column computer_leases.worker_epoch bigint not null
@@ -195,6 +198,8 @@ column computer_saves.captured_at timestamp with time zone
 column computer_saves.captured_root_digest bytea
 column computer_saves.computer_id uuid not null
 column computer_saves.computer_lease_epoch bigint not null
+column computer_saves.coverage_max_seq bigint
+column computer_saves.covered_by_save_id uuid
 column computer_saves.environment_id uuid not null
 column computer_saves.failure_evidence text
 column computer_saves.flush_acknowledged_at timestamp with time zone
@@ -202,6 +207,7 @@ column computer_saves.id uuid not null
 column computer_saves.payload_retired_at timestamp with time zone
 column computer_saves.publication_evidence text
 column computer_saves.published boolean generated stored (status = 'published'::text)
+column computer_saves.published_at timestamp with time zone
 column computer_saves.requested_at timestamp with time zone not null default clock_timestamp()
 column computer_saves.requires_recorded_result boolean generated stored true
 column computer_saves.root_id uuid
@@ -594,7 +600,11 @@ column session_holds.environment_id uuid not null
 column session_holds.id uuid not null
 column session_holds.issuer_id uuid
 column session_holds.issuer_kind text not null default 'system'::text
+column session_holds.kind text not null default 'control'::text
 column session_holds.reason text not null
+column session_holds.recovery_computer_id uuid
+column session_holds.recovery_gap jsonb
+column session_holds.recovery_lease_epoch bigint
 column session_holds.released_at timestamp with time zone
 column session_holds.scope text not null
 column session_holds.session_id uuid not null
@@ -688,6 +698,10 @@ column slack_connections.id uuid not null
 column slack_connections.revoked_at timestamp with time zone
 column slack_connections.slack_app_registration_id uuid not null
 column slack_connections.slack_installation_id uuid
+column slack_delivery_limits.channel_id text not null
+column slack_delivery_limits.installation_id uuid not null
+column slack_delivery_limits.next_post_at timestamp with time zone not null default '-infinity'::timestamp with time zone
+column slack_delivery_limits.next_status_at timestamp with time zone not null default '-infinity'::timestamp with time zone
 column slack_installations.app_id text not null
 column slack_installations.app_registration_id uuid not null
 column slack_installations.authorization_lost_at timestamp with time zone
@@ -699,7 +713,6 @@ column slack_installations.credential_ciphertext bytea
 column slack_installations.credential_expires_at timestamp with time zone
 column slack_installations.credential_nonce bytea
 column slack_installations.credential_revision bigint not null
-column slack_installations.delivery_next_at timestamp with time zone not null default clock_timestamp()
 column slack_installations.disconnected_at timestamp with time zone
 column slack_installations.granted_scopes text[] not null
 column slack_installations.history_next_at timestamp with time zone not null default clock_timestamp()
@@ -712,11 +725,15 @@ column slack_installations.refresh_error text
 column slack_installations.refresh_next_at timestamp with time zone not null default clock_timestamp()
 column slack_installations.team_id text not null
 column slack_installations.workspace_name text
+column slack_method_limits.installation_id uuid not null
+column slack_method_limits.method text not null
+column slack_method_limits.retry_after timestamp with time zone not null
 column slack_posts.ask_id uuid
 column slack_posts.attempt_count bigint not null default 0
 column slack_posts.claim_epoch bigint not null default 0
 column slack_posts.claimed_until timestamp with time zone
 column slack_posts.closed_at timestamp with time zone
+column slack_posts.confirmed_at timestamp with time zone
 column slack_posts.confirmed_revision bigint not null default 0
 column slack_posts.confirmed_stream_text text not null default ''::text
 column slack_posts.continuation_ordinal integer not null default 0
@@ -908,8 +925,6 @@ column turn_messages.turn_id uuid not null
 column turns.admission_method text not null
 column turns.caller_id uuid not null
 column turns.caller_kind text not null
-column turns.completion_published boolean generated stored true
-column turns.completion_save_id uuid
 column turns.computer_id uuid not null
 column turns.created_at timestamp with time zone not null default clock_timestamp()
 column turns.deadline_at timestamp with time zone
@@ -1173,6 +1188,7 @@ constraint computer_leases c CHECK (reserved_cpu_millis = (vm_vcpu_count::bigint
 constraint computer_leases c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint computer_leases c CHECK (reserved_memory_bytes > 0)
 constraint computer_leases c CHECK (reserved_scratch_bytes > 0)
+constraint computer_leases c CHECK (save_retirement_seq > 0)
 constraint computer_leases c CHECK (status <> 'active'::text OR initialized_at IS NOT NULL)
 constraint computer_leases c CHECK (status = ANY (ARRAY['acquiring'::text, 'active'::text, 'releasing'::text, 'lost'::text]))
 constraint computer_leases c CHECK (vm_vcpu_count > 0)
@@ -1189,14 +1205,17 @@ constraint computer_leases u UNIQUE (allocation_id)
 constraint computer_saves c CHECK ((status <> ALL (ARRAY['captured'::text, 'published'::text])) OR flush_acknowledged_at IS NOT NULL AND captured_at IS NOT NULL AND captured_root_digest IS NOT NULL AND capture_evidence IS NOT NULL)
 constraint computer_saves c CHECK ((status = 'failed'::text) = (failure_evidence IS NOT NULL))
 constraint computer_saves c CHECK ((status = 'published'::text) = (publication_evidence IS NOT NULL))
+constraint computer_saves c CHECK ((status = 'superseded'::text) = (covered_by_save_id IS NOT NULL))
 constraint computer_saves c CHECK (captured_at IS NULL OR captured_at >= requested_at AND captured_at >= flush_acknowledged_at)
+constraint computer_saves c CHECK (coverage_max_seq >= seq)
 constraint computer_saves c CHECK (octet_length(captured_root_digest) = 32)
 constraint computer_saves c CHECK (seq > 0)
 constraint computer_saves c CHECK (status <> 'published'::text OR (root_id IS NOT NULL) <> (payload_retired_at IS NOT NULL))
 constraint computer_saves c CHECK (status <> 'requested'::text OR captured_root_digest IS NULL AND capture_evidence IS NULL AND flush_acknowledged_at IS NULL AND captured_at IS NULL)
 constraint computer_saves c CHECK (status = 'published'::text OR root_id IS NULL AND payload_retired_at IS NULL)
-constraint computer_saves c CHECK (status = ANY (ARRAY['requested'::text, 'captured'::text, 'published'::text, 'failed'::text]))
+constraint computer_saves c CHECK (status = ANY (ARRAY['requested'::text, 'captured'::text, 'published'::text, 'superseded'::text, 'failed'::text]))
 constraint computer_saves f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
+constraint computer_saves f FOREIGN KEY (environment_id, computer_id, covered_by_save_id) REFERENCES computer_saves(environment_id, computer_id, id)
 constraint computer_saves f FOREIGN KEY (environment_id, root_id) REFERENCES disk_roots(environment_id, id)
 constraint computer_saves f FOREIGN KEY (environment_id, turn_id, computer_id, requires_recorded_result) REFERENCES turns(environment_id, id, computer_id, has_recorded_result)
 constraint computer_saves p PRIMARY KEY (environment_id, id)
@@ -1514,10 +1533,17 @@ constraint session_events f FOREIGN KEY (environment_id, session_id, turn_id) RE
 constraint session_events p PRIMARY KEY (environment_id, session_id, seq)
 constraint session_events u UNIQUE (environment_id, session_id, turn_id, operation_id)
 constraint session_holds c CHECK ((issuer_kind = 'system'::text) = (issuer_id IS NULL))
+constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_computer_id IS NOT NULL))
+constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_gap IS NOT NULL))
+constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_lease_epoch IS NOT NULL))
 constraint session_holds c CHECK (issuer_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'system'::text]))
+constraint session_holds c CHECK (kind = ANY (ARRAY['control'::text, 'recovery_gap'::text, 'storage_pressure'::text]))
 constraint session_holds c CHECK (octet_length(reason) <= 4096)
+constraint session_holds c CHECK (recovery_lease_epoch > 0)
 constraint session_holds c CHECK (scope = ANY (ARRAY['local'::text, 'subtree'::text]))
+constraint session_holds f FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint session_holds f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
+constraint session_holds f FOREIGN KEY (environment_id, session_id, recovery_computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint session_holds p PRIMARY KEY (environment_id, id)
 constraint session_holds u UNIQUE (environment_id, session_id, id)
 constraint session_processes c CHECK (NOT stderr_end_complete OR stderr_ended)
@@ -1604,6 +1630,8 @@ constraint slack_connections f FOREIGN KEY (slack_installation_id, slack_app_reg
 constraint slack_connections p PRIMARY KEY (environment_id, id)
 constraint slack_connections u UNIQUE (id)
 constraint slack_connections u UNIQUE (id, environment_id, slack_installation_id)
+constraint slack_delivery_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
+constraint slack_delivery_limits p PRIMARY KEY (installation_id, channel_id)
 constraint slack_installations c CHECK ((credential_ciphertext IS NULL) = (credential_nonce IS NULL))
 constraint slack_installations c CHECK ((disconnected_at IS NULL) = (credential_ciphertext IS NOT NULL))
 constraint slack_installations c CHECK ((refresh_attempt_id IS NULL) = (refresh_deadline IS NULL))
@@ -1619,6 +1647,8 @@ constraint slack_installations f FOREIGN KEY (org_id) REFERENCES organizations(i
 constraint slack_installations p PRIMARY KEY (id)
 constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
+constraint slack_method_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
+constraint slack_method_limits p PRIMARY KEY (installation_id, method)
 constraint slack_posts c CHECK ((delivery_disposed_at IS NULL) = (delivery_disposed_by IS NULL))
 constraint slack_posts c CHECK ((payload IS NULL) = (payload_expired_at IS NOT NULL))
 constraint slack_posts c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
@@ -1797,9 +1827,7 @@ constraint turn_messages u UNIQUE (environment_id, turn_id, seq)
 constraint turns c CHECK ((response_id IS NULL) = (response_digest IS NULL))
 constraint turns c CHECK ((response_id IS NULL) = (response_staged_at IS NULL))
 constraint turns c CHECK ((result_recorded_at IS NULL) = (result_digest IS NULL))
-constraint turns c CHECK ((status <> ALL (ARRAY['finalizing'::text, 'completed'::text])) OR processing_closed_at IS NOT NULL AND result_recorded_at IS NOT NULL AND result_digest IS NOT NULL AND drain_evidence IS NOT NULL)
-constraint turns c CHECK ((status <> ALL (ARRAY['running'::text, 'finalizing'::text, 'completed'::text])) OR process_epoch IS NOT NULL AND started_at IS NOT NULL)
-constraint turns c CHECK ((status = 'completed'::text) = (completion_save_id IS NOT NULL))
+constraint turns c CHECK ((status <> ALL (ARRAY['running'::text, 'completed'::text])) OR process_epoch IS NOT NULL AND started_at IS NOT NULL)
 constraint turns c CHECK ((status = ANY (ARRAY['completed'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text])) = (terminal_at IS NOT NULL))
 constraint turns c CHECK (admission_method = ANY (ARRAY['create'::text, 'spawn'::text, 'enqueue'::text, 'slack_route'::text, 'schedule'::text]))
 constraint turns c CHECK (caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'schedule'::text]))
@@ -1814,10 +1842,10 @@ constraint turns c CHECK (payload_expired_at IS NULL AND (error_code IS NULL) = 
 constraint turns c CHECK (progress_bytes >= 0 AND progress_bytes <= 8388608)
 constraint turns c CHECK (response_id IS NULL AND response IS NULL AND response_expired_at IS NULL OR response_id IS NOT NULL AND (response IS NOT NULL AND response_expired_at IS NULL OR response IS NULL AND response_expired_at IS NOT NULL))
 constraint turns c CHECK (seq > 0)
-constraint turns c CHECK (status <> 'finalizing'::text OR result IS NOT NULL)
-constraint turns c CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, 'finalizing'::text, 'completed'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text]))
+constraint turns c CHECK (status <> 'completed'::text OR processing_closed_at IS NOT NULL AND result_recorded_at IS NOT NULL AND result_digest IS NOT NULL AND drain_evidence IS NOT NULL)
+constraint turns c CHECK (status <> 'completed'::text OR result IS NOT NULL OR payload_expired_at IS NOT NULL)
+constraint turns c CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text]))
 constraint turns f FOREIGN KEY (environment_id, caller_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint turns f FOREIGN KEY (environment_id, computer_id, id, completion_save_id, completion_published) REFERENCES computer_saves(environment_id, computer_id, turn_id, id, published)
 constraint turns f FOREIGN KEY (environment_id, session_id, computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint turns f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
 constraint turns p PRIMARY KEY (environment_id, id)
@@ -1983,7 +2011,7 @@ index CREATE INDEX trigger_occurrences_activation ON public.trigger_occurrences 
 index CREATE INDEX trigger_occurrences_turn ON public.trigger_occurrences USING btree (environment_id, session_id, turn_id)
 index CREATE INDEX turn_asks_pending ON public.turn_asks USING btree (environment_id, session_id, turn_id) WHERE (status = 'pending'::text)
 index CREATE INDEX turn_messages_pending ON public.turn_messages USING btree (environment_id, session_id, turn_id, seq) WHERE (status = ANY (ARRAY['admitted'::text, 'started'::text]))
-index CREATE INDEX turns_deadlines ON public.turns USING btree (deadline_at, environment_id, session_id) WHERE ((status = ANY (ARRAY['running'::text, 'finalizing'::text])) AND (deadline_at IS NOT NULL))
+index CREATE INDEX turns_deadlines ON public.turns USING btree (deadline_at, environment_id, session_id) WHERE ((status = 'running'::text) AND (deadline_at IS NOT NULL))
 index CREATE INDEX turns_failed ON public.turns USING btree (environment_id, terminal_at) WHERE (status = 'failed'::text)
 index CREATE INDEX turns_queue ON public.turns USING btree (environment_id, session_id, seq) WHERE (status = 'queued'::text)
 index CREATE INDEX worker_groups_active_dispatch_idx ON public.worker_groups USING btree (region_id, id) WHERE (status = 'active'::text)
@@ -2004,6 +2032,8 @@ index CREATE UNIQUE INDEX secret_exposures_command ON public.secret_exposures US
 index CREATE UNIQUE INDEX secret_exposures_image_build ON public.secret_exposures USING btree (environment_id, image_build_id, secret_id) WHERE (image_build_id IS NOT NULL)
 index CREATE UNIQUE INDEX secret_exposures_process ON public.secret_exposures USING btree (environment_id, session_id, process_epoch, secret_id) WHERE (session_id IS NOT NULL)
 index CREATE UNIQUE INDEX session_controls_interrupt_hold ON public.session_controls USING btree (environment_id, hold_id) WHERE (kind = 'interrupt'::text)
+index CREATE UNIQUE INDEX session_holds_one_recovery_gap ON public.session_holds USING btree (environment_id, session_id) WHERE ((kind = 'recovery_gap'::text) AND (released_at IS NULL))
+index CREATE UNIQUE INDEX session_holds_one_storage_pressure ON public.session_holds USING btree (environment_id, session_id) WHERE ((kind = 'storage_pressure'::text) AND (released_at IS NULL))
 index CREATE UNIQUE INDEX session_processes_one_writer ON public.session_processes USING btree (environment_id, session_id) WHERE (fenced_at IS NULL)
 index CREATE UNIQUE INDEX slack_app_registrations_active_app ON public.slack_app_registrations USING btree (app_id) WHERE ((retired_at IS NULL) AND (app_id IS NOT NULL))
 index CREATE UNIQUE INDEX slack_connections_configured ON public.slack_connections USING btree (environment_id, agent_id) WHERE (revoked_at IS NULL)
@@ -2012,7 +2042,7 @@ index CREATE UNIQUE INDEX slack_installations_active ON public.slack_installatio
 index CREATE UNIQUE INDEX slack_posts_one_opening ON public.slack_posts USING btree (environment_id, turn_id) WHERE (role = 'opening'::text)
 index CREATE UNIQUE INDEX trigger_activations_current ON public.trigger_activations USING btree (environment_id, agent_id, trigger_key) WHERE (active_until IS NULL)
 index CREATE UNIQUE INDEX turn_messages_one_started ON public.turn_messages USING btree (environment_id, turn_id) WHERE (status = 'started'::text)
-index CREATE UNIQUE INDEX turns_one_active ON public.turns USING btree (environment_id, session_id) WHERE (status = ANY (ARRAY['running'::text, 'finalizing'::text]))
+index CREATE UNIQUE INDEX turns_one_active ON public.turns USING btree (environment_id, session_id) WHERE (status = 'running'::text)
 index CREATE UNIQUE INDEX users_primary_email_lower_idx ON public.users USING btree (lower(primary_email)) WHERE (primary_email IS NOT NULL)
 index CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx ON public.worker_groups USING btree (region_id) WHERE (status = ANY (ARRAY['active'::text, 'paused'::text]))
 index CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON public.worker_host_secrets USING btree (worker_host_id) WHERE (revoked_at IS NULL)

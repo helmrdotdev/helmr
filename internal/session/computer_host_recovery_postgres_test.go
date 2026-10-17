@@ -27,6 +27,8 @@ func recoveringComputerHost(t *testing.T, f fixture) workergroup.HostPrincipal {
 
 func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing.T) {
 	f := newFixture(t)
+	newSaveStorageFixture(t, f)
+	checkpointImageExposure(t, f)
 	instance := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET allocation_id=$1`, instance)
 	running := f.enqueue(t, "running")
@@ -69,7 +71,7 @@ func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing
 		}
 	}
 	var holds int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("duplicate failure %d %v", holds, err)
 	}
 }

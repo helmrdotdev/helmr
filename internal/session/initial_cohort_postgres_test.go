@@ -127,7 +127,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 	}
 }
 
-func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
+func TestInitialCohortLossWithoutCompletedWorkNeedsNoResume(t *testing.T) {
 	f, _, e := startingSessionFixture(t)
 	var identity computer.LeaseIdentity
 	identity.EnvironmentID = f.env
@@ -139,8 +139,8 @@ func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	var held bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL)`, f.env, e.SessionID).Scan(&held); err != nil || !held {
-		t.Fatalf("initialized loss silently retried: %v", err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL)`, f.env, e.SessionID).Scan(&held); err != nil || held {
+		t.Fatalf("unstarted work acquired loss hold: %v", err)
 	}
 }
 

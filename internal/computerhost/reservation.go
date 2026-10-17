@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 )
 
@@ -16,13 +17,13 @@ func instanceReservationKey(id string, epoch int64) reservation.Key {
 
 func instanceReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (reservation.Vector, error) {
 	if memoryMiB < 0 || guestEphemeralDiskMiB < 0 ||
-		memoryMiB > math.MaxInt64/mebibyte ||
+		memoryMiB > (math.MaxInt64-disk.VersionCacheBytes)/mebibyte ||
 		guestEphemeralDiskMiB > math.MaxInt64/mebibyte {
 		return reservation.Vector{}, errors.New("instance capacity vector is invalid")
 	}
 	return reservation.Vector{
 		CPUMillis:     cpuMillis,
-		MemoryBytes:   memoryMiB * mebibyte,
+		MemoryBytes:   memoryMiB*mebibyte + disk.VersionCacheBytes,
 		HostDiskBytes: guestEphemeralDiskMiB * mebibyte,
 		VMSlots:       1,
 	}, nil

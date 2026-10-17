@@ -43,7 +43,7 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusTooManyRequests {
-		return "", &channelVerificationFailure{rateLimitResult(response.Header)}
+		return "", &channelVerificationFailure{channelRateLimit(response.Header)}
 	}
 	if response.StatusCode != http.StatusOK {
 		return "", channelReadUnavailable()
@@ -91,7 +91,7 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 	if !*result.OK {
 		switch result.Error {
 		case "ratelimited", "rate_limited":
-			return "", &channelVerificationFailure{rateLimitResult(response.Header)}
+			return "", &channelVerificationFailure{channelRateLimit(response.Header)}
 		case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope", "not_in_channel", "channel_not_found", "is_archived", "restricted_action", "ekm_access_denied", "method_not_supported_for_channel_type":
 			return "", &channelVerificationFailure{DeliveryResult{Disposition: Rejected, Code: result.Error}}
 		default:
@@ -113,4 +113,10 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 func (c *WebClient) VerifyChannel(ctx context.Context, installation uuid.UUID, revision int64, team, channel string) error {
 	_, err := c.verifyChannel(ctx, installation, revision, team, channel)
 	return err
+}
+
+func channelRateLimit(header http.Header) DeliveryResult {
+	result := rateLimitResult(header)
+	result.RateLimitMethod = "conversations.info"
+	return result
 }

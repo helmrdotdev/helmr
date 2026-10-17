@@ -10,7 +10,7 @@ import (
 
 const historyReleased = `s.status IN ('closed','cancelled')
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('queued','running','finalizing'))
+ AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('queued','running'))
  AND NOT EXISTS(SELECT 1 FROM turn_messages m WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND m.status IN ('admitted','started'))
  AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=s.environment_id AND a.session_id=s.id AND a.status='pending')
  AND NOT EXISTS(SELECT 1 FROM computer_saves save JOIN turns t ON t.environment_id=save.environment_id AND t.id=save.turn_id WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND save.status IN ('requested','captured'))

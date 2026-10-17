@@ -27,12 +27,12 @@ type preparationPublicationTest struct {
 	inspected []blockformat.ObjectInspection
 }
 
-func (p *preparationPublicationTest) Register(ctx context.Context, e blockformat.ObjectInspection) error {
-	p.inspected = append(p.inspected, e)
-	return p.publisher.Register(ctx, *p.f.host(), p.ref, e)
+func (p *preparationPublicationTest) RegisterBatch(ctx context.Context, e []blockformat.ObjectInspection) error {
+	p.inspected = append(p.inspected, e...)
+	return p.publisher.RegisterBatch(ctx, *p.f.host(), p.ref, e)
 }
-func (p *preparationPublicationTest) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
-	return p.publisher.Certify(ctx, *p.f.host(), p.ref, e)
+func (p *preparationPublicationTest) CertifyBatch(ctx context.Context, e []blockformat.ObjectInspection) error {
+	return p.publisher.CertifyBatch(ctx, *p.f.host(), p.ref, e)
 }
 func (p *preparationPublicationTest) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, f); err != nil {
@@ -154,10 +154,10 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range p.inspected {
-		if err := p.publisher.Register(t.Context(), *p.f.host(), p.ref, e); err != nil {
+		if err := p.publisher.RegisterBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.publisher.Certify(t.Context(), *p.f.host(), p.ref, e); err != nil {
+		if err := p.publisher.CertifyBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -247,7 +247,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	inspection := blockformat.ObjectInspection{Pack: &pack}
-	if err = p.Register(t.Context(), inspection); err != nil {
+	if err = p.RegisterBatch(t.Context(), []blockformat.ObjectInspection{inspection}); err != nil {
 		t.Fatal(err)
 	}
 	guarded, _ := computer.NewImageBuildPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
@@ -259,7 +259,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 		}
 		return p.remote.Stat(ctx, digest)
 	}))
-	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, computer.ErrDenied) {
+	if err = guarded.CertifyBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{inspection}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("certified after revocation: %v", err)
 	}
 	object, _ := describeStoredObject(inspection)
@@ -282,7 +282,7 @@ func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = p.publisher.Register(t.Context(), *p.f.host(), p.ref, blockformat.ObjectInspection{Pack: &pack}); !errors.Is(err, computer.ErrConflict) {
+	if err = p.publisher.RegisterBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{{Pack: &pack}}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("adopted foreign certified graph: %v", err)
 	}
 	var count int

@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerpoolname"
@@ -86,6 +87,9 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			SecretHash:       generated.SecretHash,
 		})
 		if err != nil {
+			return err
+		}
+		if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
 			return err
 		}
 		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
@@ -197,7 +201,10 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipa
 			return pgx.ErrNoRows
 		}
 		_, err = q.ActivateWorkerHost(ctx, activationParams(principal, activation))
-		return err
+		if err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch")
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conflict("worker activation is stale")
@@ -347,7 +354,7 @@ func BeginHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrinci
 		if err != nil {
 			return fmt.Errorf("drain worker host %s: %w", principal.HostID, err)
 		}
-		return nil
+		return dbnotify.Notify(ctx, tx, "dispatch")
 	})
 }
 
@@ -373,7 +380,10 @@ func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPri
 		}
 		var err error
 		completed, err = q.CompleteWorkerDrain(ctx, params)
-		return err
+		if err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch")
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.CompleteWorkerDrainRow{}, conflict("worker drain is not complete or its claim fence is stale")
@@ -390,11 +400,20 @@ func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPri
 // FenceHost fences the authenticated epoch for a worker-reported reason,
 // fenced by its host claim version. Only provider termination and a
 // retired worker are control inputs; diagnostic codes are rejected.
-func FenceHost(ctx context.Context, q db.Querier, principal HostPrincipal, reasonCode string) error {
+func FenceHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipal, reasonCode string) error {
 	reasonCode = strings.TrimSpace(reasonCode)
 	if reasonCode != "provider_termination" && reasonCode != "worker_retired" {
 		return invalidInput("unsupported worker fence reason")
 	}
+	return db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		if err := fenceHost(ctx, db.New(tx), principal); err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch")
+	})
+}
+
+func fenceHost(ctx context.Context, q db.Querier, principal HostPrincipal) error {
 	_, err := q.FenceWorkerHost(ctx, db.FenceWorkerHostParams{
 		ID:                   pgvalue.UUID(principal.HostID),
 		WorkerGroupID:        pgvalue.UUID(principal.GroupID),

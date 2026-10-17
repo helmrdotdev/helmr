@@ -90,7 +90,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, f.env, queued.TurnID).Scan(&status); err != nil || status != "queued" {
 		t.Fatalf("queued input %s: %v", status, err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, f.env, finalizing.TurnID).Scan(&status); err != nil || status != "finalizing" {
+	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, f.env, finalizing.TurnID).Scan(&status); err != nil || status != "completed" {
 		t.Fatalf("recorded result %s: %v", status, err)
 	}
 	shutdown, err = session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
@@ -260,7 +260,7 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE environment_id=$1 AND turn_id=$2 AND kind='turn.failed'`, p.f.env, admission.TurnID).Scan(&events); err != nil || events != 0 {
 		t.Fatalf("unexpected failure events %d: %v", events, err)
 	}
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing')`, p.f.env).Scan(&outstanding); err != nil || outstanding != 1 {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','completed')`, p.f.env).Scan(&outstanding); err != nil || outstanding != 1 {
 		t.Fatalf("admission was released without disposition: %d %v", outstanding, err)
 	}
 	if _, err := session.ControlSession(t.Context(), p.f.pool, p.f.caller(), controlRequest(p.f.fixture, "cancel", "cancel-revoked-input")); err != nil {

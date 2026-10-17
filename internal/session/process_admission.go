@@ -71,20 +71,23 @@ func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch
  WHERE s.environment_id=$1 AND s.id=$2 AND s.status IN ('open','closing')
  AND l.worker_host_id=$4 AND l.worker_epoch=$5 AND l.fenced_at IS NULL
  AND (($6::bigint=0 AND l.status='active' AND l.expires_at>clock_timestamp())
- OR ($6::bigint>0 AND l.epoch=$6 AND l.status='acquiring' AND l.delivered_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL))
+ OR ($6::bigint>0 AND l.epoch=$6 AND l.status='acquiring' AND l.delivered_at IS NULL AND l.initialized_at IS NULL AND (l.restored_from_save_id IS NULL OR l.disk_only_recovery)))
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL
  AND `+NoSessionHoldsSQL+`
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
- AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running','finalizing'))
+ AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running'))
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.computer_id=c.id AND save.computer_lease_epoch<>l.epoch AND save.status IN ('requested','captured'))`, env, session, epoch, host, hostEpoch, freshLease)
 	if err != nil {
 		return false, err
 	}
-	return changed.RowsAffected() == 1, nil
+	if changed.RowsAffected() == 0 {
+		return false, nil
+	}
+	return true, notifySessionsChanged(ctx, tx, env, session)
 }
 
 // LockInitialSessions discovers roots before the Computer lock. The
@@ -153,8 +156,8 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 			return err
 		}
 		var currentAttachment int64
-		var stopPending bool
-		if err := tx.QueryRow(ctx, `SELECT attachment_sequence,stop_deadline_at IS NOT NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment, &stopPending); err != nil {
+		var stopPending, alreadyReady bool
+		if err := tx.QueryRow(ctx, `SELECT attachment_sequence,stop_deadline_at IS NOT NULL,status='ready' FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment, &stopPending, &alreadyReady); err != nil {
 			return err
 		}
 		if currentAttachment != attachment {
@@ -184,6 +187,12 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 		// needed to finish restoration. Recheck that control authority after the
 		// process write; Dispatch still requires active physical authority.
 		_, err = lockRuntimeAuthority(ctx, tx, host, e)
-		return err
+		if err != nil {
+			return err
+		}
+		if alreadyReady {
+			return nil
+		}
+		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}))
 }

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -48,9 +49,17 @@ type localVersionSource struct {
 }
 
 func (s localVersionSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
-	r, err := s.local.GetRange(ctx, digest, size, offset, length)
+	r, err := (guestIORangeSource{s.local}).GetRange(ctx, digest, size, offset, length)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.reads.GetRange(ctx, digest, size, offset, length)
+	}
+	return r, err
+}
+
+func (s localVersionSource) GetPackRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	r, err := (guestIORangeSource{s.local}).GetRange(ctx, digest, size, offset, length)
+	if errors.Is(err, os.ErrNotExist) {
+		return s.reads.GetPackRange(ctx, digest, size, offset, length)
 	}
 	return r, err
 }
@@ -60,21 +69,30 @@ func (s localVersionSource) GetRange(ctx context.Context, digest string, size, o
 // it is not external durability and does not tolerate loss of the host's disk.
 // Do not unlink/replace the directory or owner.lock while any owner can use it.
 type LocalVersion struct {
-	life          sync.RWMutex
-	request       sync.Mutex // Complete NBD requests versus the immutable cut only.
-	commit        sync.Mutex
-	publication   sync.RWMutex // Joins local-file publishers before reachable eviction.
-	store         *cas.File
-	reads         *versionRangeCache
-	disk          *WritableVersion
-	directory     string
-	head          localVersionHead
-	installedRoot VersionRoot
-	lock          *os.File
-	closed        bool
-	stagedBytes   int64
-	captures      map[*LocalCapture]VersionRoot
-	phase         func(string) error // Deterministic test crash/fault injection, set before use.
+	guestRequest    atomic.Pointer[guestRequestProgress]
+	guestActivity   chan struct{}
+	life            sync.RWMutex
+	request         sync.Mutex // Complete NBD requests versus the immutable cut only.
+	commit          sync.Mutex
+	collection      sync.Mutex
+	storage         sync.RWMutex // Short deletion batches versus readers and encoders.
+	revision        uint64       // Changes before each encoder, under commit.
+	publication     sync.RWMutex // Joins local-file publishers before reachable eviction.
+	store           *cas.File
+	objectBatch     func() captureObjectBatch
+	reads           *versionRangeCache
+	evidence        *versionEvidenceCache
+	disk            *WritableVersion
+	directory       string
+	head            localVersionHead
+	installedRoot   VersionRoot
+	lock            *os.File
+	closed          bool
+	stagedBytes     int64
+	captures        map[*LocalCapture]VersionRoot
+	headGeneration  uint64
+	verifiedBacking map[string]bool
+	phase           func(string) error // Deterministic test crash/fault injection, set before use.
 }
 
 func syncVersionDirectory(path string) error {
@@ -251,13 +269,14 @@ func newLocalVersion(ctx context.Context, cfg LocalVersionConfig, lock *os.File,
 	if err != nil {
 		return nil, err
 	}
-	reads := newVersionRangeCache(cfg.BaseSource)
-	writer := blockformat.Writer{Source: localVersionSource{local: store, base: cfg.BaseSource, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
+	source := guestIORangeSource{cfg.BaseSource}
+	reads := newVersionRangeCache(source)
+	writer := blockformat.Writer{Source: localVersionSource{local: store, base: source, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
 	disk, err := OpenWritableVersion(ctx, writer, head.Root, cfg.DirtyBlocks, remaining)
 	if err != nil {
 		return nil, err
 	}
-	return &LocalVersion{store: store, reads: reads, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]VersionRoot)}, nil
+	return &LocalVersion{guestActivity: make(chan struct{}, 1), store: store, objectBatch: func() captureObjectBatch { return store.NewObjectBatch() }, reads: reads, evidence: newVersionEvidenceCache(), disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]VersionRoot), verifiedBacking: make(map[string]bool)}, nil
 }
 
 func (p *LocalVersion) step(phase string) error {
@@ -274,16 +293,20 @@ func (p *LocalVersion) persist(ctx context.Context, head localVersionHead) error
 	if err != nil {
 		return err
 	}
+	wait := cas.BeginGuestIOWait(ctx)
 	file, err := os.CreateTemp(p.directory, ".root-")
+	wait.End()
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { wait := cas.BeginGuestIOWait(ctx); _ = os.Remove(file.Name()); wait.End() }()
+	wait = cas.BeginGuestIOWait(ctx)
 	_, err = file.Write(raw)
 	if err == nil {
 		err = file.Sync()
 	}
 	err = errors.Join(err, file.Close())
+	wait.End()
 	if err != nil {
 		return err
 	}
@@ -293,14 +316,20 @@ func (p *LocalVersion) persist(ctx context.Context, head localVersionHead) error
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if err = os.Rename(file.Name(), filepath.Join(p.directory, "root")); err != nil {
+	wait = cas.BeginGuestIOWait(ctx)
+	err = os.Rename(file.Name(), filepath.Join(p.directory, "root"))
+	wait.End()
+	if err != nil {
 		return err
 	}
 	p.installedRoot = head.Root
 	if err = p.step("root-renamed"); err != nil {
 		return err
 	}
-	if err = syncVersionDirectory(p.directory); err != nil {
+	wait = cas.BeginGuestIOWait(ctx)
+	err = syncVersionDirectory(p.directory)
+	wait.End()
+	if err != nil {
 		return err
 	}
 	return p.step("root-committed")
@@ -312,25 +341,31 @@ func (p *LocalVersion) ReadAt(ctx context.Context, b []byte, off int64) (int, er
 	if p.closed {
 		return 0, os.ErrClosed
 	}
+	readLockGuestIO(ctx, &p.storage)
+	defer p.storage.RUnlock()
 	n, err := p.disk.ReadAt(ctx, b, off)
 	return n, deviceFailure(err)
 }
 func (p *LocalVersion) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
+	return p.write(ctx, b, off, len(b), true)
+}
+func (p *LocalVersion) Trim(ctx context.Context, off int64, n int) error {
+	_, err := p.write(ctx, nil, off, n, true)
+	return err
+}
+
+// A tentative whole-request admission does not announce pressure: the smaller
+// fallback can still make progress. Its first rejected block reports pressure.
+func (p *LocalVersion) write(ctx context.Context, b []byte, off int64, length int, reportPressure bool) (int, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
 		return 0, os.ErrClosed
 	}
-	n, err := p.disk.WriteAt(ctx, b, off)
+	readLockGuestIO(ctx, &p.storage)
+	defer p.storage.RUnlock()
+	n, err := p.disk.write(ctx, b, off, length, reportPressure)
 	return n, deviceFailure(err)
-}
-func (p *LocalVersion) Trim(ctx context.Context, off int64, n int) error {
-	p.life.RLock()
-	defer p.life.RUnlock()
-	if p.closed {
-		return os.ErrClosed
-	}
-	return deviceFailure(p.disk.Trim(ctx, off, n))
 }
 
 func (p *LocalVersion) Flush(ctx context.Context) (VersionRoot, error) {
@@ -339,7 +374,11 @@ func (p *LocalVersion) Flush(ctx context.Context) (VersionRoot, error) {
 	if p.closed {
 		return VersionRoot{}, os.ErrClosed
 	}
+	readLockGuestIO(ctx, &p.storage)
+	defer p.storage.RUnlock()
+	wait := cas.BeginGuestIOWait(ctx)
 	p.commit.Lock()
+	wait.End()
 	defer p.commit.Unlock()
 	root, err := p.flushLocked(ctx)
 	return root, deviceFailure(err)
@@ -350,7 +389,8 @@ func (p *LocalVersion) flushLocked(ctx context.Context) (VersionRoot, error) {
 }
 
 func (p *LocalVersion) flushBoundaryLocked(ctx context.Context, cut func()) (VersionRoot, error) {
-	root, err := p.disk.captureBoundary(ctx, cut)
+	p.revision++
+	root, err := p.disk.captureBoundary(ctx, cut, p.objectBatch())
 	if err != nil {
 		return VersionRoot{}, err
 	}
@@ -363,6 +403,9 @@ func (p *LocalVersion) flushBoundaryLocked(ctx context.Context, cut func()) (Ver
 		return VersionRoot{}, err
 	}
 	p.head = head
+	p.disk.mu.Lock()
+	p.headGeneration = p.disk.rootGeneration
+	p.disk.mu.Unlock()
 	return root, nil
 }
 
@@ -377,3 +420,6 @@ func (p *LocalVersion) Close() error {
 	p.reads.clear()
 	return errors.Join(p.disk.Close(), p.lock.Close())
 }
+
+// Changes observes the local writer without filesystem or remote I/O.
+func (p *LocalVersion) Changes() VersionChanges { return p.disk.Changes() }

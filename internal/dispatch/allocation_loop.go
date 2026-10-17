@@ -32,7 +32,7 @@ type allocationCandidate struct {
 // a busy prefix of Hosts or unschedulable demand cannot hide later candidates.
 // Each attempt is a separate transaction; only committed allocations survive a
 // process restart, and retry always revalidates the discovered capacity.
-func (a *Allocator) Run(ctx context.Context, log *slog.Logger) error {
+func (a *Allocator) Run(ctx context.Context, log *slog.Logger, wake <-chan struct{}) error {
 	if log == nil {
 		return ErrInvalidInput
 	}
@@ -55,6 +55,7 @@ func (a *Allocator) Run(ctx context.Context, log *slog.Logger) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+		case <-wake:
 		}
 	}
 }
@@ -72,6 +73,14 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
  AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+session.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.epoch=9223372036854775807)
+ UNION ALL
+ SELECT c.environment_id,c.id,'recovery', (SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id)+1,NULL::uuid
+ FROM computers c LEFT JOIN computer_saves save ON (save.environment_id,save.id)=(c.environment_id,c.recovery_save_id)
+ WHERE c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.image_id IS NOT NULL AND ((c.recovery_save_id IS NULL AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM computer_leases old WHERE old.environment_id=c.environment_id AND old.computer_id=c.id AND old.initialized_at IS NOT NULL)) OR (save.root_id IS NOT NULL AND save.status='published'))
+ AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
+ AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+session.NoSessionHoldsSQL+` AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  UNION ALL
  SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid
  FROM checkpoints cp WHERE cp.status IN ('ready','restoring')
@@ -128,6 +137,8 @@ func (a *Allocator) Reconcile(ctx context.Context, after AllocationPosition) (Al
 			_, err = a.AllocateImageBuild(attemptCtx, c.environment, c.owner, c.host)
 		} else if c.kind == "restore" {
 			_, err = a.AllocateRestoredLease(attemptCtx, c.environment, c.owner, c.epoch, c.host)
+		} else if c.kind == "recovery" {
+			_, err = a.AllocateRecoveredLease(attemptCtx, c.environment, c.owner, c.epoch, c.host)
 		} else if c.kind == "process" {
 			_, err = a.AllocateSessionProcess(attemptCtx, c.environment, c.owner, c.epoch)
 		} else {

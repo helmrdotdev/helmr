@@ -3,7 +3,8 @@ import { fixtureValue } from "../../e2e/support/runtime-mcp"
 // starts the local model through an ordinary Computer command before native setup.
 import { agent, template, image, source, type JsonValue } from "../../../sdk/typescript/src/index"
 import assert from "node:assert/strict"
-import { readFile, writeFile, rename, unlink } from "node:fs/promises"
+import { readFile, writeFile, rename, unlink, open } from "node:fs/promises"
+import { createHash, randomFillSync } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import { spawnSync } from "node:child_process"
 import { channel } from "node:diagnostics_channel"
@@ -76,7 +77,7 @@ function native(definition: typeof nativeCodex) {
         assert(["no-op", "edit-test", "dependencies"].includes(performanceKind))
         const directory = `/workspace/${context.session.id}`
         assert(/^\/workspace\/[a-zA-Z0-9_-]+$/.test(directory))
-        await writeFile(`/workspace/performance-${definition.id}.json`, JSON.stringify({ command: `cd ${directory} && node /opt/native-performance/workload.mjs ${performanceKind} ${turn.sequence}` }))
+        await writeFile(`/workspace/performance-${definition.id}.json`, JSON.stringify({ kind: performanceKind, command: `cd ${directory} && node /opt/native-performance/workload.mjs ${performanceKind} ${turn.sequence}` }))
       }
       const stopping = input === "fixture-native-stop"
       const stopPath = `/workspace/native-stop-${definition.id}.json`
@@ -152,6 +153,60 @@ export const peer = agent({
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
   async turn(turn, { initResult: state, session, computer, mcp }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
+    if (input === "recover-check") {
+      let retained: JsonValue = null
+      try { retained = JSON.parse(await readFile(`/workspace/peer-${session.id}.json`, "utf8")) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+      return { nonce: state.nonce, count: state.count, pid: process.pid, retained }
+    }
+    if (input === "verify-pressure") {
+      const file = await open(`/workspace/pressure-${session.id}`, "r")
+      try {
+        // O_DIRECT forces this proof through the disk backend, bypassing guest page cache.
+        const direct = spawnSync("dd", [`if=/workspace/pressure-${session.id}`, "iflag=direct", "bs=4M", "count=1", "status=none"], {
+          maxBuffer: 4 * 1024 * 1024 + 65536, timeout: 30000,
+        })
+        assert.ifError(direct.error)
+        assert.equal(direct.status, 0, direct.stderr.toString())
+        assert.equal(direct.stdout.length, 4 * 1024 * 1024)
+        return { firstChunkDigest: createHash("sha256").update(direct.stdout).digest("hex"), bytes: (await file.stat()).size }
+      } finally { await file.close() }
+    }
+    if (input === "hold-pressure") {
+      let released = false
+      await turn.onMessage(message => { if (fixtureValue(message.content) === "release") released = true })
+      const file = await open(`/workspace/pressure-${session.id}`, "wx+")
+      const chunk = Buffer.alloc(4 * 1024 * 1024)
+      const hashes: string[] = []
+      try {
+        while (!released) {
+          turn.signal.throwIfAborted()
+          assert(hashes.length < 128, "fixture did not reach pressure within 512 MiB")
+          randomFillSync(chunk)
+          const expected = createHash("sha256").update(chunk).digest("hex")
+          const position = hashes.length * chunk.length
+          let written = 0
+          while (written < chunk.length) {
+            const result = await file.write(chunk, written, chunk.length - written, position + written)
+            assert(result.bytesWritten > 0)
+            written += result.bytesWritten
+          }
+          await file.sync()
+          hashes.push(expected)
+          await turn.output.write(JSON.stringify({ nonce: state.nonce, count: ++state.count, pid: process.pid, bytes: hashes.length * chunk.length, firstChunkDigest: hashes[0] }))
+        }
+        for (let index = 0; index < hashes.length; index++) {
+          let read = 0
+          while (read < chunk.length) {
+            const result = await file.read(chunk, read, chunk.length - read, index * chunk.length + read)
+            assert(result.bytesRead > 0)
+            read += result.bytesRead
+          }
+          assert.equal(createHash("sha256").update(chunk).digest("hex"), hashes[index])
+        }
+        return { nonce: state.nonce, count: state.count, pid: process.pid, bytes: hashes.length * chunk.length, verified: true }
+      } finally { await file.close() }
+    }
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
     if (input !== "hold" && input !== "hold-discovery" && !secretInput && !performanceProbe) return { received: input }

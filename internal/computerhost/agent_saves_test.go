@@ -61,19 +61,28 @@ func agentSaveFixture(t *testing.T, failure string) (*agentComputerSaves, *agent
 	f := &saveHostFixture{fail: failure, computer: uuid.NewV7().String(), root: testVersionRoot(4096)}
 	identity := workerapi.AllocationIdentity{Kind: "computer", OwnerID: f.computer, EnvironmentID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 2}
 	c := &agentSaveTestClient{fixture: f, save: workerapi.AgentSave{EnvironmentID: identity.EnvironmentID, SaveID: uuid.NewV7().String(), LeaseEpoch: 2}}
-	return &agentComputerSaves{client: c, objects: f, identity: identity, every: time.Minute, machine: &agentSaveTestMachine{fixture: f}}, c
+	wake := make(chan struct{}, 1)
+	wake <- struct{}{}
+	return &agentComputerSaves{pinCommitted: func(context.Context) (disk.RetainedVersion, error) { return nil, errors.New("unexpected pressure pin") }, wake: wake, changes: func() disk.VersionChanges { return disk.VersionChanges{Generation: 1} }, client: c, objects: f, identity: identity, machine: &agentSaveTestMachine{fixture: f}}, c
 }
 func TestAgentSaveRetryRetainsExactCut(t *testing.T) {
 	for _, failure := range []string{"record", "objects", "commit", "adopt"} {
 		t.Run(failure, func(t *testing.T) {
 			s, c := agentSaveFixture(t, failure)
-			if err := s.step(t.Context()); err == nil {
+			if err := saveTestStep(s, t.Context()); err == nil {
 				t.Fatal("missing injected uncertainty")
 			}
-			if s.capture == nil || s.pending == nil {
+			if failure == "record" || failure == "objects" || failure == "commit" {
+				for _, step := range c.fixture.steps {
+					if step == "adopt" {
+						t.Fatal("adopted before exact head publication was confirmed")
+					}
+				}
+			}
+			if (s.capture == nil || s.pending == nil) && s.maintenance == nil {
 				t.Fatal("uncertain cut was discarded")
 			}
-			if err := s.step(t.Context()); err != nil {
+			if err := saveTestStep(s, t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			captures, discoveries, releases := 0, 0, 0
@@ -98,16 +107,16 @@ func TestAgentSaveRetryRetainsExactCut(t *testing.T) {
 		})
 	}
 }
-func TestAgentSavePhysicalUncertaintyNeverRecaptures(t *testing.T) {
+func TestAgentSavePhysicalUncertaintyRetriesSameAdmittedPrefix(t *testing.T) {
 	s, c := agentSaveFixture(t, "")
 	s.machine.(*agentSaveTestMachine).captureErr = io.ErrUnexpectedEOF
 	for range 2 {
-		if err := s.step(t.Context()); !errors.Is(err, io.ErrUnexpectedEOF) {
+		if err := saveTestStep(s, t.Context()); !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatalf("capture uncertainty: %v", err)
 		}
 	}
-	if !reflect.DeepEqual(c.fixture.steps, []string{"discover", "capture"}) {
-		t.Fatalf("recaptured ambiguous cut: %v", c.fixture.steps)
+	if !reflect.DeepEqual(c.fixture.steps, []string{"discover", "capture", "capture"}) {
+		t.Fatalf("rediscovered ambiguous prefix: %v", c.fixture.steps)
 	}
 	if len(c.requests) != 0 {
 		t.Fatal("unproved capture reached Control Plane")
@@ -136,11 +145,11 @@ func (c *retryAgentSaveCapture) Publish(ctx context.Context, publication disk.Co
 	}
 	return c.saveHostCapture.Publish(ctx, publication)
 }
-func (c *retryAgentSaveCapture) Adopt(ctx context.Context, limit int) error {
+func (c *retryAgentSaveCapture) Adopt(ctx context.Context) error {
 	if err := c.outage("adopt"); err != nil {
 		return err
 	}
-	return c.saveHostCapture.Adopt(ctx, limit)
+	return c.saveHostCapture.Adopt(ctx)
 }
 func (c *retryAgentSaveCapture) Collect(ctx context.Context, limit int) (int64, error) {
 	if err := c.outage("collect"); err != nil {
@@ -153,13 +162,17 @@ type retryAgentSaveClient struct {
 	*agentSaveTestClient
 	cancel     context.CancelFunc
 	discovered int
+	settled    func() bool
 }
 
 func (c *retryAgentSaveClient) NextAgentSave(ctx context.Context, identity workerapi.AgentSaveDiscovery) (workerapi.AgentSavePending, error) {
 	c.discovered++
 	if c.discovered > 1 {
-		c.cancel()
-		return workerapi.AgentSavePending{}, context.Canceled
+		if c.settled == nil || c.settled() {
+			c.cancel()
+			return workerapi.AgentSavePending{}, context.Canceled
+		}
+		return workerapi.AgentSavePending{}, nil
 	}
 	return c.agentSaveTestClient.NextAgentSave(ctx, identity)
 }
@@ -171,7 +184,7 @@ func TestAgentSaveStorageOutageRetriesWhileOwnerLives(t *testing.T) {
 			defer cancel()
 			capture := &retryAgentSaveCapture{saveHostCapture: saveHostCapture{c.fixture}, stage: stage}
 			s.machine.(*agentSaveTestMachine).capture = capture
-			s.client = &retryAgentSaveClient{agentSaveTestClient: c, cancel: cancel}
+			s.client = &retryAgentSaveClient{agentSaveTestClient: c, cancel: cancel, settled: func() bool { return s.maintenance == nil }}
 			if err := s.run(ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("save loop stopped during storage outage: %v", err)
 			}
@@ -196,6 +209,8 @@ func TestAgentSaveStorageOutageRetriesWhileOwnerLives(t *testing.T) {
 
 func TestAgentSaveLoopDoesNotRetryAnUncertainCheckpoint(t *testing.T) {
 	s, _ := agentSaveFixture(t, "")
+	s.changes = func() disk.VersionChanges { return disk.VersionChanges{} }
+	s.client = &periodicAgentSaveClient{}
 	attempts := 0
 	s.idle = func(context.Context) error { attempts++; return io.ErrUnexpectedEOF }
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -209,97 +224,61 @@ type periodicAgentSaveClient struct {
 	*agentSaveTestClient
 	discoveries       []workerapi.AgentSaveDiscovery
 	decline, required bool
+	onDiscovery       func()
 }
 
 func (c *periodicAgentSaveClient) NextAgentSave(ctx context.Context, r workerapi.AgentSaveDiscovery) (workerapi.AgentSavePending, error) {
 	c.discoveries = append(c.discoveries, r)
+	if c.onDiscovery != nil {
+		c.onDiscovery()
+	}
 	if c.required || (r.BackgroundDue && !c.decline) {
 		return c.agentSaveTestClient.NextAgentSave(ctx, r)
 	}
 	return workerapi.AgentSavePending{}, nil
 }
-func TestAgentSavePeriodicTriggerAndPublicationReset(t *testing.T) {
+func TestAgentSaveDeclinedBackgroundBacksOffWithoutClaimingPreservation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s, base := agentSaveFixture(t, "")
-		client := &periodicAgentSaveClient{agentSaveTestClient: base}
-		s.client = client
-		step := func(wantDue bool) {
-			t.Helper()
-			if err := s.step(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if got := client.discoveries[len(client.discoveries)-1].BackgroundDue; got != wantDue {
-				t.Fatalf("due=%v want=%v", got, wantDue)
-			}
-		}
-		step(false)
-		time.Sleep(time.Minute - time.Nanosecond)
-		step(false)
-		time.Sleep(time.Nanosecond)
-		step(true)
-		time.Sleep(30 * time.Second)
-		client.required = true
-		step(false)
-		client.required = false
-		time.Sleep(30 * time.Second)
-		step(false)
-		time.Sleep(30 * time.Second)
-		step(true)
-	})
-}
-func TestAgentSaveDeclinedBackgroundStillRunsIdleAndThrottlesAdmission(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s, base := agentSaveFixture(t, "")
+		saves, base := agentSaveFixture(t, "")
 		client := &periodicAgentSaveClient{agentSaveTestClient: base, decline: true}
-		s.client = client
-		s.nextBackground = time.Now()
+		saves.client = client
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		idle := 0
-		s.idle = func(context.Context) error {
-			idle++
-			if idle == 6 {
+		client.onDiscovery = func() {
+			if len(client.discoveries) == 3 {
 				cancel()
 			}
-			return nil
 		}
-		if err := s.run(ctx); !errors.Is(err, context.Canceled) {
+		idle := 0
+		saves.idle = func(context.Context) error { idle++; return nil }
+		if err := saves.run(ctx); !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
-		expected := []bool{true, false, false, false, true, false}
-		if len(client.discoveries) != len(expected) || idle != 6 {
-			t.Fatalf("idle=%d discoveries=%d", idle, len(client.discoveries))
+		if idle == 0 || len(client.discoveries) != 3 || saves.savedGeneration != 0 || len(base.requests) != 0 {
+			t.Fatalf("lost idle qualification, invented preservation or admission spin: idle=%d discovery=%d", idle, len(client.discoveries))
 		}
-		for i, request := range client.discoveries {
-			if request.BackgroundDue != expected[i] {
-				t.Fatalf("attempt %d due=%v", i, request.BackgroundDue)
+		for i, want := range []bool{true, false, true} {
+			if client.discoveries[i].BackgroundDue != want {
+				t.Fatalf("discovery %d due=%t", i, client.discoveries[i].BackgroundDue)
 			}
 		}
 	})
 }
-func TestAgentSaveUncertainPublicationKeepsCutAndResetsOnlyOnAcknowledgement(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s, base := agentSaveFixture(t, "commit")
-		client := &periodicAgentSaveClient{agentSaveTestClient: base}
-		s.client = client
-		s.nextBackground = time.Now()
-		if err := s.step(t.Context()); err == nil {
-			t.Fatal("expected uncertain publication")
+
+func saveTestStep(s *agentComputerSaves, ctx context.Context) error {
+	wake := s.wake
+	s.wake = nil
+	defer func() { s.wake = wake }()
+	if s.maintenance != nil {
+		return s.maintain(ctx)
+	}
+	if err := s.step(ctx); err != nil {
+		return err
+	}
+	for s.maintenance != nil {
+		if err := s.maintain(ctx); err != nil {
+			return err
 		}
-		original := s.pending.Save.SaveID
-		time.Sleep(10 * time.Second)
-		if err := s.step(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if len(client.discoveries) != 1 || s.pending != nil || !s.nextBackground.Equal(time.Now().Add(s.every)) {
-			t.Fatalf("uncertain cut replaced or timer differs: %s %+v", original, s)
-		}
-		time.Sleep(s.every - time.Nanosecond)
-		if err := s.step(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if client.discoveries[len(client.discoveries)-1].BackgroundDue {
-			t.Fatal("timer used capture time instead of publication acknowledgement")
-		}
-	})
+	}
+	return nil
 }

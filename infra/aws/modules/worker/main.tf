@@ -17,6 +17,8 @@ locals {
   checkpoint_cipher_bytes = {
     for role, size in local.checkpoint_plain_bytes : role => size + 73 + 36 * (ceil(size / 4194304) + 1)
   }
+  # Each live disk Version retains 8 MiB ciphertext and 8 MiB verification cache.
+  worker_slot_memory_mib = var.vm_memory_mib + 16
   worker_slot_disk_bytes = (
     (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 16384 + 2 * var.vm_memory_mib) * 1048576 +
     10000000 + local.checkpoint_cipher_bytes.state +
@@ -25,7 +27,6 @@ locals {
 
   worker_environment_values = {
     WORKER_COMPUTER_STAGING_MIB       = tostring(var.computer_staging_mib)
-    WORKER_COMPUTER_SAVE_EVERY        = "${var.computer_save_interval_seconds}s"
     WORKER_COMPUTER_DEVICES           = join(" ", var.computer_devices)
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
     CAS_URI                           = var.cas_uri
@@ -422,6 +423,13 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
+      condition = var.worker_capacity_memory_mib == null || (
+        coalesce(var.worker_capacity_memory_mib, 0) >= coalesce(var.worker_execution_slots, 1) * local.worker_slot_memory_mib
+      )
+      error_message = "worker memory must fund every configured slot's guest and bounded disk caches."
+    }
+
+    precondition {
       condition     = var.worker_disk_mib == null || coalesce(var.worker_disk_mib, 0) <= var.root_volume_size_gb * 1024
       error_message = "worker_disk_mib must not exceed the provisioned root volume capacity."
     }
@@ -450,6 +458,13 @@ resource "aws_autoscaling_group" "worker" {
     version = var.sealed_provider_definition == null ? aws_launch_template.worker.latest_version : var.sealed_provider_definition.launch_template_version
   }
 
+
+  warm_pool {
+    pool_state                  = "Stopped"
+    min_size                    = var.warm_pool_size
+    max_group_prepared_capacity = var.warm_pool_size
+    instance_reuse_policy { reuse_on_scale_in = false }
+  }
 
   initial_lifecycle_hook {
     name                 = local.launch_hook_name

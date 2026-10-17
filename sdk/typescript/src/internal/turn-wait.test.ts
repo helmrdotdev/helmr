@@ -5,9 +5,9 @@ import type { TurnState } from "../contract"
 
 const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 const turnId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
-const saveId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
+const otherId="019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 const at = "2026-10-07T00:00:00Z"
-const pending: TurnState = { id: turnId, sessionId, sequence: 1, status: "finalizing", input: [] }
+const pending: TurnState = { id: turnId, sessionId, sequence: 1, status: "running", input: [] }
 
 test("wait reads exact Turn until durable completion and preserves null result and response", async () => {
   const methods: string[] = []
@@ -16,7 +16,7 @@ test("wait reads exact Turn until durable completion and preserves null result a
     expect(new URL(String(url)).pathname).toBe(`/v1/sessions/${sessionId}/turns/${turnId}`)
     methods.push(options!.method!)
     const base = { id: turnId, session_id: sessionId, sequence: 1, input: [] }
-    return Response.json(++count === 1 ? { ...base, status: "finalizing" } : { ...base, status: "completed", terminal_at: at, completion_save_id: saveId, result: null, response: [{ type: "text", text: "Saved." }] })
+    return Response.json(++count === 1 ? { ...base, status: "running" } : { ...base, status: "completed", terminal_at: at, result: null, response: [{ type: "text", text: "Saved." }] })
   }) as typeof fetch })
   const outcome = await client.sessions.ref(sessionId).turns.ref(turnId).wait()
   expect(outcome).toEqual({ status: "completed", result: null, response: [{ type: "text", text: "Saved." }] })
@@ -36,7 +36,7 @@ test("timeout returns a distinct observation and aborts an in-flight read", asyn
   expect(observed?.aborted).toBe(true)
 })
 
-test("timeout during finalizing does not synthesize a terminal outcome", async () => {
+test("timeout during processing does not synthesize a terminal outcome", async () => {
   let reads = 0
   expect(await waitForTurn(sessionId, turnId, async () => { reads++; return pending }, { timeout: "10ms" })).toEqual({ status: "timeout" })
   expect(reads).toBe(1)
@@ -65,7 +65,7 @@ test("failed, interrupted, cancelled and expired outcomes retain their recorded 
 })
 
 test("identity mismatch and invalid durations fail without changing work", async () => {
-  await expect(waitForTurn(sessionId, turnId, async () => ({ ...pending, sessionId: saveId }))).rejects.toThrow("identity")
+  await expect(waitForTurn(sessionId, turnId, async () => ({ ...pending, sessionId: otherId }))).rejects.toThrow("identity")
   for (const timeout of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "0ms", "1.5s", "bad"]) {
     let reads = 0
     await expect(waitForTurn(sessionId, turnId, async () => { reads++; return pending }, { timeout })).rejects.toThrow("timeout")

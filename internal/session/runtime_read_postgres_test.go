@@ -68,10 +68,10 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 			storage := newSaveStorageFixture(t, peer)
 			a, save := peer.finalize(t, "result")
 			view, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)
-			if err != nil || view.Status != "finalizing" || view.Result != nil || view.Response != nil {
+			if err != nil || view.Status != "completed" || view.Result == nil || view.Response != nil {
 				t.Fatalf("provisional: %+v %v", view, err)
 			}
-			// The normal publication path settles the Turn only after its own save.
+			// Publication advances file recovery without changing the completed result.
 			root, _ := storage.cut(t, 8)
 			if err := storage.publisher.Capture(t.Context(), storage.ref(save.ID), root, "owned cut"); err != nil {
 				t.Fatal(err)
@@ -79,7 +79,7 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 			if err := storage.publish(t, save.ID, root); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.Complete(t.Context(), f.pool, f.env, peer.session, a.TurnID); err != nil {
+			if err := completedTurnForTest(t.Context(), f.pool, f.env, peer.session, a.TurnID); err != nil {
 				t.Fatal(err)
 			}
 			view, err = session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, a.TurnID)

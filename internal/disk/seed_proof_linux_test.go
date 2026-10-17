@@ -60,12 +60,12 @@ func TestComputerSeedProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := oci.ReadVerifiedConfig(t.Context(), imagePath, sha256sum.DigestBytes(image), int64(len(image)))
+	metadata, _, err := oci.UnpackFilesystem(bytes.NewReader(image), filepath.Join(dir, "image-unpack"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	seeds := SeedStore{CAS: objects}
-	seedSource := publishTestSeed(t, objects, seed, dir, config)
+	seedSource := publishTestSeed(t, objects, seed, dir, metadata.Config)
 	// Runtime initialization must no longer read the original OCI archive.
 	if err := os.Remove(imagePath); err != nil {
 		t.Fatal(err)

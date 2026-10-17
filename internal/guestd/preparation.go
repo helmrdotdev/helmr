@@ -40,7 +40,23 @@ func handlePreparationControl(ctx context.Context, conn programConnection, bodyL
 		return err
 	}
 	defer clearPreparationRequest(&request)
-	response, err := registry.controlPreparation(ctx, &request, (*computerMountEntry).executePreparation)
+	controlCtx := ctx
+	finishWait := func() {}
+	if request.GetWaitForCompletion() {
+		// Completion observation has no response body until it finishes. Watch the
+		// peer's EOF so cancellation releases retention without waiting for timeout.
+		waitCtx, stop := context.WithCancel(ctx)
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			stop()
+			return err
+		}
+		joined := make(chan struct{})
+		go func() { defer close(joined); var extra [1]byte; _, _ = conn.Read(extra[:]); stop() }()
+		controlCtx = waitCtx
+		finishWait = func() { _ = conn.SetReadDeadline(time.Now()); <-joined; stop(); _ = conn.SetReadDeadline(time.Time{}) }
+	}
+	response, err := registry.controlPreparation(controlCtx, &request, (*computerMountEntry).executePreparation)
+	finishWait()
 	if err != nil {
 		return err
 	}
@@ -60,6 +76,9 @@ func clearPreparationRequest(request *computerv0.PreparationControlRequest) {
 
 func (r *computerOperationRegistry) controlPreparation(ctx context.Context, request *computerv0.PreparationControlRequest, run func(*computerMountEntry, context.Context, *computerv0.PreparationStart, *preparationOutput) (error, error)) (*computerv0.PreparationControlResponse, error) {
 	identity := request.GetIdentity()
+	if request.GetWaitForCompletion() && (request.GetStart() != nil || request.GetRenewOnly() || request.GetLogStream() != "") {
+		return nil, errors.New("completion wait requires an observation request")
+	}
 	if identity.GetPreparationId() == "" || identity.GetInstanceId() == "" || identity.GetEpoch() <= 0 || len(identity.GetChannelCredential()) != 32 || request.GetAcknowledgedThrough() < 0 || (request.GetLogStream() != "" && request.GetLogStream() != "stdout" && request.GetLogStream() != "stderr") || (request.GetLogStream() == "" && request.GetAcknowledgedThrough() != 0) || (request.GetLogStream() != "" && (request.GetStart() != nil || request.GetRenewOnly())) || (request.GetRenewOnly() && request.GetStart() != nil) {
 		return nil, errors.New("invalid preparation control")
 	}
@@ -69,9 +88,14 @@ func (r *computerOperationRegistry) controlPreparation(ctx context.Context, requ
 	}
 	defer release()
 	entry.lifecycleMu.Lock()
-	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
-	defer entry.finalizationMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			entry.finalizationMu.Unlock()
+			entry.lifecycleMu.Unlock()
+		}
+	}()
 	if !r.currentMountLocked(entry, identity.GetInstanceId(), identity.GetPreparationId(), base64.RawURLEncoding.EncodeToString(identity.GetChannelCredential())) || entry.stopping || r.captureSealed() {
 		return nil, errors.New("preparation image is stopping or capturing")
 	}
@@ -158,6 +182,24 @@ func (r *computerOperationRegistry) controlPreparation(ctx context.Context, requ
 	}
 	response := &computerv0.PreparationControlResponse{State: p.state, ErrorCode: p.code}
 	p.mu.Unlock()
+	if request.GetWaitForCompletion() && response.State == "running" {
+		// Waiting observes this retained execution. It must not retain lifecycle
+		// locks needed by renewal, cancellation, capture or terminal cleanup.
+		entry.finalizationMu.Unlock()
+		entry.lifecycleMu.Unlock()
+		locked = false
+		timer := time.NewTimer(computerControlTimeout)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-p.done:
+		case <-timer.C:
+		}
+		p.mu.Lock()
+		response.State, response.ErrorCode = p.state, p.code
+		p.mu.Unlock()
+	}
 	if stream := request.GetLogStream(); stream != "" {
 		buffer := p.output.stream(stream)
 		if through := request.GetAcknowledgedThrough(); through != 0 {

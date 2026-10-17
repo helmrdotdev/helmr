@@ -10,6 +10,11 @@ import (
 	"io"
 )
 
+// Publication batches share one owner and dependency rank. The byte limit
+// leaves room for the owner's envelope inside the existing 1 MiB HTTP limit.
+const MaxPublicationBatchObjects = 128
+const MaxPublicationBatchBytes = (1 << 20) - 4096
+
 // PageInspection describes an authenticated pack member and its immediate
 // dependencies. Shape/Level/Start allow the owner to check every incoming node
 // reference against the child's actual position, including reused objects.

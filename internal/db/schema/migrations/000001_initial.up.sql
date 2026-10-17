@@ -963,6 +963,9 @@ CREATE TABLE computer_leases (
     allocation_id uuid NOT NULL UNIQUE,
     channel_credential_digest bytea NOT NULL CHECK (octet_length(channel_credential_digest)=32),
     restored_from_save_id uuid,
+    disk_only_recovery boolean NOT NULL DEFAULT false,
+    save_retirement_seq bigint CHECK (save_retirement_seq > 0),
+    storage_pressure_since timestamptz,
     delivered_at timestamptz,
     initialized_at timestamptz,
     reserved_cpu_millis bigint NOT NULL CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
@@ -1194,7 +1197,6 @@ CREATE TABLE slack_installations (
     connected_by_user_id uuid NOT NULL REFERENCES users(id),
     connected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     authorized_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    delivery_next_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     history_next_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     authorization_lost_at timestamptz,
     disconnected_at timestamptz,
@@ -1404,7 +1406,7 @@ CREATE UNIQUE INDEX session_processes_one_writer ON session_processes(environmen
 
 CREATE INDEX session_processes_computer_custody ON session_processes(environment_id, computer_id, computer_lease_epoch, session_id, epoch) WHERE fenced_at IS NULL;
 
-CREATE INDEX session_processes_stop_due ON session_processes(stop_deadline_at) WHERE stop_deadline_at IS NOT NULL AND fenced_at IS NULL;
+CREATE INDEX session_processes_stop_due ON session_processes(stop_deadline_at) WHERE (stop_deadline_at IS NOT NULL) AND fenced_at IS NULL;
 
 CREATE TABLE secret_exposures (
     id uuid PRIMARY KEY,
@@ -1440,7 +1442,7 @@ CREATE TABLE turns (
     session_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
-    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'finalizing', 'completed', 'failed', 'interrupted', 'cancelled')),
+    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'interrupted', 'cancelled')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user', 'api_key', 'session', 'schedule')),
     caller_id uuid NOT NULL,
     origin_turn_id uuid,
@@ -1467,12 +1469,10 @@ CREATE TABLE turns (
     result_recorded_at timestamptz,
     result_digest bytea CHECK (octet_length(result_digest)=32),
     drain_evidence text,
-    completion_save_id uuid,
     has_recorded_result boolean GENERATED ALWAYS AS (result_recorded_at IS NOT NULL) STORED,
     started_at timestamptz,
     deadline_at timestamptz,
     terminal_at timestamptz,
-    completion_published boolean GENERATED ALWAYS AS (true) STORED,
     CHECK ((payload_expired_at IS NULL AND ((error_code IS NULL)=(error_message IS NULL)))
         OR (payload_expired_at IS NOT NULL AND input IS NULL AND result IS NULL AND response IS NULL AND error_message IS NULL AND terminal_at IS NOT NULL)),
     CHECK (error_code IS NULL OR (status='failed' AND error_code<>'')),
@@ -1491,19 +1491,18 @@ CREATE TABLE turns (
     CHECK (origin_turn_id IS NULL OR caller_kind='session'),
     FOREIGN KEY (environment_id, session_id, computer_id) REFERENCES sessions(environment_id, id, computer_id),
     FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch),
-    CHECK (status NOT IN ('running', 'finalizing', 'completed') OR (process_epoch IS NOT NULL AND started_at IS NOT NULL)),
-    CHECK (status NOT IN ('finalizing', 'completed') OR (processing_closed_at IS NOT NULL AND result_recorded_at IS NOT NULL AND result_digest IS NOT NULL AND drain_evidence IS NOT NULL)),
-    CHECK (status <> 'finalizing' OR result IS NOT NULL),
+    CHECK (status NOT IN ('running', 'completed') OR (process_epoch IS NOT NULL AND started_at IS NOT NULL)),
+    CHECK (status NOT IN ('completed') OR (processing_closed_at IS NOT NULL AND result_recorded_at IS NOT NULL AND result_digest IS NOT NULL AND drain_evidence IS NOT NULL)),
     CHECK ((result_recorded_at IS NULL) = (result_digest IS NULL)),
-    CHECK ((status IN ('completed', 'failed', 'interrupted', 'cancelled')) = (terminal_at IS NOT NULL)),
-    CHECK ((status='completed') = (completion_save_id IS NOT NULL))
+    CHECK (status<>'completed' OR result IS NOT NULL OR payload_expired_at IS NOT NULL),
+    CHECK ((status IN ('completed', 'failed', 'interrupted', 'cancelled')) = (terminal_at IS NOT NULL))
 );
 
-CREATE UNIQUE INDEX turns_one_active ON turns(environment_id, session_id) WHERE status IN ('running', 'finalizing');
+CREATE UNIQUE INDEX turns_one_active ON turns(environment_id, session_id) WHERE status IN ('running');
 
 CREATE INDEX turns_queue ON turns(environment_id, session_id, seq) WHERE status='queued';
 
-CREATE INDEX turns_deadlines ON turns(deadline_at, environment_id, session_id) WHERE status IN ('running', 'finalizing') AND deadline_at IS NOT NULL;
+CREATE INDEX turns_deadlines ON turns(deadline_at, environment_id, session_id) WHERE status IN ('running') AND deadline_at IS NOT NULL;
 
 CREATE INDEX turns_failed ON turns(environment_id, terminal_at) WHERE status='failed';
 
@@ -1538,6 +1537,17 @@ CREATE TABLE session_holds (
     session_id uuid NOT NULL,
     scope text NOT NULL CHECK (scope IN ('local', 'subtree')),
     reason text NOT NULL CHECK (octet_length(reason) <= 4096),
+    kind text NOT NULL DEFAULT 'control' CHECK (kind IN ('control','recovery_gap','storage_pressure')),
+    recovery_computer_id uuid,
+    recovery_lease_epoch bigint CHECK (recovery_lease_epoch > 0),
+    recovery_gap jsonb,
+    CHECK ((kind='recovery_gap') = (recovery_computer_id IS NOT NULL)),
+    CHECK ((kind='recovery_gap') = (recovery_lease_epoch IS NOT NULL)),
+    FOREIGN KEY (environment_id, session_id, recovery_computer_id)
+        REFERENCES sessions(environment_id, id, computer_id),
+    FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch)
+        REFERENCES computer_leases(environment_id, computer_id, epoch),
+    CHECK ((kind='recovery_gap') = (recovery_gap IS NOT NULL)),
     issuer_kind text NOT NULL DEFAULT 'system' CHECK (issuer_kind IN ('user', 'api_key', 'session', 'system')),
     issuer_id uuid,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1547,6 +1557,10 @@ CREATE TABLE session_holds (
     FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
     CHECK ((issuer_kind='system') = (issuer_id IS NULL))
 );
+
+CREATE UNIQUE INDEX session_holds_one_recovery_gap ON session_holds(environment_id,session_id) WHERE kind='recovery_gap' AND released_at IS NULL;
+
+CREATE UNIQUE INDEX session_holds_one_storage_pressure ON session_holds(environment_id,session_id) WHERE kind='storage_pressure' AND released_at IS NULL;
 
 CREATE INDEX session_holds_active ON session_holds(environment_id, session_id) WHERE released_at IS NULL;
 
@@ -1581,8 +1595,10 @@ CREATE TABLE computer_saves (
     computer_lease_epoch bigint NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
     turn_id uuid,
-    status text NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'captured', 'published', 'failed')),
+    status text NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'captured', 'published', 'superseded', 'failed')),
     requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    coverage_max_seq bigint CHECK (coverage_max_seq >= seq),
+    covered_by_save_id uuid,
     flush_acknowledged_at timestamptz,
     captured_at timestamptz,
     captured_root_digest bytea CHECK (octet_length(captured_root_digest)=32),
@@ -1590,6 +1606,7 @@ CREATE TABLE computer_saves (
     payload_retired_at timestamptz,
     capture_evidence text,
     publication_evidence text,
+    published_at timestamptz,
     failure_evidence text,
     published boolean GENERATED ALWAYS AS (status='published') STORED,
     requires_recorded_result boolean GENERATED ALWAYS AS (true) STORED,
@@ -1608,6 +1625,8 @@ CREATE TABLE computer_saves (
     CHECK (status<>'published' OR ((root_id IS NOT NULL) <> (payload_retired_at IS NOT NULL))),
     CHECK ((status='failed') = (failure_evidence IS NOT NULL)),
     UNIQUE (environment_id, computer_id, id),
+    CHECK ((status='superseded') = (covered_by_save_id IS NOT NULL)),
+    FOREIGN KEY (environment_id, computer_id, covered_by_save_id) REFERENCES computer_saves(environment_id, computer_id, id),
     FOREIGN KEY (environment_id, root_id)
         REFERENCES disk_roots(environment_id, id)
 );
@@ -2025,6 +2044,7 @@ CREATE TABLE slack_posts (
     claim_epoch bigint NOT NULL DEFAULT 0 CHECK (claim_epoch>=0),
     message_ts text CHECK (message_ts<>''),
     posted_at timestamptz,
+    confirmed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     error text,
     FOREIGN KEY (thread_id, environment_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, environment_id, id),
@@ -2112,9 +2132,6 @@ ALTER TABLE computer_leases
     ADD FOREIGN KEY (environment_id, computer_id, restored_from_save_id, restored_published)
     REFERENCES computer_saves(environment_id, computer_id, id, published);
 
-ALTER TABLE turns
-    ADD FOREIGN KEY (environment_id, computer_id, id, completion_save_id, completion_published)
-    REFERENCES computer_saves(environment_id, computer_id, turn_id, id, published);
 
 ALTER TABLE disk_encryption_keys
     ADD FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id, id), 
@@ -2151,3 +2168,18 @@ CREATE TABLE audit_events (
     CHECK (target_id IS NOT NULL OR (target_kind = 'slack_user_link' AND target_user_id IS NOT NULL AND slack_team_id <> '' AND slack_user_id <> ''))
 );
 CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);
+
+-- Per-channel routine pacing and provider method Retry-After are independent.
+CREATE TABLE slack_delivery_limits (
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    channel_id text NOT NULL,
+    next_post_at timestamptz NOT NULL DEFAULT '-infinity',
+    next_status_at timestamptz NOT NULL DEFAULT '-infinity',
+    PRIMARY KEY (installation_id, channel_id)
+);
+CREATE TABLE slack_method_limits (
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    method text NOT NULL,
+    retry_after timestamptz NOT NULL,
+    PRIMARY KEY (installation_id, method)
+);

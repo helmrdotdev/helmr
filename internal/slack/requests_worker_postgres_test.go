@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
 	"net/http"
@@ -87,7 +88,7 @@ func TestSlackRequestRunnerConsumesReceiptAndJoinsOnCancellation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- RunRequests(ctx, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		done <- RunRequests(ctx, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
 	}()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -151,7 +152,7 @@ func TestSlackRequestRunnerDeliversPrivateRejectionAfterReceiptCommit(t *testing
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- RunRequests(ctx, f.Pool, nil, testProjectionConfig(), client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		done <- RunRequests(ctx, f.Pool, nil, testProjectionConfig(), client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
 	}()
 	select {
 	case <-sent:

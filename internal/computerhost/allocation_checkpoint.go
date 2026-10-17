@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 	"uuid"
 
@@ -96,7 +95,7 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 		var rejected *agentComputerUnsealedError
 		if errors.As(err, &rejected) {
 			slog.Info("Computer capture qualification rejected", "computer_id", o.identity.OwnerID, "reason", rejected.Error())
-			if err = retryCheckpoint(ctx, func(ctx context.Context) error {
+			if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 				return o.client.CancelAgentComputerCapture(ctx, workerapi.AgentComputerUnsealedRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: id, Rejected: true})
 			}); err != nil {
 				return err
@@ -118,18 +117,24 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	if err != nil {
 		return err
 	}
-	if err = retryCheckpoint(ctx, func(ctx context.Context) error {
+	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 		return o.client.SealAgentComputerCapture(ctx, workerapi.AgentComputerReceiptRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: id, Receipt: raw})
 	}); err != nil {
 		return err
 	}
-	// This physical cut is attempted exactly once. A failed or ambiguous cut is
-	// terminal for this allocation; it never becomes a fabricated no-cut receipt.
+	// Attempt serialization and the physical cut once. Only explicit backend
+	// evidence of a joined pre-cut failure permits source reconciliation.
 	artifact, err := hold.CreateSnapshot(ctx)
 	if artifact.Computer != nil {
 		o.checkpointCut = artifact.Computer.Capture
 	}
 	if err != nil {
+		if errors.Is(err, vm.ErrCheckpointUncut) && artifact.Computer == nil {
+			if err = hold.ResumeGuestControl(ctx); err != nil {
+				return err
+			}
+			return o.abortUncutCheckpoint(ctx, delivery, capture, hold)
+		}
 		return fmt.Errorf("create Computer checkpoint snapshot: %w", err)
 	}
 	if artifact.Computer == nil || artifact.Computer.ComputerID != o.identity.OwnerID || artifact.Computer.Capture == nil || len(artifact.Memory) != 1 {
@@ -172,7 +177,10 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 			if err != nil {
 				return err
 			}
-			return cas.RequireExact(got, descriptor)
+			if err := cas.RequireExact(got, descriptor); err != nil {
+				return &saveProtocolError{cause: err}
+			}
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("publish checkpoint %s: %w", object.Role, err)
@@ -205,23 +213,19 @@ func (o *ComputerAllocationOwner) retryCheckpointDurability(ctx context.Context,
 		delay = checkpointRetryDelay(delay)
 		slog.Warn("Computer retains checkpoint source while publication retries", "computer_id", o.identity.OwnerID, "retry_after", delay, "error", err)
 		if err = sleepWithContext(ctx, delay); err != nil {
-			return err
+			return context.Cause(ctx)
 		}
 	}
 }
 func checkpointDurabilityRetryable(err error) bool {
-	if checkpointContinuationRetryable(err) || errors.Is(err, cas.ErrUnavailable) {
-		return true
-	}
-	var errno syscall.Errno
-	if !errors.As(err, &errno) {
+	if !saveOperationRetryable(err) || errors.Is(err, computercheckpoint.ErrInvalidManifest) || errors.Is(err, errInvalidCheckpoint) {
 		return false
 	}
-	switch errno {
-	case syscall.ENOSPC, syscall.EDQUOT, syscall.EIO, syscall.EMFILE, syscall.ENFILE, syscall.EBUSY, syscall.EAGAIN, syscall.EINTR, syscall.ESTALE:
-		return true
+	if errors.Is(err, os.ErrNotExist) {
+		return false
 	}
-	return false
+	var response *httpclient.Error
+	return !(errors.As(err, &response) && response.Code == workerapi.AgentComputerEvidenceConflict)
 }
 
 func checkpointRetryDelay(previous time.Duration) time.Duration {
@@ -234,7 +238,8 @@ func checkpointRetryDelay(previous time.Duration) time.Duration {
 func retryCheckpoint(ctx context.Context, operation func(context.Context) error) error {
 	for {
 		err := operation(ctx)
-		if err == nil || (!saveAdmissionRetryable(err) && !errors.Is(err, cas.ErrUnavailable)) {
+		var response *httpclient.Error
+		if err == nil || !checkpointDurabilityRetryable(err) || (errors.As(err, &response) && response.Code == workerapi.AgentComputerNotReady) {
 			return err
 		}
 		if err = sleepWithContext(ctx, 250*time.Millisecond); err != nil {

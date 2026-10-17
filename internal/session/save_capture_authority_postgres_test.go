@@ -62,7 +62,7 @@ func TestPublishedSaveCompletesWithoutSourceWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	var completed bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND completion_save_id=$2 FROM turns WHERE id=$1`, a.TurnID, save.ID).Scan(&completed); err != nil || !completed {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND EXISTS(SELECT 1 FROM computer_saves s WHERE s.turn_id=turns.id AND s.id=$2) FROM turns WHERE id=$1`, a.TurnID, save.ID).Scan(&completed); err != nil || !completed {
 		t.Fatalf("own-save completion after source loss: %v %v", completed, err)
 	}
 }
@@ -71,18 +71,18 @@ func TestSaveDiscoveryDoesNotTakeCheckpointCut(t *testing.T) {
 	f := newFixture(t)
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}
 	checkpoint, _ := beginCapture(t, f, f.captureRequest())
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil); err != nil || save != nil {
 		t.Fatalf("checkpoint cut entered live capture: %+v %v", save, err)
 	}
 	// Even an older checkpoint blocks a later unlinked disk request.
 	optional := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,2)`, f.env, optional, f.computer)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET next_save_seq=3 WHERE environment_id=$1 AND id=$2`, f.env, f.computer)
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil); err != nil || save != nil {
 		t.Fatalf("later cut passed checkpoint: %+v %v", save, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='checkpoint cancelled before capture' WHERE environment_id=$1 AND id=$2`, f.env, checkpoint.SaveID)
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save == nil || save.ID != optional {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, false, nil); err != nil || save == nil || save.ID != optional {
 		t.Fatalf("unlinked disk cut missing: %+v %v", save, err)
 	}
 }

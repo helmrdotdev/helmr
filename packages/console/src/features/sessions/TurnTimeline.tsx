@@ -6,7 +6,6 @@ export const turnStatusColor: Record<SessionTurn["status"], string> = {
   completed: "bg-console-success-border",
   failed: "bg-console-danger-text",
   running: "bg-console-accent",
-  finalizing: "bg-console-accent",
   queued: "bg-console-faint",
   interrupted: "bg-console-warning-border",
   cancelled: "bg-console-neutral-border",

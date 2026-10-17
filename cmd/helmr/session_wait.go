@@ -101,7 +101,7 @@ func waitForSessionTurn(ctx context.Context, cp *client.Client, sessionID, turnI
 		switch turn.Status {
 		case "completed", "failed", "interrupted", "cancelled":
 			return turn, nil
-		case "queued", "running", "finalizing":
+		case "queued", "running":
 		default:
 			return api.AgentTurn{}, fmt.Errorf("unknown Turn status %q", turn.Status)
 		}

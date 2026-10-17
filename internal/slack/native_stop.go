@@ -169,13 +169,17 @@ func admitNativeStop(ctx context.Context, pool db.TxBeginner, id uuid.UUID) erro
 }
 
 // Releasing these exact recorded holds is part of admitting a new authorized
-// Slack instruction. Other user, admin, and system holds remain untouched.
+// Slack instruction. Recovery acknowledgement is scoped to this conversation
+// and a gesture after the loss; unrelated holds remain untouched.
 func resumeNativeStops(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAdmission) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('slack-stop:'||$1::uuid::text,0))`, p.thread); err != nil {
 		return err
 	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT h.id FROM slack_requests stopped JOIN session_controls c ON (c.environment_id,c.session_id,c.id)=(stopped.environment_id,stopped.session_id,stopped.control_id) JOIN session_holds h ON (h.environment_id,h.id)=(c.environment_id,c.hold_id) JOIN slack_requests incoming ON incoming.id=$2
- WHERE stopped.thread_id=$1 AND stopped.status='accepted' AND stopped.operation='native_stop' AND h.released_at IS NULL AND stopped.source_occurred_at<incoming.source_occurred_at ORDER BY h.id`, p.thread, id)
+ WHERE stopped.thread_id=$1 AND stopped.status='accepted' AND stopped.operation='native_stop' AND h.released_at IS NULL AND stopped.source_occurred_at<incoming.source_occurred_at
+ UNION SELECT h.id FROM session_holds h JOIN slack_requests incoming ON incoming.id=$2
+ WHERE h.environment_id=$3 AND h.session_id=$4 AND h.kind='recovery_gap' AND h.released_at IS NULL AND h.created_at<incoming.source_occurred_at
+ ORDER BY id`, p.thread, id, p.route.Target.EnvironmentID, p.session)
 	if err != nil {
 		return err
 	}

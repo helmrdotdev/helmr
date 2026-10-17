@@ -102,6 +102,12 @@ func lockRuntimeProcessAuthority(ctx context.Context, tx pgx.Tx, host workergrou
 	if err != nil {
 		return RuntimeAuthority{}, err
 	}
+	return runtimeProcessAuthorityWithOwnerLocked(ctx, tx, e, allowStopped, owner)
+}
+
+// Supply and Session/Computer ownership are already locked in this transaction.
+// This query still checks physical identity and wall-clock expiry after waits.
+func runtimeProcessAuthorityWithOwnerLocked(ctx context.Context, tx pgx.Tx, e Execution, allowStopped bool, owner owners) (RuntimeAuthority, error) {
 	// A host can discover the fresh generation after control/revocation; an old
 	// model request cannot use this path because worker authentication is required.
 	result := RuntimeAuthority{Generation: owner.generation}
@@ -110,7 +116,7 @@ func lockRuntimeProcessAuthority(ctx context.Context, tx pgx.Tx, host workergrou
 	// operations independently require an active lease and a live Deployment.
 	// A confirmed stopped member is observable only through attachment acquisition;
 	// ordinary renewal must not grant its already-closed process new authority.
-	err = tx.QueryRow(ctx, `SELECT LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+	err := tx.QueryRow(ctx, `SELECT LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
  JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND l.epoch=$4 AND l.worker_host_id=$5 AND l.worker_epoch=$6

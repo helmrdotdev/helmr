@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -20,28 +22,65 @@ var ErrVersionStagingFull = errors.New("version staging reservation is exhausted
 // private immutable root, not a local durable commit or an externally saved head.
 // The VM adapter must not acknowledge FLUSH until its local commit also succeeds.
 type WritableVersion struct {
-	capture       sync.Mutex
-	mu            sync.Mutex
-	writer        blockformat.Writer
-	tree          *blockformat.Tree
-	root          VersionRoot
-	dirty, frozen map[uint64][]byte
-	limit         int
-	closed        bool
+	budget                     blockformat.CaptureBudget
+	pressureSince              time.Time
+	pressureActive             atomic.Bool
+	life                       sync.RWMutex // Retains keys for unlocked remote reads.
+	capture                    sync.Mutex
+	mu                         sync.Mutex
+	writer                     blockformat.Writer
+	tree                       *blockformat.Tree
+	root                       VersionRoot
+	dirty, frozen              map[uint64][]byte
+	limit                      int
+	closed                     bool
+	generation, rootGeneration uint64
+	changedAt, lastChangedAt   time.Time
+	changeWake                 chan struct{}
+	pressureWake               chan struct{}
 }
 
 type reservedVersionSink struct {
-	target    blockformat.ObjectSink
-	remaining int64
+	mu                                   sync.Mutex
+	dirtyReservation, captureReservation int64
+	spaceWake                            chan struct{}
+	target                               blockformat.ObjectSink
+	remaining                            int64
+	charges                              uint64
 }
 
 func (s *reservedVersionSink) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
+	return s.storeObject(ctx, digest, raw, s.target)
+}
+
+func (s *reservedVersionSink) storeObject(ctx context.Context, digest [32]byte, raw []byte, target blockformat.ObjectSink) error {
+	s.mu.Lock()
 	if int64(len(raw)) > s.remaining {
+		s.mu.Unlock()
 		return ErrVersionStagingFull
 	}
 	// Charge before I/O: a failed acknowledgement can still leave retained bytes.
 	s.remaining -= int64(len(raw))
-	return s.target.StoreObject(ctx, digest, raw)
+	s.charges++
+	s.captureReservation = max(0, s.captureReservation-int64(len(raw)))
+	s.mu.Unlock()
+	return target.StoreObject(ctx, digest, raw)
+}
+
+// A capture batch must make staged object names durable before the new root
+// replaces the frozen generation. The ordinary sink remains individually durable.
+type captureObjectBatch interface {
+	blockformat.ObjectSink
+	Sync(context.Context) error
+}
+
+type reservedCaptureSink struct {
+	reservation *reservedVersionSink
+	target      blockformat.ObjectSink
+}
+
+func (s reservedCaptureSink) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
+	return s.reservation.storeObject(ctx, digest, raw, s.target)
 }
 
 // OpenWritableVersion never creates or repairs a missing source. Source must
@@ -68,8 +107,20 @@ func OpenWritableVersion(ctx context.Context, writer blockformat.Writer, root Ve
 		}
 		return nil, err
 	}
-	writer.Sink = &reservedVersionSink{target: writer.Sink, remaining: stagedBytes}
-	return &WritableVersion{writer: writer, tree: tree, root: root, dirty: make(map[uint64][]byte), limit: dirtyBlocks}, nil
+	locator, err := root.Locator(root.LogicalBytes)
+	if err != nil {
+		return nil, err
+	}
+	shape, err := blockformat.ReadRoot(ctx, writer.Source, writer.Scope, writer.Keys, locator)
+	if err != nil {
+		return nil, err
+	}
+	budget, err := blockformat.NewCaptureBudget(shape, writer.Scope, writer.Keys)
+	if err != nil {
+		return nil, err
+	}
+	writer.Sink = &reservedVersionSink{target: writer.Sink, remaining: stagedBytes, spaceWake: make(chan struct{})}
+	return &WritableVersion{budget: budget, writer: writer, tree: tree, root: root, dirty: make(map[uint64][]byte), limit: dirtyBlocks, changeWake: make(chan struct{}, 1), pressureWake: make(chan struct{}, 1)}, nil
 }
 
 func (d *WritableVersion) bounds(offset int64, length int) error {
@@ -82,22 +133,36 @@ func (d *WritableVersion) bounds(offset int64, length int) error {
 	return nil
 }
 
-func (d *WritableVersion) block(ctx context.Context, index uint64) ([]byte, error) {
-	if b, ok := d.dirty[index]; ok {
-		return bytes.Clone(b), nil
-	}
-	if b, ok := d.frozen[index]; ok {
-		return bytes.Clone(b), nil
-	}
-	return d.tree.ReadBlock(ctx, index)
-}
-
 func (d *WritableVersion) ReadAt(ctx context.Context, p []byte, offset int64) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.life.RLock()
+	defer d.life.RUnlock()
+	lockGuestIO(ctx, &d.mu)
 	if err := d.bounds(offset, len(p)); err != nil {
+		d.mu.Unlock()
 		return 0, err
 	}
+	// Snapshot the immutable tree and mutable overlay together. Copy only blocks
+	// in this request; capture may clear the old overlay as soon as we unlock.
+	tree := d.tree
+	overlay := make(map[uint64][]byte)
+	if len(p) > 0 {
+		first, last := uint64(offset/blockformat.BlockSize), uint64((offset+int64(len(p))-1)/blockformat.BlockSize)
+		for index := first; index <= last; index++ {
+			block, ok := d.dirty[index]
+			if !ok {
+				block, ok = d.frozen[index]
+			}
+			if ok {
+				overlay[index] = bytes.Clone(block)
+			}
+		}
+	}
+	d.mu.Unlock()
+	defer func() {
+		for _, block := range overlay {
+			clear(block)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -108,10 +173,7 @@ func (d *WritableVersion) ReadAt(ctx context.Context, p []byte, offset int64) (i
 	for at := offset; at < end; {
 		index := uint64(at / blockformat.BlockSize)
 		to := min(end, (int64(index)+1)*blockformat.BlockSize)
-		block, changed := d.dirty[index]
-		if !changed {
-			block, changed = d.frozen[index]
-		}
+		block, changed := overlay[index]
 		if changed {
 			from := at % blockformat.BlockSize
 			copy(result[at-offset:to-offset], block[from:from+to-at])
@@ -120,15 +182,12 @@ func (d *WritableVersion) ReadAt(ctx context.Context, p []byte, offset int64) (i
 			// fetching the same index pages separately for every block.
 			for to < end {
 				next := uint64(to / blockformat.BlockSize)
-				if _, ok := d.dirty[next]; ok {
-					break
-				}
-				if _, ok := d.frozen[next]; ok {
+				if _, ok := overlay[next]; ok {
 					break
 				}
 				to = min(end, (int64(next)+1)*blockformat.BlockSize)
 			}
-			data, err := d.tree.ReadRange(ctx, at, int(to-at))
+			data, err := tree.ReadRange(ctx, at, int(to-at))
 			if err != nil {
 				return 0, err
 			}
@@ -144,14 +203,81 @@ func (d *WritableVersion) ReadAt(ctx context.Context, p []byte, offset int64) (i
 }
 
 func (d *WritableVersion) WriteAt(ctx context.Context, p []byte, offset int64) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writeLocked(ctx, p, offset, len(p))
+	return d.write(ctx, p, offset, len(p), true)
+}
+
+// Partial boundary blocks are fetched outside the version mutex. Retry if any
+// mutation or tree installation changed the snapshot, so a concurrent write is
+// never overwritten by stale read-modify-write data.
+func (d *WritableVersion) write(ctx context.Context, p []byte, offset int64, length int, reportPressure bool) (int, error) {
+	d.life.RLock()
+	defer d.life.RUnlock()
+	for {
+		lockGuestIO(ctx, &d.mu)
+		if err := d.bounds(offset, length); err != nil {
+			d.mu.Unlock()
+			return 0, err
+		}
+		if err := ctx.Err(); err != nil {
+			d.mu.Unlock()
+			return 0, err
+		}
+		if length == 0 {
+			d.mu.Unlock()
+			return 0, nil
+		}
+		tree, generation := d.tree, d.generation
+		first, last := uint64(offset/blockformat.BlockSize), uint64((offset+int64(length)-1)/blockformat.BlockSize)
+		var missing []uint64
+		for _, index := range []uint64{first, last} {
+			if len(missing) > 0 && missing[0] == index {
+				continue
+			}
+			start := int64(index) * blockformat.BlockSize
+			if offset <= start && offset+int64(length) >= start+blockformat.BlockSize {
+				continue
+			}
+			if _, ok := d.dirty[index]; ok {
+				continue
+			}
+			if _, ok := d.frozen[index]; ok {
+				continue
+			}
+			missing = append(missing, index)
+		}
+		if len(missing) == 0 {
+			n, err := d.writeLocked(ctx, p, offset, length, nil, reportPressure)
+			d.mu.Unlock()
+			return n, err
+		}
+		d.mu.Unlock()
+		blocks := make(map[uint64][]byte, len(missing))
+		var readErr error
+		for _, index := range missing {
+			blocks[index], readErr = tree.ReadBlock(ctx, index)
+			if readErr != nil {
+				break
+			}
+		}
+		lockGuestIO(ctx, &d.mu)
+		stale := d.generation != generation || d.tree != tree
+		var n int
+		if readErr == nil && !stale {
+			n, readErr = d.writeLocked(ctx, p, offset, length, blocks, reportPressure)
+		}
+		d.mu.Unlock()
+		for _, block := range blocks {
+			clear(block)
+		}
+		if readErr != nil || !stale {
+			return n, readErr
+		}
+	}
 }
 
 // A nil input clears only the requested subranges; callers serialize before
 // allocating temporary blocks, including concurrent trim requests.
-func (d *WritableVersion) writeLocked(ctx context.Context, p []byte, offset int64, length int) (int, error) {
+func (d *WritableVersion) writeLocked(ctx context.Context, p []byte, offset int64, length int, loaded map[uint64][]byte, reportPressure bool) (int, error) {
 	if err := d.bounds(offset, length); err != nil {
 		return 0, err
 	}
@@ -171,6 +297,9 @@ func (d *WritableVersion) writeLocked(ctx context.Context, p []byte, offset int6
 	if len(d.dirty)+len(d.frozen)+additional > d.limit {
 		return 0, ErrVersionBufferFull
 	}
+	if err := d.reserveRangeLocked(first, last, reportPressure); err != nil {
+		return 0, err
+	}
 	changes := make(map[uint64][]byte, additional)
 	defer func() {
 		for _, block := range changes {
@@ -184,11 +313,17 @@ func (d *WritableVersion) writeLocked(ctx context.Context, p []byte, offset int6
 		if from == start && to == start+blockformat.BlockSize {
 			block = make([]byte, blockformat.BlockSize)
 		} else {
-			var err error
-			block, err = d.block(ctx, b)
-			if err != nil {
-				return 0, err
+			source, ok := d.dirty[b]
+			if !ok {
+				source, ok = d.frozen[b]
 			}
+			if !ok {
+				source = loaded[b]
+			}
+			if len(source) != blockformat.BlockSize {
+				return 0, errors.New("missing partial write snapshot")
+			}
+			block = bytes.Clone(source)
 		}
 		if p == nil {
 			clear(block[from-start : to-start])
@@ -205,32 +340,39 @@ func (d *WritableVersion) writeLocked(ctx context.Context, p []byte, offset int6
 		d.dirty[b] = block
 		delete(changes, b)
 	}
+	d.generation++
+	d.lastChangedAt = time.Now()
+	if d.changedAt.IsZero() {
+		d.changedAt = d.lastChangedAt
+	}
+	select {
+	case d.changeWake <- struct{}{}:
+	default:
+	}
 	return length, nil
 }
 
 // Trim is zeroing with the same atomic request and dirty-budget contract as WriteAt.
 func (d *WritableVersion) Trim(ctx context.Context, offset int64, length int) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	_, err := d.writeLocked(ctx, nil, offset, length)
+	_, err := d.write(ctx, nil, offset, length, true)
 	return err
 }
 
 func (d *WritableVersion) Capture(ctx context.Context) (VersionRoot, error) {
-	return d.captureBoundary(ctx, nil)
+	return d.captureBoundary(ctx, nil, nil)
 }
 
 // cut releases the request boundary after the generation swap, before encoding.
 // It also runs on an early rejection so the caller never strands device I/O.
-func (d *WritableVersion) captureBoundary(ctx context.Context, cut func()) (VersionRoot, error) {
+func (d *WritableVersion) captureBoundary(ctx context.Context, cut func(), batch captureObjectBatch) (VersionRoot, error) {
 	defer func() {
 		if cut != nil {
 			cut()
 		}
 	}()
-	d.capture.Lock()
+	lockGuestIO(ctx, &d.capture)
 	defer d.capture.Unlock()
-	d.mu.Lock()
+	lockGuestIO(ctx, &d.mu)
 	if d.closed {
 		d.mu.Unlock()
 		return VersionRoot{}, os.ErrClosed
@@ -244,17 +386,36 @@ func (d *WritableVersion) captureBoundary(ctx context.Context, cut func()) (Vers
 		d.mu.Unlock()
 		return root, nil
 	}
+	sink := d.writer.Sink.(*reservedVersionSink)
+	if err := d.reserveRangeLocked(1, 0, true); err != nil {
+		d.mu.Unlock()
+		return VersionRoot{}, err
+	}
+	if err := sink.beginCapture(); err != nil {
+		d.markPressureLocked()
+		d.mu.Unlock()
+		return VersionRoot{}, err
+	}
 	d.frozen = d.dirty
 	d.dirty = make(map[uint64][]byte)
 	frozen, base := d.frozen, d.root
+	generation := d.generation
 	d.mu.Unlock()
 	if cut != nil {
 		cut()
 		cut = nil
 	}
+	writer := d.writer
+	if batch != nil {
+		writer.Sink = reservedCaptureSink{reservation: sink, target: batch}
+	}
 	locator, err := base.Locator(base.LogicalBytes)
 	if err == nil {
-		locator, err = d.writer.Capture(ctx, locator, base.LogicalBytes, frozen)
+		locator, err = writer.Capture(ctx, locator, base.LogicalBytes, frozen)
+	}
+	if err == nil && batch != nil {
+		// Failure must merge frozen writes back below, before selecting a root.
+		err = batch.Sync(ctx)
 	}
 	var root VersionRoot
 	var tree *blockformat.Tree
@@ -264,7 +425,7 @@ func (d *WritableVersion) captureBoundary(ctx context.Context, cut func()) (Vers
 	if err == nil {
 		tree, err = OpenVersion(ctx, d.writer.Source, d.writer.Scope, d.writer.Keys, root, base.LogicalBytes)
 	}
-	d.mu.Lock()
+	lockGuestIO(ctx, &d.mu)
 	defer d.mu.Unlock()
 	if err != nil {
 		// Newer foreground writes win; failed capture never loses older dirty data.
@@ -276,19 +437,25 @@ func (d *WritableVersion) captureBoundary(ctx context.Context, cut func()) (Vers
 			}
 		}
 		d.frozen = nil
+		sink.finishCapture()
+		_ = d.reserveRangeLocked(1, 0, true)
 		return VersionRoot{}, err
 	}
 	d.root, d.tree = root, tree
+	d.rootGeneration = generation
 	for _, block := range frozen {
 		clear(block)
 	}
 	d.frozen = nil
+	sink.finishCapture()
 	return root, nil
 }
 
 // Close releases plaintext/key memory after any in-flight capture. It never
 // flushes, deletes staged objects or releases the caller's durable source pins.
 func (d *WritableVersion) Close() error {
+	d.life.Lock()
+	defer d.life.Unlock()
 	d.capture.Lock()
 	defer d.capture.Unlock()
 	d.mu.Lock()
@@ -305,4 +472,128 @@ func (d *WritableVersion) Close() error {
 	}
 	d.dirty = nil
 	return nil
+}
+
+// VersionChanges is one atomic view of guest mutations. Wake is a buffered edge;
+// callers compare Generation after reading the snapshot and after every wake.
+// ChangedAt and LastChangedAt bound mutations since the last publication-owner
+// cut. Ordinary guest flushes/local staging captures do not reset this interval.
+type VersionChanges struct {
+	Generation    uint64
+	ChangedAt     time.Time
+	LastChangedAt time.Time
+	Wake          <-chan struct{}
+	PressureSince time.Time
+	PressureWake  <-chan struct{}
+}
+
+func (d *WritableVersion) Changes() VersionChanges {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return VersionChanges{Generation: d.generation, ChangedAt: d.changedAt, LastChangedAt: d.lastChangedAt, Wake: d.changeWake, PressureSince: d.pressureSince, PressureWake: d.pressureWake}
+}
+
+// StagingPressure carries the exact space edge sampled by rejected admission,
+// so collection between rejection and waiting cannot be missed.
+type StagingPressure struct{ Wake <-chan struct{} }
+
+func (*StagingPressure) Error() string { return ErrVersionStagingFull.Error() }
+func (*StagingPressure) Unwrap() error { return ErrVersionStagingFull }
+
+func (s *reservedVersionSink) reserveDirty(bytes int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if bytes+s.captureReservation > s.remaining {
+		return &StagingPressure{Wake: s.spaceWake}
+	}
+	s.dirtyReservation = bytes
+	return nil
+}
+func (s *reservedVersionSink) beginCapture() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dirtyReservation > s.remaining {
+		return &StagingPressure{Wake: s.spaceWake}
+	}
+	s.captureReservation, s.dirtyReservation = s.dirtyReservation, 0
+	return nil
+}
+func (s *reservedVersionSink) finishCapture() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.captureReservation = 0
+	close(s.spaceWake)
+	s.spaceWake = make(chan struct{})
+}
+func (d *WritableVersion) markPressureLocked() {
+	if !d.pressureSince.IsZero() {
+		return
+	}
+	d.pressureSince = time.Now()
+	d.pressureActive.Store(true)
+	select {
+	case d.pressureWake <- struct{}{}:
+	default:
+	}
+	select {
+	case d.changeWake <- struct{}{}:
+	default:
+	}
+}
+func (d *WritableVersion) clearPressure() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.pressureSince.IsZero() {
+		d.pressureSince = time.Time{}
+		d.pressureActive.Store(false)
+		select {
+		case d.pressureWake <- struct{}{}:
+		default:
+		}
+		select {
+		case d.changeWake <- struct{}{}:
+		default:
+		}
+	}
+}
+func (d *WritableVersion) reserveRangeLocked(first, last uint64, reportPressure bool) error {
+	blocks := make([]uint64, 0, len(d.dirty)+d.limit)
+	for block := range d.dirty {
+		blocks = append(blocks, block)
+	}
+	for block := first; block <= last; block++ {
+		if _, ok := d.dirty[block]; !ok {
+			blocks = append(blocks, block)
+		}
+	}
+	budget := d.budget.Bytes(blocks)
+	err := d.writer.Sink.(*reservedVersionSink).reserveDirty(budget)
+	if err != nil && reportPressure {
+		d.markPressureLocked()
+	}
+	return err
+}
+func (s *reservedVersionSink) chargeGeneration() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.charges
+}
+func (s *reservedVersionSink) creditDeleted(bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remaining += bytes
+	if bytes > 0 {
+		close(s.spaceWake)
+		s.spaceWake = make(chan struct{})
+	}
+}
+func (s *reservedVersionSink) recount(charges uint64, remaining int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.charges != charges {
+		return
+	}
+	s.remaining = remaining
+	close(s.spaceWake)
+	s.spaceWake = make(chan struct{})
 }

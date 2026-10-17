@@ -92,9 +92,9 @@ func ReconcileDelivery(ctx context.Context, pool db.TxBeginner, client *WebClien
 		err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 			var err error
 			if candidate.kind == "status" {
-				_, err = tx.Exec(ctx, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 AND next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp())`, candidate.id)
+				_, err = tx.Exec(ctx, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 second' WHERE id=$1 AND next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp())`, candidate.id)
 			} else {
-				_, err = tx.Exec(ctx, `UPDATE slack_posts SET next_attempt_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 AND (status IN ('pending','uncertain') OR (presentation_path='stream' AND stream_state='open' AND closed_at IS NOT NULL AND status IN ('posted','suppressed','failed'))) AND next_attempt_at<=clock_timestamp()`, candidate.id)
+				_, err = tx.Exec(ctx, `UPDATE slack_posts SET next_attempt_at=clock_timestamp()+interval '1 second' WHERE id=$1 AND (status IN ('pending','uncertain') OR (presentation_path='stream' AND stream_state='open' AND closed_at IS NOT NULL AND status IN ('posted','suppressed','failed'))) AND next_attempt_at<=clock_timestamp()`, candidate.id)
 			}
 			return err
 		})

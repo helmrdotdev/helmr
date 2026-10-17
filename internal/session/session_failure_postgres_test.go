@@ -73,7 +73,7 @@ func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state string
-	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, result.TurnID).Scan(&state); err != nil || state != "finalizing" {
+	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, result.TurnID).Scan(&state); err != nil || state != "completed" {
 		t.Fatalf("recorded result: %s %v", state, err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM computer_saves WHERE id=$1`, save.ID).Scan(&state); err != nil || state != "requested" {
@@ -85,7 +85,7 @@ func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 	if err = storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
+	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var held bool

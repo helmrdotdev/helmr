@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -32,3 +33,5 @@ func computerDeviceTracked(machines *PreparedMachines, ref preparedMachineRef) b
 	defer machines.mu.Unlock()
 	return machines.computerDevices[ref] != nil
 }
+
+func (*countingCloseComputerDevice) Changes() disk.VersionChanges { return disk.VersionChanges{} }

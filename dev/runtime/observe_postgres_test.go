@@ -263,7 +263,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 	sessionPath := func(id uuid.UUID) map[string]any {
 		return observe(t, f.Pool, "session-path", map[string]any{"session_id": id.String()}).(map[string]any)
 	}
-	if got := sessionPath(f.Session); len(got["checkpoints"].([]any)) != 1 || len(got["processes"].([]any)) != 1 {
+	if got := sessionPath(f.Session); len(got["checkpoints"].([]any)) != 1 || len(got["processes"].([]any)) != 1 || got["save_backlog"].(map[string]any)["oldest_uncovered_seq"] != nil {
 		t.Fatalf("member=%v", got)
 	}
 	if got := sessionPath(peer); len(got["checkpoints"].([]any)) != 0 {

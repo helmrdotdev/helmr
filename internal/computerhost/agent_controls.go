@@ -216,9 +216,11 @@ func ServeControlledAgentSession(ctx context.Context, connection *AgentSessionCo
 				return
 			}
 		}
-		ticker := time.NewTicker(250 * time.Millisecond)
+		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		for {
+			workWake := connection.workWake.snapshot()
+			localWake := connection.localWork.snapshot()
 			if err := owner.apply(ctx); err != nil {
 				cancel(err)
 				return
@@ -226,6 +228,8 @@ func ServeControlledAgentSession(ctx context.Context, connection *AgentSessionCo
 			select {
 			case <-ctx.Done():
 				return
+			case <-workWake:
+			case <-localWake:
 			case <-ticker.C:
 			}
 		}

@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -42,6 +44,33 @@ func (s nativeFaultStore) Stat(ctx context.Context, digest string) (cas.Object, 
 	}
 	return s.Store.Stat(ctx, digest)
 }
+func (s nativeFaultStore) Verify(ctx context.Context, digest string) (cas.Object, error) {
+	if fault, ok := ctx.Value(nativeStatFaultKey{}).(nativeStatFault); ok && fault.digest == digest {
+		if fault.window == nil || fault.window.unavailable(fault.response) {
+			fault.response.Header().Set(nativeStatFaultHeader, "observed")
+			return cas.Object{}, cas.ErrUnavailable
+		}
+	}
+	return s.Store.Verify(ctx, digest)
+}
+
+// Pick the same object on retry, without assuming a singleton publication RPC.
+func nativeBatchObject(inspections []blockformat.ObjectInspection, wanted string, segmentsOnly bool) (cas.Descriptor, bool) {
+	for _, inspection := range inspections {
+		var object cas.Descriptor
+		if inspection.Segment != nil {
+			object = cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", inspection.Segment.Digest), SizeBytes: inspection.Segment.Size, MediaType: "application/octet-stream"}
+		} else if !segmentsOnly && inspection.Pack != nil && len(inspection.Pack.Pages) > 0 {
+			pack := inspection.Pack.Pages[0].Locator.Pack
+			object = cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", pack.Digest), SizeBytes: pack.Size, MediaType: "application/octet-stream"}
+		}
+		if object.Digest != "" && (wanted == "" || wanted == object.Digest) {
+			return object, true
+		}
+	}
+	return cas.Descriptor{}, false
+}
+
 func nativeStorageFaultHandler(next http.Handler) http.Handler {
 	var windows sync.Map
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,16 +165,13 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 	stage := &recovery.Capture
 	digest := ""
 	if !capture {
-		if object.Inspection.Segment == nil {
-			g.next.ServeHTTP(w, r)
-			return nil
-		}
-		digest = fmt.Sprintf("sha256:%x", object.Inspection.Segment.Digest)
 		stage = &recovery.PartialUpload
-		if stage.ObjectDigest != "" && stage.ObjectDigest != digest {
+		selected, ok := nativeBatchObject(object.Inspections, stage.ObjectDigest, false)
+		if !ok || selected.Digest == recovery.RootPack {
 			g.next.ServeHTTP(w, r)
 			return nil
 		}
+		digest = selected.Digest
 		if stage.Attempts == 0 {
 			var certified, rootCertified, pinned bool
 			var certifiedBytes int64
@@ -164,7 +190,7 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 			if !pinned || rootCertified || recovery.RootPack == "" {
 				return errors.New("upload fault did not precede root certification")
 			}
-			// Inspect the real object before injecting an unavailable Stat in the child.
+			// Inspect the real object before injecting an unavailable verification in the child.
 			// This is a transient storage-call failure, not a claim of a natural S3 outage.
 			store, err := cass3.New(r.Context(), g.restart.casURI)
 			if err != nil {
@@ -174,7 +200,7 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 			if err != nil {
 				return err
 			}
-			if stored.SizeBytes != object.Inspection.Segment.Size {
+			if stored.SizeBytes != selected.SizeBytes {
 				return errors.New("partial upload object length mismatch")
 			}
 			stage.ObjectDigest = digest
@@ -239,4 +265,32 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 	w.WriteHeader(response.Code)
 	_, err = io.Copy(w, response.Body)
 	return err
+}
+
+func TestNativeStorageFaultInterceptsStoredVerification(t *testing.T) {
+	response := httptest.NewRecorder()
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ctx := context.WithValue(t.Context(), nativeStatFaultKey{}, nativeStatFault{digest: digest, response: response})
+	// A nil backing store ensures the injected fault is reached through the
+	// same optional Verify capability used by production certification.
+	if _, err := cas.VerifyStored(ctx, nativeFaultStore{}, digest); !errors.Is(err, cas.ErrUnavailable) {
+		t.Fatalf("verification fault: %v", err)
+	}
+	if response.Header().Get(nativeStatFaultHeader) != "observed" {
+		t.Fatal("verification did not retain its fault receipt")
+	}
+}
+
+func TestNativeBatchObjectSelectsSameObjectOnRetry(t *testing.T) {
+	first := blockformat.Ref{Digest: [32]byte{1}, Size: 10}
+	second := blockformat.Ref{Digest: [32]byte{2}, Size: 20}
+	inspections := []blockformat.ObjectInspection{{Segment: &first}, {Segment: &second}}
+	want := fmt.Sprintf("sha256:%x", second.Digest)
+	selected, ok := nativeBatchObject(inspections, want, true)
+	if !ok || selected.Digest != want || selected.SizeBytes != second.Size {
+		t.Fatalf("batch retry selected another object: %+v %t", selected, ok)
+	}
+	if _, ok := nativeBatchObject(inspections[:1], want, true); ok {
+		t.Fatal("unrelated batch substituted a different fault object")
+	}
 }

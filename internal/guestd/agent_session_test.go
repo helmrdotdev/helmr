@@ -593,3 +593,33 @@ func TestAgentSessionStopUnknownTurnCannotIgnoreActiveExecution(t *testing.T) {
 		t.Fatal("unknown stop was accepted or changed active execution")
 	}
 }
+
+func TestAgentSessionBoundedStopClosesOwnedTurnAndKeepsProcess(t *testing.T) {
+	session, process := agentSessionFixture(t)
+	guestDispatch(t, session, "blocked", 1)
+	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "pressure-stop", ControlSequence: 2, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold", StopSequence: 1, StopTurnId: proto.String("blocked"), StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano()}}}
+	if err := session.send(command); err != nil {
+		t.Fatal(err)
+	}
+	if !session.turns["blocked"].closed || !session.held || session.reconstructRequired || session.terminal || len(process.commands) == 0 {
+		t.Fatal("pressure stop failed to retain closed Turn and warm process")
+	}
+	if process.commands[len(process.commands)-1].GetControl().GetStopDeadlineUnixNano() == 0 {
+		t.Fatal("stop deadline lost at pipe")
+	}
+	// An old 30-second hold cannot replace the pending stop.
+	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "old-hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !session.turns["blocked"].closed || session.controlSequence != 2 {
+		t.Fatal("stale hold changed pressure stop")
+	}
+}
+func TestAgentSessionStopRequiresSequence(t *testing.T) {
+	for _, control := range []*agentv1.SessionControl{{Desired: "hold", StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano(), StopTurnId: proto.String("blocked")}} {
+		session, _ := agentSessionFixture(t)
+		if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "invalid-stop", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: control}}); err == nil {
+			t.Fatal("invalid pressure stop admitted")
+		}
+	}
+}

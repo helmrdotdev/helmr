@@ -28,6 +28,10 @@ type AllocatedSessionClient interface {
 // Whole-Computer restoration first uses AgentComputerOwner to install and
 // activate retained members before starting this ordinary discovery loop.
 func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine vm.GuestControlMachine, allocation workerapi.ComputerAllocationDelivery, hostID string, client AllocatedSessionClient, observe func(context.Context, *agentv1.GuestSessionMessage) error) error {
+	return p.serveAllocatedSessions(ctx, machine, allocation, hostID, client, observe, nil)
+}
+
+func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine vm.GuestControlMachine, allocation workerapi.ComputerAllocationDelivery, hostID string, client AllocatedSessionClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, wake *allocationWake) error {
 	identity := allocation.Identity
 	if p == nil || machine == nil || client == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || allocation.ChannelCredential == "" {
 		return errors.New("session discovery requires an owned Computer and authenticated client")
@@ -45,6 +49,7 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 	// until a complete scan no longer lists them, preventing stale page replay.
 	owned := make(map[workerapi.ProcessIdentity]<-chan struct{})
 	for ctx.Err() == nil {
+		discoveryWake := wake.snapshot()
 		seen := make(map[workerapi.ProcessIdentity]bool)
 		var cursor *workerapi.ProcessIdentity
 		var scanErr error
@@ -74,8 +79,10 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 					grant := &agentv1.SessionGrant{Identity: &agentv1.SessionIdentity{SessionId: process.SessionID, ProcessEpoch: process.Epoch}, ComputerId: identity.OwnerID, ComputerInstanceId: identity.AllocationID, WriterGeneration: identity.Epoch, WorkerHostId: hostID, ComputerLeaseEpoch: identity.Epoch, ChannelCredential: allocation.ChannelCredential}
 					retryDelay := 250 * time.Millisecond
 					for ctx.Err() == nil {
+						attachmentWake := wake.snapshot()
 						connection, attached, err := p.StartAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client)
 						if err == nil {
+							connection.workWake = wake
 							servingSince := time.Now()
 							err = ServeExecutingAgentSession(ctx, connection, attached, identity.EnvironmentID, client, observe)
 							// An attached transport can immediately replay an event
@@ -108,7 +115,7 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 						// Held startup can remain blocked for hours. Bound durable
 						// attachment writes and spread outage retries across peers.
 						wait := retryDelay/2 + time.Duration(rand.Int64N(int64(retryDelay/2)))
-						if sleepWithContext(ctx, wait) != nil {
+						if waitAllocationWake(ctx, attachmentWake, wait) != nil {
 							return
 						}
 						retryDelay = min(10*time.Second, retryDelay*2)
@@ -138,7 +145,7 @@ func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine v
 				return scanErr
 			}
 		}
-		if sleepWithContext(ctx, time.Second) != nil {
+		if waitAllocationWake(ctx, discoveryWake, 15*time.Second) != nil {
 			break
 		}
 	}

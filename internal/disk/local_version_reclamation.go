@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -23,12 +24,15 @@ type LocalCapture struct {
 	root      VersionRoot
 	released  bool
 	published bool
+	adopted   bool
+	changes   VersionChanges
 }
 
-func (c *LocalCapture) Root() VersionRoot { return c.root }
+func (c *LocalCapture) Root() VersionRoot       { return c.root }
+func (c *LocalCapture) Changes() VersionChanges { return c.changes }
 
 func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublication) error {
-	c.mu.Lock()
+	lockGuestIO(ctx, &c.mu)
 	defer c.mu.Unlock()
 	if c.released {
 		return os.ErrClosed
@@ -45,7 +49,7 @@ func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublic
 	if err != nil {
 		return err
 	}
-	_, err = publishVersion(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher)
+	_, err = publishVersionEvidence(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher, p.evidence)
 	if err == nil {
 		c.published = true
 	}
@@ -74,6 +78,8 @@ func (p *LocalVersion) Capture(ctx context.Context) (*LocalCapture, error) {
 	if p.closed {
 		return nil, os.ErrClosed
 	}
+	p.storage.RLock()
+	defer p.storage.RUnlock()
 	// Requests can flush under buffer pressure. Never wait for commit while
 	// holding request: an earlier encoder must not stall otherwise runnable I/O.
 	// Acquire both only when commit is immediately available; otherwise join the
@@ -82,30 +88,45 @@ func (p *LocalVersion) Capture(ctx context.Context) (*LocalCapture, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		p.request.Lock()
+		lockGuestIO(ctx, &p.request)
 		if p.commit.TryLock() {
 			break
 		}
 		p.request.Unlock()
-		p.commit.Lock()
-		//lint:ignore SA2001 Wait for the preceding commit outside the request gate.
+		lockGuestIO(ctx, &p.commit)
 		p.commit.Unlock()
 	}
 	defer p.commit.Unlock()
+	// The request and commit gates exclude mutations until captureBoundary swaps
+	// the dirty map. Only this publication-owner cut transfers autosave age;
+	// ordinary guest flushes must leave it observable.
+	lockGuestIO(ctx, &p.disk.mu)
+	changes := VersionChanges{Generation: p.disk.generation, ChangedAt: p.disk.changedAt, LastChangedAt: p.disk.lastChangedAt}
+	p.disk.changedAt, p.disk.lastChangedAt = time.Time{}, time.Time{}
+	p.disk.mu.Unlock()
 	root, err := p.flushBoundaryLocked(ctx, p.request.Unlock)
 	if err != nil {
+		// Persistence can fail after newer requests resume. Restore the whole
+		// unpublished interval without replacing those newer mutations.
+		p.disk.mu.Lock()
+		if !changes.ChangedAt.IsZero() && (p.disk.changedAt.IsZero() || changes.ChangedAt.Before(p.disk.changedAt)) {
+			p.disk.changedAt = changes.ChangedAt
+		}
+		if changes.LastChangedAt.After(p.disk.lastChangedAt) {
+			p.disk.lastChangedAt = changes.LastChangedAt
+		}
+		p.disk.mu.Unlock()
 		return nil, err
 	}
-	c := &LocalCapture{owner: p, root: root}
+	c := &LocalCapture{owner: p, root: root, changes: changes}
 	p.captures[c] = root
 	return c, nil
 }
 
-// Collect removes unreachable ciphertext and bytes covered by the durably adopted
-// remote source. It never releases remote ownership or changes the execution base.
-// Flush/capture is serialized; ordinary guest reads and writes may continue.
-// The finite object budget bounds traversal and directory work. Failure before
-// deletion leaves all bytes intact; partial deletion never returns space credit.
+// Collect scans immutable candidates before taking a root snapshot, traverses
+// outside commit, then rechecks the root revision before each bounded deletion
+// batch. A capture either completes before that snapshot or invalidates it.
+// Active publishers prevent reachable eviction, but not unrelated garbage.
 func (p *LocalVersion) Collect(ctx context.Context, maxObjects int) (int64, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
@@ -115,57 +136,28 @@ func (p *LocalVersion) Collect(ctx context.Context, maxObjects int) (int64, erro
 	if maxObjects <= 0 || maxObjects > 1<<20 {
 		return 0, errors.New("bounded local collection required")
 	}
-	// Unreachable collection need not wait for a stalled upload. Reachable
-	// eviction is opportunistic: it requires all local-file publishers to join.
-	evict := p.publication.TryLock()
-	if evict {
-		defer p.publication.Unlock()
+	if !p.collection.TryLock() {
+		return 0, nil
 	}
-	p.commit.Lock()
-	saved, base := p.head.Saved, p.head.Base
-	p.commit.Unlock()
-	var remote map[string]bool
-	if evict && saved != base {
-		var err error
-		remote, err = p.remoteBacked(ctx, saved, maxObjects)
-		if err != nil {
-			return 0, err
-		}
-	}
-	p.commit.Lock()
-	defer p.commit.Unlock()
-	if p.head.Saved != saved {
-		// Another handoff superseded this evidence during remote I/O. Ordinary
-		// unreachable collection remains safe; defer eviction to the next pass.
-		remote = nil
-	}
-	// Capture may have succeeded before root-file fsync failed. Both the in-memory
-	// tree and the last acknowledged root are live until the next successful flush.
-	p.disk.mu.Lock()
-	current := p.disk.root
-	p.disk.mu.Unlock()
-	// Force the latest installed root directory entry durable before deleting
-	// any candidate from an earlier ambiguous rename. Until this succeeds, a
-	// crash could expose an intermediate root from consecutive failed flushes.
-	if err := syncVersionDirectory(p.directory); err != nil {
-		return 0, err
-	}
-	roots := []VersionRoot{p.head.Root, p.installedRoot, current}
-	for _, root := range p.captures {
-		roots = append(roots, root)
-	}
-	keep, err := p.localReachable(ctx, roots, maxObjects)
-	if err != nil {
-		return 0, err
-	}
+	defer p.collection.Unlock()
 	type entry struct {
-		path  string
-		bytes int64
+		path, digest string
+		bytes        int64
 	}
-	var garbage []entry
+	var candidates []entry
 	var used int64
+	sink := p.disk.writer.Sink.(*reservedVersionSink)
+	// Start the census only between encoders. Charges are reserved before local
+	// I/O, so a generation sampled during an encoder can miss retained bytes.
+	if !p.commit.TryLock() {
+		return 0, nil
+	}
+	charges := sink.chargeGeneration()
+	p.commit.Unlock()
 	objects := filepath.Join(p.directory, "objects")
-	err = scanLocalObjects(ctx, objects, maxObjects, func(path string, e os.DirEntry) error {
+	// Only this pre-snapshot set can be deleted. Files produced by a later
+	// capture are never mistaken for unreachable objects from this pass.
+	err := scanLocalObjects(ctx, objects, maxObjects, func(path string, e os.DirEntry) error {
 		info, err := e.Info()
 		if err != nil {
 			return err
@@ -178,36 +170,121 @@ func (p *LocalVersion) Collect(ctx context.Context, maxObjects int) (int64, erro
 			return ErrVersionStagingFull
 		}
 		used += info.Size()
-		if !keep[digest] || remote[digest] {
-			garbage = append(garbage, entry{path, info.Size()})
-		}
+		candidates = append(candidates, entry{path, digest, info.Size()})
 		return nil
 	})
+	lockGuestIO(ctx, &p.commit)
+	if sink.chargeGeneration() != charges {
+		p.commit.Unlock()
+		return 0, nil
+	}
+	if err != nil {
+		p.commit.Unlock()
+		return 0, err
+	}
+	saved, base, revision := p.head.Saved, p.head.Base, p.revision
+	lockGuestIO(ctx, &p.disk.mu)
+	current := p.disk.root
+	p.disk.mu.Unlock()
+	roots := []VersionRoot{p.head.Root, p.installedRoot, current}
+	for _, root := range p.captures {
+		roots = append(roots, root)
+	}
+	backing := make(map[string]bool, len(p.verifiedBacking))
+	for digest := range p.verifiedBacking {
+		backing[digest] = true
+	}
+	p.commit.Unlock()
+	keep, err := p.localReachable(ctx, roots, maxObjects)
 	if err != nil {
 		return 0, err
 	}
+	// Certification and the saved root retain this remote closure for the lease.
+	// Evidence may be reused; every incoming link still checks its position.
+	if saved != base {
+		remote, err := p.remoteBacked(ctx, saved, maxObjects)
+		if err != nil {
+			return 0, err
+		}
+		for digest := range remote {
+			backing[digest] = true
+		}
+	}
+	var garbage []entry
+	for _, e := range candidates {
+		if !keep[e.digest] || backing[e.digest] {
+			garbage = append(garbage, e)
+		}
+	}
 	var removed int64
-	for _, e := range garbage {
-		if err = ctx.Err(); err != nil {
+	// Even an empty pass can recover conservative charges after failed/duplicate
+	// immutable writes, provided no sink write raced the directory census.
+	for len(garbage) > 0 || removed == 0 {
+		if err := ctx.Err(); err != nil {
 			return removed, err
 		}
-		if err = os.Remove(e.path); err != nil {
+		lockGuestIO(ctx, &p.commit)
+		if p.revision != revision || !p.storage.TryLock() {
+			p.commit.Unlock()
+			return removed, nil
+		}
+		// Never wait for an encoder while holding commit. The storage gate protects
+		// the unchanged roots and active read snapshots throughout physical deletion.
+		p.commit.Unlock()
+		evict := p.publication.TryLock()
+		batch := garbage[:min(64, len(garbage))]
+		var unlinked int64
+		var deleted []string
+		err = func() error {
+			// Complete an ambiguous root rename before removing its prior recovery set.
+			if err := syncVersionDirectory(p.directory); err != nil {
+				return err
+			}
+			for _, e := range batch {
+				if keep[e.digest] && !evict {
+					continue
+				}
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if err := os.Remove(e.path); err != nil {
+					return err
+				}
+				unlinked += e.bytes
+				deleted = append(deleted, e.digest)
+			}
+			if unlinked > 0 {
+				if err := p.step("objects-unlinked"); err != nil {
+					return err
+				}
+			}
+			if err := syncVersionDirectory(filepath.Join(objects, "sha256")); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			sink.creditDeleted(unlinked)
+			return nil
+		}()
+		if evict {
+			p.publication.Unlock()
+		}
+		p.commit.Lock()
+		for _, digest := range deleted {
+			delete(p.verifiedBacking, digest)
+		}
+		p.commit.Unlock()
+		removed += unlinked
+		if err == nil && len(garbage) <= len(batch) {
+			sink.recount(charges, p.stagedBytes-(used-removed))
+		}
+		p.storage.Unlock()
+		if err != nil {
 			return removed, err
 		}
-		removed += e.bytes
-	}
-	if len(garbage) > 0 {
-		if err = p.step("objects-unlinked"); err != nil {
-			return removed, err
+		garbage = garbage[len(batch):]
+		if len(garbage) == 0 {
+			return removed, nil
 		}
 	}
-	// Also sync a prior partially completed deletion before returning its credit.
-	if err = syncVersionDirectory(filepath.Join(objects, "sha256")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return removed, err
-	}
-	// This owner serializes every sink write with commit. Recounting also recovers
-	// conservative charges from failed I/O and duplicate immutable writes.
-	p.disk.writer.Sink.(*reservedVersionSink).remaining = p.stagedBytes - (used - removed)
 	return removed, nil
 }
 
@@ -235,7 +312,7 @@ func (p *LocalVersion) localReachable(ctx context.Context, roots []VersionRoot, 
 		}
 		// Authenticate even remote boundaries. Missing local bytes alone are not
 		// evidence that a subtree can be recovered from the retained source.
-		inspected, err := blockformat.InspectPack(ctx, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, ref)
+		inspected, err := p.evidence.pack(ctx, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, ref, false)
 		if err != nil {
 			return err
 		}
@@ -269,7 +346,7 @@ func (p *LocalVersion) localReachable(ctx context.Context, roots []VersionRoot, 
 		return nil
 	}
 	for _, root := range roots {
-		locator, err := root.Locator(p.head.Base.LogicalBytes)
+		locator, err := root.Locator(root.LogicalBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -327,4 +404,22 @@ func scanLocalObjects(ctx context.Context, directory string, budget int, visit f
 	return scan(filepath.Join(directory, "sha256"), func(e os.DirEntry) error {
 		return visit(filepath.Join(directory, "sha256", e.Name()), e)
 	})
+}
+
+// PinCommitted retains the last acknowledged local root without guest flush,
+// request drainage or another capture. It certifies no completed Turn prefix.
+func (p *LocalVersion) PinCommitted(ctx context.Context) (*LocalCapture, error) {
+	p.life.RLock()
+	defer p.life.RUnlock()
+	if p.closed {
+		return nil, os.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	lockGuestIO(ctx, &p.commit)
+	defer p.commit.Unlock()
+	c := &LocalCapture{owner: p, root: p.head.Root, changes: VersionChanges{Generation: p.headGeneration}}
+	p.captures[c] = c.root
+	return c, nil
 }

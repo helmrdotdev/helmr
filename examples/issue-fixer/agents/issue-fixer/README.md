@@ -13,6 +13,9 @@ interpretation of answers.
 - Both harnesses launch ordinary Node child processes and register `turn.onCancel`
   to stop and join native work. The managed Runtime owns the whole Session process
   tree; native terminal text alone does not establish physical convergence.
+- Codex command receipts may arrive after its Turn ends. The authored handler
+  remains pending until all owned commands report completion; cancellation still
+  stops and joins outstanding commands before permitting reuse.
 - `native-content.ts` and `native-questions.ts` translate supported text/JSON and
   question controls. Secret questions and unsupported semantics fail visibly.
 

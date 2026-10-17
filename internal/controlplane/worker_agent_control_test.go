@@ -113,18 +113,28 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 			if err := frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 5, Message: &agentv1.GuestSessionMessage_Stopped{Stopped: &agentv1.SessionStopped{}}}); err != nil {
 				return err
 			}
-			var ack agentv1.HostSessionMessage
-			if err := frameio.ReadProtoFrameBounded(stream, 1<<20, &ack); err != nil {
-				return err
-			}
-			if ack.GetAcknowledged().GetThroughSequence() != 5 {
-				return errors.New("physical stop not acknowledged")
+			for {
+				var ack agentv1.HostSessionMessage
+				if err := frameio.ReadProtoFrameBounded(stream, 1<<20, &ack); err != nil {
+					return err
+				}
+				// Authority renewal shares this transport until the stop is observed.
+				if ack.GetRenew() != nil {
+					continue
+				}
+				if ack.GetAcknowledged().GetThroughSequence() != 5 {
+					return errors.New("physical stop not acknowledged")
+				}
+				break
 			}
 			return nil
 		}
 		finished <- run()
 	}}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// This isolated attachment has no allocation owner to forward work hints.
+	// Allow four 15-second fallback scans: the first failed prepare and three
+	// subsequent control transitions.
+	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
 	defer cancel()
 	grant := &agentv1.SessionGrant{Identity: identity, ComputerId: f.Computer.String(), ComputerInstanceId: "instance", WriterGeneration: 1, WorkerHostId: f.Worker.String(), ComputerLeaseEpoch: 1, AuthorityGeneration: attachment.AuthorityGeneration, ExpiresAtUnixNano: attachment.ExpiresAt.UnixNano(), ChannelCredential: "private"}
 	connection, attached, err := computerhost.OpenAgentSession(ctx, machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: uint64(attachment.AttachmentSequence)})
@@ -135,7 +145,12 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 		return errors.New("unexpected observer event")
 	}, nil)
 	if err != nil {
-		t.Fatalf("clean physical stop: %v", err)
+		select {
+		case guestErr := <-finished:
+			t.Fatalf("clean physical stop: host=%v guest=%v", err, guestErr)
+		case <-time.After(time.Second):
+			t.Fatalf("clean physical stop: host=%v guest pending", err)
+		}
 	}
 	if err := <-finished; err != nil {
 		t.Fatal(err)

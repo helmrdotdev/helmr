@@ -26,8 +26,8 @@ type PreparationCaptureBegin struct {
 	LogicalBytes int64               `json:"logical_bytes"`
 }
 type PreparationObject struct {
-	Executor   PreparationExecutor          `json:"executor"`
-	Inspection blockformat.ObjectInspection `json:"inspection"`
+	Executor    PreparationExecutor            `json:"executor"`
+	Inspections []blockformat.ObjectInspection `json:"inspections"`
 }
 type PreparationPublication struct {
 	Executor PreparationExecutor `json:"executor"`

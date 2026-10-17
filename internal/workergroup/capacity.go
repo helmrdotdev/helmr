@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -179,6 +180,9 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 				return err
 			}
 		}
+		if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
+			return err
+		}
 		result, err = GetHost(ctx, q, hostID)
 		return err
 	})
@@ -230,6 +234,9 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, actor audit.Actor
 		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 			return ConfirmedProviderAbsence{}, err
 		}
+	}
+	if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
+		return ConfirmedProviderAbsence{}, err
 	}
 	return ConfirmedProviderAbsence{tx: tx, hostID: hostID}, nil
 }

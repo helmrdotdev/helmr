@@ -142,7 +142,7 @@ func TestCheckpointDownloadSeparatesInvalidContentsFromReadFailures(t *testing.T
 		fault   error
 		invalid bool
 	}{
-		{"missing object", os.ErrNotExist, true}, {"digest mismatch", cas.ErrDigestMismatch, true},
+		{"missing object", os.ErrNotExist, false}, {"digest mismatch", cas.ErrDigestMismatch, true},
 		{"unavailable", cas.ErrUnavailable, false}, {"permission", os.ErrPermission, false},
 		{"io", syscall.EIO, false}, {"cancelled", context.Canceled, false},
 	} {
@@ -153,6 +153,22 @@ func TestCheckpointDownloadSeparatesInvalidContentsFromReadFailures(t *testing.T
 				t.Fatalf("classification: %v", err)
 			}
 		})
+	}
+
+	for _, statFailure := range []bool{false, true} {
+		reader := &missingCheckpointReader{Reader: store, missing: true, statFailure: statFailure}
+		_, err := downloadCheckpointObject(t.Context(), reader, cipher, t.TempDir(), "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: object}, 5)
+		if !errors.Is(err, os.ErrNotExist) || errors.Is(err, errInvalidCheckpoint) {
+			t.Fatalf("remote absence discarded checkpoint: %v", err)
+		}
+		reader.missing = false
+		path, err := downloadCheckpointObject(t.Context(), reader, cipher, t.TempDir(), "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: object}, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if restored, err := os.ReadFile(path); err != nil || string(restored) != "state" {
+			t.Fatalf("repaired payload: %q %v", restored, err)
+		}
 	}
 
 	_, err = downloadCheckpointObject(t.Context(), interruptedVerifiedCheckpoint{Reader: store}, cipher, t.TempDir(), "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: object}, 5)
@@ -181,3 +197,22 @@ func (r interruptedVerifiedCheckpoint) Get(ctx context.Context, digest string) (
 type checkpointTransportFailure struct{}
 
 func (checkpointTransportFailure) Read([]byte) (int, error) { return 0, syscall.ECONNRESET }
+
+// Availability can be repaired without replacing the authenticated checkpoint.
+type missingCheckpointReader struct {
+	cas.Reader
+	missing, statFailure bool
+}
+
+func (r *missingCheckpointReader) Stat(ctx context.Context, digest string) (cas.Object, error) {
+	if r.missing && r.statFailure {
+		return cas.Object{}, os.ErrNotExist
+	}
+	return r.Reader.Stat(ctx, digest)
+}
+func (r *missingCheckpointReader) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+	if r.missing {
+		return nil, os.ErrNotExist
+	}
+	return r.Reader.Get(ctx, digest)
+}

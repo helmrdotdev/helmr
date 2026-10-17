@@ -4,6 +4,25 @@ import { parseTurnOutcome } from "./turn-outcome"
 import { isHelmrError, ContentError } from "../index"
 const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
 
+test("interruption data distinguishes ordinary stops from exact Computer loss", () => {
+  expect(parseSessionEventData("turn.interrupted", {})).toEqual({})
+  const loss = { reason: "computer_execution_lost", computerId: id, leaseEpoch: 2, recoveryGap: false }
+  for (const recoveryGap of [false, true]) {
+    const data = { ...loss, recoveryGap }
+    expect(parseSessionEventData("turn.interrupted", data)).toEqual(data)
+  }
+  for (const data of [
+    { ...loss, reason: "other" },
+    { ...loss, computerId: "not-a-uuid" },
+    { ...loss, computerId: "019c10d5-a6f7-4af1-8f5f-bb97bcc0dc34" },
+    ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "2"].map(leaseEpoch => ({ ...loss, leaseEpoch })),
+    ...[null, "false", 0, undefined].map(recoveryGap => ({ ...loss, recoveryGap })),
+    { reason: loss.reason },
+    { ...loss, unexpected: true },
+  ]) expect(() => parseSessionEventData("turn.interrupted", data)).toThrow()
+  expect(() => parseSessionEventData("turn.completed", loss)).toThrow()
+})
+
 test("events validate their producer-specific payload before exposing narrowed data", () => {
   expect(parseSessionEventData("turn.completed", {})).toEqual({})
   expect(() => parseSessionEventData("turn.completed", { result: 1 })).toThrow()

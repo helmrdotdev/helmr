@@ -110,7 +110,7 @@ func (server *Server) workerRegisterPreparationObject(w http.ResponseWriter, r *
 		server.writeAllocationError(w, err)
 		return
 	}
-	err = server.preparationPublisher.Register(r.Context(), workerFromContext(r.Context()), ref, request.Inspection)
+	err = server.preparationPublisher.RegisterBatch(r.Context(), workerFromContext(r.Context()), ref, request.Inspections)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -129,7 +129,7 @@ func (server *Server) workerCertifyPreparationObject(w http.ResponseWriter, r *h
 		server.writeAllocationError(w, err)
 		return
 	}
-	err = server.preparationPublisher.Certify(r.Context(), workerFromContext(r.Context()), ref, request.Inspection)
+	err = server.preparationPublisher.CertifyBatch(r.Context(), workerFromContext(r.Context()), ref, request.Inspections)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

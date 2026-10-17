@@ -18,7 +18,7 @@ import (
 // it only after those jobs have joined.
 func encryptCheckpointObject(ctx context.Context, cipher *CheckpointEncryptor, directory, checkpoint, role, media string, plaintext io.Reader, limit int64) (computercheckpoint.Object, string, error) {
 	if cipher == nil || limit <= 0 {
-		return computercheckpoint.Object{}, "", errors.New("checkpoint encryption requires a size bound")
+		return computercheckpoint.Object{}, "", invalidCheckpoint(errors.New("checkpoint encryption requires a size bound"))
 	}
 	file, err := os.CreateTemp(directory, role+"-encrypted-")
 	if err != nil {
@@ -28,7 +28,7 @@ func encryptCheckpointObject(ctx context.Context, cipher *CheckpointEncryptor, d
 	input := &io.LimitedReader{R: plaintext, N: limit + 1}
 	err = cipher.Encrypt(ctx, input, io.MultiWriter(file, hash), checkpoint+"/"+role)
 	if err == nil && input.N == 0 {
-		err = errors.New("checkpoint plaintext exceeds its staging bound")
+		err = invalidCheckpoint(errors.New("checkpoint plaintext exceeds its staging bound"))
 	}
 	if err == nil {
 		err = file.Chmod(0400)
@@ -122,10 +122,10 @@ func (w *checkpointBoundedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Absence and content mismatch are definitive immutable-object observations.
-// Transport, local filesystem and permission errors do not prove state loss.
+// Only a verified content mismatch proves this object unusable. Missing
+// payloads, transport and access errors retain the checkpoint for repair.
 func checkpointObjectReadError(err error) error {
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, cas.ErrDigestMismatch) {
+	if errors.Is(err, cas.ErrDigestMismatch) {
 		return invalidCheckpoint(err)
 	}
 	return err

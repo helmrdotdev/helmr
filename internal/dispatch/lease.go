@@ -61,10 +61,24 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 		if err = computer.MarkLeaseLost(ctx, tx, env, computerID, epoch); err != nil {
 			return err
 		}
-		if err := session.LoseLeaseProcesses(ctx, tx, env, computerID, epoch, members, false); err != nil {
+		if err = computer.SettleLostSaves(ctx, tx, env, computerID, epoch); err != nil {
 			return err
 		}
-		return computer.SettleLostSaves(ctx, tx, env, computerID, epoch)
+		if err = session.RecordComputerRecoveryGap(ctx, tx, env, computerID, epoch); err != nil {
+			return err
+		}
+		eligible, err := computer.DiskRecoveryEligible(ctx, tx, env, computerID)
+		if err != nil {
+			return err
+		}
+		disposition := session.ComputerLossRequiresAttention
+		if eligible {
+			disposition = session.ComputerLossRecoverable
+		}
+		if err := session.LoseLeaseProcesses(ctx, tx, env, computerID, epoch, members, false, disposition); err != nil {
+			return err
+		}
+		return nil
 	}))
 }
 
@@ -97,7 +111,29 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 		if err := computer.LoseInvalidCheckpoint(ctx, tx, identity.EnvironmentID, invalidCheckpoint); err != nil {
 			return err
 		}
+	}
+	if err = computer.FenceLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, evidence); err != nil {
+		return err
+	}
+	if err = computer.SettleLostSaves(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+		return err
+	}
+	if err = session.RecordComputerRecoveryGap(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+		return err
+	}
+	eligible, err := computer.DiskRecoveryEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID)
+	if err != nil {
+		return err
+	}
+	disposition := session.ComputerLossRequiresAttention
+	if eligible {
+		disposition = session.ComputerLossRecoverable
+	}
+	if invalidCheckpoint != uuid.Nil() {
 		for _, member := range members {
+			if member.LeaseEpoch == identity.Epoch {
+				continue // The target epoch is settled below with its ordinary members.
+			}
 			var captured bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoint_processes WHERE environment_id=$1 AND checkpoint_id=$2 AND session_id=$3 AND process_epoch=$4)`, identity.EnvironmentID, invalidCheckpoint, member.Session, member.Epoch).Scan(&captured); err != nil {
 				return err
@@ -105,32 +141,24 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 			if !captured {
 				continue
 			}
-			// Before preparation a member still names the physically fenced source;
-			// after preparation it names this target. Never substitute the target epoch.
+			// A checkpoint member may still name a previous source/target epoch.
+			// Its physical closure must be independently established.
 			var stopped bool
-			if err := tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL OR epoch=$3 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$4`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, member.LeaseEpoch).Scan(&stopped); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, identity.EnvironmentID, identity.ComputerID, member.LeaseEpoch).Scan(&stopped); err != nil {
 				return err
 			}
 			if !stopped {
 				return ErrNotReady
 			}
-			if err := session.LoseProcess(ctx, tx, session.Execution{EnvironmentID: identity.EnvironmentID, SessionID: member.Session, ProcessEpoch: member.Epoch, LeaseEpoch: member.LeaseEpoch}, true); err != nil {
+			if err := session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, member.LeaseEpoch, []session.ComputerMember{member}, true, disposition); err != nil {
 				return err
 			}
 		}
 	}
-	if err = session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true); err != nil {
+	if err = session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true, disposition); err != nil {
 		return err
 	}
-	// Physical closure also settles an unfinished capture owned by this allocation.
-	// Disk publication is reconciled under the same Computer lock below.
 	if err = computer.LoseLeaseCheckpoints(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
-		return err
-	}
-	if err = computer.FenceLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, evidence); err != nil {
-		return err
-	}
-	if err := computer.SettleLostSaves(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err
 	}
 	return computer.ReleaseDeletedKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)

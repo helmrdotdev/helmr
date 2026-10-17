@@ -57,39 +57,24 @@ loopback, outside Session scopes. A readiness Command validates its ports and
 HTTP listener. External guest IPv4 traffic is blocked, with a loopback DNS
 resolver; no provider credentials are used. A third authored Session continuously
 writes a counter and emits output while both native harnesses complete two Turns.
-The HTTP publication gate holds each native save before forwarding it, requiring
-the owning Turn to remain `finalizing` without a completion receipt while peer
-counter advances on five separate observations. The SDK then requires Completed, distinct own-save IDs and
-unchanged native/setup identities. Database assertions join each completion to
-that Turn's captured root digest and publication receipt, allowing recorded payload
-retirement after physical closure, and check the four native MCP
-enqueue effects with the exact native Session callers and Session-scoped MCP
-provenance (no originating Turn ID). An ordinary Command reads the authored files
-and compares them with the native and peer results. The driver answers only the
-expected synthetic Claude enqueue approvals through the public Ask API; it checks
-one approval per Claude Turn and none for the preapproved Codex tool.
+The HTTP publication gate holds each selected native save before forwarding it.
+The owning Turn must already be Completed with its exact public result while the
+save remains captured and unpublished, and the peer counter must advance on five
+separate observations. The SDK checks unchanged native/setup identities. Private
+database evidence links each Turn request to its covering published save; save IDs
+are not part of the public Turn contract. Authored file checks compare native and
+peer results with the guest files. Synthetic approvals still use the public Ask API.
 
 Each provider's first Turn runs alongside SDK event iteration and approval handling.
-After consuming public output, the driver aborts its iterator and creates a fresh
-client. With publication held, it retrieves the same output and finalizing status,
-enqueues the second Turn, and resumes events strictly after its last consumed
-sequence. A bounded fixture-file handshake lets the gate independently confirm
-the exact Session/Turn/Save and queued, unstarted successor before publication.
-This exercises client detachment without resubmitting the first Turn. Healthy
-continuation and checkpoint-fault drivers retain their separate gate behavior.
-
-Each provider's second Turn is enqueued before the first completes. The publication
-gate reads the authored JSON output through the public HTTP API, compares it with
-the recorded result, and requires
-the follow-up to remain queued while its predecessor is saving. The driver checks
-that the follow-up starts after the preceding terminal timestamp. It retains each
-completed Turn's admission ACK time and event-derived queue-to-running,
-running-to-first-output and finalizing-to-completed intervals, plus the next
-dispatch gap. These are one-sample phase measurements per Turn, not latency
-distributions or a measurement of the complete handler-return-to-settlement interval.
-The finalizing interval explicitly includes the deliberate publication hold; the
-gate records that hold separately in `publication-gates.json`, keyed by save ID.
-Per-Turn evidence is also written to the driver log so later failures preserve it.
+After consuming output, the driver aborts its iterator and reconnects with a fresh
+client. With publication held, it reads the Completed result and retained output,
+enqueues the second Turn, and resumes events after its last consumed sequence.
+The successor may run while the previous file save is held. Its start must follow
+the predecessor's completion timestamp. The driver records admission ACK time,
+queue-to-running, first output and completion times. The fixture separately records
+publication delay; these are samples, not latency distributions. Before ending the
+peer, the driver waits for private publication witnesses for the completed Turns.
+Healthy continuation and checkpoint-fault drivers retain their separate gates.
 
 Set `HELMR_NATIVE_PROCESS_LOSS_PROOF=1` to select
 `TestWorkerAgentNativeProcessLoss`. After two completed native Turns per provider,
@@ -149,6 +134,23 @@ They do not prove cross-epoch publication, transparent customer-process recovery
 automatic orphan reclamation or systemd restart behavior. A failed identity,
 disposition or physical-absence check retains uncertain resources for explicit
 operator audit; a remembered PID or an absent marker never authorizes cleanup.
+
+For the bounded save-pressure check, additionally set
+`HELMR_NATIVE_SAVE_PRESSURE_PROOF=1` with the authority-loss selector. The
+`TestWorkerAgentSavePressureAndLoss` case blocks object registration at the
+fixture HTTP boundary while an authored Agent writes and fsyncs random data
+against a 256-MiB staging budget. After observing real pressure and failed
+object admission, it holds that state for 15 seconds beyond the old ten-second
+kernel deadline. The same lease/process and running Turn must survive. Restoring
+object admission lets the Agent finish its write, read back every completed
+chunk by SHA-256, and complete before publication. The ordinary Worker-loss
+cases then prove the completed result is preserved whether publication was
+committed or still pending. Each enqueues a successor on the original Computer;
+an uncovered result requires acknowledgement of its exact recovery hold, while
+covered recovery proceeds without one. A fresh process and lease must use disk
+recovery, retain the published guest marker when covered, and never replay the
+completed Turn. This does not qualify a natural S3 outage, the five-minute
+pressure stop policy, cross-host recovery or a soak.
 
 ## Component continuation qualification
 
@@ -416,7 +418,7 @@ It is exclusive with every other fault/restart mode.
 Both cases use the same assertions. The SDK admits two new native Turns and
 observes local holds on all four Sessions.
 For at least 20 seconds, both inputs remain queued, hold identities stay stable,
-and prior Completed Turn records and their completion-save references remain
+and prior Completed Turn records and their results remain
 unchanged. SQL then requires
 one physically closed restore attempt, a definitively lost checkpoint, no guest
 initialization or reconciled controls, and only the original four process epochs.
@@ -517,43 +519,28 @@ cross-host verdict. This case does not prove source-EC2 outage, real provider
 sign-in, arbitrary platform compatibility, hours-long idle or performance distributions.
 
 
-### Cancellation during native finalization
+### Cancellation after completion while file publication is pending
 
 Set `HELMR_NATIVE_FINALIZATION_CANCEL_PROOF=1` to select
-`TestWorkerAgentFinalizationCancellation`. It uses both real native harnesses,
-the ordinary public Session cancellation API and a publication gate on the third
-Turn of each Session. Two prior Completed Turns retain their exact results and
-own Saves. While the third Turn's captured Save remains unpublished, the driver
-enqueues a fourth Turn and cancels the Session. Both unsettled Turns must become
-Cancelled; the queued Turn must never start, the public prepared result must stay
-unavailable and the active peer must continue producing output.
+`TestWorkerAgentFinalizationCancellation`. Both real native harnesses return their
+third result while its captured file save remains unpublished. The public Turn
+must already be Completed. The driver installs an ordinary explicit Session hold,
+enqueues a fourth Turn, and cancels the Session. The fourth Turn is Cancelled
+without starting; the third and earlier completed results remain unchanged.
+The original save then publishes. SQL checks exactly one completion event before
+and after publication. Guest peer work continues throughout the deliberate hold.
 
-The fixture then forwards the original Save publication unchanged. The real Save
-must publish, while the Turn remains Cancelled with no completion Save or success
-event. SQL checks run before forwarding, after publication and at case completion.
-Prepared result/capture evidence remain internal; cancellation does not roll back
-written data. This case does not qualify configured Turn deadlines or revocation.
-It uses the ordinary 10-minute driver / 15-minute case bounds and normal retirement.
-
-### Configured Turn deadline during finalization
+### Crossing a prior Turn deadline after completion
 
 Set `HELMR_NATIVE_FINALIZATION_DEADLINE_PROOF=1` to select
-`TestWorkerAgentFinalizationDeadline`. After the two native harnesses have completed
-their ordinary Turns, an authored Agent with `maxTurnDuration: "30s"` returns a
-result on the same Computer. The fixture holds its captured Save publication
-before the configured deadline. A queued successor remains accepted but cannot
-run after natural deadline settlement places one Session-local runtime hold.
-The driver observes active peer work while waiting; it does not mutate database
-clocks/state or call cancellation to cause expiry.
-
-The original Save then publishes. The expired Turn must remain Interrupted,
-without public result, completion Save or success event, and the successor stays
-queued with the same hold present across five fresh peer progress samples.
-Prior native Completed results/own Saves remain
-unchanged. Finally, ordinary fixture cancellation settles that retained queued
-input. SQL independently checks deadline/capture/terminal ordering before and after
-publication, and again after cleanup. This qualifies the shared Turn/Save deadline
-path with a real guest; it does not model native-provider credential expiration.
+`TestWorkerAgentFinalizationDeadline`. An Agent configured with a 30-second Turn
+budget returns its result before that budget expires. The fixture holds its file
+publication, observes Completed with the public result and a cleared deadline,
+and waits for wall time to cross the original budget while a peer keeps working.
+An explicit user hold retains a queued successor for inspection. Natural expiry
+must not interrupt the completed Turn or install a deadline hold. The original
+save publishes, the exact result and completion event stay unchanged, and normal
+fixture cleanup cancels the queued successor. No database clock is changed.
 
 ### Background recovery saves with active work
 
@@ -675,8 +662,7 @@ have no observer or measurement flag. Its receipt explicitly identifies the
 instrumented variant; do not substitute an ordinary native fixture bundle.
 
 Run this variant with `HELMR_NATIVE_PERFORMANCE_KIND=no-op`, `edit-test`, or
-`dependencies`, selecting `HELMR_NATIVE_PERFORMANCE_BACKGROUND=0|1` and
-`HELMR_NATIVE_PERFORMANCE_DEGRADED=0|1`. Each invocation needs fresh evidence and
+`dependencies`, selecting `HELMR_NATIVE_PERFORMANCE_DEGRADED=0|1`. Each invocation needs fresh evidence and
 remote prefixes under the existing authorized host operation. It retains the
 healthy fixture's two native providers, queued successors, two RAM continuations
 and eight distinct own-Save completions. Native tools perform the workload, and
@@ -752,3 +738,15 @@ Inventory overhead and its remote page calls remain separate from measured
 Worker/Control Plane traffic. Preserve raw samples and report sample counts and
 ranges; a small number of repetitions does not establish tail percentiles or a
 release latency budget.
+
+For a bounded overwrite/retention observation, run the no-op performance case
+with `HELMR_NATIVE_PERFORMANCE_SOAK_MS=900000`. After the initial native Turns,
+the existing peer continues overwriting and reading back its fixed-size 32 KiB
+file for fifteen minutes before the two ordinary checkpoint/restoration cycles.
+The driver retains the exact soak interval. Resource samples include save status,
+graph and reclamation counts alongside local bytes and actual S3 versions and
+multipart bytes. Production maintenance cadence is unchanged. Retired digest
+and retained multipart-ID counts include durable retry history; they are not
+by themselves leaked bytes or pending work. This is a single-host bounded soak,
+not multi-worker or production-shape qualification; report plateau and backlog
+observations from the samples rather than assuming convergence from completion.

@@ -54,36 +54,29 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if state != "published" {
-					for range 2 {
-						if err := session.ReconcileSessionCompletion(t.Context(), f.pool, f.env, f.session); err != nil {
-							t.Fatal(err)
-						}
-					}
-				}
 				var saveState, turnState string
 				if err := f.pool.QueryRow(t.Context(), `SELECT s.status,t.status FROM computer_saves s JOIN turns t ON t.id=s.turn_id AND t.environment_id=s.environment_id WHERE s.id=$1`, save.ID).Scan(&saveState, &turnState); err != nil {
 					t.Fatal(err)
 				}
 				if state == "published" {
-					if saveState != "published" || turnState != "finalizing" {
+					if saveState != "published" || turnState != "completed" {
 						t.Fatalf("committed receipt changed: %s %s", saveState, turnState)
 					}
-					if err := session.Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); err != nil {
+					if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, turn.TurnID); err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					if saveState != "failed" || turnState != "interrupted" {
+					if saveState != "failed" || turnState != "completed" {
 						t.Fatalf("absence not settled: %s %s", saveState, turnState)
 					}
 					if err := storage.publisher.Publish(t.Context(), storage.ref(save.ID), cut, "late publication"); err == nil {
 						t.Fatal("lost writer published fresh bytes")
 					}
-					if err := session.Complete(t.Context(), f.pool, f.env, f.session, turn.TurnID); !errors.Is(err, session.ErrTerminal) {
+					if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, turn.TurnID); err != nil {
 						t.Fatalf("absent save completed: %v", err)
 					}
 					var events int
-					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE turn_id=$1 AND kind='turn.interrupted'`, turn.TurnID).Scan(&events); err != nil || events != 1 {
+					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE turn_id=$1 AND kind='turn.completed'`, turn.TurnID).Scan(&events); err != nil || events != 1 {
 						t.Fatalf("interruption events %d %v", events, err)
 					}
 				}
@@ -116,7 +109,7 @@ func TestComputerSaveLossPreservesCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state string
-	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, turn.TurnID).Scan(&state); err != nil || state != "cancelled" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, turn.TurnID).Scan(&state); err != nil || state != "completed" {
 		t.Fatalf("cancel outcome %s %v", state, err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_saves WHERE id=$1`, save.ID).Scan(&state); err != nil || state != "failed" {
@@ -203,7 +196,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				want := "interrupted"
+				want := "completed"
 				if publishFirst {
 					want = "completed"
 				}

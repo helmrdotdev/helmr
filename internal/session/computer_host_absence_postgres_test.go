@@ -40,6 +40,7 @@ func TestComputerHostAbsencePreservesAcceptedWorkAndFencesAllEpochs(t *testing.T
 	queued := f.enqueue(t, "queued")
 	result, save := peer.finalize(t, "prepared")
 	storage := newSaveStorageFixture(t, peer)
+	checkpointImageExposure(t, f)
 	cut, root := storage.cut(t, 2)
 	peer.capture(t, save, root)
 	if err := storage.publish(t, save.ID, cut); err != nil {
@@ -59,13 +60,13 @@ func TestComputerHostAbsencePreservesAcceptedWorkAndFencesAllEpochs(t *testing.T
 	if err := f.pool.QueryRow(t.Context(), `SELECT bool_and(fenced_at IS NOT NULL AND fence_evidence='provider confirmed physical host absence') FROM computer_leases`).Scan(&fenced); err != nil || !fenced {
 		t.Fatalf("physical evidence: %v %v", fenced, err)
 	}
-	for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", result.TurnID: "finalizing"} {
+	for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", result.TurnID: "completed"} {
 		var status string
 		if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, id).Scan(&status); err != nil || status != want {
 			t.Fatalf("turn status %s want %s: %v", status, want, err)
 		}
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	host, err := workergroup.GetHost(t.Context(), db.New(f.pool), f.worker)
@@ -73,7 +74,7 @@ func TestComputerHostAbsencePreservesAcceptedWorkAndFencesAllEpochs(t *testing.T
 		t.Fatalf("host %+v: %v", host, err)
 	}
 	var holds int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("duplicate or missing holds: %d %v", holds, err)
 	}
 }

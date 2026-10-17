@@ -32,8 +32,14 @@ func recordSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason st
 
 // Definitive process failure or stop settles its exact running Turn, including revocation.
 func interruptRunningSessionTurn(ctx context.Context, tx pgx.Tx, e Execution) error {
-	// A recorded result may still complete from its exact published save. Keep
-	// finalization and its ordered save intact for independent reconciliation.
+	return interruptRunningSessionTurnWithData(ctx, tx, e, nil)
+}
+
+func interruptRunningSessionTurnWithData(ctx context.Context, tx pgx.Tx, e Execution, data json.RawMessage) error {
+	if len(data) == 0 {
+		data = json.RawMessage(`{}`)
+	}
+	// Completed results remain immutable; only an actively running handler is interrupted.
 	rows, err := tx.Query(ctx, `UPDATE turns SET status='interrupted',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
  WHERE environment_id=$1 AND session_id=$2 AND process_epoch=$3 AND status='running' RETURNING id`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
 	if err != nil {
@@ -50,7 +56,7 @@ func interruptRunningSessionTurn(ctx context.Context, tx pgx.Tx, e Execution) er
 		if err = rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, true, "turn_terminated"); err != nil {
 			return err
 		}
-		if err = event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.interrupted"); err != nil {
+		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.interrupted", data); err != nil {
 			return err
 		}
 	}
@@ -111,5 +117,8 @@ func observeSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason s
 	}
 	// This is stop intent, never evidence that the physical process is absent.
 	_, err = tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 }

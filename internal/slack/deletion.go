@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -74,7 +75,10 @@ func (h EventHandler) observeDeletion(ctx context.Context, team, channel, timest
 			_, err := tx.Exec(ctx, `UPDATE slack_posts p SET status='failed',stream_state=CASE WHEN presentation_path='stream' THEN 'stopped' ELSE stream_state END,error='message_deleted',claimed_until=NULL,closed_at=COALESCE(closed_at,clock_timestamp()),
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL
  FROM slack_thread_sources s WHERE p.thread_source_id=s.id AND s.thread_id=$1 AND p.message_ts=$2`, o.thread, timestamp)
-			return err
+			if err != nil {
+				return err
+			}
+			return dbnotify.Notify(ctx, tx, "slack_delivery")
 		})
 		if err != nil {
 			return err

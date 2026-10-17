@@ -62,7 +62,7 @@ func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 	}
 }
 
-func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
+func TestRuntimeResponsePublishesAtCompletionBeforeSave(t *testing.T) {
 	f := newFixture(t)
 	storage := newSaveStorageFixture(t, f)
 	a := f.enqueue(t, "response")
@@ -86,18 +86,18 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome != nil {
+	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome == nil {
 		t.Fatalf("premature completion %s: %v", outcome, err)
 	}
 	if _, err := session.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"late"`)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("late output %v", err)
 	}
 	page, err := session.ListEvents(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: sequence - 1, Limit: 100})
-	if err != nil || len(page.Records) != 2 || page.Records[0].Kind != "turn.output" || page.Records[1].Kind != "turn.finalizing" || string(page.Records[0].Data) != `[{"text":"drained\u0000","type":"text"}]` {
+	if err != nil || len(page.Records) != 2 || page.Records[0].Kind != "turn.output" || page.Records[1].Kind != "turn.completed" || string(page.Records[0].Data) != `[{"text":"drained\u0000","type":"text"}]` {
 		t.Fatalf("progress while saving %+v: %v", page, err)
 	}
 	view, err = session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
-	if err != nil || view.Status != "finalizing" || view.Response != nil || view.Result != nil {
+	if err != nil || view.Status != "completed" || view.Response == nil || view.Result == nil {
 		t.Fatalf("unpublished while saving %+v: %v", view, err)
 	}
 	var save computer.SaveRequest
@@ -111,7 +111,7 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if err := storage.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined")

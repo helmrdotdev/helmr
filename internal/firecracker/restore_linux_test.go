@@ -69,32 +69,33 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		editManifest func(*snapshotManifest)
 		editIdentity func(*vm.CheckpointIdentity)
 		want         string
+		invalid      bool
 	}{
 		{name: "valid"},
-		{name: "missing manifest", manifest: []byte{}, want: "checkpoint manifest is required"},
-		{name: "malformed manifest", manifest: []byte("{"), want: "decode checkpoint manifest"},
-		{name: "checkpoint id", checkpointID: "other", want: `checkpoint manifest recovery point id "checkpoint-1" does not match restore id "other"`},
-		{name: "identity backend", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeBackend = "test" }, want: `checkpoint runtime backend "test" is not supported`},
-		{name: "identity arch", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeArch = "other" }, want: `checkpoint runtime arch "other" does not match`},
-		{name: "identity contract", editIdentity: func(i *vm.CheckpointIdentity) { i.VMRuntimeContract = "other" }, want: `checkpoint runtime contract "other" does not match`},
+		{name: "missing manifest", invalid: true, manifest: []byte{}, want: "checkpoint manifest is required"},
+		{name: "malformed manifest", invalid: true, manifest: []byte("{"), want: "decode checkpoint manifest"},
+		{name: "checkpoint id", invalid: true, checkpointID: "other", want: `checkpoint manifest recovery point id "checkpoint-1" does not match restore id "other"`},
+		{name: "identity backend", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeBackend = "test" }, want: `checkpoint runtime backend "test" is not supported`},
+		{name: "identity arch", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeArch = "other" }, want: `checkpoint runtime arch "other" does not match`},
+		{name: "identity contract", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.VMRuntimeContract = "other" }, want: `checkpoint runtime contract "other" does not match`},
 		{name: "identity runtime id", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeID = "sha256:other" }, want: "checkpoint runtime id sha256:other does not match"},
-		{name: "identity kernel digest", editIdentity: func(i *vm.CheckpointIdentity) { i.KernelDigest = "sha256:other" }, want: "checkpoint kernel digest sha256:other does not match"},
-		{name: "identity initramfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.InitramfsDigest = "sha256:other" }, want: "checkpoint initramfs digest sha256:other does not match"},
-		{name: "identity rootfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
-		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.VMConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
-		{name: "identity vcpu count", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = 0 }, want: "checkpoint VM vCPU count 0 is invalid"},
-		{name: "identity vcpu count does not match manifest", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount-- }, want: "does not match checkpoint manifest vCPU count"},
-		{name: "identity cpu config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.CPUConfigDigest = "sha256:other" }, want: "checkpoint guest CPU configuration digest is not canonical"},
-		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
-		{name: "manifest descriptor", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:other" }, want: "checkpoint manifest VM runtime descriptor digest sha256:other does not match"},
-		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
-		{name: "manifest contract", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Contract = "other" }, want: `checkpoint manifest runtime contract "other" does not match`},
-		{name: "manifest runtime id", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ID = "sha256:other" }, want: "checkpoint manifest runtime id sha256:other does not match"},
-		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
-		{name: "manifest initramfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.InitramfsDigest = "sha256:other" }, want: "checkpoint manifest initramfs digest sha256:other does not match"},
-		{name: "manifest rootfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
+		{name: "identity kernel digest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.KernelDigest = "sha256:other" }, want: "checkpoint kernel digest sha256:other does not match"},
+		{name: "identity initramfs digest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.InitramfsDigest = "sha256:other" }, want: "checkpoint initramfs digest sha256:other does not match"},
+		{name: "identity rootfs digest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
+		{name: "identity runtime config digest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.VMConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
+		{name: "identity vcpu count", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = 0 }, want: "checkpoint VM vCPU count 0 is invalid"},
+		{name: "identity vcpu count does not match manifest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount-- }, want: "does not match checkpoint manifest vCPU count"},
+		{name: "identity cpu config digest", invalid: true, editIdentity: func(i *vm.CheckpointIdentity) { i.CPUConfigDigest = "sha256:other" }, want: "checkpoint guest CPU configuration digest is not canonical"},
+		{name: "manifest backend", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
+		{name: "manifest descriptor", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:other" }, want: "checkpoint manifest VM runtime descriptor digest sha256:other does not match"},
+		{name: "manifest arch", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
+		{name: "manifest contract", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Contract = "other" }, want: `checkpoint manifest runtime contract "other" does not match`},
+		{name: "manifest runtime id", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ID = "sha256:other" }, want: "checkpoint manifest runtime id sha256:other does not match"},
+		{name: "manifest kernel digest", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
+		{name: "manifest initramfs digest", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.InitramfsDigest = "sha256:other" }, want: "checkpoint manifest initramfs digest sha256:other does not match"},
+		{name: "manifest rootfs digest", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.RootfsDigest = "sha256:other" }, want: "checkpoint manifest rootfs digest sha256:other does not match"},
 		{name: "manifest vcpu exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.VCPUCount = cfg.VCPUCount + 1 }, editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = int32(cfg.VCPUCount + 1) }, want: "checkpoint manifest vcpu count"},
-		{name: "manifest cpu config digest", editManifest: func(m *snapshotManifest) {
+		{name: "manifest cpu config digest", invalid: true, editManifest: func(m *snapshotManifest) {
 			m.RecoveryPoint.Runtime.CPUConfigDigest = testCPUConfigDigest(cfg.VCPUCount + 1)
 		}, want: "does not match checkpoint manifest digest"},
 		{
@@ -109,13 +110,17 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		},
 		{name: "manifest memory exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB + 1 }, want: "checkpoint manifest memory"},
 		{name: "manifest scratch disk exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB + 1 }, want: "checkpoint manifest scratch disk size"},
-		{name: "mismatched VM descriptor", editManifest: func(m *snapshotManifest) {
+		{name: "mismatched VM descriptor", invalid: true, editManifest: func(m *snapshotManifest) {
 			m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:" + strings.Repeat("a", 64)
 		}, want: "descriptor"},
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPv4CIDR = "" }, want: "checkpoint manifest guest_ipv4_cidr"},
+		{name: "invalid memory size", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB = 0 }, want: "memory 0 MiB is invalid"},
+		{name: "invalid scratch size", invalid: true, editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB = 0 }, want: "scratch disk size 0 MiB is invalid"},
+		{name: "wrong target with malformed content", manifest: []byte("{"), editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeID = testDigest([]byte("other target")) }, want: "does not match worker runtime id"},
+		{name: "valid resolver differs from target", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.ResolverAddresses = []string{"192.0.2.53"} }, want: "network does not match VM runtime contract"},
+		{name: "manifest guest ip", invalid: true, editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPv4CIDR = "" }, want: "checkpoint manifest guest_ipv4_cidr"},
 	}
 
 	for _, tt := range tests {
@@ -160,6 +165,9 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 				nil,
 			)
+			if errors.Is(err, vm.ErrInvalidCheckpointContent) != tt.invalid {
+				t.Fatalf("invalid content classification=%v want=%v: %v", errors.Is(err, vm.ErrInvalidCheckpointContent), tt.invalid, err)
+			}
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("err = %v", err)

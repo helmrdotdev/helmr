@@ -51,7 +51,7 @@ func waitForTurn(ctx context.Context, invoke Invoke, input waitInput) (json.RawM
 			return nil, errors.New("turn response changed identity")
 		}
 		switch state.Status {
-		case "queued", "running", "finalizing":
+		case "queued", "running":
 			if state.Result != nil || state.Response != nil || state.Error != nil || state.PayloadExpiredAt != nil {
 				return nil, errors.New("unfinished Turn published an outcome")
 			}

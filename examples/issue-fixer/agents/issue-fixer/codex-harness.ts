@@ -67,7 +67,12 @@ export class CodexHarness {
     })
     this.server = new CodexStdio(message => this.observe(message), child)
     this.reader = this.read()
-    void this.reader.catch(error => { this.broken ??= error instanceof Error ? error : new Error(String(error)); this.active?.done.reject(error); this.active?.boundary.reject(error) })
+    void this.reader.catch(error => {
+      this.broken ??= error instanceof Error ? error : new Error(String(error))
+      this.active?.done.reject(error)
+      this.active?.boundary.reject(error)
+      this.active?.commandsDrained.reject(error)
+    })
   }
   static async open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexHarness> {
     const saved = await conversation(cwd, sessionId, "codex")
@@ -158,7 +163,18 @@ export class CodexHarness {
       turn.signal.throwIfAborted()
       if (operation.failure !== undefined) throw operation.failure
       if (status !== "completed") throw new Error(`Native Turn ended: ${status}`)
-      if (operation.commands.size) throw new Error("Native command cessation is not established")
+      if (operation.commands.size) {
+        // The native Turn can end before a yielded command's output drains and
+        // its terminal receipt arrives. Keep ownership until that exact receipt.
+        const cancelled = deferred<void>()
+        const cancel = () => cancelled.reject(turn.signal.reason)
+        turn.signal.addEventListener("abort", cancel, { once: true })
+        try {
+          turn.signal.throwIfAborted()
+          await Promise.race([operation.commandsDrained.promise, cancelled.promise])
+        } finally { turn.signal.removeEventListener("abort", cancel) }
+        turn.signal.throwIfAborted()
+      }
       if (operation.unknownPhase && operation.finalText === undefined) throw new Error("Native work completed with an unsupported message phase; its side effects may already have occurred")
       const response = operation.finalText ?? operation.candidate
       return { nativeThreadId: this.threadId, nativeTurnId: native.id, ...(response === undefined ? {} : { response }) }
@@ -213,6 +229,7 @@ export class CodexHarness {
       if (this.pendingStart) { this.buffered.push(message); continue }
       this.route(message)
     }
+    throw new Error("Native message stream ended")
   }
   private observe(message: NativeMessage): void {
     if (message.method !== "serverRequest/resolved") return

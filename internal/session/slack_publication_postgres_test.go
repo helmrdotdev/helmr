@@ -111,7 +111,7 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 			if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 				t.Fatal(err)
 			}
-			if result, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result != nil {
+			if result, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result == nil {
 				t.Fatalf("prepare: %s %v", result, err)
 			}
 			var count int
@@ -130,7 +130,7 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+				if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			}

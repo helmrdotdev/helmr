@@ -36,7 +36,7 @@ export async function waitForTurn(
       if (deadline !== undefined && performance.now() >= deadline) timerController.abort(timeoutReason)
       signal.throwIfAborted()
       if (state.id !== turnId || state.sessionId !== sessionId) throw new Error("Turn response changed identity")
-      if (state.status !== "queued" && state.status !== "running" && state.status !== "finalizing") {
+      if (state.status !== "queued" && state.status !== "running") {
         const outcome = Object.freeze(parseTurnOutcome({
           status: state.status,
           ...(state.result === undefined ? {} : { result: state.result }),

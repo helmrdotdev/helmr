@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -46,8 +47,7 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		}
 		var credential int64
 		var authorized time.Time
-		var budgetReady bool
-		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at,delivery_next_at<=clock_timestamp() FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, installation).Scan(&credential, &authorized, &budgetReady); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, installation).Scan(&credential, &authorized); err != nil {
 			return err
 		}
 		if !active {
@@ -74,9 +74,16 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 			if _, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2,desired_revision=$3 WHERE id=$1`, thread, status, revision); err != nil {
 				return err
 			}
+			if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
+				return err
+			}
 		}
-		if !due || !budgetReady || (revision == confirmed && !refresh) {
+		if !due || (revision == confirmed && !refresh) {
 			return nil
+		}
+		allowed, err := reserveDelivery(ctx, tx, installation, slackChannel, "agents.sessions.setStatus", false)
+		if err != nil || !allowed {
+			return err
 		}
 		payload, err := json.Marshal(map[string]string{"channel_id": slackChannel, "thread_ts": *ts, "status": status})
 		if err != nil {
@@ -87,9 +94,6 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if err = tx.QueryRow(ctx, `UPDATE slack_threads SET status_confirmation='unknown',inflight_method='agents.sessions.setStatus',inflight_payload=$2,inflight_digest=$3,inflight_revision=$4,inflight_attempt_id=$5,
  claim_epoch=claim_epoch+1,claimed_until=clock_timestamp()+interval '30 seconds'
  WHERE id=$1 RETURNING claim_epoch,claimed_until`, thread, payload, digest[:], revision, c.AttemptID).Scan(&c.Epoch, &c.ExpiresAt); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_installations SET delivery_next_at=clock_timestamp()+interval '3 seconds' WHERE id=$1`, installation); err != nil {
 			return err
 		}
 		claim = c
@@ -114,7 +118,7 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
  EXISTS(SELECT 1 FROM session_processes p JOIN visible v ON p.session_id=v.id WHERE p.environment_id=$2 AND p.fenced_at IS NULL AND
  (p.status IN ('lost','stopping') OR p.stop_deadline_at IS NOT NULL OR p.control_error IS NOT NULL OR v.status IN ('closed','cancelled') OR
  (EXISTS(SELECT 1 FROM held h WHERE h.id=v.id) AND NOT COALESCE(p.control_kind='suspend' AND p.control_acknowledged_at IS NOT NULL AND p.control_generation=v.authority_generation AND p.control_attachment=p.attachment_sequence,false))))
- OR EXISTS(SELECT 1 FROM turns t JOIN visible v ON t.session_id=v.id WHERE t.environment_id=$2 AND t.status IN ('queued','running','finalizing') AND NOT EXISTS(SELECT 1 FROM waiting w WHERE w.id=v.id))
+ OR EXISTS(SELECT 1 FROM turns t JOIN visible v ON t.session_id=v.id WHERE t.environment_id=$2 AND t.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM waiting w WHERE w.id=v.id))
  THEN 'processing' WHEN EXISTS(SELECT 1 FROM waiting) THEN 'suspended' ELSE 'active' END`, thread, env).Scan(&status)
 	return status, err
 }
@@ -146,7 +150,11 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 			return err
 		}
 		if result.Disposition == RateLimited {
-			if _, err = tx.Exec(ctx, `UPDATE slack_installations SET delivery_next_at=GREATEST(delivery_next_at,clock_timestamp()+$2*interval '1 second') WHERE id=$1`, installation, retry.Seconds()); err != nil {
+			method := "agents.sessions.setStatus"
+			if result.RateLimitMethod != "" {
+				method = result.RateLimitMethod
+			}
+			if err = recordMethodBackoff(ctx, tx, installation, method, retry); err != nil {
 				return err
 			}
 		}
@@ -171,7 +179,12 @@ func ReconcileStatus(ctx context.Context, pool db.TxBeginner, client Caller, thr
 		return false, err
 	}
 	if err = client.VerifyChannel(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID); err != nil {
-		return false, FinishStatus(ctx, pool, *claim, DeliveryResult{Disposition: Rejected, Code: "channel_unavailable"})
+		result := DeliveryResult{Disposition: Rejected, Code: "channel_unavailable"}
+		var failure *channelVerificationFailure
+		if errors.As(err, &failure) {
+			result = failure.result
+		}
+		return false, FinishStatus(ctx, pool, *claim, result)
 	}
 	allowed, err := statusClaimAuthorized(ctx, pool, *claim)
 	if err != nil {

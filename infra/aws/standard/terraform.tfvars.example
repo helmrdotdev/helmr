@@ -81,7 +81,6 @@ worker_vm_memory_mib          = 4096
 worker_vm_scratch_disk_mib    = 32768
 
 # Initial evaluation values; tune using workload measurements.
-worker_computer_save_interval_seconds = 60
 worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 
 # Required: set the following keys in controlplane_environment to operator-approved

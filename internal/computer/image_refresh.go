@@ -67,6 +67,9 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
  VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "refresh:"+due.UTC().Format(time.RFC3339Nano), now.Add(time.Duration(timeout)*time.Millisecond)); err != nil {
 				return err
 			}
+			if err := notifyImageBuildChanged(ctx, tx, env, attempt); err != nil {
+				return err
+			}
 		} else if err != nil {
 			return err
 		} else if !usable {

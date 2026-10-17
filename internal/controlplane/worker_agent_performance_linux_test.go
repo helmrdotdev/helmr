@@ -12,7 +12,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,9 +29,8 @@ import (
 )
 
 type nativePerformanceConfig struct {
-	Kind       string
-	Degraded   bool
-	Background bool
+	Kind     string
+	Degraded bool
 }
 
 func TestWorkerAgentPerformance(t *testing.T) {
@@ -45,8 +43,8 @@ func TestNativePerformanceGateForwardsUnselectedSegmentWithBinaryDigest(t *testi
 		t.Fatal(err)
 	}
 	object := workerapi.AgentSaveObject{
-		Save:       workerapi.AgentSave{SaveID: uuid.NewV7().String()},
-		Inspection: blockformat.ObjectInspection{Segment: &blockformat.Ref{Digest: [32]byte{0xff, 0x00, 0xdc}}},
+		Save:        workerapi.AgentSave{SaveID: uuid.NewV7().String()},
+		Inspections: []blockformat.ObjectInspection{{Segment: &blockformat.Ref{Digest: [32]byte{0xff, 0x00, 0xdc}}}},
 	}
 	body, err := json.Marshal(object)
 	if err != nil {
@@ -140,16 +138,21 @@ func (g *nativePerformanceGate) ServeHTTP(w http.ResponseWriter, r *http.Request
 		io.Closer
 	}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
 	var object workerapi.AgentSaveObject
-	if json.Unmarshal(body, &object) != nil || object.Inspection.Segment == nil {
+	if json.Unmarshal(body, &object) != nil {
 		g.next.ServeHTTP(w, r)
 		return
 	}
 	save := object.Save.SaveID
-	digest := fmt.Sprintf("sha256:%x", object.Inspection.Segment.Digest)
 	g.mu.Lock()
 	selected := g.selected[save]
 	nonNative := g.nonNative[save]
 	g.mu.Unlock()
+	candidate, found := nativeBatchObject(object.Inspections, selected, true)
+	if !found {
+		g.next.ServeHTTP(w, r)
+		return
+	}
+	digest := candidate.Digest
 	if nonNative {
 		g.next.ServeHTTP(w, r)
 		return
@@ -237,6 +240,17 @@ func (g *nativePerformanceGate) verify(saveIDs []string) error {
 	if len(g.observerErrors) != 0 {
 		return fmt.Errorf("performance observer failed: %v", g.observerErrors)
 	}
+	if !g.degraded {
+		// Turn coverage may reuse certified objects or coalesce with another
+		// save. Validate observed storage work independently of that coverage.
+		if len(g.selected) == 0 {
+			return errors.New("healthy storage case selected no native certification")
+		}
+		saveIDs = make([]string, 0, len(g.selected))
+		for save := range g.selected {
+			saveIDs = append(saveIDs, save)
+		}
+	}
 	for _, save := range saveIDs {
 		injected, recovered := false, false
 		start, end := "", ""
@@ -269,6 +283,47 @@ func (g *nativePerformanceGate) verify(saveIDs []string) error {
 	return nil
 }
 
+func TestNativePerformanceGateHealthyCoverageCanReuseObjects(t *testing.T) {
+	for _, tc := range []struct {
+		name                                   string
+		degraded, empty, injected, wrongDigest bool
+		status                                 int
+		wantError                              bool
+	}{
+		{name: "shared or reused coverage", status: http.StatusNoContent},
+		{name: "no selected storage", empty: true, wantError: true},
+		{name: "selected storage did not succeed", status: http.StatusServiceUnavailable, wantError: true},
+		{name: "changed object", status: http.StatusNoContent, wrongDigest: true, wantError: true},
+		{name: "unexpected injection", status: http.StatusServiceUnavailable, injected: true, wantError: true},
+		{name: "degraded still requires each save", degraded: true, status: http.StatusNoContent, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := nativePerformanceGate{degraded: tc.degraded}
+			if !tc.empty {
+				gate.selected = map[string]string{"selected": "digest"}
+				digest := "digest"
+				if tc.wrongDigest {
+					digest = "other"
+				}
+				gate.attempts = []nativePerformanceAttempt{{SaveID: "selected", Digest: digest,
+					Status: tc.status, Injected: tc.injected}}
+				if tc.degraded {
+					gate.attempts = []nativePerformanceAttempt{
+						{SaveID: "selected", Digest: digest, Status: http.StatusServiceUnavailable, Injected: true, FaultStartedAt: "start", FaultEndsAt: "end"},
+						{SaveID: "selected", Digest: digest, Status: http.StatusNoContent, FaultStartedAt: "start", FaultEndsAt: "end"},
+					}
+					if err := gate.verify([]string{"selected"}); err != nil {
+						t.Fatalf("selected degraded storage was not valid: %v", err)
+					}
+				}
+			}
+			if err := gate.verify([]string{"no-new-certification", "selected"}); (err != nil) != tc.wantError {
+				t.Fatalf("verify error = %v, wantError = %v", err, tc.wantError)
+			}
+		})
+	}
+}
+
 func TestNativeStorageFaultWindowStartsAtFirstUseAndDoesNotExtend(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		window := &nativeStatWindow{}
@@ -297,14 +352,104 @@ type nativeTurnTiming struct {
 	FinalizationToSettlementMS                                 *float64
 }
 
+func TestNativePerformancePublicationCancellationRetainsUnknown(t *testing.T) {
+	// Pool creation is lazy. A canceled wait must not need a running database
+	// in order to preserve its deadline and failed-observation metadata.
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost:1/unused?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	input := nativeExecutionConfig{Evidence: t.TempDir(), Performance: &nativePerformanceConfig{Kind: "dependencies"}}
+	err = awaitNativePerformancePublications(ctx, pool, uuid.NewV7(), []string{uuid.NewV7().String()}, input)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation was not preserved: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(input.Evidence, "performance-publication-wait.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observations []struct {
+		Stage, WaitError, ObservationError string
+		PendingTurnIDs                     json.RawMessage
+		EffectiveDeadline                  time.Time
+	}
+	if err := json.Unmarshal(data, &observations); err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 1 || observations[0].Stage != "initial-30s" || observations[0].WaitError == "" ||
+		observations[0].ObservationError == "" || string(observations[0].PendingTurnIDs) != "null" || observations[0].EffectiveDeadline.IsZero() {
+		t.Fatalf("canceled collection lost unknown-state evidence: %s", data)
+	}
+}
+
+// The dependency workload changes hundreds of MiB. Its final-save collection
+// budget is separate from small-delta latency targets and production timeouts.
+// Keep a thirty-second observation even when collecting later convergence.
+func awaitNativePerformancePublications(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, turns []string, input nativeExecutionConfig) error {
+	started := time.Now()
+	budget := 30 * time.Second
+	if input.Performance.Kind == "dependencies" {
+		budget = 5 * time.Minute
+	}
+	collectionCtx, cancelCollection := context.WithDeadline(ctx, started.Add(budget))
+	defer cancelCollection()
+	deadline, _ := collectionCtx.Deadline()
+	observations := []json.RawMessage{}
+	observe := func(stage string, waitErr error) error {
+		var pending []string
+		observationErr := pool.QueryRow(ctx, `SELECT COALESCE(array_agg(t.id::text ORDER BY t.id),ARRAY[]::text[])
+ FROM turns t LEFT JOIN computer_saves requested ON (requested.environment_id,requested.turn_id)=(t.environment_id,t.id)
+ LEFT JOIN computer_saves covering ON (covering.environment_id,covering.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id))
+ WHERE t.environment_id=$1 AND t.id=ANY($2::uuid[]) AND covering.status IS DISTINCT FROM 'published'`, env, turns).Scan(&pending)
+		observationError := ""
+		if observationErr != nil {
+			pending = nil // Unknown is not evidence that no publications remain.
+			observationError = observationErr.Error()
+		} else if pending == nil {
+			pending = []string{}
+		}
+		errorText := ""
+		if waitErr != nil {
+			errorText = waitErr.Error()
+		}
+		data, err := json.Marshal(map[string]any{"stage": stage, "startedAt": started.UTC(), "observedAt": time.Now().UTC(),
+			"elapsedMS": float64(time.Since(started)) / float64(time.Millisecond), "collectionBudgetMS": budget.Milliseconds(),
+			"effectiveDeadline": deadline.UTC(), "pendingTurnIDs": pending, "expectedTurns": len(turns), "waitError": errorText,
+			"observationError": observationError})
+		if err != nil {
+			return err
+		}
+		observations = append(observations, data)
+		data, err = json.MarshalIndent(observations, "", "  ")
+		if err != nil {
+			return err
+		}
+		return errors.Join(observationErr, os.WriteFile(filepath.Join(input.Evidence, "performance-publication-wait.json"), data, 0600))
+	}
+	initialCtx, cancelInitial := context.WithTimeout(collectionCtx, 30*time.Second)
+	err := awaitNativeTurnPublications(initialCtx, pool, env, turns)
+	cancelInitial()
+	if observeErr := observe("initial-30s", err); observeErr != nil {
+		return errors.Join(err, observeErr)
+	}
+	if input.Performance.Kind != "dependencies" || !errors.Is(err, context.DeadlineExceeded) || collectionCtx.Err() != nil {
+		return err
+	}
+	err = awaitNativeTurnPublications(collectionCtx, pool, env, turns)
+	return errors.Join(err, observe("final-collection", err))
+}
+
 func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, result []byte, input nativeExecutionConfig) error {
 	var receipt struct {
 		ComputerID, PeerSessionID string
 		NativeSessions            map[string]string
 		Turns                     []struct {
-			ID, SessionID, CompletionSaveID string
-			Sequence                        int64
-			Result                          struct {
+			ID, SessionID string
+			Sequence      int64
+			Result        struct {
 				Workload struct {
 					Kind                     string
 					Sequence                 int64
@@ -334,8 +479,23 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
  'predecessorTerminalAt',predecessor_terminal_at,'serverAdmissionToDispatchMS',extract(epoch FROM(started_at-created_at))*1000,
  'serverPredecessorSettlementToDispatchMS',extract(epoch FROM(started_at-predecessor_terminal_at))*1000) ORDER BY session_id,seq),'[]'::jsonb) FROM native`,
 
+		"performance-turn-publications.json": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+ 'turnId',t.id,'sessionId',t.session_id,'sequence',t.seq,'observedAt',statement_timestamp(),
+ 'resultRecordedAt',t.result_recorded_at,'terminalAt',t.terminal_at,
+ 'requestedSaveId',requested.id,'coveringSaveId',covering.id,'coveringStatus',covering.status,
+ 'publishedAt',covering.published_at,
+ 'resultToPublicationMS',extract(epoch FROM(covering.published_at-t.result_recorded_at))*1000)
+ ORDER BY t.session_id,t.seq),'[]'::jsonb)
+ FROM turns t JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id)
+ JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id)
+ LEFT JOIN computer_saves requested ON(requested.environment_id,requested.turn_id)=(t.environment_id,t.id)
+ LEFT JOIN computer_saves covering ON(covering.environment_id,covering.id)=(requested.environment_id,COALESCE(requested.covered_by_save_id,requested.id))
+ WHERE t.environment_id=$1 AND t.computer_id=$2 AND a.key IN ('codex','claude')`,
+
 		"performance-saves.json": `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',s.id,'turnId',s.turn_id,'sequence',s.seq,'status',s.status,
- 'requestedAt',s.requested_at,'capturedAt',s.captured_at,'retained',s.root_id IS NOT NULL,'payloadRetiredAt',s.payload_retired_at,
+ 'requestedAt',s.requested_at,'capturedAt',s.captured_at,'publishedAt',s.published_at,
+ 'leaseEpoch',s.computer_lease_epoch,'coverageMaxSequence',s.coverage_max_seq,'coveredBySaveId',s.covered_by_save_id,
+ 'retained',s.root_id IS NOT NULL,'payloadRetiredAt',s.payload_retired_at,
  'checkpoint',EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)) ORDER BY s.seq),'[]'::jsonb)
  FROM computer_saves s WHERE s.environment_id=$1 AND s.computer_id=$2`,
 		"performance-peer-io.json": `SELECT COALESCE(jsonb_agg(jsonb_build_object('sequence',e.seq,'turnId',e.turn_id,'acceptedAt',e.created_at,
@@ -353,14 +513,11 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 			return err
 		}
 	}
-	var background int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM computer_saves s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.turn_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM checkpoints p WHERE p.environment_id=s.environment_id AND p.disk_save_id=s.id)`, env, receipt.ComputerID).Scan(&background); err != nil {
+
+	if err := retainNativeModelDiagnostics(ctx, pool, env, receipt.ComputerID, input.Evidence); err != nil {
 		return err
 	}
-	if (background > 0) != input.Performance.Background {
-		return fmt.Errorf("save policy not exercised: background count=%d expected=%v", background, input.Performance.Background)
-	}
+
 	wait, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	for {
@@ -436,186 +593,4 @@ func readNativeTurnTimings(ctx context.Context, pool *pgxpool.Pool, env uuid.UUI
 		}
 	}
 	return result, raw, nil
-}
-
-type nativeStorageAttempt struct {
-	Process        string    `json:"process"`
-	Message        string    `json:"msg"`
-	Operation      string    `json:"operation"`
-	ObjectDigest   string    `json:"object_digest"`
-	StoreBucket    string    `json:"store_bucket"`
-	StorePrefix    string    `json:"store_prefix"`
-	InvocationID   string    `json:"invocation_id"`
-	Attempt        string    `json:"request_attempt"`
-	Method         string    `json:"method"`
-	Status         int       `json:"status"`
-	StartedAt      time.Time `json:"started_at"`
-	DurationMS     float64   `json:"duration_ms"`
-	RequestBytes   int64     `json:"request_body_bytes_read"`
-	ResponseBytes  int64     `json:"response_body_bytes_read"`
-	Replays        int64     `json:"request_body_replays"`
-	TransportError bool      `json:"transport_error"`
-}
-
-func readNativeStorageAttempts(path, process string) ([]nativeStorageAttempt, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var records []nativeStorageAttempt
-	// A live writer may be appending the last record. Preserve only complete
-	// newline-terminated records; the required native Save records already ended.
-	end := bytes.LastIndexByte(data, '\n')
-	if end >= 0 {
-		data = data[:end+1]
-	} else {
-		data = nil
-	}
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		marker := []byte(`"msg":"Native storage request attempt"`)
-		at := bytes.Index(line, marker)
-		if at < 0 {
-			continue
-		}
-		// VM console writes may leave an unrelated partial line before the
-		// logger's complete JSON write. Its message follows only scalar logger
-		// metadata, so the nearest opening brace identifies that record. Reject
-		// multiple observations or malformed JSON rather than dropping evidence.
-		start := bytes.LastIndexByte(line[:at], '{')
-		if start < 0 || bytes.Count(line, marker) != 1 {
-			return nil, errors.New("ambiguous storage observation boundary")
-		}
-		var record nativeStorageAttempt
-		if err := json.Unmarshal(line[start:], &record); err != nil {
-			return nil, err
-		}
-		if record.InvocationID == "" || record.Operation == "" || !strings.Contains(record.Attempt, "attempt=") || record.StoreBucket == "" || record.StorePrefix == "" || record.StartedAt.IsZero() || record.DurationMS < 0 {
-			return nil, errors.New("storage attempt lacks operation/store/retry/timing identity")
-		}
-		record.Process = process
-		records = append(records, record)
-	}
-	if len(records) == 0 {
-		return nil, fmt.Errorf("no storage attempt observations in %s", path)
-	}
-	return records, nil
-}
-
-func (g *nativePerformanceGate) retainStorageObservations(input nativeExecutionConfig, saves []string) error {
-	records := []nativeStorageAttempt{}
-	for _, process := range []string{"worker", "control-plane"} {
-		attempts, err := readNativeStorageAttempts(filepath.Join(input.Evidence, process+".log"), process)
-		if err != nil {
-			return err
-		}
-		records = append(records, attempts...)
-	}
-	raw, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(input.Evidence, "performance-storage-attempts.json"), raw, 0600); err != nil {
-		return err
-	}
-	store, err := url.Parse(input.CASURI)
-	if err != nil {
-		return err
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	for _, save := range saves {
-		observed := false
-		for _, certify := range g.attempts {
-			if certify.SaveID != save || certify.Injected || certify.Status < 200 || certify.Status >= 300 {
-				continue
-			}
-			start, err := time.Parse(time.RFC3339Nano, certify.StartedAt)
-			if err != nil {
-				return err
-			}
-			end := start.Add(time.Duration(certify.DurationMS * float64(time.Millisecond)))
-			for _, attempt := range records {
-				// Correlate the exact object and request window on this one host. Durations
-				// themselves come from the request observer's monotonic clock.
-				if attempt.Process == "control-plane" && attempt.Operation == "HeadObject" && attempt.ObjectDigest == g.selected[save] &&
-					attempt.StoreBucket == store.Host && attempt.StorePrefix == strings.Trim(store.Path, "/") && attempt.Status >= 200 && attempt.Status < 300 &&
-					!attempt.StartedAt.Before(start) && !attempt.StartedAt.After(end) {
-					observed = true
-					break
-				}
-			}
-			if observed {
-				break
-			}
-		}
-		if !observed {
-			return fmt.Errorf("no matching storage observation for native Save %s", save)
-		}
-	}
-	return nil
-}
-
-func TestNativeStorageAttemptCustodyRequiresObserverAndRetryIdentity(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "worker.log")
-	if err := os.WriteFile(file, []byte("ordinary worker output\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readNativeStorageAttempts(file, "worker"); err == nil {
-		t.Fatal("accepted missing observer")
-	}
-	record := nativeStorageAttempt{Message: "Native storage request attempt", Operation: "HeadObject", StoreBucket: "fixture", StorePrefix: "cas", InvocationID: "invocation", Attempt: "attempt=2; max=3", StartedAt: time.Now()}
-	raw, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, append(raw, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readNativeStorageAttempts(file, "worker")
-	if err != nil || len(got) != 1 || got[0].Process != "worker" {
-		t.Fatalf("observations=%v error=%v", got, err)
-	}
-	for _, prefix := range []string{
-		"[    0.000000] Linux version 6.12.51-0-virt",
-		"[",
-		`{"time":"2026-10`,
-		`{"time":"2026-10-09T22:18:22Z","level":"ERROR","msg":"guest connection failed","error":"EOF"}`,
-	} {
-		if err := os.WriteFile(file, append(append([]byte(prefix), raw...), '\n'), 0600); err != nil {
-			t.Fatal(err)
-		}
-		got, err := readNativeStorageAttempts(file, "worker")
-		if err != nil || len(got) != 1 || got[0].InvocationID != record.InvocationID {
-			t.Fatalf("console prefix %q lost observation: records=%v error=%v", prefix, got, err)
-		}
-	}
-	for _, invalid := range [][]byte{
-		append(append([]byte(nil), raw...), []byte("unrelated suffix\n")...),
-		append(append([]byte(`{"msg":"Native storage request attempt",`), raw...), '\n'),
-		[]byte("{\"msg\":\"Native storage request attempt\",\"operation\":\n"),
-	} {
-		if err := os.WriteFile(file, invalid, 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := readNativeStorageAttempts(file, "worker"); err == nil {
-			t.Fatal("accepted malformed or ambiguous observation")
-		}
-	}
-	if err := os.WriteFile(file, append(append(raw, '\n'), []byte(`{"msg":"Native storage request attempt","operation":`)...), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := readNativeStorageAttempts(file, "worker"); err != nil || len(got) != 1 {
-		t.Fatalf("partial live tail invalidated complete records: %v", err)
-	}
-	record.InvocationID = ""
-	raw, err = json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, append(raw, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readNativeStorageAttempts(file, "worker"); err == nil {
-		t.Fatal("accepted missing retry identity")
-	}
 }

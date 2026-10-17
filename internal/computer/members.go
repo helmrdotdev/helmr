@@ -92,7 +92,7 @@ func ListMembers(ctx context.Context, database db.DBTX, scope Scope, computer uu
 	rows, err := database.Query(ctx, `WITH members AS (
  SELECT 'session'::text kind,s.id,
  CASE WHEN s.status IN ('closed','cancelled') THEN 'unreconciled' WHEN s.status='closing' THEN 'draining'
- WHEN EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running','finalizing')) THEN 'running'
+ WHEN EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running')) THEN 'running'
  WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('ready','restoring')) THEN 'parked' ELSE 'admitted' END state,s.created_at
  FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND (s.status IN ('open','closing') OR EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL))
  UNION ALL SELECT 'command',c.id,CASE WHEN c.terminal_at IS NOT NULL THEN 'unreconciled' WHEN c.status='stopping' THEN 'draining' WHEN c.status='running' THEN 'running' ELSE 'admitted' END,c.created_at

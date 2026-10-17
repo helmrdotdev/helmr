@@ -54,12 +54,16 @@ export function parseSession(value: unknown): Session {
         const h = objectValue(value, "Session hold")
         if (h["scope"] !== "local" && h["scope"] !== "subtree")
           throw new Error("Session hold.scope is invalid")
+        if (h["kind"] !== "control" && h["kind"] !== "recovery_gap" && h["kind"] !== "storage_pressure") throw new Error("Session hold.kind is invalid")
+        if ((h["kind"]==="recovery_gap") !== (h["recovery_gap"]!==undefined)) throw new Error("Session recovery hold metadata is inconsistent")
         if (typeof h["reason"] !== "string")
           throw new Error("Session hold.reason is invalid")
         return Object.freeze({
           id: resourceID(h["id"], "Session hold.id"),
           sessionId: resourceID(h["session_id"], "Session hold.session_id"),
           scope: h["scope"],
+          kind: h["kind"],
+          ...(h["recovery_gap"]===undefined?{}:{recoveryGap:parseSessionEventData("session.recovery_gap",h["recovery_gap"]) as import("../contract").RecoveryGap}),
           reason: h["reason"],
           createdAt: timestampString(
             h["created_at"],
@@ -80,7 +84,7 @@ export function parseSessionPage(value: unknown): CursorPage<Session> {
 }
 
 function turnStatus(value: unknown): TurnState["status"] {
-  if (typeof value !== "string" || !["queued", "running", "finalizing", "completed", "failed", "interrupted", "cancelled"].includes(value)) throw new Error("Turn.status is invalid")
+  if (typeof value !== "string" || !["queued", "running", "completed", "failed", "interrupted", "cancelled"].includes(value)) throw new Error("Turn.status is invalid")
   return value as TurnState["status"]
 }
 
@@ -92,8 +96,6 @@ export function parseTurnState(value: unknown): TurnState {
   )
   if (terminal !== (v["terminal_at"] !== undefined))
     throw new Error("Turn terminal timestamp is inconsistent")
-  if ((v["status"] === "completed") !== (v["completion_save_id"] !== undefined))
-    throw new Error("Turn completion save is inconsistent")
   if ((Object.hasOwn(v, "result") || Object.hasOwn(v, "response")) && v["status"] !== "completed")
     throw new Error("An unfinished Turn cannot publish a result")
   const expired = v["payload_expired_at"] !== undefined
@@ -118,14 +120,6 @@ export function parseTurnState(value: unknown): TurnState {
     ...(v["terminal_at"] === undefined
       ? {}
       : { terminalAt: timestampString(v["terminal_at"], "Turn.terminal_at") }),
-    ...(v["completion_save_id"] === undefined
-      ? {}
-      : {
-          completionSaveId: resourceID(
-            v["completion_save_id"],
-            "Turn.completion_save_id",
-          ),
-        }),
     ...(Object.hasOwn(v, "response") ? { response: normalizeContent(v["response"], false) } : {}),
     ...(Object.hasOwn(v, "result") ? { result: jsonValue(v["result"]) } : {}),
   } as TurnState)
@@ -208,7 +202,6 @@ const eventKinds: readonly SessionEventKind[] = [
   "turn.output",
   "turn.queued",
   "turn.running",
-  "turn.finalizing",
   "turn.completed",
   "turn.failed",
   "turn.interrupt",
@@ -218,6 +211,8 @@ const eventKinds: readonly SessionEventKind[] = [
   "session.closed",
   "session.process_stopped",
   "session.process_failed",
+  "session.recovery_gap",
+  "session.storage_pressure",
   "session.deadline",
   "session.interrupt",
   "session.resume",

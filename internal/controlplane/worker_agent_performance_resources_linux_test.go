@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/helmrdotdev/helmr/internal/firecracker/custody"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -90,6 +91,19 @@ func observeNativePerformanceResources(ctx context.Context, input nativeExecutio
 		} else {
 			sample["retainedPinnedObjects"] = retained
 		}
+		var backlog json.RawMessage
+		err = pool.QueryRow(observation, `SELECT jsonb_build_object(
+ 'saveStatuses', (SELECT COALESCE(jsonb_object_agg(status,n),'{}'::jsonb) FROM (SELECT status,count(*) n FROM computer_saves WHERE environment_id=$1 GROUP BY status) counts),
+ 'graphObjects', (SELECT count(*) FROM disk_objects WHERE environment_id=$1),
+ 'retiredDigests', (SELECT count(*) FROM cas_blobs WHERE retired_at IS NOT NULL),
+ 'dueReclaims', (SELECT count(*) FROM cas_blobs WHERE retired_at IS NOT NULL AND next_reclaim_at<=statement_timestamp()),
+ 'failedReclaims', (SELECT count(*) FROM cas_blobs WHERE retired_at IS NOT NULL AND last_reclaim_error IS NOT NULL),
+ 'retainedMultipartIDs', (SELECT count(*) FROM cas_upload_reclaims))`, env).Scan(&backlog)
+		if err != nil {
+			failures = append(failures, "save/reclamation backlog: "+err.Error())
+		} else {
+			sample["backlog"] = backlog
+		}
 		remote, err := nativeRemoteFootprint(observation, store, bucket, prefix)
 		cancel()
 		if err != nil && ctx.Err() == nil {
@@ -151,9 +165,32 @@ type nativeRemoteSize struct {
 	Versions, VersionBytes, CurrentVersions, CurrentBytes, DeleteMarkers int64
 	MultipartUploads, MultipartParts, MultipartBytes                     int64
 	ObserverPageCalls                                                    int64
+	InventoryAttempts, MultipartRaces                                    int64
 }
 
 func nativeRemoteFootprint(ctx context.Context, store *awss3.Client, bucket, prefix string) (nativeRemoteSize, error) {
+	var result nativeRemoteSize
+	var err error
+	var calls, races int64
+	for attempt := int64(1); attempt <= 3; attempt++ {
+		result, err = nativeRemoteFootprintOnce(ctx, store, bucket, prefix)
+		calls += result.ObserverPageCalls
+		var apiError smithy.APIError
+		transition := errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchUpload"
+		if transition {
+			races++
+		}
+		result.ObserverPageCalls, result.InventoryAttempts, result.MultipartRaces = calls, attempt, races
+		if !transition {
+			return result, err
+		}
+		// Completion/abort can retire an upload between listing and ListParts.
+		// Restart the whole observation; never count missing parts as zero.
+	}
+	return result, err
+}
+
+func nativeRemoteFootprintOnce(ctx context.Context, store *awss3.Client, bucket, prefix string) (nativeRemoteSize, error) {
 	var result nativeRemoteSize
 	versions := awss3.NewListObjectVersionsPaginator(store, &awss3.ListObjectVersionsInput{Bucket: aws.String(bucket), Prefix: aws.String(prefix)})
 	for versions.HasMorePages() {

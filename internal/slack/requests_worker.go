@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -99,10 +100,13 @@ func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust computer.T
 
 // RunRequests consumes only authenticated durable receipts. Slack HTTP handlers
 // acknowledge persistence; this dispatcher loop owns subsequent core admission.
-func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger) error {
+func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || client == nil || log == nil || !config.valid() {
 		return errGestureInvalid
 	}
+
+	wake, unsubscribe := changes.Subscribe("slack_requests")
+	defer unsubscribe()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -120,6 +124,7 @@ func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIs
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-wake:
 		case <-ticker.C:
 		}
 	}

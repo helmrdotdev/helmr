@@ -509,8 +509,7 @@ variable "retained_worker_generations" {
       nested_virtualization = bool
       supply = object({
         computer = object({
-          save_interval_seconds = number
-          devices               = list(string)
+          devices = list(string)
         })
         contract_digest = string
         enable_ssm      = bool
@@ -777,10 +776,6 @@ variable "worker_vm_scratch_disk_mib" {
   default     = 32768
 }
 
-variable "worker_computer_save_interval_seconds" {
-  description = "Explicit background Computer save interval in seconds."
-  type        = number
-}
 variable "worker_computer_devices" {
   description = "Exclusive Worker NBD device allowlist."
   type        = list(string)

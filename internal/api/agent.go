@@ -79,12 +79,22 @@ type AgentSessionInitialTurn struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
 }
+type AgentRecoveryGap struct {
+	HoldID          string     `json:"holdId"`
+	ComputerID      string     `json:"computerId"`
+	LeaseEpoch      int64      `json:"leaseEpoch"`
+	RecoverySaveID  *string    `json:"recoverySaveId"`
+	RestoredAt      *time.Time `json:"restoredAt"`
+	AffectedTurnIDs []string   `json:"affectedTurnIds"`
+}
 type AgentSessionHold struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id"`
-	Scope     string    `json:"scope"`
-	Reason    string    `json:"reason"`
-	CreatedAt time.Time `json:"created_at"`
+	RecoveryGap *AgentRecoveryGap `json:"recovery_gap,omitempty"`
+	Kind        string            `json:"kind"`
+	ID          string            `json:"id"`
+	SessionID   string            `json:"session_id"`
+	Scope       string            `json:"scope"`
+	Reason      string            `json:"reason"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 type AgentTurnError struct {
 	Code    string  `json:"code"`
@@ -103,7 +113,6 @@ type AgentTurn struct {
 	Result           json.RawMessage   `json:"result,omitempty"`
 	StartedAt        *time.Time        `json:"started_at,omitempty"`
 	TerminalAt       *time.Time        `json:"terminal_at,omitempty"`
-	CompletionSaveID *string           `json:"completion_save_id,omitempty"`
 }
 type AgentSessionsPage struct {
 	Sessions   []AgentSession `json:"sessions"`

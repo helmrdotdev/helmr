@@ -34,7 +34,7 @@ func newStatusFixture(t *testing.T) statusFixture {
 
 func (f statusFixture) due(t *testing.T) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_threads SET next_attempt_at=clock_timestamp(),refresh_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread)
 }
 
@@ -197,13 +197,13 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	var remaining float64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT extract(epoch from delivery_next_at-clock_timestamp()) FROM slack_installations WHERE id=$1`, f.installation).Scan(&remaining); err != nil || remaining < 85 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT extract(epoch from retry_after-clock_timestamp()) FROM slack_method_limits WHERE installation_id=$1 AND method='agents.sessions.setStatus'`, f.installation).Scan(&remaining); err != nil || remaining < 85 {
 		t.Fatalf("workspace cooldown: %v %v", remaining, err)
 	}
 	if next, err := ClaimStatus(t.Context(), f.Pool, other); err != nil || next != nil {
 		t.Fatalf("other thread ignored cooldown: %+v %v", next, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1`, f.installation)
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1`, f.installation)
 	if next, err := ClaimStatus(t.Context(), f.Pool, other); err != nil || next == nil {
 		t.Fatalf("other thread not released: %+v %v", next, err)
 	}

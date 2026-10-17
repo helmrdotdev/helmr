@@ -77,7 +77,7 @@ func TestChannelReadFailureDoesNotFailUnsentOpening(t *testing.T) {
 			}
 			if strings.HasPrefix(kind, "rate-limit") {
 				var paced bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT delivery_next_at>clock_timestamp()+interval '15 seconds' FROM slack_installations WHERE id=$1`, f.installation).Scan(&paced); err != nil || !paced {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT retry_after>clock_timestamp()+interval '15 seconds' FROM slack_method_limits WHERE installation_id=$1 AND method='conversations.info'`, f.installation).Scan(&paced); err != nil || !paced {
 					t.Fatal("lost Retry-After", paced, err)
 				}
 			}

@@ -42,6 +42,10 @@ if [[ ${HELMR_NATIVE_AUTHORITY_LOSS_PROOF:-0} == 1 ]]; then
   if [[ ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} == 1 ]]; then
     test_case=TestWorkerAgentRetainedNetworkRecovery
   fi
+  if [[ ${HELMR_NATIVE_SAVE_PRESSURE_PROOF:-0} == 1 ]]; then
+    [[ ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 ]]
+    test_case=TestWorkerAgentSavePressureAndLoss
+  fi
 fi
 if [[ ${HELMR_NATIVE_LONG_IDLE_PROOF:-0} == 1 ]]; then
   [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
@@ -79,7 +83,6 @@ if [[ -n ${HELMR_NATIVE_PERFORMANCE_KIND:-} ]]; then
   [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
   [[ "$HELMR_NATIVE_PERFORMANCE_KIND" == no-op || "$HELMR_NATIVE_PERFORMANCE_KIND" == edit-test || "$HELMR_NATIVE_PERFORMANCE_KIND" == dependencies ]]
   [[ ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 0 || ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 1 ]]
-  [[ ${HELMR_NATIVE_PERFORMANCE_BACKGROUND:-0} == 0 || ${HELMR_NATIVE_PERFORMANCE_BACKGROUND:-0} == 1 ]]
   test_case=TestWorkerAgentPerformance
 fi
 [[ $(id -u) == 0 && $(uname -m) == x86_64 && "$candidate" == /* && "$evidence" == /* ]]
@@ -224,10 +227,11 @@ def tool(name):
  return p
 worker={'WORKER_WORK_DIR':e+'/w','JAILER_CHROOT_DIR':e+'/w/jailer','WORKER_HOST_SECRET_PATH':e+'/w/host-secret.json',
  'WORKER_IMAGES_DIR':c+'/images','WORKER_COMPUTER_DEVICES':'/dev/nbd0 /dev/nbd1',
- 'WORKER_COMPUTER_STAGING_MIB':'1024','WORKER_COMPUTER_SAVE_EVERY':'30s',
+ 'WORKER_COMPUTER_STAGING_MIB':'1024',
  'WORKER_LOG_CHUNK_BYTES':'1024','WORKER_LOG_BUFFER_BYTES':'1048576','WORKER_LOG_BUFFER_RECORDS':'1024',
  'WORKER_EXECUTION_SLOTS':'1','VM_VCPUS':'2','VM_MEMORY_MIB':'4096','VM_SCRATCH_DISK_MIB':'4096',
- 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4096','JAILER_UID':'61001','JAILER_GID':'61001',
+ # One 4096-MiB guest plus the 16-MiB per-Computer read/evidence caches.
+ 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4112','JAILER_UID':'61001','JAILER_GID':'61001',
  'WORKER_NETWORK_LINK_POOL':'198.18.32.0/24','WORKER_NETWORK_TRANSLATION_POOL':'198.19.32.0/24',
  'WORKER_NETWORK_RESOLVER_IPV4':'127.0.0.1','WORKER_NETWORK_BLOCKED_IPV4_CIDRS':'["0.0.0.0/0"]',
  'FIRECRACKER_PATH':tool('firecracker'),'JAILER_PATH':tool('jailer'),'CPU_TEMPLATE_HELPER_PATH':tool('cpu-template-helper'),
@@ -239,8 +243,12 @@ config={'Worker':c+'/agent-worker','Node':tool('node'),'Driver':c+'/driver.mjs',
  'SourceHostID':host_id,'TargetHostID':os.environ.get('HELMR_NATIVE_CROSS_HOST_TARGET_ID','')}
 if os.environ.get('HELMR_NATIVE_PERFORMANCE_KIND'):
  assert json.loads(Path(c+'/source.json').read_text()).get('native_performance') is True,'performance requires its instrumented artifact'
- config['Performance']={'Kind':os.environ['HELMR_NATIVE_PERFORMANCE_KIND'],'Degraded':os.environ.get('HELMR_NATIVE_PERFORMANCE_DEGRADED','0')=='1','Background':os.environ.get('HELMR_NATIVE_PERFORMANCE_BACKGROUND','0')=='1'}
- worker['WORKER_COMPUTER_SAVE_EVERY']='5s' if config['Performance']['Background'] else '1h'
+ config['Performance']={'Kind':os.environ['HELMR_NATIVE_PERFORMANCE_KIND'],'Degraded':os.environ.get('HELMR_NATIVE_PERFORMANCE_DEGRADED','0')=='1'}
+ # Match the intended managed slot envelope for workload qualification. Fault
+ # cases use their deliberately smaller staging bound through their own setup.
+ worker.update({'VM_VCPUS':'3','VM_SCRATCH_DISK_MIB':'8192',
+  'WORKER_CAPACITY_VCPUS':'4','WORKER_CAPACITY_MEMORY_MIB':'7168',
+  'WORKER_COMPUTER_STAGING_MIB':'16384'})
 with open(e+'/config.json','x') as f:json.dump(config,f,indent=2)
 if role=='target':
  assert not os.path.lexists(e+'/w'),'target workroot is not fresh'

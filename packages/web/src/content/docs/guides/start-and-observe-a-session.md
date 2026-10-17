@@ -111,7 +111,7 @@ shows one Turn's status and, once it has settled, its result, response or error.
 
 | Turn status | Meaning |
 | --- | --- |
-| `queued`, `running`, `finalizing` | Not settled yet. |
+| `queued`, `running` | Not settled yet. |
 | `completed` | Finished; the result and response are available. |
 | `failed`, `interrupted`, `cancelled` | Settled without completing; read `error`. |
 

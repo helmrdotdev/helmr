@@ -2,15 +2,12 @@ package controlplane
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -118,20 +115,8 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	runSDK("closed")
 	op.Method, op.Payload, op.DrainEvidence = workerapi.AgentMethodFinalize, json.RawMessage(`{"result":null}`), "joined"
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		response, err := client.AgentOperation(ctx, op)
-		if err == nil && response.Error != nil {
-			err = fmt.Errorf("%+v", response.Error)
-		}
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("pending callback settled finalization: %v", err)
-	case <-time.After(300 * time.Millisecond):
+	if _, err := client.AgentOperation(t.Context(), op); !httpclient.IsStatus(err, http.StatusServiceUnavailable) {
+		t.Fatalf("pending callback was not transient: %v", err)
 	}
 	receipt.AttachmentSequence = attachment.AttachmentSequence
 	for range 2 {
@@ -143,20 +128,12 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 		t.Fatalf("completed replay: %+v %v", next, err)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		var state string
-		if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, a.TurnID).Scan(&state); err != nil {
-			t.Fatal(err)
-		}
-		if state == "finalizing" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("finalize did not proceed: %s", state)
-		}
-		time.Sleep(10 * time.Millisecond)
+	response, err := client.AgentOperation(t.Context(), op)
+	if err != nil || response.Error != nil {
+		t.Fatalf("finalization after callback drainage %+v %v", response, err)
 	}
-	cancel()
-	<-done
+	var state string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, a.TurnID).Scan(&state); err != nil || state != "completed" {
+		t.Fatalf("completion after callback drainage %s %v", state, err)
+	}
 }

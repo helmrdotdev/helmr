@@ -479,8 +479,9 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
 		headObject: &awss3.HeadObjectOutput{
-			ContentLength: aws.Int64(5),
-			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ContentLength:  aws.Int64(5),
+			ContentType:    aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ChecksumSHA256: aws.String("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
 		},
 	}
 	store := &ImmutableStore{store: &Store{
@@ -505,8 +506,9 @@ func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
 		headObject: &awss3.HeadObjectOutput{
-			ContentLength: aws.Int64(5),
-			ContentType:   aws.String("application/octet-stream"),
+			ContentLength:  aws.Int64(5),
+			ChecksumSHA256: aws.String("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
+			ContentType:    aws.String("application/octet-stream"),
 		},
 	}
 	store := &ImmutableStore{store: &Store{
@@ -517,8 +519,8 @@ func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
 	}}
 
 	expected, file := sealedPublicationFile(t, []byte("hello"))
-	if _, err := store.Publish(t.Context(), expected, file); err == nil {
-		t.Fatal("expected metadata mismatch")
+	if _, err := store.Publish(t.Context(), expected, file); !errors.Is(err, cas.ErrRemoteIntegrity) {
+		t.Fatalf("expected remote metadata mismatch, got %v", err)
 	}
 }
 
@@ -530,8 +532,9 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 			&smithy.GenericAPIError{Code: "PreconditionFailed", Message: "writer won"},
 		},
 		headObject: &awss3.HeadObjectOutput{
-			ContentLength: aws.Int64(5),
-			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ContentLength:  aws.Int64(5),
+			ContentType:    aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+			ChecksumSHA256: aws.String("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
 		},
 	}
 	store := &ImmutableStore{store: &Store{
@@ -562,6 +565,8 @@ func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 	}}
 
 	expected, file := sealedPublicationFile(t, []byte("hello"))
+	client.headObject = &awss3.HeadObjectOutput{ContentLength: aws.Int64(expected.SizeBytes), ContentType: aws.String(expected.MediaType), ChecksumType: types.ChecksumTypeComposite}
+	client.getObjectBody = []byte("hello")
 	if _, err := store.Publish(t.Context(), expected, file); err != nil {
 		t.Fatal(err)
 	}
@@ -584,6 +589,8 @@ func TestImmutableS3MultipartPublishUsesOnlySealedDescriptor(t *testing.T) {
 		multipartPartSizeBytes:  4,
 	}}
 	expected, file := sealedPublicationFile(t, []byte("hello world"))
+	client.headObject = &awss3.HeadObjectOutput{ContentLength: aws.Int64(expected.SizeBytes), ContentType: aws.String(expected.MediaType), ChecksumType: types.ChecksumTypeComposite}
+	client.getObjectBody = []byte("hello world")
 	if err := os.Remove(file.Name()); err != nil {
 		t.Fatal(err)
 	}
@@ -622,6 +629,8 @@ func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.
 	}}
 
 	expected, file := sealedPublicationFile(t, []byte("hello"))
+	client.headObject = &awss3.HeadObjectOutput{ContentLength: aws.Int64(expected.SizeBytes), ContentType: aws.String(expected.MediaType), ChecksumType: types.ChecksumTypeComposite}
+	client.getObjectBody = []byte("hello")
 	if _, err := store.Publish(t.Context(), expected, file); err != nil {
 		t.Fatal(err)
 	}
@@ -1027,6 +1036,7 @@ type fakeS3Client struct {
 	uploadID                string
 	uploadPartErr           error
 	getObjectBody           []byte
+	getObjectCalls          int
 	putObjectErr            error
 	putObjectErrors         []error
 	putObjectCalls          int
@@ -1084,6 +1094,7 @@ func (f *fakeS3Client) HeadObject(_ context.Context, input *awss3.HeadObjectInpu
 }
 
 func (f *fakeS3Client) GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
+	f.getObjectCalls++
 	return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(f.getObjectBody))}, nil
 }
 
@@ -1263,5 +1274,53 @@ func TestStorageReadFailureRequiresDefinitiveObjectAbsence(t *testing.T) {
 				t.Fatalf("cancelled read classified as object state: %v", err)
 			}
 		})
+	}
+}
+
+func TestS3VerifyRequiresFullObjectChecksumOrReadback(t *testing.T) {
+	const digest = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	checksum, _ := descriptorChecksum(digest)
+	for _, tc := range []struct {
+		name, checksum, body string
+		kind                 types.ChecksumType
+		fail                 bool
+		reads                int
+	}{
+		{name: "full", checksum: checksum, kind: types.ChecksumTypeFullObject},
+		{name: "legacy full", checksum: checksum},
+		{name: "wrong full", checksum: "wrong", kind: types.ChecksumTypeFullObject, fail: true},
+		{name: "missing", body: "hello", reads: 1},
+		{name: "missing corrupt", body: "jello", fail: true, reads: 1},
+		{name: "composite", checksum: checksum + "-2", kind: types.ChecksumTypeComposite, body: "hello", reads: 1},
+		{name: "composite corrupt", checksum: checksum, kind: types.ChecksumTypeComposite, body: "jello", fail: true, reads: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeS3Client{headObject: &awss3.HeadObjectOutput{ContentLength: aws.Int64(5), ContentType: aws.String("application/octet-stream"), ChecksumSHA256: aws.String(tc.checksum), ChecksumType: tc.kind}, getObjectBody: []byte(tc.body)}
+			store := &Store{client: client, bucket: "test"}
+			_, err := store.Verify(t.Context(), digest)
+			if (err != nil) != tc.fail {
+				t.Fatalf("error=%v", err)
+			}
+			if client.getObjectCalls != tc.reads || client.headObjectInput.ChecksumMode != types.ChecksumModeEnabled {
+				t.Fatalf("GET=%d HEAD=%+v", client.getObjectCalls, client.headObjectInput)
+			}
+		})
+	}
+}
+
+func TestImmutableS3PublishPreservesLocalCustodyOnRemoteDigestMismatch(t *testing.T) {
+	requireDescriptorPublication(t)
+	client := &fakeS3Client{
+		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
+		headObject:   &awss3.HeadObjectOutput{ContentLength: aws.Int64(5), ContentType: aws.String("application/vnd.helmr.runtime.v0+squashfs"), ChecksumSHA256: aws.String("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")},
+	}
+	store := &ImmutableStore{store: &Store{client: client, bucket: "bucket", prefix: "runtime", multipartThresholdBytes: 10}}
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); !errors.Is(err, cas.ErrRemoteIntegrity) || !errors.Is(err, cas.ErrDigestMismatch) {
+		t.Fatalf("remote mismatch classification: %v", err)
+	}
+	content := make([]byte, 5)
+	if _, err := file.ReadAt(content, 0); err != nil || string(content) != "hello" {
+		t.Fatalf("local custody lost: %q %v", content, err)
 	}
 }

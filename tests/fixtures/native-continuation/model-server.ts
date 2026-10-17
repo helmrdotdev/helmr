@@ -4,9 +4,9 @@ import { createServer } from "node:http"
 import { readFileSync } from "node:fs"
 import { claudeModel, codexModel } from "../../../examples/issue-fixer/probes/native-model"
 import { nativeStopModelState, nativeStopResponse, type NativeStopModelState } from "./native-stop-model"
-import { performanceTool } from "./performance-model"
+import { performanceTool, type PerformanceCommand } from "./performance-model"
 export async function startNativeModels(targetSession: () => string, ports?: Record<"codex" | "claude" | "proof", number>, requests: { codex: any[]; claude: any[] } = { codex: [], claude: [] }, performanceMode = () => false, controlState: NativeStopModelState = nativeStopModelState()) {
-const command = (provider: string) => JSON.parse(readFileSync(`/workspace/performance-${provider}.json`, "utf8")).command as string
+const command = (provider: string) => JSON.parse(readFileSync(`/workspace/performance-${provider}.json`, "utf8")) as PerformanceCommand
 const performanceCodex = performanceTool("codex", () => command("codex"))
 const performanceClaude = performanceTool("claude", () => command("claude"))
 function enqueueTool(body: any): { name: string; namespace?: string } {

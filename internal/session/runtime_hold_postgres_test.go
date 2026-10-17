@@ -58,7 +58,7 @@ func TestRuntimeHoldPreservesRecordedSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	var turnStatus, saveStatus string
-	if err := f.pool.QueryRow(t.Context(), `SELECT t.status,s.status FROM turns t JOIN computer_saves s ON s.turn_id=t.id WHERE t.id=$1 AND s.id=$2`, a.TurnID, save.ID).Scan(&turnStatus, &saveStatus); err != nil || turnStatus != "finalizing" || saveStatus != "requested" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT t.status,s.status FROM turns t JOIN computer_saves s ON s.turn_id=t.id WHERE t.id=$1 AND s.id=$2`, a.TurnID, save.ID).Scan(&turnStatus, &saveStatus); err != nil || turnStatus != "completed" || saveStatus != "requested" {
 		t.Fatalf("prepared result %s/%s: %v", turnStatus, saveStatus, err)
 	}
 }

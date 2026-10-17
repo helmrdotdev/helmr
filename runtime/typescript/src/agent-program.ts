@@ -169,6 +169,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
             if (control.desired !== "hold" && control.desired !== "run") throw new Error("Invalid desired Session state")
             if (control.desired === "hold") current.suspend(new Error("Session is held"))
             if (control.stopDeadlineUnixNano !== 0n) {
+              if (control.stopSequence <= 0n) throw new Error("Invalid stop identity")
               if (!control.stopTurnId) {
                 shutdown = true
                 stopped.abort(new Error("Session initialization interrupted; reconstruction required"))

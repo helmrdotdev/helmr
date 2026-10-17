@@ -307,6 +307,9 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
  SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID)); err != nil {
 			return err
 		}
+		if err = inheritComputerRecoveryGap(ctx, tx, req.EnvironmentID, result.SessionID, computerID); err != nil {
+			return err
+		}
 		if parent != nil {
 			if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, parent); err != nil {
 				return err
@@ -329,7 +332,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if hasInput {
 			return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
 		}
-		return nil
+		return notifySessionsChanged(ctx, tx, req.EnvironmentID, result.SessionID)
 	}()
 	return result, pin, err
 }

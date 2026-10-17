@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -137,6 +138,9 @@ func run(log *slog.Logger) error {
 	if err := validateWorkerDiskFunding(diskCapacity.HostDiskBytes, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
 		return err
 	}
+	if vmResources.MemoryMiB+disk.VersionCacheBytes/(1<<20) > cfg.WorkerCapacityMemoryMiB/int64(cfg.WorkerExecutionSlots) {
+		return errors.New("worker memory capacity does not fund guest and Computer caches for every execution slot")
+	}
 	hostReservations, err := reservation.New(reservation.Vector{
 		CPUMillis:     cfg.WorkerCapacityVCPUs * 1000,
 		MemoryBytes:   cfg.WorkerCapacityMemoryMiB * 1024 * 1024,
@@ -192,7 +196,7 @@ func run(log *slog.Logger) error {
 			}
 			return qualifyRecoveredRuntime(qualificationCtx, evidence, hostReservations, reservation.Vector{
 				CPUMillis:     vmResources.MilliCPU,
-				MemoryBytes:   vmResources.MemoryMiB * 1024 * 1024,
+				MemoryBytes:   vmResources.MemoryMiB*1024*1024 + disk.VersionCacheBytes,
 				HostDiskBytes: perSlotDisk,
 				VMSlots:       1,
 			}, runtimeCandidate.Qualify)
@@ -260,7 +264,6 @@ func run(log *slog.Logger) error {
 	preparedMachines.ComputerRanges = store
 	preparedMachines.ComputerDevices = cfg.ComputerDevices
 	preparedMachines.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
-	preparedMachines.ComputerSaveEvery = cfg.ComputerSaveEvery
 	preparedMachines.ComputerHelper, err = os.Executable()
 	if err != nil {
 		return err
@@ -285,12 +288,12 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure allocation consumer: %w", err)
 	}
 	consumerSpecs := []worker.ConsumerSpec{{
-		Name: "allocation", Concurrency: int(cfg.WorkerExecutionSlots),
+		Name: "allocation", Concurrency: int(cfg.WorkerExecutionSlots), Wake: allocations.Ready(),
 		ContinueDuringDrain: true, Consumer: allocations,
 	}}
 	supervisor, err := worker.New(worker.Config{
 		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs,
-		Background:         []worker.BackgroundSpec{{Name: "allocation discovery", DrainEligible: true, Run: allocations.RunDiscovery}},
+		Background:         []worker.BackgroundSpec{{Name: "allocation discovery", DrainEligible: true, Run: allocations.RunDiscovery}, {Name: "allocation updates", DrainEligible: true, Run: func(ctx context.Context) error { return watchAllocationUpdates(ctx, controlPlaneClient, allocations) }}},
 		PollEvery:          cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (worker.RecoveryEvidence, error) {

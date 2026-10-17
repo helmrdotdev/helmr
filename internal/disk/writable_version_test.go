@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -133,14 +136,11 @@ func TestWritableVersionBoundsAndBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tiny.Close()
-	if _, err = tiny.WriteAt(t.Context(), []byte{4}, 8192); err != nil {
-		t.Fatal(err)
+	if _, err = tiny.WriteAt(t.Context(), []byte{4}, 8192); !errors.Is(err, ErrVersionStagingFull) {
+		t.Fatal("staging must be reserved before accepting writes", err)
 	}
-	if _, err = tiny.Capture(t.Context()); !errors.Is(err, ErrVersionStagingFull) {
-		t.Fatal("staging not bounded", err)
-	}
-	if got := readWritable(t, tiny, 8192, 1); got[0] != 4 {
-		t.Fatal("failed capture lost dirty data")
+	if got := readWritable(t, tiny, 8192, 1); got[0] != 0 {
+		t.Fatal("rejected staging admission changed data")
 	}
 	if _, err = tiny.WriteAt(t.Context(), []byte{1}, root.LogicalBytes); err == nil {
 		t.Fatal("out of range write accepted")
@@ -284,4 +284,82 @@ func TestWritableVersionSourceFailureIsAtomic(t *testing.T) {
 		t.Fatal("failed read exposed partial data", n, err)
 	}
 	source.fail = false
+}
+
+// A blocked source simulates network latency after construction, without holding
+// the caller's own coordination lock across the storage request.
+type pausedWritableSource struct {
+	blockformat.RangeSource
+	pause   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *pausedWritableSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	if s.pause.CompareAndSwap(true, false) {
+		close(s.entered)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.RangeSource.GetRange(ctx, digest, size, offset, length)
+}
+
+func TestWritableVersionRemoteReadDoesNotBlockWrites(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint("partial=", partial), func(t *testing.T) {
+			_, writer, root := writableFixture(t, 8)
+			source := &pausedWritableSource{RangeSource: writer.Source, entered: make(chan struct{}), release: make(chan struct{})}
+			writer.Source = source
+			d, err := OpenWritableVersion(t.Context(), writer, root, 8, 32<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			var release sync.Once
+			defer release.Do(func() { close(source.release) })
+			source.pause.Store(true)
+			done := make(chan error, 1)
+			read := make([]byte, 4096)
+			go func() {
+				if partial {
+					_, err := d.WriteAt(t.Context(), []byte{9}, 17)
+					done <- err
+				} else {
+					_, err := d.ReadAt(t.Context(), read, 0)
+					done <- err
+				}
+			}()
+			select {
+			case <-source.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("remote read did not start")
+			}
+			written := make(chan error, 1)
+			go func() { _, err := d.WriteAt(t.Context(), bytes.Repeat([]byte{7}, 4096), 0); written <- err }()
+			select {
+			case err := <-written:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("remote read blocked a full write")
+			}
+			release.Do(func() { close(source.release) })
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			expected := bytes.Repeat([]byte{7}, 4096)
+			if partial {
+				expected[17] = 9
+			} else if !bytes.Equal(read, bytes.Repeat([]byte{1}, 4096)) {
+				t.Fatal("read did not retain its original snapshot")
+			}
+			if got := readWritable(t, d, 0, 4096); !bytes.Equal(got, expected) {
+				t.Fatal("partial write overwrote a newer full block")
+			}
+		})
+	}
 }

@@ -357,3 +357,31 @@ test("resume waits for interrupted work and a later hold supersedes the wait", a
     await f.shutdown()
   }
 })
+
+test("framed stop preserves a newer hold while drain waits", async () => {
+  const started = deferred<void>(), aborted = deferred<void>(), release = deferred<void>()
+  const f = fixture({ turn: async turn => {
+    if (turn.sequence === 1) {
+      turn.signal.addEventListener("abort", () => aborted.resolve(), { once: true })
+      started.resolve(); await release.promise
+    }
+    return turn.sequence
+  } })
+  try {
+    await f.ready
+    const first = f.dispatch(1)
+    await started.promise
+    const stop = f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold", stopTurnId: "turn-1", stopSequence: 3n, stopDeadlineUnixNano: 1n }) }, 10n)
+    await aborted.promise
+    const armed = f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run", stopTurnId: "turn-1", stopSequence: 3n, stopDeadlineUnixNano: 1n }) }, 11n)
+    const renewed = f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold", stopTurnId: "turn-1", stopSequence: 3n, stopDeadlineUnixNano: 1n }) }, 12n)
+    release.resolve()
+    assert.equal(value(await first).status, "interrupted")
+    assert.deepEqual(value(await stop), { superseded: true })
+    assert.deepEqual(value(await armed), { superseded: true })
+    assert.equal(value(await renewed), null)
+    assert.equal((await f.dispatch(2)).outcome.case, "error")
+    await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 13n)
+    assert.equal(value(await f.dispatch(2)).result, 2)
+  } finally { release.resolve(); await f.shutdown() }
+})

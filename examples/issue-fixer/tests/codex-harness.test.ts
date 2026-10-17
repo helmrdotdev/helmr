@@ -10,6 +10,7 @@ import { Queue } from "../agents/issue-fixer/queue"
 
 let messages: Queue<any>
 let sent: any[] = []
+let requested: string[] = []
 let startRequestGate: Promise<void> | undefined
 let onInterrupt: (() => void) | undefined
 let finishExit!: () => void
@@ -18,10 +19,11 @@ mock.module("../agents/issue-fixer/codex-stdio", () => ({
   spawnCodex: () => { const child = Object.assign(new EventEmitter(), { pid: 123 }); queueMicrotask(() => child.emit("spawn")); return child }, CodexRequestRejected: Rejected,
   CodexStdio: class {
     readonly messages = messages = new Queue()
-    constructor() { sent = [] }
+    constructor() { sent = []; requested = [] }
     readonly processId = 123
     readonly exit = new Promise<void>(resolve => { finishExit = resolve })
     async request(method: string) {
+      requested.push(method)
       if (method === "turn/steer") throw new Rejected(-32600, "no active turn to steer")
       if (method === "turn/start") { await startRequestGate; return { turn: { id: "native-turn", status: "inProgress" } } }
       if (method === "turn/interrupt") onInterrupt?.()
@@ -201,6 +203,73 @@ test("terminal notification remains live while questions wait and no late native
     await pending
     expect(withdrawals).toBe(2)
     expect(sent.some(value => value.id === 9)).toBe(false)
+  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+for (const status of ["completed", "failed", "declined"]) test(`a yielded ${status} command receipt may arrive after native Turn completion`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-native-late-command-"))
+  const harness = await CodexHarness.open(directory, "session", {})
+  const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
+  try {
+    const pending = harness.run(turn, "inspect")
+    void pending.catch(() => {})
+    let settled = false
+    void pending.then(() => { settled = true }, () => { settled = true })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "inProgress", exitCode: null } } })
+    messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "earlier", status: "inProgress", exitCode: null } } })
+    messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "earlier", status: "completed", exitCode: 0 } } })
+    messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
+    for (const [threadId, turnId, id] of [["foreign", "native-turn", "command"], ["native", "foreign", "command"], ["native", "native-turn", "unknown"]]) {
+      messages.push({ method: "item/completed", params: { threadId, turnId, item: { type: "commandExecution", id, status: "completed", exitCode: 0 } } })
+    }
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(settled).toBe(false)
+    expect(harness.idle).toBe(false)
+    expect(requested).not.toContain("thread/backgroundTerminals/clean")
+    messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status, exitCode: status === "completed" ? 0 : null } } })
+    await expect(pending).resolves.toEqual({ nativeThreadId: "native", nativeTurnId: "native-turn" })
+    expect(harness.reusable).toBe(true)
+    const next = harness.run(turn, "next")
+    await new Promise<void>(resolve => setImmediate(resolve))
+    messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
+    await next
+  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+for (const failure of ["cancel", "cancel-race", "reader-error", "reader-end", "cancel-reader-error"]) test(`outstanding command receipt joins through ${failure}`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-native-command-join-"))
+  const harness = await CodexHarness.open(directory, "session", {})
+  const abort = new AbortController()
+  const turn = { id: "turn", signal: abort.signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
+  const receipt = { method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "completed", exitCode: 0 } } }
+  try {
+    const pending = harness.run(turn, "inspect")
+    let settled = false
+    void pending.then(() => { settled = true }, () => { settled = true })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "inProgress", exitCode: null } } })
+    messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(settled).toBe(false)
+    const cancelled = new Error("owned Turn cancelled")
+    if (failure.startsWith("cancel")) {
+      if (failure === "cancel-race") messages.push(receipt)
+      abort.abort(cancelled)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      if (failure !== "cancel-race") {
+        expect(requested.filter(value => value === "thread/backgroundTerminals/clean")).toHaveLength(1)
+        expect(settled).toBe(false)
+      }
+      if (failure === "cancel") messages.push(receipt)
+    }
+    if (failure.includes("reader")) {
+      messages.end(failure === "reader-end" ? undefined : new Error("lost native reader"))
+      finishExit()
+    }
+    await expect(pending).rejects.toThrow(failure.startsWith("cancel") ? "owned Turn cancelled" : failure === "reader-end" ? "Native message stream ended" : "lost native reader")
+    expect(harness.reusable).toBe(!failure.includes("reader"))
+    expect(harness.idle).toBe(true)
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
 

@@ -17,7 +17,7 @@ if [[ "$5" = expose-secret ]]; then
 else
   [[ "$4" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 1
 fi
-case "$5" in text|choice|finalizing|output|disable-member|restore-member|expose-secret) ;; *) exit 1;; esac
+case "$5" in text|choice|completed|output|disable-member|restore-member|expose-secret) ;; *) exit 1;; esac
 export HELMR_DEV_DIR="${ROOT}/.helmr-dev-e2e"
 export HELMR_DEV_POSTGRES_PORT="$(( ${HELMR_E2E_PORT:-4173} + 1 ))"
 source "${ROOT}/dev/local/instance.sh"
@@ -35,7 +35,7 @@ FROM environments e JOIN sessions s ON s.environment_id=e.id JOIN turns t ON t.e
 WHERE e.id=:'environment_id' AND e.slug LIKE 'browser-agent-%' AND s.id=:'session_id' AND t.id=:'turn_id'
  AND t.caller_kind='user' AND t.admission_method='create';
 DO $$ BEGIN IF (SELECT count(*) FROM fixture) <> 1 THEN RAISE EXCEPTION 'not an owned browser Session'; END IF; END $$;
-SELECT :'mode' IN ('text','choice') AS seed, :'mode'='finalizing' AS finalizing,
+SELECT :'mode' IN ('text','choice') AS seed, :'mode'='completed' AS completed,
  :'mode'='expose-secret' AS expose_secret, :'mode'='output' AS output, :'mode' IN ('disable-member','restore-member') AS membership \gset
 \if :seed
 INSERT INTO regions(id,display_name) VALUES('browser-'||:'session_id','Browser fixture');
@@ -65,14 +65,18 @@ created AS (INSERT INTO session_events(environment_id,session_id,turn_id,seq,kin
 INSERT INTO turn_asks(environment_id,session_id,turn_id,id,process_epoch,created_event_seq,question_digest,question)
 SELECT :'environment_id',:'session_id',:'turn_id',:'reference_id',1,seq,sha256(value),value FROM created CROSS JOIN question;
 \endif
-\if :finalizing
-UPDATE turns SET status='finalizing',processing_closed_at=clock_timestamp(),result_recorded_at=clock_timestamp(),
- result='{"private":"PRIVATE_RETURN"}',result_digest=sha256(convert_to('{"private":"PRIVATE_RETURN"}','UTF8')),drain_evidence='browser phase fixture',
- response_id=uuidv7(),response=convert_to('[{"type":"text","text":"RESPONSE_REQUIRES_OWN_SAVE"}]','UTF8'),
- response_digest=sha256(convert_to('[{"type":"text","text":"RESPONSE_REQUIRES_OWN_SAVE"}]','UTF8')),response_staged_at=clock_timestamp()
-WHERE environment_id=:'environment_id' AND id=:'turn_id' AND status='running' RETURNING id AS finalizing_turn_id \gset
+\if :completed
+UPDATE turns SET status='completed',terminal_at=clock_timestamp(),deadline_at=NULL,processing_closed_at=clock_timestamp(),result_recorded_at=clock_timestamp(),
+ result='{"private":"COMPLETED_RESULT"}',result_digest=sha256(convert_to('{"private":"COMPLETED_RESULT"}','UTF8')),drain_evidence='browser phase fixture',
+ response_id=uuidv7(),response=convert_to('[{"type":"text","text":"COMPLETED_RESPONSE"}]','UTF8'),
+ response_digest=sha256(convert_to('[{"type":"text","text":"COMPLETED_RESPONSE"}]','UTF8')),response_staged_at=clock_timestamp()
+WHERE environment_id=:'environment_id' AND id=:'turn_id' AND status='running' RETURNING id AS completed_turn_id \gset
 INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id)
 SELECT environment_id,turn_id,computer_id,1,1,turn_id FROM fixture;
+WITH allocated AS (UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE environment_id=:'environment_id' AND id=:'session_id' RETURNING next_event_seq-1 AS seq)
+INSERT INTO session_events(environment_id,session_id,turn_id,seq,kind,data)
+SELECT :'environment_id',:'session_id',:'turn_id',seq,'turn.completed','{}'::bytea FROM allocated;
+
 \endif
 \if :output
 WITH allocated AS (UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE environment_id=:'environment_id' AND id=:'session_id' RETURNING next_event_seq-1 AS seq)

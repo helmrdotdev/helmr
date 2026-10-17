@@ -275,3 +275,20 @@ func preparationIdentity(e computer.ImageBuildExecutor) computer.ImageBuildIdent
 }
 
 func sameLifetime(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+
+// Completion is already durable before background save work starts.
+func completedTurnForTest(ctx context.Context, pool db.TxBeginner, env, sessionID, turn uuid.UUID) error {
+	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		var status string
+		if err := tx.QueryRow(ctx, `SELECT status FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, env, sessionID, turn).Scan(&status); err != nil {
+			return err
+		}
+		if status == "completed" {
+			return nil
+		}
+		if status == "running" || status == "queued" {
+			return session.ErrNotReady
+		}
+		return session.ErrTerminal
+	})
+}

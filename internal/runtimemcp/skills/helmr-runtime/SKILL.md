@@ -88,7 +88,7 @@ These controls operate on owned descendants; an accepted control receipt is
 not proof that execution has stopped.
 
 - `interrupt_turn` targets one exact running Turn. It creates no Session hold
-  and does not stop children. Queued, finalizing, or settled Turns cannot be
+  and does not stop children. Queued or settled Turns cannot be
   interrupted this way. Confirm the target's outcome afterward.
 - `interrupt_session` places a hold and requests interruption of the Session
   and its subtree. Retain the returned `holdId` and check state afterward.

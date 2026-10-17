@@ -39,7 +39,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 		post := uuid.NewV7()
 		body := []byte(`{"text":"visible fallback","blocks":[{"type":"actions","elements":[{"value":"DO_NOT_RETURN_SIGNED_CONTROL"}]}]}`)
 		digest := sha256.Sum256(body)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,role,payload,payload_digest,presentation_path) VALUES($1,$2,$3,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$4,$5,$6,'lifecycle',$7,$8,'post'); UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$9`, pgx.QueryExecModeSimpleProtocol, post, f.Environment, f.Session, participant, seq, fmt.Sprint(seq), body, digest[:], installation)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,role,payload,payload_digest,presentation_path) VALUES($1,$2,$3,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$4,$5,$6,'lifecycle',$7,$8,'post'); UPDATE slack_delivery_limits SET next_post_at=clock_timestamp() WHERE installation_id=$9`, pgx.QueryExecModeSimpleProtocol, post, f.Environment, f.Session, participant, seq, fmt.Sprint(seq), body, digest[:], installation)
 		claim, err := slack.ClaimPost(t.Context(), f.Pool, post)
 		if err != nil || claim == nil {
 			t.Fatal(claim, err)

@@ -215,7 +215,7 @@ func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host wo
 		if err != nil {
 			return err
 		}
-		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || r.Shape != shape || r.BaseVersion != base || r.RestoredFrom != nil {
+		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || r.Shape != shape || r.BaseVersion != base || (r.RestoredFrom != nil && !r.DiskOnlyRecovery) {
 			return ErrDenied
 		}
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {

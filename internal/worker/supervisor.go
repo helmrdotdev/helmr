@@ -35,6 +35,7 @@ type Consumer interface {
 }
 
 type ConsumerSpec struct {
+	Wake        <-chan struct{}
 	Name        string
 	Concurrency int
 	Admission   string
@@ -529,6 +530,7 @@ func (s *Supervisor) consume(
 		case <-claimCtx.Done():
 			return
 		case <-timer.C:
+		case <-spec.Wake:
 		}
 		state := s.state.Load().(Status)
 		if state != StatusActive && !(spec.ContinueDuringDrain && state == StatusDraining) {

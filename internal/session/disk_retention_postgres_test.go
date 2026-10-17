@@ -6,8 +6,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -22,7 +20,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	if err := s.publish(t, old.ID, oldRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	b, head := f.finalize(t, "current-result")
@@ -31,7 +29,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	if err := s.publish(t, head.ID, headRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, b.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, b.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	_, pending := f.finalize(t, "uncertain-result")
@@ -53,7 +51,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
    AND head.root_id IS NOT NULL AND c.recovery_save_id=head.id
    AND l.disk_released_at IS NULL AND pending.status='captured'
    AND EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=c.environment_id AND p.save_id=pending.id)
-   AND t.status='completed' AND t.completion_save_id=old.id
+   AND t.status='completed' AND old.turn_id=t.id
    FROM computers c JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id
    JOIN computer_saves old ON old.environment_id=c.environment_id AND old.id=$2
    JOIN computer_saves head ON head.environment_id=c.environment_id AND head.id=$3

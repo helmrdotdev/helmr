@@ -37,6 +37,10 @@ type saveStorageFixture struct {
 // authenticated empty root here, then exercise real registration/certification
 // and publication for every new cut against PostgreSQL and a separate file CAS.
 func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
+	return newSizedSaveStorageFixture(t, f, 1<<20)
+}
+
+func newSizedSaveStorageFixture(t *testing.T, f fixture, logicalBytes int64) *saveStorageFixture {
 	t.Helper()
 	local, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -48,7 +52,7 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	}
 	keyID, writeKeyID := uuid.NewV7(), uuid.NewV7()
 	writer := blockformat.Writer{Source: local, Sink: local, Scope: f.env.String(), ActiveKey: keyID.String(), Keys: map[string][]byte{keyID.String(): bytes.Repeat([]byte{7}, 32)}, PackLimit: blockformat.MinPackLimit}
-	base, err := writer.Empty(t.Context(), 1<<20, 64)
+	base, err := writer.Empty(t.Context(), logicalBytes, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +64,7 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewVersionRoot(base, 1<<20)
+	root, err := disk.NewVersionRoot(base, logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +104,15 @@ func (s *saveStorageFixture) ref(save uuid.UUID) computer.SavePublication {
 
 func (s *saveStorageFixture) cut(t *testing.T, value byte) (disk.VersionRoot, string) {
 	t.Helper()
+	var pending bool
+	if err := s.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status='requested' AND coverage_max_seq IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_saves.environment_id AND cp.disk_save_id=computer_saves.id))`, s.f.env, s.f.computer).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending {
+		if _, err := computer.NextSave(t.Context(), s.f.pool, *s.f.host(), saveIdentity(s.f), true, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 	root, err := s.writer.Capture(t.Context(), s.base, 1<<20, map[uint64][]byte{0: bytes.Repeat([]byte{value}, 4096), 100: bytes.Repeat([]byte{value}, 4096)})
 	if err != nil {
 		t.Fatal(err)
@@ -181,11 +194,11 @@ func (s *saveStorageFixture) certify(t *testing.T, ref computer.SavePublication,
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = s.publisher.Register(t.Context(), ref, e); err != nil {
+		if err = s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 		s.uploadObject(t, object)
-		if err = s.publisher.Certify(t.Context(), ref, e); err != nil {
+		if err = s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -208,7 +221,7 @@ func TestSavePublicationRetainsAuthenticatedGraph(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
@@ -247,17 +260,17 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	inspections := s.inspect(t, root)
 	// Certify children, then lose access to storage while the root is pending.
 	for _, e := range inspections[:len(inspections)-1] {
-		if err := s.publisher.Register(t.Context(), ref, e); err != nil {
+		if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 		object, _ := describeStoredObject(e)
 		s.uploadObject(t, object)
-		if err := s.publisher.Certify(t.Context(), ref, e); err != nil {
+		if err := s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	e := inspections[len(inspections)-1]
-	if err := s.publisher.Register(t.Context(), ref, e); err != nil {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 		t.Fatal(err)
 	}
 	object, _ := describeStoredObject(e)
@@ -265,17 +278,23 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	unavailable, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		return cas.Object{}, errors.New("temporarily unavailable")
 	}))
-	if err := unavailable.Certify(t.Context(), ref, e); !errors.Is(err, computer.ErrSaveStorageUnavailable) {
+	if err := unavailable.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrSaveStorageUnavailable) {
 		t.Fatalf("transient storage: %v", err)
+	}
+	mismatch, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+		return cas.Object{}, cas.ErrDigestMismatch
+	}))
+	if err := mismatch.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrSaveStorageUnavailable) || !errors.Is(err, cas.ErrDigestMismatch) {
+		t.Fatalf("remote mismatch must retain unpublished custody and its diagnostic: %v", err)
 	}
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unknown publication: %v", err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, session.ErrNotReady) {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatalf("unpublished success: %v", err)
 	}
 	queued := f.enqueue(t, "accepted-during-storage-retry")
-	if current, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil || current.TurnID != a.TurnID || current.Status != "finalizing" {
+	if current, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil || current.TurnID != queued.TurnID || current.Status != "running" {
 		t.Fatalf("dispatched through unsettled save: %v %v", current, err)
 	}
 	// The persistence service restarts, not the customer process or physical
@@ -284,7 +303,7 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted.Certify(t.Context(), ref, e); err != nil {
+	if err = restarted.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 		t.Fatal(err)
 	}
 	if err = restarted.Publish(t.Context(), ref, root, "same retained operation after restart"); err != nil {
@@ -294,10 +313,10 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	next, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
@@ -335,7 +354,7 @@ func TestSavePublicationExpiryDoesNotAuthorizeSalvage(t *testing.T) {
 				if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); err != nil {
 					t.Fatal(err)
 				}
-				if err = session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+				if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -345,10 +364,10 @@ func TestSavePublicationExpiryDoesNotAuthorizeSalvage(t *testing.T) {
 				if err = savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, session.ErrNotReady) {
 					t.Fatalf("salvaged uncommitted objects: %v", err)
 				}
-				if err = s.publisher.Register(t.Context(), ref, inspections[0]); !errors.Is(err, computer.ErrDenied) {
+				if err = s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{inspections[0]}); !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("new object admission after expiry: %v", err)
 				}
-				if err = s.publisher.Certify(t.Context(), ref, inspections[0]); !errors.Is(err, computer.ErrDenied) {
+				if err = s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{inspections[0]}); !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("new certification after expiry: %v", err)
 				}
 			}
@@ -368,7 +387,7 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 	f.capture(t, save, identity)
 	ref := s.ref(save.ID)
 	e := s.inspect(t, root)[0]
-	if err := s.publisher.Register(t.Context(), ref, e); err != nil {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 		t.Fatal(err)
 	}
 	object, _ := describeStoredObject(e)
@@ -380,7 +399,7 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 		return s.remote.Stat(ctx, digest)
 	}))
 	result := make(chan error, 1)
-	go func() { result <- p.Certify(t.Context(), ref, e) }()
+	go func() { result <- p.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}) }()
 	<-entered
 	// This update would block if remote I/O held the Computer's transaction.
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -410,7 +429,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	ref := s.ref(save.ID)
 	inspections := s.inspect(t, root)
 	rootEvidence := inspections[len(inspections)-1]
-	if err := s.publisher.Register(t.Context(), ref, rootEvidence); !errors.Is(err, computer.ErrNotReady) {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{rootEvidence}); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("registered parent with uncertified children: %v", err)
 	}
 	var pins int
@@ -418,12 +437,12 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		t.Fatalf("failed registration leaked pins: %d %v", pins, err)
 	}
 	for _, e := range inspections[:len(inspections)-1] {
-		if err := s.publisher.Register(t.Context(), ref, e); err != nil {
+		if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 		object, _ := describeStoredObject(e)
 		s.uploadObject(t, object)
-		if err := s.publisher.Certify(t.Context(), ref, e); err != nil {
+		if err := s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -436,15 +455,15 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		t.Fatal("fixture needs child position")
 	}
 	changed.Pack.Pages[0].Children[0].Locator.Pack.Size++
-	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, computer.ErrConflict) {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{changed}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("child geometry mismatch misclassified: %v", err)
 	}
 	changed.Pack.Pages[0].Children[0].Locator.Pack.Size--
 	changed.Pack.Pages[0].Children[0].Start++
-	if err := s.publisher.Register(t.Context(), ref, changed); err == nil {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{changed}); err == nil {
 		t.Fatal("child's wrong position accepted")
 	}
-	if err := s.publisher.Register(t.Context(), ref, rootEvidence); err != nil {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{rootEvidence}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.publisher.Publish(t.Context(), ref, root, "root not uploaded"); !errors.Is(err, computer.ErrNotReady) {
@@ -457,10 +476,10 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		obj.SizeBytes++
 		return obj, err
 	}))
-	if err := wrongStore.Certify(t.Context(), ref, rootEvidence); !errors.Is(err, computer.ErrConflict) {
+	if err := wrongStore.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{rootEvidence}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("mismatched remote object: %v", err)
 	}
-	if err := s.publisher.Certify(t.Context(), ref, rootEvidence); err != nil {
+	if err := s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{rootEvidence}); err != nil {
 		t.Fatal(err)
 	}
 	wrongRoot := root
@@ -471,7 +490,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	if err := s.publisher.Publish(t.Context(), ref, root, "correct locator"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.publisher.Register(t.Context(), ref, changed); !errors.Is(err, computer.ErrConflict) {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{changed}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("changed registered inspection: %v", err)
 	}
 }
@@ -490,7 +509,7 @@ func TestSavePublicationCancellationKeepsTerminalOutcome(t *testing.T) {
 			if err := s.publish(t, save.ID, root); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, session.ErrTerminal) {
+			if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); !errors.Is(err, session.ErrTerminal) {
 				t.Fatalf("terminal outcome replaced: %v", err)
 			}
 			var state string
@@ -561,10 +580,10 @@ func TestPublishedSaveReceiptRequiresOriginalHostIdentity(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.worker)
 				ref.Host.Epoch = 2
 			}
-			if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, computer.ErrDenied) {
+			if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("foreign registration replay: %v", err)
 			}
-			if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, computer.ErrDenied) {
+			if err := s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("foreign certification replay: %v", err)
 			}
 			if err := s.publisher.Publish(t.Context(), ref, root, "foreign replay"); !errors.Is(err, computer.ErrDenied) {
@@ -586,7 +605,7 @@ func TestSaveStorageClassifiesMissingAuthorityAndDependencies(t *testing.T) {
 	f.capture(t, save, identity)
 	ref := s.ref(save.ID)
 	e := s.inspect(t, root)[0]
-	if err := s.publisher.Certify(t.Context(), ref, e); !errors.Is(err, computer.ErrNotReady) {
+	if err := s.publisher.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("missing registration: %v", err)
 	}
 	if err := s.publisher.Publish(t.Context(), ref, root, "unregistered root"); !errors.Is(err, computer.ErrNotReady) {
@@ -594,7 +613,7 @@ func TestSaveStorageClassifiesMissingAuthorityAndDependencies(t *testing.T) {
 	}
 	unknown := ref
 	unknown.SaveID = uuid.NewV7()
-	if err := s.publisher.Register(t.Context(), unknown, e); !errors.Is(err, computer.ErrDenied) {
+	if err := s.publisher.RegisterBatch(t.Context(), unknown, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("unknown save: %v", err)
 	}
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, unknown.SaveID, identity); !errors.Is(err, session.ErrDenied) {
@@ -602,11 +621,11 @@ func TestSaveStorageClassifiesMissingAuthorityAndDependencies(t *testing.T) {
 	}
 	wrongEpoch := ref
 	wrongEpoch.LeaseEpoch++
-	if err := s.publisher.Register(t.Context(), wrongEpoch, e); !errors.Is(err, computer.ErrDenied) {
+	if err := s.publisher.RegisterBatch(t.Context(), wrongEpoch, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("wrong epoch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=NULL,write_key_id=NULL WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if err := s.publisher.Register(t.Context(), ref, e); !errors.Is(err, computer.ErrDenied) {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("unbound source: %v", err)
 	}
 }
@@ -634,7 +653,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	}
 	ref := s.ref(nextSave)
 	ref.LeaseEpoch = 2
-	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, root)[0]); !errors.Is(err, computer.ErrDenied) {
+	if err = s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{s.inspect(t, root)[0]}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("acquiring lease published: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='active',initialized_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND epoch=2`, f.env, f.computer)
@@ -652,8 +671,15 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.publisher.Register(t.Context(), ref, s.inspect(t, wrongRoot)[0]); !errors.Is(err, computer.ErrConflict) {
+	if err = s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{s.inspect(t, wrongRoot)[0]}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("new object used old base key: %v", err)
+	}
+	var instance uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=2`, f.env, f.computer).Scan(&instance); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := computer.NextSave(t.Context(), f.pool, ref.Host, computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 2, InstanceID: instance}, true, false, nil); err != nil {
+		t.Fatal(err)
 	}
 	s.writer.ActiveKey = key.String()
 	s.writer.Keys[key.String()] = bytes.Repeat([]byte{8}, 32)
@@ -708,7 +734,7 @@ func TestSaveStorageCannotAdoptUnretainedCertifiedObjects(t *testing.T) {
 	}
 	ref = s.ref(nextSave)
 	ref.LeaseEpoch = 2
-	if err := s.publisher.Register(t.Context(), ref, inspections[len(inspections)-1]); !errors.Is(err, computer.ErrConflict) {
+	if err := s.publisher.RegisterBatch(t.Context(), ref, []blockformat.ObjectInspection{inspections[len(inspections)-1]}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("unretained object adopted: %v", err)
 	}
 	var pins int
@@ -726,7 +752,7 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 	if err := s.publish(t, save.ID, root); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var rootID uuid.UUID
@@ -763,7 +789,7 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 		t.Fatalf("retired receipt lost capture evidence: %v", err)
 	}
 	var retained bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT t.status='completed' AND t.completion_save_id=s.id AND s.root_id IS NULL AND s.payload_retired_at IS NOT NULL AND octet_length(s.captured_root_digest)=32 FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id) WHERE t.environment_id=$1 AND t.id=$2`, f.env, a.TurnID).Scan(&retained); err != nil || !retained {
+	if err := f.pool.QueryRow(t.Context(), `SELECT t.status='completed' AND s.turn_id=t.id AND s.root_id IS NULL AND s.payload_retired_at IS NOT NULL AND octet_length(s.captured_root_digest)=32 FROM turns t JOIN computer_saves s ON (s.environment_id,s.turn_id)=(t.environment_id,t.id) WHERE t.environment_id=$1 AND t.id=$2`, f.env, a.TurnID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("terminal evidence lost: %v", err)
 	}
 }
@@ -841,4 +867,106 @@ func describeStoredObject(e blockformat.ObjectInspection) (storedObject, error) 
 	raw, err := json.Marshal(e)
 	out.encoded = raw
 	return out, err
+}
+
+// Fault fixtures model the verified storage boundary explicitly. Ordinary file
+// stores exercise the real read-back verifier in the same integration suite.
+func (f saveStatFunc) Verify(ctx context.Context, digest string) (cas.Object, error) {
+	return f(ctx, digest)
+}
+func (f saveStatFunc) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("fault fixture must use Verify")
+}
+
+// A dependency level is acknowledged atomically even when only some uploads
+// exist, a response is retried, or the physical lease expires during read-back.
+func TestSaveBatchCertificationReconcilesPartialUploadsAndLeaseLoss(t *testing.T) {
+	for _, expire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "partial-upload-and-lost-ack", true: "lease-loss-during-verification"}[expire], func(t *testing.T) {
+			f := newFixture(t)
+			s := newSaveStorageFixture(t, f)
+			_, save := f.finalize(t, "batch")
+			ref := s.ref(save.ID)
+			var batch []blockformat.ObjectInspection
+			for value := byte(1); value <= 3; value++ {
+				root, _ := s.cut(t, value)
+				for _, e := range s.inspect(t, root) {
+					if e.Segment != nil {
+						batch = append(batch, e)
+						break
+					}
+				}
+			}
+			if len(batch) != 3 {
+				t.Fatalf("segment batch size = %d", len(batch))
+			}
+			if err := s.publisher.RegisterBatch(t.Context(), ref, batch); err != nil {
+				t.Fatal(err)
+			}
+			assertCertified := func(want int) {
+				t.Helper()
+				var count int
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_objects d JOIN disk_object_pins p USING(environment_id,digest) WHERE p.save_id=$1 AND d.certified`, save.ID).Scan(&count); err != nil || count != want {
+					t.Fatalf("certified=%d want=%d: %v", count, want, err)
+				}
+			}
+			first, _ := describeStoredObject(batch[0])
+			s.uploadObject(t, first)
+			if err := s.publisher.CertifyBatch(t.Context(), ref, batch); err == nil {
+				t.Fatal("partial upload acknowledged")
+			}
+			assertCertified(0)
+			for _, e := range batch[1:] {
+				object, _ := describeStoredObject(e)
+				s.uploadObject(t, object)
+			}
+			if !expire {
+				for range 2 {
+					if err := s.publisher.RegisterBatch(t.Context(), ref, batch); err != nil {
+						t.Fatal(err)
+					}
+					if err := s.publisher.CertifyBatch(t.Context(), ref, batch); err != nil {
+						t.Fatal(err)
+					}
+				}
+				assertCertified(len(batch))
+				return
+			}
+			entered, release := make(chan struct{}, len(batch)), make(chan struct{})
+			publisher, err := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+				entered <- struct{}{}
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return cas.Object{}, ctx.Err()
+				}
+				return s.remote.Stat(ctx, digest)
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := make(chan error, 1)
+			go func() { result <- publisher.CertifyBatch(t.Context(), ref, batch) }()
+			for range batch {
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					close(release)
+					t.Fatal("verification did not overlap")
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			_, err = f.pool.Exec(ctx, `UPDATE computers SET next_save_seq=next_save_seq WHERE environment_id=$1 AND id=$2; UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer)
+			close(release)
+			certifyErr := <-result
+			if err != nil {
+				t.Fatalf("network verification held owner transaction: %v", err)
+			}
+			if !errors.Is(certifyErr, computer.ErrDenied) {
+				t.Fatalf("expired batch acknowledged: %v", certifyErr)
+			}
+			assertCertified(0)
+		})
+	}
 }

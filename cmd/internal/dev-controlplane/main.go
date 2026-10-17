@@ -40,6 +40,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -177,7 +178,11 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
 	mailer, magicLinkDelivery := devEmail(log)
+	changes := dbnotify.New()
+	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
+	defer stopAllocationWake()
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
+		Changes:                        changes,
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
 		DiagnosticBounds:               diagnosticAdmission.Bounds,
@@ -221,7 +226,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	loops := []backgroundLoop{
-		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
+		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},
+		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},

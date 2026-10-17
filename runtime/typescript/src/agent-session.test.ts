@@ -847,3 +847,41 @@ test("live messages reject non-text content before the authored callback", async
     assert.equal(callbacks, 1)
   } finally { release.resolve(); await result }
 })
+
+test("held interruption retains its convergence bound through repeated controls", async () => {
+  const started = deferred<void>(), release = deferred<void>(), aborted = deferred<void>()
+  const { runtime, calls } = fixture({ turn: async turn => {
+    turn.signal.addEventListener("abort", () => aborted.resolve(), { once: true })
+    started.resolve(); await release.promise; return null
+  } }, {}, { failureConvergenceMs: 40 })
+  const pending = runtime.dispatch(request())
+  const failed = assert.rejects(pending, /convergence timed out/)
+  await started.promise
+  runtime.suspend("capacity exhausted")
+  const first = assert.rejects(runtime.interrupt("turn-1", new Error("storage stop")), /convergence timed out/)
+  await aborted.promise
+  runtime.suspend("still held")
+  const retry = assert.rejects(runtime.interrupt("turn-1", new Error("repeated stop")), /convergence timed out/)
+  try {
+    await Promise.all([failed, first, retry])
+    assert.equal(calls.filter(call => call === "hold:turn_drain_failed").length, 1)
+    assert.throws(() => runtime.resume(), /reconciliation|reconstruction/)
+  } finally { release.resolve() }
+})
+
+test("finalization interruption bounds cleanup even when a later hold arrives", async () => {
+  const cleanupStarted = deferred<void>(), release = deferred<void>()
+  const { runtime, calls } = fixture({ turn: turn => {
+    turn.onCancel(async () => { cleanupStarted.resolve(); await release.promise })
+    return null
+  } }, { finalize: async () => ({ status: "interrupted" }) }, { failureConvergenceMs: 40 })
+  const pending = runtime.dispatch(request())
+  const failed = assert.rejects(pending, /convergence timed out/)
+  await cleanupStarted.promise
+  runtime.suspend("storage full")
+  const stopped = assert.rejects(runtime.interrupt("turn-1", new Error("late stop")), /convergence timed out/)
+  try {
+    await Promise.all([failed, stopped])
+    assert.ok(calls.includes("hold:turn_drain_failed"))
+  } finally { release.resolve() }
+})

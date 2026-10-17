@@ -324,7 +324,7 @@ func assertDatabaseConstraintBoundaries(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,checkpoint_objects.availability_required:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,diagnostic_chunks.ingest_size_bytes:s,diagnostic_chunks.producer_epoch:s,diagnostic_chunks.source_id:s,diagnostic_chunks.source_kind:s,disk_encryption_keys.available:s,disk_object_edges.certification_required:s,disk_object_keys.availability_required:s,disk_objects.availability_required:s,disk_objects.certified:s,disk_objects.certified_org_id:s,disk_roots.certification_required:s,disk_roots.direct_key_required:s,disk_roots.root_kind:s,image_builds.write_key_required:s,slack_threads.front_root_session_id:s,turns.completion_published:s,turns.has_recorded_result:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,checkpoint_objects.availability_required:s,computer_leases.restored_published:s,computer_leases.retained_base_root_id:s,computer_leases.write_key_required:s,computer_saves.published:s,computer_saves.requires_recorded_result:s,computers.recovery_published:s,diagnostic_chunks.ingest_size_bytes:s,diagnostic_chunks.producer_epoch:s,diagnostic_chunks.source_id:s,diagnostic_chunks.source_kind:s,disk_encryption_keys.available:s,disk_object_edges.certification_required:s,disk_object_keys.availability_required:s,disk_objects.availability_required:s,disk_objects.certified:s,disk_objects.certified_org_id:s,disk_roots.certification_required:s,disk_roots.direct_key_required:s,disk_roots.root_kind:s,image_builds.write_key_required:s,slack_threads.front_root_session_id:s,turns.has_recorded_result:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -542,7 +542,6 @@ func assertExecutionOwnershipSchema(t *testing.T, ctx context.Context, pool *pgx
 		{"template_definitions", "environment_id, image_spec_id", "image_specs(environment_id, id)"},
 		{"computer_saves", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
 		{"computer_saves", "environment_id, turn_id, computer_id, requires_recorded_result", "turns(environment_id, id, computer_id, has_recorded_result)"},
-		{"turns", "environment_id, computer_id, id, completion_save_id, completion_published", "computer_saves(environment_id, computer_id, turn_id, id, published)"},
 		{"checkpoint_processes", "environment_id, computer_id, session_id, process_epoch", "session_processes(environment_id, computer_id, session_id, epoch)"},
 		{"checkpoint_processes", "environment_id, computer_id, checkpoint_id", "checkpoints(environment_id, computer_id, id)"},
 		{"checkpoints", "environment_id, computer_id, disk_save_id", "computer_saves(environment_id, computer_id, id)"},

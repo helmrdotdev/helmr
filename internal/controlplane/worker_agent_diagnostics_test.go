@@ -44,6 +44,7 @@ func TestWorkerAgentTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 				t.Fatalf("public response exposed diagnostics: %s", body)
 			}
 			var record struct {
+				Level string
 				Error struct{ Stage, Cause, SQLState string }
 			}
 			if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
@@ -52,6 +53,13 @@ func TestWorkerAgentTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 			expectedState := ""
 			if tc.name == "postgres" {
 				expectedState = "53300"
+			}
+			expectedLevel := "ERROR"
+			if tc.name == "cancelled" {
+				expectedLevel = "INFO"
+			}
+			if record.Level != expectedLevel {
+				t.Fatalf("log level %q, want %q", record.Level, expectedLevel)
 			}
 			if record.Error.Stage != "begin transaction" || record.Error.Cause != tc.kind || record.Error.SQLState != expectedState || strings.Contains(logs.String(), "private") {
 				t.Fatalf("missing or unsafe diagnostic: %s", logs.String())
@@ -88,12 +96,16 @@ func TestWorkerAgentJoinedTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 		}
 	}
 	var record struct {
+		Level string
 		Error struct {
 			Operation, Rollback struct{ Stage, Cause string }
 		}
 	}
 	if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
 		t.Fatal(err)
+	}
+	if record.Level != "INFO" {
+		t.Fatalf("cancelled transaction logged at %q", record.Level)
 	}
 	if record.Error.Operation.Stage != "commit transaction" || record.Error.Operation.Cause != "context_cancelled" ||
 		record.Error.Rollback.Stage != "rollback transaction" || record.Error.Rollback.Cause != "transaction_closed" || strings.Contains(logs.String(), "private") {

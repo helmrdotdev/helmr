@@ -13,7 +13,7 @@ lets it work alongside your team in Slack.
 
 - **Computers defined in code**: image, tools, resources, prepare steps and secrets in one definition.
 - **Agents in plain TypeScript**: start your coding agent once in `init`, then hand it each turn.
-- **Durable by default**: each turn's work is saved, and idle agents resume without rerunning `init`.
+- **Immediate replies, background file saves**: completed turns have durable results and conversation records. Computer files save in the background. If a worker is lost before files are saved, Helmr warns each affected conversation and waits for your next message or Resume before continuing from the last retained save, or the initial work environment if no save exists. Completed turns are never replayed.
 - **People in the loop**: agents ask questions with `turn.ask`, and teammates answer from Slack or the CLI.
 - **Protected secrets**: real credentials are swapped in outside the VM, only for the origins you allow.
 - **Infrastructure you control**: self-host in your own AWS account. Managed Helmr Cloud is planned.

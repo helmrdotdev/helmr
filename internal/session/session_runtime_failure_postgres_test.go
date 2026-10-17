@@ -100,7 +100,7 @@ func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 	if err = storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.Complete(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
+	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var held bool

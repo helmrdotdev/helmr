@@ -55,7 +55,6 @@ worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768
 worker_computer_staging_mib           = 65536
-worker_computer_save_interval_seconds = 60
 worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
 
@@ -114,22 +113,22 @@ artifacts must fit the admitted VM shape before materialization. AWS planning
 rejects explicit disk configurations that cannot fund these files. Genuine
 preparation failures retain their existing bounded retry and exhaustion behavior.
 
-`WORKER_COMPUTER_SAVE_EVERY` is required and must be a positive Go duration.
-It controls background disk preservation while an execution is running. Choose
-it using the workload's write rate, staging capacity, and acceptable loss window;
-there is no built-in default. An in-flight save coalesces ticks. This is not a
-maximum recovery-point age: upload latency and failures can extend that age.
-Successful Turn completion requires its own fresh disk cut and durable publication;
-it does not wait for the periodic interval. Required saves take priority over new
-background saves, while an already admitted save finishes first. Any successful
-publication restarts the interval. Managed waiting and `idleTimeout` govern
-execution suspension separately. Successful adoption allows bounded local staging
-cleanup. Published roots remain retained while the writer lease is live, so both
-write volume and lease duration affect retained storage. Save records and object
-pins also accumulate each interval while the lease is live, even when the resulting
-disk content is unchanged. A failed live capture
-stops the allocation and interrupts its running work; an uncertain publication
-retains its original cut for reconciliation.
+The Worker automatically saves accumulated filesystem changes after a short
+quiet interval, with a maximum deliberate wait during continuous writes. These
+internal scheduling intervals do not bound upload time or the recovery gap during
+failures. An admitted save finishes before its successor; later changes keep their
+original age while waiting. Idle checkpointing and storage pressure bypass
+optional waiting. A clean Computer with no pending completion proof does not
+perform a periodic disk save.
+
+Turn completion is durable independently of Computer saving. Its filesystem
+coverage becomes durable only after an ordered flush, capture and certified
+publication. Multiple completed Turns can share that proof; they do not each
+promise a distinct restore point. Managed waiting and `idleTimeout` govern
+execution suspension separately. Successful adoption and live-writer retirement
+allow bounded local staging cleanup and release superseded remote payloads while
+preserving dependency and key custody. An uncertain publication retains its
+original cut for reconciliation.
 
 The Worker binary runs its own NBD helper. Keep the Computer preparation arena
 and VMM state on the same filesystem. If the Worker dies while a helper owns a

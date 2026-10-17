@@ -32,6 +32,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
@@ -165,7 +166,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("connect diagnostic database: %w", err)
 	}
 	defer diagnosticPool.Close()
-	log.Info("control plane database connection budget", "lifecycle", poolConfig.MaxConns, "diagnostic", diagnosticConfig.MaxConns)
+	log.Info("control plane database connection budget", "lifecycle", poolConfig.MaxConns, "diagnostic", diagnosticConfig.MaxConns, "notifications", 1)
 	queries := db.New(pool)
 	if cfg.Bootstrap.Enabled {
 		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
@@ -221,7 +222,11 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		}
 		slackConfig = &controlplane.SlackConfig{ControlKey: controlKey, Credentials: credentials, Client: slack.NewWebClient(credentials, nil)}
 	}
+	changes := dbnotify.New()
+	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
+	defer stopAllocationWake()
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		Changes:                        changes,
 		Slack:                          slackConfig,
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
@@ -268,9 +273,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 
 	workflows := []backgroundWorkflow{
+		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},
 		{name: "CAS reclamation", run: casReclaimer.Run},
 		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) }},
-		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
+		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},

@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"io"
 	"path/filepath"
 	"testing"
 	"uuid"
@@ -56,7 +55,7 @@ func TestAgentSaveRepeatedCutsReuseStagingBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := &saveRangeOutage{File: remote}
+	source := remote
 	cfg := disk.LocalVersionConfig{Directory: filepath.Join(t.TempDir(), "local"), Base: root, BaseSource: source, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 96 << 10, PackLimit: blockformat.MinPackLimit}
 	local, err := disk.CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
@@ -79,19 +78,28 @@ func TestAgentSaveRepeatedCutsReuseStagingBudget(t *testing.T) {
 			stage = "collect"
 		}
 		machine.wrap = func(c *disk.LocalCapture) computerSaveCapture {
-			return &localSaveReadOutage{LocalCapture: c, source: source, stage: stage}
+			return &localSaveReadOutage{LocalCapture: c, stage: stage}
 		}
 		s.machine = machine
 		want := bytes.Repeat([]byte{byte(i)}, 4096)
-		if _, err := local.WriteAt(t.Context(), want, 4096); err != nil {
+		if _, err := local.WriteAt(t.Context(), want, 4096); errors.Is(err, disk.ErrVersionStagingFull) {
+			// Direct device callers perform the same pressure reclamation that
+			// the NBD owner runs before retrying an unadmitted request.
+			if _, err := local.Collect(t.Context(), 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := local.WriteAt(t.Context(), want, 4096); err != nil {
+				t.Fatal(err)
+			}
+		} else if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.step(t.Context()); stage != "" {
-			if !errors.Is(err, cas.ErrUnavailable) || s.pending == nil {
+		if err := saveTestStep(s, t.Context()); stage != "" {
+			if !errors.Is(err, cas.ErrUnavailable) || s.maintenance == nil {
 				t.Fatalf("%s read outage did not retain cut: %v", stage, err)
 			}
-			pending := *s.pending
-			if err := s.step(t.Context()); err != nil {
+			pending := c.requests[len(c.requests)-1]
+			if err := saveTestStep(s, t.Context()); err != nil {
 				t.Fatalf("retry %s: %v", stage, err)
 			}
 			if s.pending != nil || len(c.requests) == 0 || c.requests[len(c.requests)-1] != pending {
@@ -107,36 +115,22 @@ func TestAgentSaveRepeatedCutsReuseStagingBudget(t *testing.T) {
 	}
 }
 
-type saveRangeOutage struct {
-	*cas.File
-	fail bool
-}
-
-func (s *saveRangeOutage) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
-	if s.fail {
-		s.fail = false
-		return nil, cas.ErrUnavailable
-	}
-	return s.File.GetRange(ctx, digest, size, offset, length)
-}
-
 type localSaveReadOutage struct {
 	*disk.LocalCapture
-	source *saveRangeOutage
-	stage  string
+	stage string
 }
 
-func (c *localSaveReadOutage) Adopt(ctx context.Context, limit int) error {
+func (c *localSaveReadOutage) Adopt(ctx context.Context) error {
 	if c.stage == "adopt" {
-		c.source.fail = true
 		c.stage = ""
+		return cas.ErrUnavailable
 	}
-	return c.LocalCapture.Adopt(ctx, limit)
+	return c.LocalCapture.Adopt(ctx)
 }
 func (c *localSaveReadOutage) Collect(ctx context.Context, limit int) (int64, error) {
 	if c.stage == "collect" {
-		c.source.fail = true
 		c.stage = ""
+		return 0, cas.ErrUnavailable
 	}
 	return c.LocalCapture.Collect(ctx, limit)
 }

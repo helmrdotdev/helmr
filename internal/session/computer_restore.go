@@ -127,6 +127,9 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 				if _, err = tx.Exec(ctx, `UPDATE session_processes SET computer_lease_epoch=$4 WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, env, m.Session, m.Epoch, epoch); err != nil {
 					return err
 				}
+				if err = notifySessionsChanged(ctx, tx, env, m.Session); err != nil {
+					return err
+				}
 			}
 			identity := &agentv1.SessionIdentity{SessionId: m.Session.String(), ProcessEpoch: m.Epoch}
 			result.Grants = append(result.Grants, &agentv1.SessionGrant{Identity: identity, ComputerId: r.Computer.String(), ComputerInstanceId: target.Instance.String(), WriterGeneration: epoch, ComputerLeaseEpoch: epoch, WorkerHostId: host.HostID.String(), AuthorityGeneration: generation, ExpiresAtUnixNano: target.Expires.UnixNano(), ChannelCredential: credential})
@@ -225,6 +228,11 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
  AND (p.environment_id,p.session_id,p.epoch)=(m.environment_id,m.session_id,m.process_epoch)
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
+		}
+		for _, m := range r.Members {
+			if err = notifySessionsChanged(ctx, tx, env, m.Session); err != nil {
+				return err
+			}
 		}
 		return computer.ConsumeCheckpoint(ctx, tx, env, checkpoint)
 	}))

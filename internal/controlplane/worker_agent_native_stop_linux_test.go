@@ -66,7 +66,7 @@ func verifyNativeStops(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, r
 		var valid bool
 		var observed json.RawMessage
 		err := pool.QueryRow(ctx, `SELECT interrupted.status='interrupted' AND interrupted.result IS NULL
- AND interrupted.completion_save_id IS NULL AND successor.status='completed' AND successor.completion_save_id IS NOT NULL
+ AND successor.status='completed'
  AND interrupted.process_epoch=$6 AND successor.process_epoch=interrupted.process_epoch
  AND successor.started_at>=interrupted.terminal_at AND successor.started_at>$7
  AND p.failure_recorded_at IS NULL AND p.stop_turn_id IS NULL AND p.stop_sequence>=$8

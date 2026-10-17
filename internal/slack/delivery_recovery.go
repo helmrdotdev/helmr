@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
@@ -149,6 +150,9 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		}
 		if attempt == nil || *attempt != input.AttemptID || revision != input.PublicationRevision || (state != "uncertain" && !(state == "failed" && disposed)) {
 			return ErrDeliveryChanged
+		}
+		if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
+			return err
 		}
 		if action == "check" {
 			if !paused {

@@ -64,7 +64,6 @@ variables {
     ENVIRONMENT_ADMISSION_BURST            = "20"
     ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
   }
-  worker_computer_save_interval_seconds    = 60
   worker_computer_devices                  = ["/dev/nbd0", "/dev/nbd1"]
   aws_region                               = "us-east-1"
   worker_group_name                        = "workers"
@@ -93,7 +92,7 @@ variables {
   worker_host_type                    = "c8i.xlarge"
   worker_enable_nested_virtualization = true
   worker_capacity_vcpus               = 8
-  worker_capacity_memory_mib          = 16384
+  worker_capacity_memory_mib          = 16448
   worker_execution_slots              = 4
   worker_root_volume_size_gb          = 1024
   worker_disk_mib                     = 1048576
@@ -160,11 +159,10 @@ run "export_current_sealed_generation" {
 run "retain_current_sealed_generation" {
   command = plan
   variables {
-    worker_vm_scratch_disk_mib            = 40960
-    create_worker                         = true
-    worker_computer_save_interval_seconds = 30
-    worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2"]
-    retained_worker_generations           = run.export_current_sealed_generation.worker_generation_definitions
+    worker_vm_scratch_disk_mib  = 40960
+    create_worker               = true
+    worker_computer_devices     = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2"]
+    retained_worker_generations = run.export_current_sealed_generation.worker_generation_definitions
   }
   assert {
     condition     = alltrue([for key, generation in var.retained_worker_generations : jsonencode(output.worker_generation_definitions[key].sealed_provider_definition) == jsonencode(generation.sealed_provider_definition) && generation.sealed_provider_definition.boundary_policy_arn == null])
@@ -189,17 +187,6 @@ run "rollback_disabled" {
   }
 }
 
-run "save_interval_rotates_generation" {
-  command = plan
-  variables {
-    worker_computer_save_interval_seconds = 30
-    retained_worker_generations           = run.export_current_sealed_generation.worker_generation_definitions
-  }
-  assert {
-    condition     = local.worker_pool_name != one(keys(var.retained_worker_generations))
-    error_message = "Changing Computer save cadence must allocate a new Pool."
-  }
-}
 run "device_allowlist_rotates_generation" {
   command = plan
   variables {

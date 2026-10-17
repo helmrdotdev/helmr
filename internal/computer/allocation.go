@@ -38,7 +38,8 @@ type Allocation struct {
 
 type ComputerAllocation struct {
 	Allocation
-	BaseVersion   string
-	RestoredFrom  *uuid.UUID
-	InitializedAt *time.Time
+	BaseVersion      string
+	RestoredFrom     *uuid.UUID
+	DiskOnlyRecovery bool
+	InitializedAt    *time.Time
 }

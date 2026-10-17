@@ -12,7 +12,7 @@ const TONE_CLASSES: Record<Tone, string> = {
 };
 
 const TONES = {
-  turn: { queued: "waiting", running: "active", finalizing: "waiting", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
+  turn: { queued: "waiting", running: "active", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
   session: { open: "active", closing: "waiting", closed: "succeeded", cancelled: "revoked" },
   // Only the lifecycle states the console shows; an available Computer shows its
   // residency (ComputerStatus).

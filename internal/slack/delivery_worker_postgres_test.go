@@ -235,7 +235,7 @@ func TestSlackDeliveryWorkerExpiresIssuedReplyAfterRootDeletion(t *testing.T) {
 
 func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T) {
 	f := newStatusFixture(t)
-	// Earlier first publications share the same installation's send budget.
+	// Earlier publications share this channel's posting budget; status is independent.
 	for n := range 6 {
 		peer := f
 		peer.Session, peer.thread, peer.participant = uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -250,6 +250,9 @@ func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T)
 	f.due(t)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
+		if r.URL.Path == "/api/agents.sessions.setStatus" {
+			return `{"ok":true,"agent_status":"processing"}`
+		}
 		calls++
 		var body map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -291,21 +294,21 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
 		t.Fatal(err)
 	}
-	if len(methods) != 1 || !strings.HasSuffix(methods[0], "agents.sessions.setStatus") {
+	if len(methods) != 2 || !strings.HasSuffix(methods[0], "agents.sessions.setStatus") || !strings.HasSuffix(methods[1], "chat.postMessage") {
 		t.Fatal("initial assertion", methods)
 	}
 	// Change authoritative core state while retaining FinishStatus's refresh_at.
 	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$2;
  UPDATE slack_posts SET next_attempt_at=clock_timestamp() WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread, post)
 	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='posted' FROM slack_posts WHERE id=$1`, post).Scan(&posted); err != nil || !posted || len(methods) != 2 || !strings.HasSuffix(methods[1], "chat.postMessage") {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='posted' FROM slack_posts WHERE id=$1`, post).Scan(&posted); err != nil || !posted || len(methods) != 3 || !strings.HasSuffix(methods[2], "agents.sessions.setStatus") {
 		t.Fatal("changing status starved waiting content", posted, methods, err)
 	}
 }
@@ -324,6 +327,9 @@ func TestSlackDeliveryWorkerWaitingContentPrecedesPeriodicRefreshPopulation(t *t
  UPDATE slack_posts SET created_at=clock_timestamp()-interval '2 minutes' WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.Session, f.channel, f.Environment, post)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
+		if r.URL.Path == "/api/agents.sessions.setStatus" {
+			return `{"ok":true,"agent_status":"active"}`
+		}
 		calls++
 		if r.URL.Path != "/api/chat.postMessage" {
 			t.Fatal("periodic refresh consumed content slot", r.URL.Path)
@@ -354,18 +360,23 @@ func TestSlackDeliveryWorkerAgeOrderingPreservesStreamRepair(t *testing.T) {
 		return `{"ok":true,"ts":"123.789","channel":"C1"}`
 	})
 	want := []string{"/api/chat.startStream", "/api/agents.sessions.setStatus", "/api/chat.stopStream", "/api/agents.sessions.setStatus", "/api/chat.startStream"}
-	for i, method := range want {
+	for i := 0; i < len(want) && len(methods) < len(want); i++ {
 		// Advance only retry eligibility. Keep publication age, repair obligations
 		// and the refresh deadline written by the real completion paths unchanged.
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1;
+		dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_posts SET next_attempt_at=clock_timestamp();
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()`, pgx.QueryExecModeSimpleProtocol, f.installation)
 		if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
 			t.Fatal(err)
 		}
-		if len(methods) != i+1 || methods[i] != method {
-			t.Fatalf("repair order step %d: %v", i, methods)
+		for index := range min(len(methods), len(want)) {
+			if methods[index] != want[index] {
+				t.Fatalf("repair order step %d: %v", i, methods)
+			}
 		}
+	}
+	if len(methods) < len(want) {
+		t.Fatalf("incomplete repair sequence: %v", methods)
 	}
 }
 
@@ -385,9 +396,15 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 	post := f.post(t, 1, "newer-content", "lifecycle", nil)
 	f.post(t, 2, "newer-content-2", "lifecycle", nil)
 	f.post(t, 3, "newer-content-3", "lifecycle", nil)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1`, f.installation)
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1`, f.installation)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
+		if r.URL.Path == "/api/chat.postMessage" {
+			if calls != 1 {
+				t.Fatal("content preceded status")
+			}
+			return `{"ok":true,"ts":"123.789","channel":"C1"}`
+		}
 		calls++
 		if r.URL.Path != "/api/agents.sessions.setStatus" {
 			t.Fatal("newer content displaced known status change", r.URL.Path)
@@ -398,7 +415,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 		t.Fatal(err)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='pending' FROM slack_posts WHERE id=$1) AND (SELECT status_confirmation='acknowledged' AND desired_status='processing' AND confirmed_revision=desired_revision FROM slack_threads WHERE id=$2)`, post, f.thread).Scan(&exact); err != nil || !exact || calls != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='posted' FROM slack_posts WHERE id=$1) AND (SELECT status_confirmation='acknowledged' AND desired_status='processing' AND confirmed_revision=desired_revision FROM slack_threads WHERE id=$2)`, post, f.thread).Scan(&exact); err != nil || !exact || calls != 1 {
 		t.Fatal("changed status freshness", exact, calls, err)
 	}
 }
@@ -412,6 +429,9 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
  UPDATE slack_threads SET status_confirmation='acknowledged',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, f.thread)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
+		if r.URL.Path == "/api/agents.sessions.setStatus" {
+			return `{"ok":true,"agent_status":"active"}`
+		}
 		calls++
 		if r.URL.Path != "/api/chat.startStream" {
 			t.Fatal("unexpected mutation", r.URL.Path)

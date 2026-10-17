@@ -35,6 +35,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 	queued := f.enqueue(t, "queued")
 	result, save := peer.finalize(t, "prepared")
 	storage := newSaveStorageFixture(t, peer)
+	checkpointImageExposure(t, f)
 	cut, root := storage.cut(t, 2)
 	peer.capture(t, save, root)
 	if err := storage.publish(t, save.ID, cut); err != nil {
@@ -46,7 +47,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", result.TurnID: "finalizing"} {
+	for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", result.TurnID: "completed"} {
 		var state string
 		if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, id).Scan(&state); err != nil || state != want {
 			t.Fatalf("turn %s: %s %v", id, state, err)
@@ -66,19 +67,8 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 	if !errors.As(err, &unique) || unique.Code != "23505" || unique.ConstraintName != "computer_leases_one_writer" {
 		t.Fatalf("expected exact live-writer exclusion, got %v", err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, peer.session, result.TurnID); err != nil {
 		t.Fatal(err)
-	}
-	for _, s := range []fixture{f, peer} {
-		var hold uuid.UUID
-		if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND scope='local' AND issuer_kind='system'`, s.session).Scan(&hold); err != nil {
-			t.Fatal(err)
-		}
-		req := controlRequest(s, "resume", "release-loss")
-		req.HoldID = hold
-		if _, err := session.ControlSession(t.Context(), f.pool, s.caller(), req); err != nil {
-			t.Fatal(err)
-		}
 	}
 	for range 2 {
 		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
@@ -189,6 +179,7 @@ func TestComputerLeaseLossPreservesEligibleContinuation(t *testing.T) {
 
 func TestComputerLeaseLossAfterConsumptionDoesNotReplayCheckpoint(t *testing.T) {
 	r := newComputerRestoreFixture(t)
+	checkpointImageExposure(t, r.f)
 	p := r.prepare(t)
 	if err := session.ValidateComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, p, restoreReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
@@ -210,7 +201,7 @@ func TestComputerLeaseLossAfterConsumptionDoesNotReplayCheckpoint(t *testing.T) 
 		t.Fatal(err)
 	}
 	var holds int
-	if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, r.f.session).Scan(&holds); err != nil || holds != 1 {
+	if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, r.f.session).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("checkpoint loss duplicated hold %d %v", holds, err)
 	}
 	if err := r.f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM session_processes WHERE session_id=$1`, r.f.session).Scan(&lost); err != nil || !lost {
@@ -436,78 +427,88 @@ func TestPhysicalStopReleasesOnlyDeletedComputerKey(t *testing.T) {
 }
 
 func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T) {
-	for _, phase := range []string{"before-installation", "after-installation-preparation", "later-target-before-preparation"} {
-		t.Run(phase, func(t *testing.T) {
-			r := newComputerRestoreFixture(t)
-			if phase != "before-installation" {
-				r.prepare(t)
-			}
-			identity := func() computer.LeaseIdentity {
-				id := computer.LeaseIdentity{EnvironmentID: r.f.env, ComputerID: r.f.computer, Epoch: r.epoch}
-				if err := r.f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&id.InstanceID); err != nil {
+	for _, eligible := range []bool{true, false} {
+		for _, phase := range []string{"before-installation", "after-installation-preparation", "later-target-before-preparation"} {
+			t.Run(fmt.Sprintf("%s/eligible=%v", phase, eligible), func(t *testing.T) {
+				r := newComputerRestoreFixture(t)
+				if eligible {
+					checkpointImageExposure(t, r.f)
+				}
+				if phase != "before-installation" {
+					r.prepare(t)
+				}
+				identity := func() computer.LeaseIdentity {
+					id := computer.LeaseIdentity{EnvironmentID: r.f.env, ComputerID: r.f.computer, Epoch: r.epoch}
+					if err := r.f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&id.InstanceID); err != nil {
+						t.Fatal(err)
+					}
+					return id
+				}
+				if phase == "later-target-before-preparation" {
+					if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, identity(), uuid.Nil()); err != nil {
+						t.Fatal(err)
+					}
+					r.newTarget(t)
+				}
+				current := identity()
+				wrongInstance := current
+				wrongInstance.InstanceID = uuid.NewV7()
+				if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, dispatch.ErrDenied) {
+					t.Fatalf("wrong instance report: %v", err)
+				}
+				queued := r.f.enqueue(t, "queued-through-invalid-restore")
+				independent := uuid.NewV7()
+				dbtest.MustExec(t, t.Context(), r.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','independent runtime crash')`, r.f.env, independent, r.f.session)
+				if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, dispatch.ErrDenied) {
+					t.Fatalf("unbound checkpoint report: %v", err)
+				}
+				var intact bool
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT cp.status IN ('ready','restoring') AND l.fenced_at IS NULL FROM checkpoints cp JOIN computer_leases l ON l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
+					t.Fatalf("unbound report mutated state: %v %v", intact, err)
+				}
+				for range 2 {
+					if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var lost bool
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL AND manifest IS NOT NULL FROM checkpoints WHERE id=$1`, r.manifest.CheckpointID).Scan(&lost); err != nil || !lost {
+					t.Fatalf("checkpoint remained eligible: %v %v", lost, err)
+				}
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT bool_and(status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL) FROM session_processes WHERE computer_id=$1`, r.f.computer).Scan(&lost); err != nil || !lost {
+					t.Fatalf("captured generations not held/fenced: %v %v", lost, err)
+				}
+				wantHolds := 1 // The independent hold must survive.
+				if !eligible {
+					wantHolds += 2
+				} // Each member also requires attention without an eligible disk.
+				var holds int
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != wantHolds {
+					t.Fatalf("eligible disk recovery changed independent attention holds=%d error=%v", holds, err)
+				}
+				resume := controlRequest(r.f, "resume", "after-checkpoint-loss")
+				resume.HoldID = independent
+				if _, err := session.ControlSession(t.Context(), r.f.pool, r.f.caller(), resume); err != nil {
 					t.Fatal(err)
 				}
-				return id
-			}
-			if phase == "later-target-before-preparation" {
-				if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, identity(), uuid.Nil()); err != nil {
-					t.Fatal(err)
-				}
-				r.newTarget(t)
-			}
-			current := identity()
-			wrongInstance := current
-			wrongInstance.InstanceID = uuid.NewV7()
-			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, wrongInstance, r.manifest.CheckpointID); !errors.Is(err, dispatch.ErrDenied) {
-				t.Fatalf("wrong instance report: %v", err)
-			}
-			queued := r.f.enqueue(t, "queued-through-invalid-restore")
-			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, uuid.NewV7()); !errors.Is(err, dispatch.ErrDenied) {
-				t.Fatalf("unbound checkpoint report: %v", err)
-			}
-			var intact bool
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT cp.status IN ('ready','restoring') AND l.fenced_at IS NULL FROM checkpoints cp JOIN computer_leases l ON l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
-				t.Fatalf("unbound report mutated state: %v %v", intact, err)
-			}
-			for range 2 {
 				if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
 					t.Fatal(err)
 				}
-			}
-			var lost bool
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL AND manifest IS NOT NULL FROM checkpoints WHERE id=$1`, r.manifest.CheckpointID).Scan(&lost); err != nil || !lost {
-				t.Fatalf("checkpoint remained eligible: %v %v", lost, err)
-			}
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT bool_and(status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL) FROM session_processes WHERE computer_id=$1`, r.f.computer).Scan(&lost); err != nil || !lost {
-				t.Fatalf("captured generations not held/fenced: %v %v", lost, err)
-			}
-			var holds int
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 2 {
-				t.Fatalf("holds=%d error=%v", holds, err)
-			}
-			resume := controlRequest(r.f, "resume", "after-checkpoint-loss")
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, r.f.session).Scan(&resume.HoldID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := session.ControlSession(t.Context(), r.f.pool, r.f.caller(), resume); err != nil {
-				t.Fatal(err)
-			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), r.f.pool, r.host, current, r.manifest.CheckpointID); err != nil {
-				t.Fatal(err)
-			}
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, r.f.session).Scan(&holds); err != nil || holds != 0 {
-				t.Fatalf("replayed failure recreated released hold: %d %v", holds, err)
-			}
-			var queuedIntact bool
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT status='queued' FROM turns WHERE id=$1`, queued.TurnID).Scan(&queuedIntact); err != nil || !queuedIntact {
-				t.Fatalf("accepted input lost: %v %v", queuedIntact, err)
-			}
-		})
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != wantHolds-1 {
+					t.Fatalf("replayed loss recreated hold: %d %v", holds, err)
+				}
+				var queuedIntact bool
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT status='queued' FROM turns WHERE id=$1`, queued.TurnID).Scan(&queuedIntact); err != nil || !queuedIntact {
+					t.Fatalf("accepted input lost: %v %v", queuedIntact, err)
+				}
+			})
+		}
 	}
 }
 
 func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStaleOwner(t *testing.T) {
 	f := newFixture(t)
+	checkpointImageExposure(t, f)
 	storage := newSaveStorageFixture(t, f)
 	completed, save := f.finalize(t, "completed-before-capture")
 	cut, root := storage.cut(t, 41)
@@ -515,7 +516,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, completed.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, completed.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var before string
@@ -563,5 +564,9 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='published' FROM computer_saves WHERE id=$1`, save.ID).Scan(&intact); err != nil || !intact {
 		t.Fatalf("completed save changed: %v %v", intact, err)
+	}
+	var holds int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
+		t.Fatalf("fully covered RAM loss acquired attention holds=%d error=%v", holds, err)
 	}
 }

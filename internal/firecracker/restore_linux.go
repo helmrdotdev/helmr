@@ -161,60 +161,63 @@ func (c *Connector) validateRestoreIdentity(
 	if err != nil {
 		return manifest, Config{}, fmt.Errorf("resolve target host runtime identity: %w", err)
 	}
-	if identity.RuntimeBackend != "firecracker" {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime backend %q is not supported", identity.RuntimeBackend)
-	}
-	workerArchitecture := targetRuntime.Arch
-	if identity.RuntimeArch != workerArchitecture {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime arch %q does not match worker arch %q", identity.RuntimeArch, workerArchitecture)
-	}
-	if identity.VMRuntimeContract != targetRuntime.Contract {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime contract %q does not match worker contract %q", identity.VMRuntimeContract, targetRuntime.Contract)
-	}
-	if len(manifestBytes) == 0 {
-		return manifest, Config{}, errors.New("checkpoint manifest is required")
-	}
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return manifest, Config{}, fmt.Errorf("decode checkpoint manifest: %w", err)
-	}
-	if manifest.RecoveryPoint.ID != checkpointID {
-		return manifest, Config{}, fmt.Errorf("checkpoint manifest recovery point id %q does not match restore id %q", manifest.RecoveryPoint.ID, checkpointID)
-	}
-	kernelDigest := targetRuntime.KernelDigest
-	if identity.KernelDigest != kernelDigest {
-		return manifest, Config{}, fmt.Errorf("checkpoint kernel digest %s does not match worker kernel digest %s", identity.KernelDigest, kernelDigest)
-	}
-	initramfsDigest := targetRuntime.InitramfsDigest
-	if identity.InitramfsDigest != initramfsDigest {
-		return manifest, Config{}, fmt.Errorf("checkpoint initramfs digest %s does not match worker initramfs digest %s", identity.InitramfsDigest, initramfsDigest)
-	}
-	rootfsDigest := targetRuntime.RootfsDigest
-	if identity.RootfsDigest != rootfsDigest {
-		return manifest, Config{}, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
-	}
-	if identity.VMConfigDigest != sha256sum.DigestBytes(manifestBytes) {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.VMConfigDigest, sha256sum.DigestBytes(manifestBytes))
-	}
+	// Match placement before interpreting content against this runtime's format.
 	runtimeID := targetRuntime.ID
 	if identity.RuntimeID != runtimeID {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime id %s does not match worker runtime id %s", identity.RuntimeID, runtimeID)
 	}
+	if identity.RuntimeBackend != "firecracker" {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint runtime backend %q is not supported", vm.ErrInvalidCheckpointContent, identity.RuntimeBackend)
+	}
+	workerArchitecture := targetRuntime.Arch
+	if identity.RuntimeArch != workerArchitecture {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint runtime arch %q does not match worker arch %q", vm.ErrInvalidCheckpointContent, identity.RuntimeArch, workerArchitecture)
+	}
+	if identity.VMRuntimeContract != targetRuntime.Contract {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint runtime contract %q does not match worker contract %q", vm.ErrInvalidCheckpointContent, identity.VMRuntimeContract, targetRuntime.Contract)
+	}
+	if len(manifestBytes) == 0 {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint manifest is required", vm.ErrInvalidCheckpointContent)
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return manifest, Config{}, fmt.Errorf("%w: decode checkpoint manifest: %w", vm.ErrInvalidCheckpointContent, err)
+	}
+	if manifest.RecoveryPoint.ID != checkpointID {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint manifest recovery point id %q does not match restore id %q", vm.ErrInvalidCheckpointContent, manifest.RecoveryPoint.ID, checkpointID)
+	}
+	kernelDigest := targetRuntime.KernelDigest
+	if identity.KernelDigest != kernelDigest {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint kernel digest %s does not match worker kernel digest %s", vm.ErrInvalidCheckpointContent, identity.KernelDigest, kernelDigest)
+	}
+	initramfsDigest := targetRuntime.InitramfsDigest
+	if identity.InitramfsDigest != initramfsDigest {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint initramfs digest %s does not match worker initramfs digest %s", vm.ErrInvalidCheckpointContent, identity.InitramfsDigest, initramfsDigest)
+	}
+	rootfsDigest := targetRuntime.RootfsDigest
+	if identity.RootfsDigest != rootfsDigest {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint rootfs digest %s does not match worker rootfs digest %s", vm.ErrInvalidCheckpointContent, identity.RootfsDigest, rootfsDigest)
+	}
+	if identity.VMConfigDigest != sha256sum.DigestBytes(manifestBytes) {
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint runtime config digest %s does not match checkpoint manifest digest %s", vm.ErrInvalidCheckpointContent, identity.VMConfigDigest, sha256sum.DigestBytes(manifestBytes))
+	}
 	if identity.VMVCPUCount <= 0 {
-		return manifest, Config{}, fmt.Errorf("checkpoint VM vCPU count %d is invalid", identity.VMVCPUCount)
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint VM vCPU count %d is invalid", vm.ErrInvalidCheckpointContent, identity.VMVCPUCount)
 	}
 	if int64(identity.VMVCPUCount) != manifest.RecoveryPoint.Runtime.VCPUCount {
 		return manifest, Config{}, fmt.Errorf(
-			"checkpoint VM vCPU count %d does not match checkpoint manifest vCPU count %d",
+			"%w: checkpoint VM vCPU count %d does not match checkpoint manifest vCPU count %d",
+			vm.ErrInvalidCheckpointContent,
 			identity.VMVCPUCount,
 			manifest.RecoveryPoint.Runtime.VCPUCount,
 		)
 	}
 	if !sha256sum.ValidDigest(identity.CPUConfigDigest) {
-		return manifest, Config{}, errors.New("checkpoint guest CPU configuration digest is not canonical")
+		return manifest, Config{}, fmt.Errorf("%w: checkpoint guest CPU configuration digest is not canonical", vm.ErrInvalidCheckpointContent)
 	}
 	if identity.CPUConfigDigest != manifest.RecoveryPoint.Runtime.CPUConfigDigest {
 		return manifest, Config{}, fmt.Errorf(
-			"checkpoint guest CPU configuration digest %s does not match checkpoint manifest digest %s",
+			"%w: checkpoint guest CPU configuration digest %s does not match checkpoint manifest digest %s",
+			vm.ErrInvalidCheckpointContent,
 			identity.CPUConfigDigest,
 			manifest.RecoveryPoint.Runtime.CPUConfigDigest,
 		)
@@ -255,13 +258,13 @@ func (c *Connector) configForRestoreManifest(manifest snapshotManifest) (Config,
 	cfg := c.cfg
 	runtimeManifest := manifest.RecoveryPoint.Runtime
 	if runtimeManifest.VCPUCount <= 0 {
-		return Config{}, fmt.Errorf("checkpoint manifest vcpu count %d is invalid", runtimeManifest.VCPUCount)
+		return Config{}, fmt.Errorf("%w: checkpoint manifest vcpu count %d is invalid", vm.ErrInvalidCheckpointContent, runtimeManifest.VCPUCount)
 	}
 	if runtimeManifest.MemoryMiB <= 0 {
-		return Config{}, fmt.Errorf("checkpoint manifest memory %d MiB is invalid", runtimeManifest.MemoryMiB)
+		return Config{}, fmt.Errorf("%w: checkpoint manifest memory %d MiB is invalid", vm.ErrInvalidCheckpointContent, runtimeManifest.MemoryMiB)
 	}
 	if runtimeManifest.ScratchDiskMiB <= 0 {
-		return Config{}, fmt.Errorf("checkpoint manifest scratch disk size %d MiB is invalid", runtimeManifest.ScratchDiskMiB)
+		return Config{}, fmt.Errorf("%w: checkpoint manifest scratch disk size %d MiB is invalid", vm.ErrInvalidCheckpointContent, runtimeManifest.ScratchDiskMiB)
 	}
 	if runtimeManifest.VCPUCount > cfg.VCPUCount {
 		return Config{}, fmt.Errorf("checkpoint manifest vcpu count %d exceeds worker capacity %d", runtimeManifest.VCPUCount, cfg.VCPUCount)

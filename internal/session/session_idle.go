@@ -26,7 +26,7 @@ func reconcileSessionIdle(ctx context.Context, database db.TxBeginner, env, sess
    SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
    UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON a.parent_session_id=s.id WHERE s.environment_id=$1
   ) SELECT
-   EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('queued','running','finalizing'))
+   EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('queued','running'))
    OR EXISTS(SELECT 1 FROM turn_messages WHERE environment_id=$1 AND session_id=$2 AND status IN ('admitted','started'))
    OR EXISTS(SELECT 1 FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND status='pending')
    OR EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))

@@ -201,7 +201,8 @@ type ownedCaptureFixture struct {
 	released bool
 }
 
-func (*ownedCaptureFixture) Root() disk.VersionRoot { return disk.VersionRoot{} }
+func (*ownedCaptureFixture) Changes() disk.VersionChanges { return disk.VersionChanges{} }
+func (*ownedCaptureFixture) Root() disk.VersionRoot       { return disk.VersionRoot{} }
 func (*ownedCaptureFixture) Publish(context.Context, disk.ContinuationPublication) error {
 	return errors.New("unexpected publication")
 }
@@ -210,4 +211,10 @@ func (c *ownedCaptureFixture) Release() {
 		c.released = true
 		c.owner.releases++
 	}
+}
+
+func (*ownedComputerFixture) Changes() disk.VersionChanges { return disk.VersionChanges{} }
+
+func (d *ownedComputerFixture) PinCommitted(context.Context) (disk.RetainedVersion, error) {
+	return nil, errors.New("unexpected pressure pin")
 }

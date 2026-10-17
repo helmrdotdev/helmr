@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -38,9 +39,13 @@ func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, 
 		// retained request instead of treating deterministic rejection as uncertainty.
 		response = workerapi.AgentOperationResponse{RequestID: request.RequestID, Error: &workerapi.AgentOperationError{Code: "invalid_arguments", Message: "Operation ID or JSON payload is invalid"}}
 	} else {
-		var err error
-		response, err = client.AgentOperation(ctx, request)
-		if err != nil {
+		delay := 100 * time.Millisecond
+		for {
+			var err error
+			response, err = client.AgentOperation(ctx, request)
+			if err == nil {
+				break
+			}
 			var response *httpclient.Error
 			status := 0
 			if errors.As(err, &response) {
@@ -48,7 +53,22 @@ func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, 
 			}
 			slog.Info("Session operation awaiting retry", "session_id", request.Session.SessionID, "turn_id", request.TurnID,
 				"request_id", request.RequestID, "method", operation.GetMethod().String(), "http_status", status, "error", err)
-			return err
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			if !agentOperationRequestRetryable(request.Method, err) {
+				return err
+			}
+			// The same retained operation stays owned by this attachment. Only
+			// the upstream HTTP request retries; guest framing below never does.
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return context.Cause(ctx)
+			case <-timer.C:
+			}
+			delay = min(2*time.Second, delay*2)
 		}
 	}
 	if response.RequestID != request.RequestID || (response.Error == nil) == (len(response.Value) == 0) || (response.Error == nil && !json.Valid(response.Value)) {
@@ -64,6 +84,14 @@ func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, 
 		return err
 	}
 	return connection.Acknowledge(ctx, event.GetEventSequence())
+}
+
+// Pending callback receipts are a normal finalization dependency. Retry only
+// that typed response; all other HTTP and guest transport uncertainty retains
+// its existing attachment reconciliation behavior.
+func agentOperationRequestRetryable(method workerapi.AgentOperationMethod, err error) bool {
+	var response *httpclient.Error
+	return method == workerapi.AgentMethodFinalize && errors.As(err, &response) && response.StatusCode == http.StatusServiceUnavailable && response.Code == workerapi.TurnReceiptsPending
 }
 
 // ServeAgentSession serves one attached Session over its guest connection until

@@ -17,7 +17,7 @@ import (
 
 var ErrResponseAlreadyStaged = errors.New("response already staged")
 
-// Output is durable progress, independent of the result's mandatory own save.
+// Output is durable progress, independent of background Computer saves.
 // The same operation returns its original sequence, including after settlement.
 func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, operation uuid.UUID, raw json.RawMessage) (int64, error) {
 	value, err := content.Content(raw, true)
@@ -68,6 +68,9 @@ func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.Hos
  INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,operation_id,operation_digest)
  SELECT $1,$2,seq,$3,'turn.output',$4,$5,$6 FROM allocated RETURNING seq`, e.EnvironmentID, e.SessionID, turn, []byte(value), operation, digest[:]).Scan(&sequence)
 		if err != nil {
+			return err
+		}
+		if err = notifySessionReaders(ctx, tx, e.SessionID); err != nil {
 			return err
 		}
 		if !slackContentNonempty(value) {

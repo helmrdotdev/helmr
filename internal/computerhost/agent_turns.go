@@ -91,6 +91,7 @@ func (owner *agentSessionTurns) observe(ctx context.Context, message *agentv1.Gu
 		owner.mu.Lock()
 		if owner.pending == turn {
 			owner.pending = ""
+			owner.connection.localWork.notify()
 		}
 		owner.mu.Unlock()
 		return true, nil
@@ -166,9 +167,11 @@ func serveExecutingAgentSession(ctx context.Context, connection *AgentSessionCon
 					return
 				}
 			}
-			ticker := time.NewTicker(250 * time.Millisecond)
+			ticker := time.NewTicker(15 * time.Second)
 			defer ticker.Stop()
 			for {
+				workWake := connection.workWake.snapshot()
+				localWake := connection.localWork.snapshot()
 				if err := owner.dispatch(ctx); err != nil {
 					cancel(err)
 					return
@@ -176,6 +179,8 @@ func serveExecutingAgentSession(ctx context.Context, connection *AgentSessionCon
 				select {
 				case <-ctx.Done():
 					return
+				case <-workWake:
+				case <-localWake:
 				case <-ticker.C:
 				}
 			}

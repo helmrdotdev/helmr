@@ -65,7 +65,7 @@ func TestIssueHostCredentialValidatesInOrder(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// A call past validation has no database executor.
-			_, err := IssueHostCredential(t.Context(), db.New(nil), cfg, test.exchange, time.Now)
+			_, err := issueHostCredential(t.Context(), db.New(nil), cfg, test.exchange, time.Now)
 			var input InputError
 			if test.input != "" && (!errors.As(err, &input) || err.Error() != test.input) {
 				t.Fatalf("error = %v, want input error %q", err, test.input)

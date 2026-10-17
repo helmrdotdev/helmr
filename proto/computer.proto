@@ -207,6 +207,7 @@ message PreparationControlRequest {
   bool renew_only = 4;
   string log_stream = 5;
   int64 acknowledged_through = 6;
+ bool wait_for_completion = 7;
 }
 message PreparationControlResponse {
   string state = 1;

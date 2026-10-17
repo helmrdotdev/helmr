@@ -49,10 +49,10 @@ func (g *nativePublicationGate) holdNativeDeadline(ctx context.Context, save str
 	defer cancel()
 	proof := nativeFinalizationDeadline{SaveID: save}
 	var valid bool
-	err = g.pool.QueryRow(ctx, `SELECT t.id,t.session_id,t.deadline_at,clock_timestamp(),
- t.status='finalizing' AND t.seq=1 AND t.result IS NOT NULL AND t.completion_save_id IS NULL
- AND s.status='captured' AND s.root_id IS NULL AND s.captured_at<t.deadline_at
- AND t.deadline_at>=t.started_at+interval '30 seconds' AND t.deadline_at<=t.started_at+interval '31 seconds' AND clock_timestamp()<t.deadline_at
+	err = g.pool.QueryRow(ctx, `SELECT t.id,t.session_id,t.started_at+interval '30 seconds',clock_timestamp(),
+ t.status='completed' AND t.seq=1 AND t.result IS NOT NULL
+ AND s.status='captured' AND s.root_id IS NULL AND t.terminal_at<=s.captured_at
+ AND t.deadline_at IS NULL AND t.terminal_at<t.started_at+interval '30 seconds' AND clock_timestamp()<t.started_at+interval '30 seconds'
  FROM computer_saves s JOIN turns t ON(t.environment_id,t.id)=(s.environment_id,s.turn_id)
  WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&proof.TurnID, &proof.SessionID, &proof.DeadlineAt, &proof.HeldAt, &valid)
 	if err != nil {
@@ -110,29 +110,29 @@ func (g *nativePublicationGate) observeNativeDeadlinePublication(ctx context.Con
 func verifyNativeDeadlineSave(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, proof nativeFinalizationDeadline, saveStatus, queuedStatus string) error {
 	var valid bool
 	err := pool.QueryRow(ctx, `SELECT
- t.status='interrupted' AND t.seq=1 AND t.result IS NOT NULL AND t.completion_save_id IS NULL
+ t.status='completed' AND t.seq=1 AND t.result IS NOT NULL
  AND t.result_recorded_at IS NOT NULL AND t.result_recorded_at<=s.captured_at
- AND s.captured_at<t.deadline_at AND t.deadline_at=$7 AND t.terminal_at>=t.deadline_at
- AND $10>=s.captured_at AND $10<t.deadline_at
+ AND t.deadline_at IS NULL AND t.terminal_at<=s.captured_at AND t.terminal_at<$7
+ AND $10>=s.captured_at AND $10<$7 AND clock_timestamp()>=$7
  AND (SELECT count(DISTINCT (convert_from(e.data,'UTF8')::jsonb->0->>'text')::jsonb->>'count')>=2
       FROM session_events e JOIN turns peer ON(peer.environment_id,peer.id)=(e.environment_id,e.turn_id)
       JOIN sessions se ON(se.environment_id,se.id)=(peer.environment_id,peer.session_id)
       JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id)
       WHERE e.environment_id=t.environment_id AND peer.computer_id=t.computer_id AND a.key='peer'
-      AND e.kind='turn.output' AND e.created_at>=$10 AND e.created_at<t.deadline_at
-      AND peer.started_at<=$10 AND (peer.terminal_at IS NULL OR peer.terminal_at>=t.deadline_at))
- AND t.deadline_at>=t.started_at+interval '30 seconds' AND t.deadline_at<=t.started_at+interval '31 seconds'
+      AND e.kind='turn.output' AND e.created_at>=$10 AND e.created_at<$7
+      AND peer.started_at<=$10 AND (peer.terminal_at IS NULL OR peer.terminal_at>=$7))
+ AND $7=t.started_at+interval '30 seconds'
  AND s.status=$8 AND s.capture_evidence IS NOT NULL AND s.captured_root_digest IS NOT NULL
  AND (CASE WHEN $8='captured' THEN s.root_id IS NULL AND s.publication_evidence IS NULL
       ELSE s.publication_evidence IS NOT NULL AND (s.root_id IS NOT NULL OR s.payload_retired_at IS NOT NULL) END)
  AND queued.session_id=t.session_id AND queued.seq=2 AND queued.status=$9
- AND queued.started_at IS NULL AND queued.process_epoch IS NULL AND queued.completion_save_id IS NULL
- AND h.scope='local' AND h.issuer_kind='system' AND h.reason='Turn deadline elapsed' AND h.released_at IS NULL
- AND h.created_at>=t.deadline_at
+ AND queued.started_at IS NULL AND queued.process_epoch IS NULL
+ AND h.scope='subtree' AND h.issuer_kind IN ('user','api_key') AND h.released_at IS NULL
  AND (SELECT count(*)=1 FROM session_holds other WHERE other.environment_id=t.environment_id AND other.session_id=t.session_id)
- AND EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id
-      AND e.kind='session.deadline' AND convert_from(e.data,'UTF8')::jsonb->>'holdId'=h.id::text)
- AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.completed')
+ AND EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.session_id=t.session_id
+      AND e.kind='session.interrupt' AND convert_from(e.data,'UTF8')::jsonb->>'holdId'=h.id::text)
+ AND (SELECT count(*)=1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.completed')
+ AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='session.deadline')
  FROM turns t JOIN computer_saves s ON(s.environment_id,s.turn_id)=(t.environment_id,t.id)
  JOIN turns queued ON queued.environment_id=t.environment_id AND queued.id=$5
  JOIN session_holds h ON(h.environment_id,h.session_id)=(t.environment_id,t.session_id) AND h.id=$6
@@ -157,7 +157,7 @@ func verifyNativeFinalizationDeadline(ctx context.Context, pool *pgxpool.Pool, e
 		return errors.New("configured deadline evidence is missing")
 	}
 	// The SDK driver's final cleanup explicitly cancels retained queued input;
-	// this cannot change the already-interrupted predecessor or release its hold.
+	// this cannot change the completed predecessor or release its explicit hold.
 	if err := verifyNativeDeadlineSave(ctx, pool, env, *receipt.Deadline, "published", "cancelled"); err != nil {
 		return err
 	}

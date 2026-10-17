@@ -31,6 +31,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 	request := &computerv0.PreparationControlRequest{Identity: identity}
 	started := false
 	for {
+		preparationWake := o.workWake.snapshot()
 		request.ExpiresAtUnixNano = o.expires.Load()
 		if err := wire.ValidatePreparationControl(request); err != nil {
 			for _, secret := range request.GetStart().GetSecrets() {
@@ -38,11 +39,19 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 			}
 			return err
 		}
-		callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+		request.WaitForCompletion = started && request.Start == nil
+		callCtx, stop := context.WithTimeout(ctx, 35*time.Second)
 		var response computerv0.PreparationControlResponse
-		err := o.machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-			return allocationGuestExchange(ctx, o.machine, wire.StreamTypePreparationControl, request, &response)
-		})
+		var err error
+		if request.WaitForCompletion {
+			// This observes the retained execution only. Do not hold the VM control
+			// barrier while waiting; guest lease renewals must remain independent.
+			err = allocationGuestExchange(callCtx, o.machine, wire.StreamTypePreparationControl, request, &response)
+		} else {
+			err = o.machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
+				return allocationGuestExchange(ctx, o.machine, wire.StreamTypePreparationControl, request, &response)
+			})
+		}
 		stop()
 		// Only the first confirmed absence permits transmission of authored startup.
 		// After an uncertain send, probe the same retained owner without new secrets.
@@ -54,7 +63,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 			started = true
 		}
 		if err != nil {
-			if sleepWithContext(ctx, time.Second) != nil {
+			if waitAllocationWake(ctx, preparationWake, time.Second) != nil {
 				return errors.Join(ctx.Err(), err)
 			}
 			continue
@@ -96,9 +105,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 		if response.State == "failed" {
 			return errors.New("guest preparation failed: " + response.ErrorCode)
 		}
-		if err := sleepWithContext(ctx, time.Second); err != nil {
-			return err
-		}
+
 	}
 }
 

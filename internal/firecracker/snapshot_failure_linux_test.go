@@ -21,7 +21,7 @@ import (
 
 // The API boundary is fake; these checks do not qualify VMM/device durability.
 func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
-	for _, stage := range []string{"pause response lost", "snapshot rejected", "invalid runtime identity", "invalid manifest", "missing backing file"} {
+	for _, stage := range []string{"pause response lost", "snapshot rejected", "snapshot output unavailable", "invalid runtime identity", "invalid manifest", "missing backing file"} {
 		t.Run(stage, func(t *testing.T) {
 			api := &snapshotFailureAPI{}
 			switch stage {
@@ -110,11 +110,16 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if beginErr != nil {
 				t.Fatal(beginErr)
 			}
+			if stage == "snapshot output unavailable" {
+				if err := os.WriteFile(filepath.Join(root, safeSnapshotID("checkpoint")+snapshotStateSuffix), []byte("existing output"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, err = capture.CreateSnapshot(context.Background())
 			if device.captures != device.releases {
 				t.Fatalf("capture retention leaked: %d/%d", device.captures, device.releases)
 			}
-			if stage == "snapshot rejected" || stage == "invalid runtime identity" || stage == "invalid manifest" {
+			if stage == "invalid runtime identity" || stage == "invalid manifest" {
 				if device.captures != 1 {
 					t.Fatal("post-capture failure did not acquire capture")
 				}
@@ -122,7 +127,13 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected capture failure")
 			}
-			if stage == "missing backing file" && !strings.Contains(err.Error(), "sync paused scratch") {
+			if errors.Is(err, vm.ErrCheckpointUncut) != (stage == "snapshot rejected" || stage == "snapshot output unavailable") {
+				t.Fatalf("unsafe no-cut classification: %v", err)
+			}
+			if stage == "snapshot rejected" && device.captures != 0 {
+				t.Fatal("rejected snapshot acquired a disk cut")
+			}
+			if stage == "missing backing file" && !strings.Contains(err.Error(), "validate paused scratch") {
 				t.Fatalf("did not reject the missing source before serialization: %v", err)
 			}
 			if stage == "invalid manifest" && !strings.Contains(err.Error(), "manifest") {

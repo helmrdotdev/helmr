@@ -20,16 +20,20 @@ type AllocationDiscovery interface {
 type AllocationOwner interface {
 	Run(context.Context) error
 	Finished() bool
+	Wake()
 }
 
 // AllocationConsumer bounds retained custody separately from physical capacity.
 // The reservation ledger remains the authority for VM and quarantine resources.
 type AllocationConsumer struct {
+	wake    chan struct{}
+	ready   chan struct{}
 	client  AllocationDiscovery
 	create  func(workerapi.AllocationIdentity, func(context.Context) error) (AllocationOwner, error)
 	limit   int
 	poll    time.Duration
 	mu      sync.Mutex
+	wakeMu  sync.RWMutex // Owner wake snapshots must not wait behind discovery RPCs.
 	entries map[workerapi.AllocationIdentity]AllocationOwner
 	pending []workerapi.AllocationIdentity
 	after   *workerapi.AllocationIdentity
@@ -39,7 +43,7 @@ func NewAllocationConsumer(client AllocationDiscovery, limit int, poll time.Dura
 	if client == nil || create == nil || limit <= 0 || poll <= 0 {
 		return nil, errors.New("allocation discovery, owner factory, positive custody bound and polling interval are required")
 	}
-	return &AllocationConsumer{client: client, create: create, limit: limit, poll: poll, entries: make(map[workerapi.AllocationIdentity]AllocationOwner)}, nil
+	return &AllocationConsumer{wake: make(chan struct{}, 1), ready: make(chan struct{}, 1), client: client, create: create, limit: limit, poll: poll, entries: make(map[workerapi.AllocationIdentity]AllocationOwner)}, nil
 }
 
 // RunDiscovery is drain-eligible and must be joined before exclusive finalization.
@@ -49,8 +53,14 @@ func (c *AllocationConsumer) RunDiscovery(ctx context.Context) error {
 		if err := c.discoverPage(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("discover physical allocations", "error", err)
 		}
-		if err := waitAllocation(ctx, c.poll); err != nil {
-			return err
+		timer := time.NewTimer(c.poll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-c.wake:
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 	return ctx.Err()
@@ -93,6 +103,10 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 		}
 		if !duplicate {
 			c.pending = append(c.pending, identity)
+			select {
+			case c.ready <- struct{}{}:
+			default:
+			}
 		}
 	}
 	last := page.Allocations[len(page.Allocations)-1]
@@ -135,7 +149,15 @@ func (c *AllocationConsumer) Claim(ctx context.Context, admission ConsumerAdmiss
 		return nil, false, errors.New("allocation factory returned no physical owner")
 	}
 	c.pending = c.pending[1:]
+	c.wakeMu.Lock()
 	c.entries[identity] = owner
+	c.wakeMu.Unlock()
+	if len(c.pending) > 0 {
+		select {
+		case c.ready <- struct{}{}:
+		default:
+		}
+	}
 	return func(ctx context.Context) error {
 		delay := c.poll
 		for {
@@ -145,7 +167,9 @@ func (c *AllocationConsumer) Claim(ctx context.Context, admission ConsumerAdmiss
 					slog.Warn("physical allocation failed before completed cleanup", "kind", identity.Kind, "owner", identity.OwnerID, "epoch", identity.Epoch, "error", err)
 				}
 				c.mu.Lock()
+				c.wakeMu.Lock()
 				delete(c.entries, identity)
+				c.wakeMu.Unlock()
 				c.mu.Unlock()
 				return nil
 			}
@@ -181,3 +205,22 @@ func waitAllocation(ctx context.Context, delay time.Duration) error {
 		return nil
 	}
 }
+
+// Wake is a hint: each owner and discovery rechecks its durable authority.
+func (c *AllocationConsumer) Wake() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+	c.wakeMu.RLock()
+	owners := make([]AllocationOwner, 0, len(c.entries))
+	for _, owner := range c.entries {
+		owners = append(owners, owner)
+	}
+	c.wakeMu.RUnlock()
+	for _, owner := range owners {
+		owner.Wake()
+	}
+}
+
+func (c *AllocationConsumer) Ready() <-chan struct{} { return c.ready }

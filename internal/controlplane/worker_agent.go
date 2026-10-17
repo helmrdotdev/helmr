@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -170,6 +171,9 @@ func (server *Server) writeAgentWorkerError(w http.ResponseWriter, err error) {
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied), errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
 		writeError(w, conflict(errors.New("session execution authority is unavailable")))
+	case errors.Is(err, context.Canceled):
+		server.log.Info("Session worker operation cancelled", "error", err)
+		writeError(w, unavailable(errors.New("session operation is temporarily unavailable")))
 	default:
 		server.log.Error("Session worker operation failed", "error", err)
 		writeError(w, unavailable(errors.New("session operation is temporarily unavailable")))

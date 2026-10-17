@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -137,6 +138,9 @@ func (m *checkpointPipelineMachine) CreateSnapshot(context.Context) (vm.Snapshot
 	m.snapshots++
 	if m.mode == "cut-lost" {
 		return m.artifact, io.ErrUnexpectedEOF
+	}
+	if m.mode == "uncut" {
+		return vm.SnapshotArtifact{}, errors.Join(vm.ErrCheckpointUncut, syscall.ENOSPC)
 	}
 	return m.artifact, nil
 }
@@ -326,7 +330,7 @@ func (s corruptCheckpointStore) Get(ctx context.Context, digest string) (io.Read
 }
 
 func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing.T) {
-	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-key", "invalid-filepack", "backend-io"} {
+	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-key", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
 		t.Run(fault, func(t *testing.T) {
 			source, c, _, _ := checkpointPipelineFixture(t, "", "")
 			if err := source.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} }); !errors.Is(err, errComputerHibernated) {
@@ -355,6 +359,8 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 				target.machines.ComputerObjects = corruptCheckpointStore{ImmutableStore: target.machines.ComputerObjects, digest: m.Memory.Digest}
 			case "invalid-filepack":
 				b.verifyFilepack = true
+			case "invalid-runtime-content":
+				b.restoreErr = fmt.Errorf("restore content: %w", vm.ErrInvalidCheckpointContent)
 			case "backend-io":
 				b.restoreErr = syscall.EIO
 			case "wrong-key":
@@ -365,10 +371,10 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 				t.Fatalf("incorrect key fault classification: paused=%v error=%v", paused, err)
 			}
 
-			if (target.invalidCheckpointID != "") != (fault == "corrupt-memory" || fault == "invalid-filepack") {
+			if (target.invalidCheckpointID != "") != (fault == "corrupt-memory" || (fault == "invalid-filepack" || fault == "invalid-runtime-content")) {
 				t.Fatalf("incorrect invalid checkpoint report: %q", target.invalidCheckpointID)
 			}
-			if fault == "wrong-key" || fault == "corrupt-memory" || fault == "invalid-filepack" {
+			if fault == "wrong-key" || fault == "corrupt-memory" || (fault == "invalid-filepack" || fault == "invalid-runtime-content") {
 				stopped := false
 				c.stopped = func(request workerapi.AgentComputerStoppedRequest) {
 					stopped = true
@@ -396,7 +402,7 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 				}
 			} else {
 				wantCalls := 0
-				if fault == "invalid-filepack" || fault == "backend-io" {
+				if (fault == "invalid-filepack" || fault == "invalid-runtime-content") || fault == "backend-io" {
 					wantCalls = 1
 				}
 				if err == nil || b.calls != wantCalls {
@@ -513,7 +519,7 @@ func TestComputerCheckpointPreservesSourceThroughDurabilityFailures(t *testing.T
 }
 func TestComputerCheckpointDurabilityEndsAtAuthorityLoss(t *testing.T) {
 	o := &ComputerAllocationOwner{}
-	want := &httpclient.Error{StatusCode: 401}
+	want := &httpclient.Error{StatusCode: 409, Code: workerapi.SaveAuthorityLost}
 	calls := 0
 	if err := o.retryCheckpointDurability(t.Context(), func(context.Context) error { calls++; return want }); err != want || calls != 1 {
 		t.Fatalf("authority rejection retried: %v calls=%d", err, calls)
@@ -527,7 +533,7 @@ func TestComputerCheckpointDurabilityEndsAtAuthorityLoss(t *testing.T) {
 }
 
 func TestComputerCheckpointPermanentDurabilityRejectionsDoNotLoop(t *testing.T) {
-	for _, err := range []error{&httpclient.Error{StatusCode: 400}, &httpclient.Error{StatusCode: 409}, &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerEvidenceConflict}, computercheckpoint.ErrInvalidManifest, errors.New("plaintext exceeds bound")} {
+	for _, err := range []error{&httpclient.Error{StatusCode: 400}, &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerEvidenceConflict}, computercheckpoint.ErrInvalidManifest, invalidCheckpoint(errors.New("plaintext exceeds bound")), os.ErrNotExist, cas.ErrDigestMismatch} {
 		o := &ComputerAllocationOwner{}
 		calls := 0
 		got := o.retryCheckpointDurability(t.Context(), func(context.Context) error { calls++; return err })
@@ -554,4 +560,37 @@ func TestComputerCheckpointUnownedInspectionDoesNotLoop(t *testing.T) {
 	if err := o.abortUncutCheckpoint(t.Context(), workerapi.ComputerAllocationDelivery{}, capture, m); err == nil || c.cancelled != nil || m.aborts != 0 {
 		t.Fatalf("unowned inspection treated as absence: %v", err)
 	}
+}
+
+func TestComputerCheckpointJoinedUncutFailureReconcilesSource(t *testing.T) {
+	o, client, machine, _ := checkpointPipelineFixture(t, "uncut", "")
+	continuation := &allocationContinuationFixture{t: t, target: o.identity, source: true, scenario: "joined-uncut", capture: new(agentv1.ComputerSessionCapture)}
+	client.AllocatedComputerClient = continuation
+	machine.control = &agentControlMachine{handle: continuation.handle}
+	// Admission binds the fresh checkpoint identity before guest preparation.
+	o.client = &uncutCheckpointClient{checkpointPipelineClient: client, continuation: continuation}
+	o.observe = func(context.Context, *agentv1.GuestSessionMessage) error { return nil }
+	resumed := 0
+	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{BaseVersion: "base", ChannelCredential: "current"}, func() func() { return func() { resumed++ } }); err != nil {
+		t.Fatal(err)
+	}
+	if machine.snapshots != 1 || machine.resumes != 1 || machine.aborts != 1 || resumed != 1 || o.checkpointCut != nil || !continuation.activated || continuation.absence != 1 || continuation.commit != 1 {
+		t.Fatalf("uncut source did not reconcile: snapshots=%d resumes=%d aborts=%d attachments=%d activated=%v absence=%d commits=%d", machine.snapshots, machine.resumes, machine.aborts, resumed, continuation.activated, continuation.absence, continuation.commit)
+	}
+	if !reflect.DeepEqual(client.calls, []string{"begin", "seal"}) {
+		t.Fatalf("uncut checkpoint published: %v", client.calls)
+	}
+}
+
+type uncutCheckpointClient struct {
+	*checkpointPipelineClient
+	continuation *allocationContinuationFixture
+}
+
+func (c *uncutCheckpointClient) BeginAgentComputerCapture(ctx context.Context, request workerapi.AgentComputerCaptureRequest) (workerapi.AgentComputerCaptureResponse, error) {
+	response, err := c.checkpointPipelineClient.BeginAgentComputerCapture(ctx, request)
+	if err == nil {
+		err = proto.Unmarshal(response.Capture, c.continuation.capture)
+	}
+	return response, err
 }

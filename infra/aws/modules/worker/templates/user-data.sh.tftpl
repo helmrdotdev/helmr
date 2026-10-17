@@ -1,25 +1,11 @@
 #!/bin/sh
 set -eu
 umask 077
-date +%s >/run/helmr-launch-started-at
 
 /usr/local/sbin/helmr-prepare-root '${expected_root_bytes}'
 
 install -d -m 0750 -o root -g root /etc/helmr
 install -d -m 0700 -o root -g root /run/helmr
-
-metadata_url=http://169.254.169.254/latest
-metadata_token() {
-  curl -fsS -X PUT "$metadata_url/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"
-}
-metadata_get() {
-  path="$1"
-  token="$(metadata_token)"
-  curl -fsS -H "X-aws-ec2-metadata-token: $token" "$metadata_url/$path"
-}
-aws_region='${aws_region}'
-export AWS_REGION="$aws_region"
-export AWS_DEFAULT_REGION="$aws_region"
 
 env_tmp="$(mktemp /etc/helmr/worker.env.XXXXXX)"
 cat >"$env_tmp" <<'EOF'
@@ -28,21 +14,9 @@ ${key}=${value}
 %{ endfor ~}
 EOF
 
-checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
-worker_resource_id="$(metadata_get meta-data/instance-id)"
-worker_enrollment_token_file=/run/helmr/worker-enrollment-token
-
-{
-  printf 'AWS_REGION=%s\n' "$aws_region"
-  printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
-  printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
-  printf 'WORKER_ENROLLMENT_TOKEN_FILE=%s\n' "$worker_enrollment_token_file"
-  printf 'WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
-} >>"$env_tmp"
-
 chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
-mv "$env_tmp" /etc/helmr/worker.env
+mv "$env_tmp" /etc/helmr/worker-base.env
 
 cat >/usr/local/sbin/helmr-worker-enrollment-token <<'EOF'
 #!/bin/sh
@@ -51,6 +25,22 @@ umask 077
 
 export AWS_REGION='${aws_region}'
 export AWS_DEFAULT_REGION="$AWS_REGION"
+checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
+metadata_token="$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')"
+worker_resource_id="$(curl -fsS -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/instance-id)"
+env_tmp="$(mktemp /etc/helmr/worker.env.XXXXXX)"
+cat /etc/helmr/worker-base.env >"$env_tmp"
+{
+  printf 'AWS_REGION=%s\n' "$AWS_REGION"
+  printf 'AWS_DEFAULT_REGION=%s\n' "$AWS_REGION"
+  printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+  printf 'WORKER_ENROLLMENT_TOKEN_FILE=%s\n' /run/helmr/worker-enrollment-token
+  printf 'WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
+} >>"$env_tmp"
+chmod 0600 "$env_tmp"
+mv "$env_tmp" /etc/helmr/worker.env
+unset checkpoint_key
+
 token="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_token_secret_arn}' --query SecretString --output text)"
 install -d -m 0700 -o root -g root /run/helmr
 token_tmp="$(mktemp /run/helmr/worker-enrollment-token.XXXXXX)"
@@ -89,7 +79,7 @@ heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
 worker_binary='${worker_binary_path}'
 drain_marker='${worker_work_dir}/drain-complete'
 metadata_url=http://169.254.169.254/latest
-launch_started_at="$(cat /run/helmr-launch-started-at 2>/dev/null || date +%s)"
+launch_started_at="$(date +%s)"
 
 metadata_token() {
   curl -fsS -X PUT "$metadata_url/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"
@@ -147,6 +137,13 @@ complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
+  # IMDS reports the target, including InService during Pending:Wait.
+  # Completing warm-entry initialization must not enroll a logical Worker.
+  case "$(target_lifecycle_state)" in
+    Warmed:Stopped) complete_lifecycle_action "$launch_hook" CONTINUE; return ;;
+    InService) systemctl start --no-block '${worker_service_name}.service' || return 1 ;;
+    *) return 1 ;;
+  esac
   systemctl is-active --quiet '${worker_service_name}' || return 1
   "$worker_binary" status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
@@ -164,6 +161,10 @@ termination_observed() {
 
 drain_and_complete_termination() {
   termination_observed || return 1
+  if [ ! -f '${worker_work_dir}/worker-host-secret.json' ]; then
+    complete_lifecycle_action "$termination_hook" CONTINUE
+    return 0
+  fi
 	if [ -f "$drain_marker" ]; then
 		complete_lifecycle_action "$termination_hook" CONTINUE
 		return 0
@@ -196,6 +197,12 @@ case "$${1:-watch}" in
     complete_launch
     ;;
   watch)
+    # /run is cleared on a stopped-instance boot; retries share that boot's
+    # readiness deadline instead of extending it whenever this service restarts.
+    if [ ! -f /run/helmr-launch-started-at ]; then
+      date +%s >/run/helmr-launch-started-at
+    fi
+    launch_started_at="$(cat /run/helmr-launch-started-at)"
     launch_completed=0
     while :; do
       if [ "$launch_completed" -eq 0 ]; then
@@ -231,12 +238,12 @@ chmod 0755 /usr/local/bin/helmr-asg-lifecycle
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
 Description=Helmr Auto Scaling lifecycle integration
-After=network-online.target ${worker_service_name}.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/helmr/worker.env
+EnvironmentFile=/etc/helmr/worker-base.env
 ExecStart=/usr/local/bin/helmr-asg-lifecycle watch
 Restart=always
 RestartSec=15s
@@ -266,6 +273,8 @@ modprobe nbd nbds_max='${computer_device_count}' max_part=0
 test -b '${device}'
 test ! -e '/sys/block/${basename(device)}/pid'
 %{ endfor ~}
-systemctl enable --now '${worker_service_name}'
+# The lifecycle service starts the Worker only on an InService-target boot.
+# Enabling it directly would enroll warm-entry instances and deadlock admission.
+systemctl disable '${worker_service_name}'
 
 systemctl enable --now helmr-asg-lifecycle.service

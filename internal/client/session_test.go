@@ -133,7 +133,7 @@ func TestSessionReads(t *testing.T) {
 					if explicitResult {
 						result = `,"result":null`
 					}
-					_, _ = io.WriteString(w, `{"id":"`+testTurnID+`","sequence":1,"status":"completed","completion_save_id":"`+testComputerDiskVersionID+`"`+result+`}`)
+					_, _ = io.WriteString(w, `{"id":"`+testTurnID+`","sequence":1,"status":"completed"`+result+`}`)
 				case prefix + "/sessions":
 					if r.URL.RawQuery != "limit=5&status=closing" {
 						t.Errorf("query = %s", r.URL.RawQuery)
@@ -158,7 +158,7 @@ func TestSessionReads(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if turn.ID != testTurnID || turn.Status != "completed" || turn.CompletionSaveID == nil || *turn.CompletionSaveID != testComputerDiskVersionID {
+				if turn.ID != testTurnID || turn.Status != "completed" {
 					t.Fatalf("turn = %+v", turn)
 				}
 				if explicit && string(turn.Result) != "null" || !explicit && turn.Result != nil {

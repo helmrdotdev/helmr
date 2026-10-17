@@ -97,7 +97,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 			}
 		}
 		var busy bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status IN ('running','finalizing'))
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status IN ('running'))
    OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
      WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+NoSessionHoldsSQL+`)
    OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
@@ -190,19 +190,27 @@ func LockCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, chec
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]uuid.UUID, len(before))
-	for i, m := range before {
-		ids[i] = m.Session
-	}
-	if _, err = lockSessions(ctx, tx, env, ids); err != nil {
+	rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing') ORDER BY id`, env, computerID)
+	if err != nil {
 		return nil, err
 	}
-	// lockSessions has no Computer to lock when no resident is present.
-	if len(ids) == 0 {
-		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, computerID).Scan(&id); err != nil {
-			return nil, err
-		}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, err
+	}
+	known := append([]uuid.UUID(nil), ids...)
+	for _, m := range before {
+		ids = append(ids, m.Session)
+	}
+	if _, err = LockSessionsAndComputers(ctx, tx, env, ids, []uuid.UUID{computerID}); err != nil {
+		return nil, err
+	}
+	var changed bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing') AND NOT(id=ANY($3::uuid[])))`, env, computerID, known).Scan(&changed); err != nil {
+		return nil, err
+	}
+	if changed {
+		return nil, ErrNotReady
 	}
 	after, err := read()
 	if err != nil {

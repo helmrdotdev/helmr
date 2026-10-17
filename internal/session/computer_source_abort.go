@@ -264,6 +264,11 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
  AND (p.control_error IS NULL OR p.failure_recorded_at IS NOT NULL)`, env, checkpoint); err != nil {
 			return err
 		}
+		for _, m := range r.Members {
+			if err = notifySessionsChanged(ctx, tx, env, m.Session); err != nil {
+				return err
+			}
+		}
 		return computer.ConsumeCheckpoint(ctx, tx, env, checkpoint)
 	}))
 }

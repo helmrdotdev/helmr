@@ -19,7 +19,7 @@ import (
 // and complete physical-pack inspection precede registration on the owned
 // publication pipeline; an existence claim from a guest is not an inspection.
 type SaveObjectStore interface {
-	Stat(context.Context, string) (cas.Object, error)
+	cas.Reader
 }
 
 // SavePublisher owns disk graph retention and durable publication. It is an
@@ -69,30 +69,47 @@ func (p *SavePublisher) Capture(ctx context.Context, ref SavePublication, root d
 	}))
 }
 
-// Register retains an authenticated object's complete graph before its upload.
+// RegisterBatch retains an authenticated object's complete graph before its upload.
 // Children are certified first. Every physical page counts, including pages
 // outside the logical tree selected by this save's root.
-func (p *SavePublisher) Register(ctx context.Context, ref SavePublication, inspection blockformat.ObjectInspection) error {
+
+func (p *SavePublisher) RegisterBatch(ctx context.Context, ref SavePublication, input []blockformat.ObjectInspection) error {
+	inspections, err := normalizeSaveBatch(input)
+	if err != nil {
+		return err
+	}
 	return hideMissing(db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, state, err := lockSaveStorage(ctx, tx, ref)
 		if err != nil {
 			return err
 		}
-		if state == "published" {
-			return scope.verifyRegistered(ctx, tx, inspection)
+		if state != "published" {
+			if err = scope.prepareBatchChildren(ctx, tx, inspections); err != nil {
+				return err
+			}
 		}
-		if err = scope.registerObject(ctx, tx, inspection); err != nil {
-			return err
+		for _, inspection := range inspections {
+			if state == "published" {
+				err = scope.verifyRegistered(ctx, tx, inspection)
+			} else {
+				err = scope.registerObject(ctx, tx, inspection)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if state == "published" {
+			return nil
 		}
 		return scope.requireWriter(ctx, tx, ref.Host)
 	}))
 }
 
-// Certify performs storage I/O outside database locks and rechecks the exact
-// retained registration afterwards. Errors and unavailable storage leave the
-// candidate pending; they never establish permanent absence.
-func (p *SavePublisher) Certify(ctx context.Context, ref SavePublication, inspection blockformat.ObjectInspection) error {
-	object, err := describeSaveObject(inspection)
+// Certification uses two short transactions around parallel remote verification.
+// Every retry revalidates owner epoch and the exact registered inspection. A lost
+// response is reconciled idempotently; no partial certificate is acknowledged.
+func (p *SavePublisher) CertifyBatch(ctx context.Context, ref SavePublication, input []blockformat.ObjectInspection) error {
+	inspections, err := normalizeSaveBatch(input)
 	if err != nil {
 		return err
 	}
@@ -103,31 +120,42 @@ func (p *SavePublisher) Certify(ctx context.Context, ref SavePublication, inspec
 			return err
 		}
 		committed = state == "published"
-		if committed {
-			return scope.verifyCertified(ctx, tx, inspection)
+		for _, inspection := range inspections {
+			if committed {
+				err = scope.verifyCertified(ctx, tx, inspection)
+			} else {
+				err = scope.verifyRegistered(ctx, tx, inspection)
+			}
+			if err != nil {
+				return err
+			}
 		}
-		return scope.verifyRegistered(ctx, tx, inspection)
+		return nil
 	})
-	if err != nil {
+	if err != nil || committed {
 		return hideMissing(err)
 	}
-	if committed {
-		return nil
-	}
-	stored, err := p.objects.Stat(ctx, object.digest)
+	stored, err := verifySaveBatch(ctx, p.objects, inspections)
 	if err != nil {
-		return SaveStorageUnavailable(err)
+		return err
 	}
 	return hideMissing(db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, state, err := lockSaveStorage(ctx, tx, ref)
 		if err != nil {
 			return err
 		}
-		if state == "published" {
-			return scope.verifyCertified(ctx, tx, inspection)
+		for index, inspection := range inspections {
+			if state == "published" {
+				err = scope.verifyCertified(ctx, tx, inspection)
+			} else {
+				err = scope.certifyObject(ctx, tx, inspection, stored[index])
+			}
+			if err != nil {
+				return err
+			}
 		}
-		if err = scope.certifyObject(ctx, tx, inspection, stored); err != nil {
-			return err
+		if state == "published" {
+			return nil
 		}
 		return scope.requireWriter(ctx, tx, ref.Host)
 	}))
@@ -181,6 +209,12 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err != nil {
 			return err
 		}
+		if err = scope.requireAdmittedObject(ctx, tx, object.digest); err != nil {
+			return err
+		}
+		if err = scope.pin(ctx, tx, object); err != nil {
+			return err
+		}
 		if err = scope.requireRetained(ctx, tx, object); err != nil {
 			return err
 		}
@@ -198,7 +232,15 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_saves SET status='published',publication_evidence=$3,root_id=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.SaveID, evidence, rootID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE computer_saves SET status='published',published_at=clock_timestamp(),publication_evidence=$3,root_id=$4 WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.SaveID, evidence, rootID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE computer_saves covered SET status='superseded',covered_by_save_id=chosen.id
+ FROM computer_saves chosen WHERE chosen.environment_id=$1 AND chosen.id=$2
+ AND covered.environment_id=chosen.environment_id AND covered.computer_id=chosen.computer_id AND covered.computer_lease_epoch=chosen.computer_lease_epoch
+ AND covered.id<>chosen.id AND covered.seq BETWEEN chosen.seq AND chosen.coverage_max_seq
+ AND covered.status IN ('requested','captured')
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE (cp.environment_id,cp.disk_save_id)=(covered.environment_id,covered.id))`, scope.environmentID, scope.saveID); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE computers c SET recovery_save_id=$3 FROM computer_saves s
@@ -206,7 +248,10 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
           AND (c.recovery_save_id IS NULL OR s.seq>(SELECT old.seq FROM computer_saves old WHERE old.environment_id=c.environment_id AND old.id=c.recovery_save_id))`, scope.environmentID, scope.computerID, scope.saveID); err != nil {
 			return err
 		}
-		return scope.requireWriter(ctx, tx, ref.Host)
+		if err = scope.requireWriter(ctx, tx, ref.Host); err != nil {
+			return err
+		}
+		return notifyComputerChanged(ctx, tx, pgvalue.MustUUIDValue(scope.environmentID), pgvalue.MustUUIDValue(scope.computerID))
 	}))
 }
 
@@ -249,7 +294,7 @@ func lockSaveIdentity(ctx context.Context, tx pgx.Tx, ref SavePublication) (save
 	if epoch != ref.LeaseEpoch || sourceHost != ref.Host.HostID || sourceWorkerEpoch != ref.Host.Epoch {
 		return s, "", ErrDenied
 	}
-	if state == "failed" {
+	if state == "failed" || state == "superseded" {
 		return s, "", ErrTerminal
 	}
 	if state != "published" {
@@ -332,6 +377,13 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 	if state != "requested" {
 		return ErrTerminal
 	}
+	var selected bool
+	if err = tx.QueryRow(ctx, `SELECT coverage_max_seq IS NOT NULL OR EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id) FROM computer_saves s WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID).Scan(&selected); err != nil {
+		return err
+	}
+	if !selected {
+		return ErrNotReady
+	}
 	var earlier bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND seq<$3 AND status='requested')`, c.EnvironmentID, computer, seq).Scan(&earlier); err != nil {
 		return err
@@ -340,7 +392,10 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 		return ErrNotReady
 	}
 	_, err = tx.Exec(ctx, `WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at) UPDATE computer_saves SET status='captured',flush_acknowledged_at=observed.at,captured_at=observed.at,captured_root_digest=decode(substring($3::text from 8),'hex'),capture_evidence=$4 FROM observed WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID, c.DiskRoot, c.Evidence)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, c.EnvironmentID, computer)
 }
 
 // The caller holds the supply and Computer locks and has irrevocably ended this
@@ -350,5 +405,8 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 func SettleLostSaves(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
 	_, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence='publication absent after writer authority ended'
  WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch=$3 AND status IN ('requested','captured')`, env, computer, epoch)
-	return err
+	if err != nil {
+		return err
+	}
+	return notifyComputerChanged(ctx, tx, env, computer)
 }

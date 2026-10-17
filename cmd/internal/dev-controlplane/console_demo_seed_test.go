@@ -65,7 +65,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='cancelled'),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status='failed'),
  (SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL),
- (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing'))+
+ (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running'))+
  (SELECT count(*) FROM turn_asks WHERE environment_id=$1 AND status='pending')+
  (SELECT count(*) FROM turn_messages WHERE environment_id=$1 AND status IN ('admitted','started'))+
  (SELECT count(*) FROM image_builds WHERE environment_id=$1)+
@@ -78,7 +78,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  `, demoSeedEnvironmentID).Scan(&definitions, &triggers, &computers, &openSessions, &closedSessions, &cancelledSessions, &failedTurns, &holds, &runnable, &events, &current); err != nil {
 		t.Fatal(err)
 	}
-	if !current || definitions != 3 || triggers != 1 || computers != 1 || openSessions != 3 || closedSessions != 6 || cancelledSessions != 1 || failedTurns != 5 || holds != 1 || events < 300 || runnable != 0 {
+	if !current || definitions != 3 || triggers != 1 || computers != 1 || openSessions != 3 || closedSessions != 6 || cancelledSessions != 1 || failedTurns != 5 || holds != 1 || events < 200 || runnable != 0 {
 		t.Fatalf("demo current/definitions/triggers/computers/open/closed/cancelled/failed/holds/events/runnable=%v/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d", current, definitions, triggers, computers, openSessions, closedSessions, cancelledSessions, failedTurns, holds, events, runnable)
 	}
 	// Every Session's counters match its rows, each Turn has its own
@@ -94,6 +94,9 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
    OR (s.status IN ('closed','cancelled')) <> (s.history_eligible_at IS NOT NULL)))+
  (SELECT count(*) FROM turns t WHERE t.environment_id=$1 AND NOT EXISTS(SELECT 1 FROM session_events e
    WHERE (e.environment_id,e.session_id)=(t.environment_id,t.session_id) AND e.turn_id=t.id AND e.kind='turn.queued'))+
+ (SELECT count(*) FROM session_events WHERE environment_id=$1 AND kind='turn.finalizing')+
+ (SELECT count(*) FROM turns t JOIN computer_saves s ON (s.environment_id,s.turn_id)=(t.environment_id,t.id)
+   WHERE t.environment_id=$1 AND (t.terminal_at>s.requested_at OR t.terminal_at>=s.captured_at))+
  (SELECT count(*) FROM session_events e JOIN session_events later ON (later.environment_id,later.session_id)=(e.environment_id,e.session_id) AND later.seq>e.seq AND later.created_at<e.created_at WHERE e.environment_id=$1)+
  (SELECT count(*) FROM session_events e JOIN sessions s ON (s.environment_id,s.id)=(e.environment_id,e.session_id) JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
    WHERE e.environment_id=$1 AND c.deleted_at IS NOT NULL AND e.created_at>c.deleted_at)
@@ -114,7 +117,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  `, demoSeedEnvironmentID, demoSeedLongSessionID, demoSeedExpiredSessionID, demoSeedJSONSessionID).Scan(&longTurns, &longCompleted, &longFailed, &longInterrupted, &longEvents, &childSessions, &expiredEvents, &jsonInput); err != nil {
 		t.Fatal(err)
 	}
-	if longTurns != 45 || longCompleted != 40 || longFailed != 2 || longInterrupted != 3 || longEvents < 250 || childSessions != 2 || expiredEvents == 0 || jsonInput[0] != '{' {
+	if longTurns != 45 || longCompleted != 40 || longFailed != 2 || longInterrupted != 3 || longEvents < 200 || childSessions != 2 || expiredEvents == 0 || jsonInput[0] != '{' {
 		t.Fatalf("long turns/completed/failed/interrupted/events/children/expired events/json input=%d/%d/%d/%d/%d/%d/%d/%q", longTurns, longCompleted, longFailed, longInterrupted, longEvents, childSessions, expiredEvents, jsonInput)
 	}
 	// The dev control plane's background owners leave the seeded history alone.
@@ -127,7 +130,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	loopCtx, stopLoops := context.WithTimeout(ctx, 3*time.Second)
 	var loops sync.WaitGroup
 	for _, run := range []func(context.Context) error{
-		func(ctx context.Context) error { return allocator.Run(ctx, log) },
+		func(ctx context.Context) error { return allocator.Run(ctx, log, nil) },
 		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
 		func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) },

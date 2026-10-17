@@ -97,7 +97,7 @@ rejected transactions use no additional committed tokens.
 
 | Control | Effect |
 | --- | --- |
-| Turn interrupt | Interrupts exactly one running Turn without a hold or effects on owned Sessions. The next Turn can run once the handler has stopped. Queued, finalizing and settled targets are rejected. |
+| Turn interrupt | Interrupts exactly one running Turn without a hold or effects on owned Sessions. The next Turn can run once the handler has stopped. Queued and settled targets are rejected. |
 | Session interrupt | Stops the running Turn as `interrupted` and places a hold on this Session and the Sessions it owns. Queued Turns stay queued. |
 | Resume | Releases one hold by ID. Queued Turns continue; the interrupted Turn is not replayed. |
 | Close | Rejects new Turns and lets already-admitted Turns finish, then closes the Session and the Sessions it owns. Existing holds remain. |

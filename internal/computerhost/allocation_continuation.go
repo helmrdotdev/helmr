@@ -25,7 +25,7 @@ func (o *ComputerAllocationOwner) continueCheckpoint(ctx context.Context, delive
 		var observed *agentv1.ComputerSessionReceipt
 		var err error
 		if capture != nil {
-			err = retryCheckpoint(ctx, func(ctx context.Context) error {
+			err = retryCheckpointControl(ctx, func(ctx context.Context) error {
 				var err error
 				observed, err = controlAgentComputer(ctx, o.machine, &agentv1.ComputerSessionControl{Operation: &agentv1.ComputerSessionControl_Inspect{Inspect: capture}})
 				return err
@@ -44,7 +44,7 @@ func (o *ComputerAllocationOwner) continueCheckpoint(ctx context.Context, delive
 					return err
 				}
 			}
-			err = retryCheckpoint(ctx, func(ctx context.Context) error {
+			err = retryCheckpointControl(ctx, func(ctx context.Context) error {
 				var err error
 				observed, err = controlAgentComputer(ctx, o.machine, &agentv1.ComputerSessionControl{Operation: &agentv1.ComputerSessionControl_Inspect{Inspect: capture}})
 				return err
@@ -139,4 +139,19 @@ func (o *ComputerAllocationOwner) prepareContinuation(ctx context.Context, deliv
 		}
 	}
 	return p, nil
+}
+
+// Guest control retries uncertain transport, but a complete rejection must
+// return to the continuation owner. Storage/credential retention uses the
+// separate checkpoint durability retry policy.
+func retryCheckpointControl(ctx context.Context, operation func(context.Context) error) error {
+	for {
+		err := operation(ctx)
+		if err == nil || !saveAdmissionRetryable(err) {
+			return err
+		}
+		if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
+			return err
+		}
+	}
 }

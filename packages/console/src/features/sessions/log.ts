@@ -2,7 +2,7 @@ import type { JsonValue, SessionEventKind } from "../../../../../sdk/typescript/
 import type { Content } from "../../../../../sdk/typescript/src/content";
 import type { NormalizedQuestion } from "../../../../../sdk/typescript/src/question";
 import { parseSessionEventData } from "../../../../../sdk/typescript/src/internal/session-event";
-import { messageDeliveryNotice, type SessionEvent, type SessionTurn } from "../../lib/sessions";
+import { messageDeliveryNotice, storagePressureNotice, type SessionEvent, type SessionTurn } from "../../lib/sessions";
 import { formatID } from "../../ui/id";
 import { byteLength, preview } from "../../ui/payload";
 import type { Tone } from "../../ui/styles";
@@ -17,7 +17,7 @@ export const isProblem = (kind: string) => problems.has(kind);
 
 export function eventTone(kind: string): Tone {
   if (isProblem(kind)) return "danger";
-  if (kind.startsWith("ask.")) return "warning";
+  if (kind.startsWith("ask.") || kind === "session.storage_pressure" || kind === "session.recovery_gap") return "warning";
   if (kind === "turn.output") return "info";
   if (kind === "turn.completed") return "success";
   return "neutral";
@@ -49,7 +49,6 @@ export function parseEvent(event: SessionEvent): ParsedEvent {
 const words: Record<string, string> = {
   "turn.queued": "queued",
   "turn.running": "running",
-  "turn.finalizing": "saving results",
   "turn.completed": "completed",
   "turn.interrupted": "interrupted",
   "turn.cancelled": "cancelled",
@@ -90,6 +89,7 @@ export function eventSummary(event: SessionEvent, parsed = parseEvent(event)): s
   if (parsed.kind === "ask.created") return questionSummary(parsed.question);
   const data = parsed.data ?? {};
   switch (event.kind) {
+    case "session.storage_pressure": return storagePressureNotice(event) ?? preview(data);
     case "turn.failed": return typeof data["code"] === "string" ? data["code"] : "failed";
     case "ask.answered": return `answered by ${data["answered_by_user_id"] ? "a user" : "an API key"} · ${preview(data["answer"] ?? null)}`;
     case "message.admitted": case "message.started": case "message.delivered":

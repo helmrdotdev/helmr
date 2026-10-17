@@ -24,7 +24,7 @@ func saveIdentity(f fixture) computer.LeaseIdentity {
 func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T) {
 	f := newFixture(t)
 	identity := saveIdentity(f)
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, false, nil); err != nil || save != nil {
 		t.Fatalf("not due: %+v %v", save, err)
 	}
 	const n = 8
@@ -33,7 +33,7 @@ func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T)
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true)
+			s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil)
 			results <- s
 			errs <- e
 		})
@@ -62,11 +62,11 @@ func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T)
 	if required.Sequence != 2 || required.ID == first.ID {
 		t.Fatalf("required cut reused background: %+v", required)
 	}
-	if s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != first.ID {
+	if s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil); e != nil || s == nil || s.ID != first.ID {
 		t.Fatalf("uncertain admission displaced: %+v %v", s, e)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='fixture settlement' WHERE environment_id=$1 AND id=$2`, f.env, first.ID)
-	if s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != required.ID {
+	if s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil); e != nil || s == nil || s.ID != required.ID {
 		t.Fatalf("required priority: %+v %v", s, e)
 	}
 	var count int
@@ -82,7 +82,7 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 	if err != nil || save == nil {
 		t.Fatalf("optional: %+v %v", save, err)
 	}
@@ -94,10 +94,10 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT c.recovery_save_id=$2 AND s.status='published' AND s.turn_id IS NULL AND t.status='running' AND t.completion_save_id IS NULL FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$2 JOIN turns t ON t.environment_id=c.environment_id AND t.id=$3 WHERE c.environment_id=$1 AND c.id=$4`, f.env, save.ID, admitted.TurnID, f.computer).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT c.recovery_save_id=$2 AND s.status='published' AND s.turn_id IS NULL AND t.status='running' FROM computers c JOIN computer_saves s ON s.environment_id=c.environment_id AND s.id=$2 JOIN turns t ON t.environment_id=c.environment_id AND t.id=$3 WHERE c.environment_id=$1 AND c.id=$4`, f.env, save.ID, admitted.TurnID, f.computer).Scan(&valid); err != nil || !valid {
 		t.Fatalf("background head/completion: %v %v", valid, err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err == nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err == nil {
 		t.Fatalf("background completed Turn: %v", err)
 	}
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
@@ -114,10 +114,10 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if err := storage.publish(t, required.ID, ownRoot); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err != nil {
+	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND completion_save_id=$2 FROM turns WHERE id=$1`, admitted.TurnID, required.ID).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND EXISTS(SELECT 1 FROM computer_saves s WHERE s.turn_id=turns.id AND s.id=$2) FROM turns WHERE id=$1`, admitted.TurnID, required.ID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("own-save completion: %v %v", valid, err)
 	}
 }
@@ -142,7 +142,7 @@ func TestBackgroundSaveDeclinesOptionalWorkButDiscoversPending(t *testing.T) {
 					expected = save.ID
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, query, f.worker)
-				save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+				save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -167,7 +167,7 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 		var saveErr, captureErr error
 		wg.Go(func() {
 			<-start
-			save, saveErr = computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+			save, saveErr = computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 		})
 		wg.Go(func() {
 			<-start
@@ -209,7 +209,7 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, computer.ErrDenied) || save != nil {
+			if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil); !errors.Is(err, computer.ErrDenied) || save != nil {
 				t.Fatalf("invalid writer: %+v %v", save, err)
 			}
 		})
@@ -227,7 +227,7 @@ func TestBackgroundSaveDeclinesRevokedImage(t *testing.T) {
 		if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
 			t.Fatal(err)
 		}
-		save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+		save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,10 +250,10 @@ func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil || save != nil {
-		t.Fatalf("ordinary discovery blocked: %+v %v", save, err)
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, false, nil); !errors.Is(err, computer.ErrNotReady) || save != nil {
+		t.Fatalf("discovery bypassed lock: %+v %v", save, err)
 	}
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, computer.ErrNotReady) || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil); !errors.Is(err, computer.ErrNotReady) || save != nil {
 		t.Fatalf("optional admission bypassed lock: %+v %v", save, err)
 	}
 }
@@ -263,7 +263,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 	if err != nil || save == nil {
 		t.Fatalf("admission: %+v %v", save, err)
 	}
@@ -271,7 +271,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.status='failed' AND s.turn_id IS NULL AND t.status='interrupted' AND t.completion_save_id IS NULL FROM computer_saves s JOIN turns t ON t.environment_id=s.environment_id AND t.id=$2 WHERE s.id=$1`, save.ID, turn.TurnID).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.status='failed' AND s.turn_id IS NULL AND t.status='interrupted' FROM computer_saves s JOIN turns t ON t.environment_id=s.environment_id AND t.id=$2 WHERE s.id=$1`, save.ID, turn.TurnID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("loss disposition: %v %v", valid, err)
 	}
 }
@@ -279,7 +279,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 func TestBackgroundSaveThenCheckpointKeepsCoherentRecoveryHead(t *testing.T) {
 	f := newFixture(t)
 	storage := newSaveStorageFixture(t, f)
-	optional, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	optional, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
 	if err != nil || optional == nil {
 		t.Fatalf("background admission: %+v %v", optional, err)
 	}
@@ -301,11 +301,40 @@ func TestBackgroundSaveThenCheckpointKeepsCoherentRecoveryHead(t *testing.T) {
 	if err := checkpoint.checkpoints.CompleteCheckpoint(t.Context(), checkpoint.ref, checkpoint.manifest); err != nil {
 		t.Fatal(err)
 	}
-	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil || save != nil {
+	if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil); err != nil || save != nil {
 		t.Fatalf("optional passed ready checkpoint: %+v %v", save, err)
 	}
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT p.status='ready' AND c.recovery_save_id=p.disk_save_id AND p.disk_save_id<>$3 AND (SELECT count(*) FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id)=2 FROM computers c JOIN checkpoints p ON p.environment_id=c.environment_id AND p.computer_id=c.id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer, optional.ID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("coherent checkpoint head: %v %v", valid, err)
+	}
+}
+
+func TestAutosaveInspectionDoesNotFreezeCoverage(t *testing.T) {
+	f := newFixture(t)
+	peer := f.peer(t)
+	_, first := f.finalize(t, "first")
+	inspect, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false, false, nil)
+	if err != nil || inspect == nil || inspect.Claimed || inspect.ID != first.ID || inspect.AgeMillis < 0 {
+		t.Fatalf("metadata discovery: %+v %v", inspect, err)
+	}
+	var unfrozen bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT coverage_max_seq IS NULL FROM computer_saves WHERE id=$1`, first.ID).Scan(&unfrozen); err != nil || !unfrozen {
+		t.Fatalf("inspection froze the prefix: %v %v", unfrozen, err)
+	}
+	_, second := peer.finalize(t, "later completion during quiet window")
+	selected, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, false, nil)
+	if err != nil || selected == nil || !selected.Claimed || selected.ID != first.ID {
+		t.Fatalf("admission: %+v %v", selected, err)
+	}
+	var prefix int64
+	if err = f.pool.QueryRow(t.Context(), `SELECT coverage_max_seq FROM computer_saves WHERE id=$1`, first.ID).Scan(&prefix); err != nil || prefix != second.Sequence {
+		t.Fatalf("quiet-window completion excluded: %d %v", prefix, err)
+	}
+	// Losing an admission response must not create another batching wait or
+	// expand the prefix, even when the retry only asks for metadata.
+	retry, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false, false, nil)
+	if err != nil || retry == nil || !retry.Claimed || *retry != *selected {
+		t.Fatalf("claimed prefix was hidden on retry: %+v %v", retry, err)
 	}
 }

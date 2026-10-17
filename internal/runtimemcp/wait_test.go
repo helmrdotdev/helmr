@@ -18,7 +18,7 @@ func TestTurnWaitSettlementAndRepeat(t *testing.T) {
 		}
 		calls++
 		if calls == 1 {
-			return json.RawMessage(`{"id":"turn","sessionId":"session","status":"finalizing"}`), nil
+			return json.RawMessage(`{"id":"turn","sessionId":"session","status":"running"}`), nil
 		}
 		return json.RawMessage(`{"id":"turn","sessionId":"session","status":"completed","result":null,"response":[{"type":"text","text":"done"}]}`), nil
 	}
@@ -83,7 +83,7 @@ func TestTurnWaitValidatesSnapshotsAndPreservesExpiry(t *testing.T) {
 	for _, raw := range []string{
 		`{"id":"other","sessionId":"session","status":"completed"}`,
 		`{"id":"turn","sessionId":"other","status":"completed"}`,
-		`{"id":"turn","sessionId":"session","status":"finalizing","result":null}`,
+		`{"id":"turn","sessionId":"session","status":"running","result":null}`,
 		`{"id":"turn","sessionId":"session","status":"completed","payloadExpiredAt":"2026-10-07T00:00:00Z","result":null}`,
 		`{"id":"turn","sessionId":"session","status":"unknown"}`,
 	} {
