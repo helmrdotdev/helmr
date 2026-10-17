@@ -40,8 +40,11 @@ const (
 	snapshotCreateType        = "Full"
 	snapshotMemoryBackend     = "File"
 	machineHugePages          = "None"
-	blockIOEngine             = "Sync"
-	writableBlockCache        = "Writeback"
+	// Long Sync block requests can delay VMM control traffic and execution grants.
+	// Revisit an official threaded block-device release after qualifying control
+	// responsiveness, flush durability and RAM snapshot/restore together.
+	blockIOEngine      = "Sync"
+	writableBlockCache = "Writeback"
 
 	GuestNetworkCIDRV0   = "192.168.127.2/30"
 	GuestGatewayIPv4V0   = "192.168.127.1"

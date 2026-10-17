@@ -162,6 +162,10 @@ than silently using a different environment.
 
 ## Limits
 
+- A disk operation that blocks for a long time can also delay runtime control
+  communication. A running request may be interrupted or its environment may
+  require recovery even while the worker is reachable. Completed results remain
+  available, but recovery can omit files that have not been saved.
 - The Computer disk is 32 GiB.
 - `initResult` is held in memory. It survives hibernation but not
   reconstruction, so keep anything that must outlive a process on disk or in an
