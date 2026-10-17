@@ -176,6 +176,18 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 
 	duration, driverTimeout := 15*time.Minute, 600000
+	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
+		if mode != nativeExecutionBaseline {
+			t.Fatal("Codex starter proof requires baseline execution mode")
+		}
+		duration, driverTimeout = 24*time.Minute, 20*60*1000
+	}
+	if os.Getenv("HELMR_NATIVE_SDK_PROOF") == "1" {
+		if mode != nativeExecutionBaseline {
+			t.Fatal("native SDK proof requires the baseline execution mode")
+		}
+		duration, driverTimeout = 39*time.Minute, 34*60*1000
+	}
 	// Performance includes eight native Turns, ordinary peer/model Saves and
 	// two full RAM releases/restores. Keep the full baseline observable without
 	// treating the harness deadline as a product latency acceptance threshold.
@@ -214,7 +226,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var extraPermissions []auth.Permission
-	if sessionDiscovery {
+	if sessionDiscovery || os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
 		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt)
 	}
 	if secretBindings {
@@ -576,6 +588,13 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var receipt struct {
+		CodexStarter *struct {
+			Retained, Steering, Questions, JoinedBackgroundStop, HeldOwnerFailure, Reconstruction bool
+		} `json:"codexStarter"`
+		NativeSDK *struct {
+			PassedCases []string `json:"passedCases"`
+			FailedCases []string `json:"failedCases"`
+		} `json:"nativeSDK"`
 		ComputerID     string            `json:"computerId"`
 		PeerSessionID  string            `json:"peerSessionId"`
 		NativeSessions map[string]string `json:"nativeSessions"`
@@ -594,6 +613,15 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	if err := json.Unmarshal(result.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
+	}
+	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
+		proof := receipt.CodexStarter
+		if proof == nil || !proof.Retained || !proof.Steering || !proof.Questions || !proof.JoinedBackgroundStop || !proof.HeldOwnerFailure || !proof.Reconstruction {
+			t.Fatal("missing or incomplete Codex starter Turn evidence")
+		}
+	}
+	if os.Getenv("HELMR_NATIVE_SDK_PROOF") == "1" && (receipt.NativeSDK == nil || len(receipt.NativeSDK.PassedCases) != 14 || len(receipt.NativeSDK.FailedCases) != 0) {
+		t.Fatal("missing or incomplete native SDK guest evidence")
 	}
 	if mode == nativeExecutionMissingMemory {
 		if err := verifyMissingCheckpointRepair(ctx, database.Pool, env, checkpointObservations); err != nil {
