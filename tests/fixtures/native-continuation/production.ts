@@ -17,7 +17,11 @@ import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/c
 
 const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
 // Replaced by the fixture packaging command, before ordinary compilation.
-const computerImage = process.env.HELMR_NATIVE_PERFORMANCE === "1"
+const computerImage = process.env.HELMR_NATIVE_SDK_PROOF === "1"
+  ? baseImage.copy(source.directory("native-sdk-dependencies"), "/workspace/native-sdk")
+      .run(["sh", "/workspace/native-sdk/prepare-image.sh"])
+      .copy(source.directory("native-sdk"), "/workspace/native-sdk")
+  : process.env.HELMR_NATIVE_PERFORMANCE === "1"
   ? baseImage.copy(source.directory("performance"), "/opt/native-performance")
       .run(["sh", "/opt/native-performance/prepare-image.sh"])
   : baseImage
@@ -281,3 +285,6 @@ export const deadline = agent({
   id: "deadline", template: workspace, maxTurnDuration: "30s",
   turn(turn) { return { input: fixtureValue(turn.input) } },
 })
+
+import { createCodexStarter } from "./codex-starter"
+export const codexStarter = createCodexStarter(workspace)

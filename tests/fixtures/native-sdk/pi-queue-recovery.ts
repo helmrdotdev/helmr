@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {mkdirSync} from 'node:fs';
+import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
+import {createAgentSession,createExtensionRuntime,ModelRuntime,SessionManager,SettingsManager} from '@earendil-works/pi-coding-agent';
+const root='/workspace/native-sdk/isolated/pi';
+mkdirSync(root+'/sessions',{recursive:true});
+let contexts:any[]=[]; let calls=0, waitMode=false, startedResolve:any;
+console.error('PHASE pi runtime-create',new Date().toISOString());const runtime=await ModelRuntime.create({authPath:root+'/auth.json',modelsPath:null,modelsStorePath:root+'/models-store.json',allowModelNetwork:false,refreshOnCreate:false});
+runtime.registerProvider('probe',{baseUrl:'https://invalid.example',api:'probe-api',apiKey:'offline-fixture',models:[{id:'probe',name:'probe',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:100000,maxTokens:1000}],streamSimple:(model,context,options)=>{
+ calls++; contexts.push(JSON.stringify(context.messages));
+ const stream=createAssistantMessageEventStream();
+ const msg:any={role:'assistant',content:[{type:'text',text:'fixture reply'}],api:model.api,provider:model.provider,model:model.id,usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()};
+ if(waitMode){
+  options?.signal?.addEventListener('abort',()=>{msg.stopReason='aborted';msg.errorMessage='fixture aborted';stream.push({type:'error',reason:'aborted',error:msg});stream.end(msg)},{once:true});
+  startedResolve?.();
+ }else setTimeout(()=>{stream.push({type:'done',reason:'stop',message:msg});stream.end(msg)},5);
+ return stream;
+}});
+const model=runtime.getModel('probe','probe');assert.ok(model);
+const resourceLoader:any={getExtensions:()=>({extensions:[],errors:[],runtime:createExtensionRuntime()}),getSkills:()=>({skills:[],diagnostics:[]}),getPrompts:()=>({prompts:[],diagnostics:[]}),getThemes:()=>({themes:[],diagnostics:[]}),getAgentsFiles:()=>({agentsFiles:[]}),getSystemPrompt:()=>'',getSystemPromptSource:()=>undefined,getAppendSystemPrompt:()=>[],getAppendSystemPromptSources:()=>[],extendResources:()=>{},reload:async()=>{}};
+const manager=SessionManager.create(root,root+'/sessions');
+const create=async(sm:any)=>createAgentSession({cwd:root,agentDir:root,model,modelRuntime:runtime,thinkingLevel:'off',resourceLoader,tools:[],sessionManager:sm,settingsManager:SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false},cacheWarming:{mode:'off'}} as any)});
+console.error('PHASE pi session-create',new Date().toISOString());const {session}=await create(manager);assert.equal(calls,0);
+let settled=0;session.subscribe(e=>{if(e.type==='agent_settled')settled++});
+console.error('PHASE pi first-prompt',new Date().toISOString());await session.prompt('first');console.error('PHASE pi second-prompt',new Date().toISOString());await session.prompt('second');assert.equal(calls,2);assert.equal(session.isIdle,true);
+console.error('PHASE pi interrupt-start',new Date().toISOString());waitMode=true;const started=new Promise(r=>startedResolve=r);const running=session.prompt('interrupt me');await started;await session.steer('queued steer');await session.followUp('queued followup');assert.equal(session.pendingMessageCount,2);const removed=session.clearQueue();assert.equal(removed.steering.length,1);assert.equal(removed.followUp.length,1);console.error('PHASE pi abort',new Date().toISOString());await session.abort();await running;assert.equal(session.isIdle,true);
+waitMode=false;await session.prompt('after abort');assert.equal(calls,4);
+const saved=manager.getSessionFile();assert.ok(saved);session.dispose();
+console.error('PHASE pi reopen',new Date().toISOString());const {session:resumed}=await create(SessionManager.open(saved));assert.equal(calls,4);assert.equal(resumed.isIdle,true);await resumed.prompt('new input after reopen');assert.equal(calls,5);assert.ok(contexts[4].includes('first'));assert.ok(contexts[4].includes('second'));assert.ok(contexts[4].includes('after abort'));assert.ok(!contexts[4].includes('queued steer'));assert.ok(!contexts[4].includes('queued followup'));resumed.dispose();
+const missing=SessionManager.open(root+'/absent-session.jsonl');assert.equal(missing.getEntries().length,0);
+console.log(JSON.stringify({case:'Pi-public-SDK-with-local-model',calls,settled,retainedMultiTurn:true,abortJoined:true,reusableAfterAbort:true,reopenDidNotPrompt:true,missingFileCreatesEmpty:true,queueRetiredBeforeAbort:true,restoredContextObservedByModel:true}));

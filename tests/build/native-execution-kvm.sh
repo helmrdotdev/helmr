@@ -85,6 +85,7 @@ if [[ -n ${HELMR_NATIVE_PERFORMANCE_KIND:-} ]]; then
   [[ ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 0 || ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 1 ]]
   test_case=TestWorkerAgentPerformance
 fi
+if [[ ${HELMR_NATIVE_SDK_PROOF:-0} == 1 || ${HELMR_CODEX_STARTER_PROOF:-0} == 1 ]]; then [[ "$test_case" == TestWorkerAgentNativeExecution ]]; fi
 [[ $(id -u) == 0 && $(uname -m) == x86_64 && "$candidate" == /* && "$evidence" == /* ]]
 [[ "$remote" == s3://*/_verification/native-execution/* && "$remote" != *'?'* && "$remote" != *'#'* ]]
 [[ $(tr -d '\n' </sys/devices/virtual/dmi/id/board_asset_tag) == "$host_id" ]]
@@ -241,6 +242,12 @@ config={'Worker':c+'/agent-worker','Node':tool('node'),'Driver':c+'/driver.mjs',
  'RestartPublicationOwner':os.environ.get('HELMR_NATIVE_RESTART_PUBLICATION_OWNER')=='1',
  'CASURI':remote.rstrip('/')+'/cas','PlatformURI':remote.rstrip('/')+'/platform','WorkerEnv':worker,
  'SourceHostID':host_id,'TargetHostID':os.environ.get('HELMR_NATIVE_CROSS_HOST_TARGET_ID','')}
+if os.environ.get('HELMR_NATIVE_SDK_PROOF')=='1':
+ worker['WORKER_COMPUTER_STAGING_MIB']='16384'
+ assert json.loads(Path(c+'/source.json').read_text()).get('native_sdk') is True,'SDK cases require their packaged native dependencies'
+if os.environ.get('HELMR_CODEX_STARTER_PROOF')=='1':
+ worker['WORKER_COMPUTER_STAGING_MIB']='16384'
+ assert json.loads(Path(c+'/source.json').read_text()).get('codex_starter') is True,'starter case requires its packaged native dependency'
 if os.environ.get('HELMR_NATIVE_PERFORMANCE_KIND'):
  assert json.loads(Path(c+'/source.json').read_text()).get('native_performance') is True,'performance requires its instrumented artifact'
  config['Performance']={'Kind':os.environ['HELMR_NATIVE_PERFORMANCE_KIND'],'Degraded':os.environ.get('HELMR_NATIVE_PERFORMANCE_DEGRADED','0')=='1'}
@@ -286,6 +293,8 @@ PY
 if [[ "$role" == target ]]; then exit 0; fi
 export HELMR_NATIVE_EXECUTION_PROOF=1 HELMR_NATIVE_EXECUTION_CONFIG="$evidence/config.json"
 test_timeout=19m
+if [[ ${HELMR_NATIVE_SDK_PROOF:-0} == 1 ]]; then test_timeout=44m; fi
+if [[ ${HELMR_CODEX_STARTER_PROOF:-0} == 1 ]]; then test_timeout=29m; fi
 if [[ "$test_case" == TestWorkerAgentPerformance ]]; then test_timeout=42m; fi
 if [[ "$test_case" == TestWorkerAgentCheckpointKeyMismatch || "$test_case" == TestWorkerAgentSessionDiscoveryContinuation ]]; then test_timeout=24m; fi
 if [[ "$test_case" == TestWorkerAgentLongIdleContinuation ]]; then test_timeout=139m; fi

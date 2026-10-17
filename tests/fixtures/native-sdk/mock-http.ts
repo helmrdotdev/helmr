@@ -1,0 +1,9 @@
+import http from 'node:http';
+export let calls:any[]=[];let hold=false,held:any[]=[];
+const server=http.createServer(async(req,res)=>{let raw='';for await(const c of req)raw+=c;const b=JSON.parse(raw||'{}');if(req.url.includes('count_tokens')){res.end(JSON.stringify({input_tokens:10}));return}if(!req.url.includes('/messages')){res.writeHead(404);res.end('{}');return}calls.push(b);console.log("model-request",calls.length);if(hold){held.push(res);return}reply(res,b)});
+function reply(res,b){const m={id:'msg_'+crypto.randomUUID(),type:'message',role:'assistant',model:b.model,content:[],stop_reason:null,stop_sequence:null,usage:{input_tokens:10,output_tokens:1}};
+if(!b.stream){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({...m,content:[{type:'text',text:'offline reply'}],stop_reason:'end_turn'}));return}
+res.writeHead(200,{'content-type':'text/event-stream'});const e=(type,data)=>res.write('event: '+type+'\ndata: '+JSON.stringify({type,...data})+'\n\n');e('message_start',{message:m});e('content_block_start',{index:0,content_block:{type:'text',text:''}});e('content_block_delta',{index:0,delta:{type:'text_delta',text:'offline reply'}});e('content_block_stop',{index:0});e('message_delta',{delta:{stop_reason:'end_turn',stop_sequence:null},usage:{output_tokens:2}});e('message_stop',{});res.end();}
+await new Promise(r=>server.listen(18479,'127.0.0.1',r));
+
+export {server};
