@@ -297,3 +297,7 @@ export const codexStarter = createCodexStarter(workspace)
 
 import { createClaudeStarter } from "./claude-starter"
 export const claudeStarter = createClaudeStarter(workspace)
+
+import { createEmbeddedStarter } from "./embedded-starters"
+export const opencodeStarter = createEmbeddedStarter("opencode", workspace)
+export const piStarter = createEmbeddedStarter("pi", workspace)

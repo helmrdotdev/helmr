@@ -750,3 +750,18 @@ and retained multipart-ID counts include durable retry history; they are not
 by themselves leaked bytes or pending work. This is a single-host bounded soak,
 not multi-worker or production-shape qualification; report plateau and backlog
 observations from the samples rather than assuming convergence from completion.
+
+### Embedded starter lifecycle cases
+
+`HELMR_EMBEDDED_STARTER_PROOF=1` selects the actual OpenCode and Pi starter bridges
+in the native execution fixture. Set it for both packaging and execution. The
+bundle includes pinned SDK dependencies; source metadata records this selection.
+The cases use a loopback Anthropic-compatible model without provider credentials.
+They assert retained native identity/context, steering, native questions, queued
+input retirement, joined shell-tool cancellation, and explicit Session-owner loss
+followed by a hold and reconstruction. The first model request after reconstruction
+must see old history and new input without replaying the old work; it also observes
+that the prior shell has stopped. Crash cleanup is a Helmr Session-containment
+assertion, separate from ordinary SDK cancellation. Results are written to
+`opencode-starter.json` and `pi-starter.json` with ordinary fixture cleanup.
+These cases do not prove live provider authentication or protected transports.

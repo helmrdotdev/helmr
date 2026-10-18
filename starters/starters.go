@@ -19,6 +19,8 @@ import (
 
 //go:embed claude-code/.helmrignore claude-code/README.md claude-code/helmr.config.ts claude-code/package.json claude-code/tsconfig.json claude-code/agents
 //go:embed codex/.helmrignore codex/README.md codex/helmr.config.ts codex/package.json codex/tsconfig.json codex/agents
+//go:embed opencode/.helmrignore opencode/README.md opencode/helmr.config.ts opencode/package.json opencode/tsconfig.json opencode/agents
+//go:embed pi/.helmrignore pi/README.md pi/helmr.config.ts pi/package.json pi/tsconfig.json pi/agents
 var files embed.FS
 
 const (
@@ -38,8 +40,9 @@ type Provider struct {
 }
 
 var providers = map[string]Provider{
-	"openai":    {ID: "openai", Secret: "OPENAI_API_KEY", Origin: "https://api.openai.com"},
-	"anthropic": {ID: "anthropic", Secret: "ANTHROPIC_API_KEY", Origin: "https://api.anthropic.com"},
+	"opencode-go": {ID: "opencode-go", Secret: "OPENCODE_GO_API_KEY", Origin: "https://opencode.ai"},
+	"openai":      {ID: "openai", Secret: "OPENAI_API_KEY", Origin: "https://api.openai.com"},
+	"anthropic":   {ID: "anthropic", Secret: "ANTHROPIC_API_KEY", Origin: "https://api.anthropic.com"},
 }
 
 // Binding is how a starter uses one provider: the model and the env var that
@@ -62,6 +65,16 @@ var all = []Starter{
 	}},
 	{ID: "claude-code", bindings: []Binding{
 		{Provider: providers["anthropic"], Model: "claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
+	}},
+	{ID: "opencode", bindings: []Binding{
+		{Provider: providers["anthropic"], Model: "anthropic/claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
+		{Provider: providers["openai"], Model: "openai/gpt-5.5", Env: "OPENAI_API_KEY"},
+		{Provider: providers["opencode-go"], Model: "opencode-go/glm-5.3", Env: "OPENCODE_API_KEY"},
+	}},
+	{ID: "pi", bindings: []Binding{
+		{Provider: providers["anthropic"], Model: "anthropic/claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
+		{Provider: providers["openai"], Model: "openai/gpt-5.5", Env: "OPENAI_API_KEY"},
+		{Provider: providers["opencode-go"], Model: "opencode-go/glm-5.3", Env: "OPENCODE_API_KEY"},
 	}},
 }
 

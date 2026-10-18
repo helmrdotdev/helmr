@@ -1,3 +1,4 @@
+import { runEmbeddedStarter } from "./embedded-starters-driver"
 import { runClaudeStarter } from "./claude-starter-driver"
 import { runCodexStarter } from "./codex-starter-driver"
 import { runNativeSDK } from "../native-sdk/driver"
@@ -123,7 +124,7 @@ try {
   model = await commands.exec({
     command: ["/usr/bin/env", `HELMR_NATIVE_TARGET_SESSION=${peer.session.id}`, "/usr/local/bin/node", "--input-type=module", "-", "/workspace/native-models.json"],
     stdin: await readFile(options.modelScript),
-    timeout: `${(process.env.HELMR_NATIVE_SDK_PROOF === "1" || process.env.HELMR_CODEX_STARTER_PROOF === "1" || process.env.HELMR_CLAUDE_STARTER_PROOF === "1") ? 600000 : options.timeoutMs}ms`,
+    timeout: `${(process.env.HELMR_NATIVE_SDK_PROOF === "1" || process.env.HELMR_CODEX_STARTER_PROOF === "1" || process.env.HELMR_CLAUDE_STARTER_PROOF === "1" || process.env.HELMR_EMBEDDED_STARTER_PROOF === "1") ? 600000 : options.timeoutMs}ms`,
     idempotencyKey: "fixture-model",
   }, { signal })
   const ready = await commands.exec({
@@ -559,7 +560,8 @@ try {
   }
   const codexStarter = process.env.HELMR_CODEX_STARTER_PROOF === "1" ? await runCodexStarter(client, computer.id, options.evidence, signal) : undefined
   const claudeStarter = process.env.HELMR_CLAUDE_STARTER_PROOF === "1" ? await runClaudeStarter(client, computer.id, options.evidence, signal) : undefined
-  process.stdout.write(JSON.stringify({ claudeStarter, codexStarter, nativeSDK, computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: peer.turn.id, peerSequence, peerOutcome, nativeSessions, nativeLosses, cancellations, deadline, turns, timings }) + "\n")
+  const embeddedStarters = process.env.HELMR_EMBEDDED_STARTER_PROOF === "1" ? [await runEmbeddedStarter("opencode", client, computer.id, options.evidence, signal), await runEmbeddedStarter("pi", client, computer.id, options.evidence, signal)] : undefined
+  process.stdout.write(JSON.stringify({ embeddedStarters, claudeStarter, codexStarter, nativeSDK, computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: peer.turn.id, peerSequence, peerOutcome, nativeSessions, nativeLosses, cancellations, deadline, turns, timings }) + "\n")
 } finally {
   activeOutcome?.controller.abort()
   await activeOutcome?.promise.catch(() => {})
