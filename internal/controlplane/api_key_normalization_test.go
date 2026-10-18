@@ -47,3 +47,18 @@ func TestNormalizeAPIKeyPermissionGrantsRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeAPIKeyPermissionGrantsAllowsComputerRetentionUpdates(t *testing.T) {
+	wantGrants := []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeComputersUpdate}}}
+	grants, permissions, err := normalizeAPIKeyPermissionGrants(wantGrants)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(grants, wantGrants) {
+		t.Fatalf("grants = %+v, want %+v", grants, wantGrants)
+	}
+	wantPermissions := []auth.Permission{auth.PermissionComputersUpdate}
+	if !reflect.DeepEqual(permissions, wantPermissions) {
+		t.Fatalf("permissions = %v, want %v", permissions, wantPermissions)
+	}
+}
