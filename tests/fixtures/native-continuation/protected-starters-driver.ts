@@ -20,6 +20,19 @@ async function execPrepared(computer: ComputerRef, request: ComputerCommandReque
   }
 }
 
+async function deleteFixtureComputer(computer: ComputerRef, idempotencyKey: string) {
+  // Storage is released by the ordinary retention loop after physical cleanup.
+  const signal = AbortSignal.timeout(180_000)
+  for (;;) {
+    try { await computer.delete({ idempotencyKey }, { signal }); break }
+    catch (error) {
+      if (!isHelmrError(error) || error.code !== "computer_busy") throw error
+      await delay(100, undefined, { signal })
+    }
+  }
+  while ((await computer.get({ signal })).status !== "deleted") await delay(100, undefined, { signal })
+}
+
 export async function runProtectedStarters(client: HelmrClient, fixture: { origin: string; state: string }, evidence: string, signal: AbortSignal) {
   const records: Record<string, unknown>[] = []
   for (const kind of kinds) {
@@ -27,10 +40,11 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
     let primaryError: unknown
     let session: SessionRef | undefined
     let newerSession: SessionRef | undefined
+    let computer: ComputerRef | undefined
     const name = `protected-${kind}`
     await client.secrets.create({ secret: name, value: "synthetic-protected-native-key", idempotencyKey: name }, { signal })
     try {
-      const computer = await client.computers.create({ template: "native-continuation", idempotencyKey: name,
+      computer = await client.computers.create({ template: "native-continuation", idempotencyKey: name,
         secrets: [{ secret: name, env: { name: "NATIVE_PROTECTED_KEY", mode: "protected", allowedOrigins: [fixture.origin] } }],
       }, { signal })
       const commands = client.computers.ref(computer.id)
@@ -137,6 +151,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
         }),
         client.secrets.ref(name).revoke({ idempotencyKey: `${name}-revoke` }, { signal: cleanup }),
       ])
+      if (computer) results.push(...await Promise.allSettled([deleteFixtureComputer(computer, `${name}-delete`)]))
       const errors = results.filter(result => result.status === "rejected")
       if (errors.length) throw new AggregateError([...(primaryError ? [primaryError] : []), ...errors.map(result => result.reason)], "protected fixture cleanup failed")
     }
@@ -153,12 +168,14 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
   await client.secrets.create({ secret: name, value: "synthetic-protected-native-key", idempotencyKey: name }, { signal })
   const commands: import("../../../sdk/typescript/src/command").CommandRef[] = []
   let primaryError: unknown
+  let computer: ComputerRef | undefined
   try {
-    const computer = await client.computers.create({ template: "native-continuation", idempotencyKey: name,
+    computer = await client.computers.create({ template: "native-continuation", idempotencyKey: name,
       secrets: [{ secret: name, env: { name: "NATIVE_PROTECTED_KEY", mode: "protected", allowedOrigins: [fixture.origin] } }],
     }, { signal })
+    const computerRef = computer
     async function socket(owner: string) {
-      const command = await execPrepared(client.computers.ref(computer.id), { command: ["/usr/local/bin/node", "--input-type=module", "-e", `
+      const command = await execPrepared(computerRef, { command: ["/usr/local/bin/node", "--input-type=module", "-e", `
         import https from 'node:https'; import {randomBytes} from 'node:crypto';
         const request=https.request(${JSON.stringify(fixture.origin)}+'/command/'+${JSON.stringify(owner)}+'/v1/responses', {headers:{
           Authorization:'Bearer '+process.env.NATIVE_PROTECTED_KEY, Connection:'Upgrade', Upgrade:'websocket',
@@ -216,6 +233,7 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
       }),
       client.secrets.ref(name).revoke({ idempotencyKey: `${name}-revoke` }, { signal: cleanup }),
     ])
+    if (computer) results.push(...await Promise.allSettled([deleteFixtureComputer(computer, `${name}-delete`)]))
     const errors = results.filter(result => result.status === "rejected")
     if (errors.length) throw new AggregateError([...(primaryError ? [primaryError] : []), ...errors.map(result => result.reason)], "protected authority cleanup failed")
   }
