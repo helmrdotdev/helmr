@@ -5,11 +5,11 @@ import { errorMessage } from "../../lib/error";
 import { usePermission } from "../../lib/me";
 import { createSecret, listSecrets, rotateSecret } from "../../lib/secrets";
 import { CodeBlock } from "../../ui/CodeBlock";
-import { Field, Segmented, SecretInput } from "../../ui/Field";
-import { InlineStatus, Notice } from "../../ui/Notice";
+import { Field, FormActions, Segmented, SecretInput } from "../../ui/Field";
+import { Notice } from "../../ui/Notice";
 import { Panel } from "../../ui/Panel";
 import { isDenied } from "../../ui/QueryState";
-import { Steps } from "../../ui/Steps";
+import { Steps, type Step } from "../../ui/Steps";
 import { cx, ui } from "../../ui/styles";
 import { HARNESSES, PROVIDERS, setupPrompt, type HarnessID, type ProviderID } from "./harnesses";
 
@@ -39,7 +39,7 @@ function HarnessPicker(props: { value: HarnessID; onChange: (value: HarnessID) =
 
 // The provider's key as a Secret in this Environment: add it, replace it, or
 // say who can.
-function ModelKey(props: { projectID: string; environmentID: string; provider: ProviderID; onReady: (ready: boolean) => void }) {
+function ModelKey(props: { projectID: string; environmentID: string; provider: ProviderID; otherChoices: boolean; onReady: (ready: boolean) => void }) {
   const queryClient = useQueryClient();
   const permission = usePermission();
   const provider = () => PROVIDERS[props.provider];
@@ -55,6 +55,8 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
   const [saving, setSaving] = createSignal(false);
   const [saved, setSaved] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [announcement, setAnnouncement] = createSignal("");
+  let replaceButton: HTMLButtonElement | undefined;
   const secretsHref = () => `/settings/secrets?project=${encodeURIComponent(props.projectID)}&environment=${encodeURIComponent(props.environmentID)}`;
 
   const save = async (event: Event) => {
@@ -67,7 +69,10 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
       setValue("");
       setReplacing(false);
       setSaved(true);
+      setAnnouncement(`${provider().secret} saved`);
       await queryClient.invalidateQueries({ queryKey: ["secrets", props.projectID, props.environmentID] });
+      // The form is gone; keep keyboard focus on the key's row.
+      replaceButton?.focus();
     } catch (saveError) {
       setError(errorMessage(saveError, "Could not save the key. Please try again.", SAVE_ERRORS));
     } finally {
@@ -80,12 +85,13 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
       <Field label={provider().secret} hint={<>Get a key at <a class={ui.monoLink} href={provider().keyURL} target="_blank" rel="noreferrer">{new URL(provider().keyURL).host}</a>.</>} error={error()} flush>
         <SecretInput value={value()} placeholder="Paste the key" onInput={(event) => setValue(event.currentTarget.value)} />
       </Field>
-      <div class={ui.buttonGroup}>
-        <button type="submit" class={ui.button} disabled={saving() || value().trim() === ""}>{saving() ? "Saving..." : "Save key"}</button>
-        <Show when={replacing()}>
-          <button type="button" class={ui.secondaryButton} onClick={() => { setReplacing(false); setValue(""); setError(null); }}>Cancel</button>
-        </Show>
-      </div>
+      <Show when={replacing()} fallback={
+        <div class={ui.modalActions}>
+          <button type="submit" class={ui.button} disabled={saving() || value().trim() === ""}>{saving() ? "Saving..." : "Save key"}</button>
+        </div>
+      }>
+        <FormActions submitLabel="Save key" busyLabel="Saving..." busy={saving()} disabled={value().trim() === ""} onCancel={() => { setReplacing(false); setValue(""); setError(null); }} />
+      </Show>
     </form>
   );
 
@@ -108,28 +114,29 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
         </Match>
         <Match when={state() === "active" && !replacing()}>
           <div class="flex flex-wrap items-center gap-2">
-            <InlineStatus>{saved() ? "Saved" : "Set"}</InlineStatus>
+            <span class="font-mono text-chrome text-console-success">{saved() ? "Saved" : "Set"}</span>
             <span><code class="font-mono text-chrome text-console-text">{provider().secret}</code> is set in this environment.</span>
             <Show when={canWrite()}>
-              <button type="button" class={ui.compactButton} onClick={() => { setSaved(false); setReplacing(true); }}>Replace key</button>
+              <button ref={replaceButton} type="button" class={ui.compactButton} onClick={() => { setSaved(false); setAnnouncement(""); setReplacing(true); }}>Replace key</button>
             </Show>
           </div>
         </Match>
         <Match when={state() === "revoked"}>
           <Notice tone="warning">
-            {provider().secret} was revoked in this environment, and a revoked ID cannot be used again. Choose another provider, or ask an owner or admin how to proceed.
+            {provider().secret} was revoked in this environment, and a revoked ID cannot be used again. {props.otherChoices ? "Choose another agent or provider" : "Choose another agent"}, or ask an owner or admin how to proceed.
           </Notice>
+        </Match>
+        <Match when={state() === "error"}>
+          <Notice tone="danger" action={<button type="button" class={ui.monoLink} onClick={() => void secrets.refetch()}>Retry</button>}>Could not check this environment's secrets.</Notice>
         </Match>
         <Match when={!canWrite()}>
           <Notice tone="info" action={<A href={secretsHref()}>Secrets</A>}>
             An owner or admin adds <code class="font-mono">{provider().secret}</code> to this environment. You can copy the prompt now; your agent asks you to confirm the key before it deploys.
           </Notice>
         </Match>
-        <Match when={state() === "error"}>
-          <Notice tone="danger" action={<button type="button" class={ui.monoLink} onClick={() => void secrets.refetch()}>Retry</button>}>Could not check this environment's secrets.</Notice>
-        </Match>
         <Match when={true}>{form()}</Match>
       </Switch>
+      <span class="sr-only" aria-live="polite">{announcement()}</span>
     </div>
   );
 }
@@ -150,8 +157,6 @@ export function SetUpPanel(props: { projectID: string; environmentID: string }) 
     setChosen(HARNESSES.find((item) => item.id === id)!.bindings[0]!.provider);
   };
 
-  // Built once: the step list is rebuilt as the steps change state, and these
-  // must keep their DOM and state (a typed key, a saved notice) across that.
   const harnessStep = <HarnessPicker value={harnessID()} onChange={pick} />;
   const providerStep = (
     <>
@@ -161,8 +166,13 @@ export function SetUpPanel(props: { projectID: string; environmentID: string }) 
       <span>Uses <code class="font-mono text-chrome text-console-text">{binding().model}</code>; change it later in <code class="font-mono text-chrome">agents/settings.ts</code>.</span>
     </>
   );
-  // Keyed by provider, so a half-typed key never carries over to another provider's Secret.
-  const keyStep = <Show when={provider().id} keyed>{(id) => <ModelKey projectID={props.projectID} environmentID={props.environmentID} provider={id} onReady={setReady} />}</Show>;
+  // Keyed by scope and provider, so a half-typed key never carries over to
+  // another Environment's or provider's Secret.
+  const keyStep = (
+    <Show when={`${props.projectID}/${props.environmentID}/${provider().id}`} keyed>
+      {(_scope) => <ModelKey projectID={props.projectID} environmentID={props.environmentID} provider={provider().id} otherChoices={harness().bindings.length > 1} onReady={setReady} />}
+    </Show>
+  );
   const promptStep = (
     <>
       <span>It signs in, creates and deploys the agent, and tells you when to approve the sign-in and connect Slack.</span>
@@ -173,17 +183,18 @@ export function SetUpPanel(props: { projectID: string; environmentID: string }) 
     </>
   );
 
+  // One stable list whose states follow the key: rebuilding it would replace
+  // every step's row and drop keyboard focus.
+  const steps: Step[] = [
+    { title: "Which agent do you want to run on Helmr?", state: "done", description: harnessStep },
+    { title: "Which model provider?", state: "done", description: providerStep },
+    { title: "Add the key it needs", get state() { return ready() ? "done" : "current"; }, description: keyStep },
+    { title: "Paste this into the coding agent you work with", get state() { return ready() ? "current" : "upcoming"; }, description: promptStep },
+  ];
+
   return (
     <Panel title="Set up">
-      <Steps
-        label="Set up"
-        steps={[
-          { title: "Which agent do you want to run on Helmr?", state: "done", description: harnessStep },
-          { title: "Which model provider?", state: "done", description: providerStep },
-          { title: "Add the key it needs", state: ready() ? "done" : "current", description: keyStep },
-          { title: "Paste this into the coding agent you work with", state: ready() ? "current" : "upcoming", description: promptStep },
-        ]}
-      />
+      <Steps label="Set up" steps={steps} />
     </Panel>
   );
 }

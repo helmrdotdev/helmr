@@ -203,8 +203,18 @@ function setupFixture(req: IncomingMessage, res: ServerResponse, url: URL): bool
     else json(res, 200, { id: id(961), version: "20261018.1", bundle_digest: "sha256:demo", created_at: ago(30) });
     return true;
   }
-  if (rest === "/agents" && req.method === "GET" && deployment !== "agents") {
-    json(res, 200, { deployment_id: id(961), agents: [] });
+  if (rest === `/deployments/${id(961)}/events` && req.method === "GET") {
+    json(res, 200, { events: [{ id: "1", kind: "deployment.promoted", message: "Deployment promoted", at: ago(30), attributes: {} }] });
+    return true;
+  }
+  if (rest === "/agents" && req.method === "GET") {
+    json(res, 200, { deployment_id: id(961), agents: deployment === "agents" ? [{ agent: "noether", template: "noether" }] : [] });
+    return true;
+  }
+  // Like the server, only people who manage secrets can list them.
+  const role = cookie(req, "helmr_dev_role");
+  if (rest === "/secrets" && req.method === "GET" && role && role !== "owner" && role !== "admin") {
+    json(res, 403, { error: { code: "forbidden", message: "secrets.write is required" } });
     return true;
   }
   if (rest === "/secrets" && req.method === "GET") {

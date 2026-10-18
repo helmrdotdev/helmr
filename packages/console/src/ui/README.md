@@ -258,8 +258,8 @@ Panel.
   in `payload.ts`.
 - **Steps.** Numbered setup steps with done, current and upcoming states; a step's
   description may hold a CodeBlock. Multi-step setup is never a modal; it is Steps
-  on the owning page or tab (the Agent's Slack tab, the Overview before the first
-  Deployment).
+  on the owning page or tab (the Agent's Slack tab, the Overview until an
+  environment has agents).
 
 ## Inputs
 
@@ -283,6 +283,7 @@ Panel.
 | 2–5 mutually exclusive options that change a view | **Segmented** (an option's `count` follows its label) |
 | A value in a form, more than 5 options, or long labels | **Select** (filters itself past 10 options) |
 | Options that need a description | **ChoiceCards** (radio, or `multiple` for checkboxes) |
+| A few options best recognized by a logo | Logo cards: a radio group of bordered cards, logo then mono name, the chosen card in the accent (the Overview's agent picker) |
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
 There is one Select. Native `<select>` elements are not used. An option's

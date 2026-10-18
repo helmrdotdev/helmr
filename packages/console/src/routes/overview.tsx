@@ -1,5 +1,5 @@
 import { A } from "@solidjs/router";
-import { createQuery } from "@tanstack/solid-query";
+import { createQuery, keepPreviousData } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { attentionTotal, useAttention, type AttentionCounts, type AttentionItem, type AttentionKind } from "../lib/attention";
@@ -171,6 +171,9 @@ export function Overview() {
     queryFn: async () => (await listAgentDefinitions({ ...ids(), deploymentID: current.data!.id, limit: 1 })).agents.length > 0,
     enabled: enabled() && !!current.data,
     retry: false,
+    // A new Deployment keeps the last answer while it loads, so setup in
+    // progress is not replaced by the loading state.
+    placeholderData: keepPreviousData,
   }));
   const total = () => (attention.data ? attentionTotal(attention.data.counts) : 0);
   const setUp = () => current.data === null || hasAgents.data === false;
