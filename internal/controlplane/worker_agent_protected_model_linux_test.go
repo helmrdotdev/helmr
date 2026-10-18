@@ -44,6 +44,8 @@ type protectedModelRejection struct {
 }
 
 type protectedModelObservation struct {
+	AuxiliaryHTTP  []json.RawMessage         `json:"auxiliaryHTTP"`
+	RejectedHTTP   []json.RawMessage         `json:"rejectedHTTP"`
 	Preconnects    int                       `json:"unauthenticatedPreconnects"`
 	Rejected       []protectedModelRejection `json:"rejected"`
 	DeniedRenewals int                       `json:"deniedRenewals"`
@@ -254,14 +256,20 @@ func (f *protectedModelFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}}.ServeHTTP(w, r)
 		return
 	}
-	if (kind == "codex" || kind == "opencode-openai") && strings.HasSuffix(r.URL.Path, "/responses") {
-		f.record(owner, func(o *protectedModelObservation) { o.Fallback++ })
-		http.Error(w, "Responses HTTP fallback is forbidden", 400)
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
 	if err != nil {
 		http.Error(w, "fixture request limit", 400)
+		return
+	}
+	auxiliary := protectedTitleRequest(r, kind, owner, body)
+	if (kind == "codex" || kind == "opencode-openai") && strings.HasSuffix(r.URL.Path, "/responses") && !auxiliary {
+		f.record(owner, func(o *protectedModelObservation) {
+			o.Fallback++
+			if json.Valid(body) {
+				o.RejectedHTTP = append(o.RejectedHTTP, json.RawMessage(body))
+			}
+		})
+		http.Error(w, "Responses HTTP fallback is forbidden", 400)
 		return
 	}
 	if strings.HasSuffix(r.URL.Path, "/count_tokens") {
@@ -275,10 +283,14 @@ func (f *protectedModelFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.record(owner, func(o *protectedModelObservation) {
 		o.HTTP++
 		o.ActiveHTTP++
-		o.Requests = append(o.Requests, json.RawMessage(body))
+		if auxiliary {
+			o.AuxiliaryHTTP = append(o.AuxiliaryHTTP, json.RawMessage(body))
+		} else {
+			o.Requests = append(o.Requests, json.RawMessage(body))
+		}
 	})
 	defer f.record(owner, func(o *protectedModelObservation) { o.ActiveHTTP-- })
-	if f.holding(owner) {
+	if !auxiliary && f.holding(owner) {
 		<-r.Context().Done()
 		return
 	}
@@ -451,6 +463,60 @@ func TestProtectedModelPreconnectClassification(t *testing.T) {
 			}
 			if got.Unauthorized != wantUnauthorized || got.Preconnects != wantPreconnect || len(got.Rejected) != 1 || got.Rejected[0].Path != r.URL.Path || len(got.Versions) != 0 {
 				t.Fatalf("observation = %+v", got)
+			}
+		})
+	}
+}
+
+// OpenCode's native title agent uses HTTP even when the retained conversation
+// uses WebSocket. Match its system instruction, never a user-input substring.
+func protectedTitleRequest(r *http.Request, kind, owner string, body []byte) bool {
+	if kind != "opencode-openai" || r.Method != http.MethodPost || r.URL.Path != "/opencode-openai/"+owner+"/v1/responses" || r.URL.RawQuery != "" {
+		return false
+	}
+	var request struct {
+		Model        string            `json:"model"`
+		Stream       bool              `json:"stream"`
+		Instructions string            `json:"instructions"`
+		Tools        []json.RawMessage `json:"tools"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return false
+	}
+	const prefix = "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later."
+	return request.Model == "probe" && request.Stream && len(request.Tools) == 0 && strings.HasPrefix(request.Instructions, prefix) && !strings.Contains(request.Instructions, "Use the protected test model.")
+}
+
+func TestProtectedTitleRequestClassification(t *testing.T) {
+	title := "You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>\nGenerate a brief title that would help the user find this conversation later.\n</task>"
+	for _, name := range []string{"title", "user-only", "primary", "tools", "wrong-model", "not-streaming", "wrong-client", "wrong-method", "wrong-path", "query"} {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{"model": "probe", "stream": true, "instructions": title, "input": []any{}}
+			kind, method, path := "opencode-openai", "POST", "/opencode-openai/owner/v1/responses"
+			switch name {
+			case "user-only":
+				body["instructions"] = "ordinary"
+				body["input"] = title
+			case "primary":
+				body["instructions"] = title + " Use the protected test model."
+			case "tools":
+				body["tools"] = []any{map[string]any{"type": "function", "name": "test"}}
+			case "wrong-model":
+				body["model"] = "different"
+			case "not-streaming":
+				body["stream"] = false
+			case "wrong-client":
+				kind = "codex"
+			case "wrong-method":
+				method = "GET"
+			case "wrong-path":
+				path += "/extra"
+			case "query":
+				path += "?probe=1"
+			}
+			raw, _ := json.Marshal(body)
+			if got := protectedTitleRequest(httptest.NewRequest(method, path, nil), kind, "owner", raw); got != (name == "title") {
+				t.Fatalf("classification=%v", got)
 			}
 		})
 	}

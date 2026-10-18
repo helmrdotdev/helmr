@@ -43,7 +43,8 @@ export function createProtectedStarter(kind: ProtectedKind, template: TemplateDe
         bridge = await OpenCodeSession.open({ ...common, model: `${providerID}/probe`, introduction: "Use the protected test model.", native: {
           config: { directory: join(cwd, "config"), project: false, claude: false, content: JSON.stringify({ providers: { [providerID]: {
             name: "Protected fixture", package: `@opencode/ai/providers/${packageName}`,
-            settings: { baseURL: `${base}/v1`, apiKey: marker },
+            // The empty synthetic catalog is populated after native provider defaults.
+            settings: { baseURL: `${base}/v1`, apiKey: marker, ...(provider === "openai" ? { transport: "websocket" } : {}) },
             models: { probe: { name: "Probe", limit: { context: 100000, output: 1000 }, capabilities: { tools: true, input: ["text"], output: ["text"] } } },
           } } }) }, models: { fetch: false, snapshot: false }, fs: { filewatcher: false, fff: false }, plugins: [],
         } })
