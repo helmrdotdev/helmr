@@ -77,6 +77,7 @@ let
           bun install --frozen-lockfile --ignore-scripts
           bun run typecheck
           bun run test:ts
+          scripts/check-starters.sh
           (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           (cd examples/pi-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           bun run check:web
@@ -138,6 +139,7 @@ let
           scripts/check-packed-sdk-consumer.sh --sdk-packages "$sdk_packages"
           scripts/build-compiler-entry.sh
           scripts/build-hostconfig-entry.sh
+          scripts/check-starters.sh
           node tests/build/check-fixture-analysis.mjs --sdk-packages "$sdk_packages"
           bun run typecheck
           bun run test:ts:prepared

@@ -45,7 +45,7 @@ interface Operation {
 
 // The streaming query and its sole reader live across successful Turns. This
 // adapter joins SDK work; the platform owns the entire Session process tree.
-export class ClaudeHarness {
+export class ClaudeBridge {
   private readonly prompts = new Queue<SDKUserMessage>()
   private readonly lifetime = new AbortController()
   private readonly native: Query
@@ -123,7 +123,7 @@ export class ClaudeHarness {
     this.reader = this.read()
     void this.reader.catch(error => { this.broken ??= error instanceof Error ? error : new Error(String(error)); this.active?.done.reject(error); this.active?.boundary.reject(error) })
   }
-  static async open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, mcpServers?: McpServers): Promise<ClaudeHarness> {
+  static async open(cwd: string, sessionId: string, environment: NodeJS.ProcessEnv = process.env, mcpServers?: McpServers): Promise<ClaudeBridge> {
     const saved = await conversation(cwd, sessionId, "claude")
     const nativeId = z.uuid().parse(saved.candidateId ?? randomUUID())
     let resume = saved.id !== undefined
@@ -135,10 +135,10 @@ export class ClaudeHarness {
       }
     }
     await saved.reserve(nativeId)
-    const harness = new ClaudeHarness(cwd, saved.directory, nativeId, resume, environment, mcpServers)
-    harness.remember = () => saved.remember(nativeId)
-    try { await Promise.all([harness.native.initializationResult(), harness.started.promise]); return harness }
-    catch (error) { await harness.close(); throw error }
+    const bridge = new ClaudeBridge(cwd, saved.directory, nativeId, resume, environment, mcpServers)
+    bridge.remember = () => saved.remember(nativeId)
+    try { await Promise.all([bridge.native.initializationResult(), bridge.started.promise]); return bridge }
+    catch (error) { await bridge.close(); throw error }
   }
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }

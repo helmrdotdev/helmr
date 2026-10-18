@@ -170,6 +170,7 @@ rec {
   ];
 
   ciTypescript = ciShell ++ [
+    helmrPackages.goPackage # Builds the CLI that writes the starter projects.
     helmrPackages.bun
     helmrPackages.nodejs
     pkgs.rsync
