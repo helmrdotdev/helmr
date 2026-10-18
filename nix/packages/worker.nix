@@ -26,7 +26,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-Z4pEuAfjERyaHhitgddDl50HD02i3vegRnx+lrgkqqA=";
+  vendorHash = "sha256-s3i9YV0qbo+xzYi5F5p7RGuKTHQbvcHJ14B4LLAo4JU=";
   overrideModAttrs = _: {
     src = moduleSource;
   };
