@@ -21,6 +21,11 @@ export default defineConfig({
         target: backendURL,
         changeOrigin: true,
       },
+      // Setup instructions for coding agents are served by the control plane.
+      "/agent-setup/": {
+        target: backendURL,
+        changeOrigin: true,
+      },
     },
   },
   build: {
