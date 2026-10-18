@@ -32,17 +32,12 @@ test("local developer can enter the console and sees the five sections", async (
   await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings/project");
 });
 
-test("an environment before its first Deployment shows the CLI steps for this scope on the Overview", async ({ page }) => {
+test("an environment before its first Deployment shows setup on the Overview", async ({ page }) => {
   await login(page);
 
-  const setup = page.getByRole("region", { name: "Set up Production" });
-  await expect(setup.getByRole("heading", { name: "Set up Production" })).toBeVisible();
-  const steps = setup.getByRole("list", { name: "First deployment" });
-  await expect(steps.getByRole("listitem")).toHaveCount(3);
-  const origin = new URL(page.url()).origin;
-  await expect(setup.getByLabel("Install and sign in")).toContainText(`helmr login ${origin}`);
-  await expect(setup.getByLabel("Create and deploy")).toHaveText("helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . --project console-demo --env production");
-  await expect(setup.getByLabel("Start a session")).toHaveText("helmr session create hello --project console-demo --env production");
+  const setup = page.getByRole("region", { name: "Set up" });
+  await expect(setup.getByRole("list", { name: "Set up" }).getByRole("listitem")).toHaveCount(4);
+  await expect(setup.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   await expect(page.getByText("No current deployment")).toBeVisible();
   await expect(page.getByRole("region", { name: "Waiting on you" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Overview", exact: true })).toBeVisible();

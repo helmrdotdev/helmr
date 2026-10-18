@@ -13,7 +13,12 @@ import type { Plugin } from "vite";
 //   `connected`, `reauth`, `disconnected`, `unconfigured`), a linked identity,
 //   and delivery issues on every Session. `&role=developer` views it as a
 //   member who does not manage Slack. `/__dev/slack` off.
-// - `/__dev/go?delay=1500&fail=500:sessions&slack=connected&role=developer&to=/sessions?…`
+// - `/__dev/setup?deployment=none&secret=missing` shows the Overview's setup
+//   panel: `deployment` is `none` (no current deployment), `empty` (one without
+//   agents) or `agents`; `secret` is `missing`, `active` or `revoked` for every
+//   provider key, and saving a key makes it active. With `&role=developer` the
+//   viewer cannot manage secrets. `/__dev/setup` off.
+// - `/__dev/go?delay=1500&fail=500:sessions&slack=connected&setup=none:missing&role=developer&to=/sessions?…`
 //   sets exactly these states (anything omitted is turned off) and opens `to`,
 //   which comes last and is taken as written, query string included.
 export function devStates(backendURL: string): Plugin {
@@ -38,15 +43,23 @@ export function devStates(backendURL: string): Plugin {
           redirect(res, back, [setCookie("helmr_dev_slack", url.searchParams.get("state") ?? ""), setCookie("helmr_dev_role", url.searchParams.get("role") ?? "")]);
           return;
         }
+        if (url.pathname === "/__dev/setup") {
+          savedKeys.clear();
+          const deployment = url.searchParams.get("deployment") ?? "";
+          redirect(res, back, [setCookie("helmr_dev_setup", deployment === "" ? "" : `${deployment}:${url.searchParams.get("secret") ?? "missing"}`), setCookie("helmr_dev_role", url.searchParams.get("role") ?? "")]);
+          return;
+        }
         if (url.pathname === "/__dev/go") {
           const raw = req.url ?? "";
           const toAt = raw.indexOf("to=");
           const to = toAt >= 0 ? decodeURIComponent(raw.slice(toAt + 3)) : "/";
+          savedKeys.clear();
           const ms = Math.min(60_000, Math.max(0, Number.parseInt(url.searchParams.get("delay") ?? "0", 10) || 0));
           redirect(res, to, [
             setCookie("helmr_dev_delay", ms === 0 ? "" : String(ms)),
             setCookie("helmr_dev_fail", url.searchParams.get("fail") ?? ""),
             setCookie("helmr_dev_slack", url.searchParams.get("slack") ?? ""),
+            setCookie("helmr_dev_setup", url.searchParams.get("setup") ?? ""),
             setCookie("helmr_dev_role", url.searchParams.get("role") ?? ""),
           ]);
           return;
@@ -71,6 +84,7 @@ export function devStates(backendURL: string): Plugin {
           return;
         }
         const answer = () => {
+          if (setupFixture(req, res, url)) return;
           if (slackFixture(req, res, url, backendURL)) return;
           next();
         };
@@ -128,7 +142,9 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
   const role = cookie(req, "helmr_dev_role");
   const path = url.pathname;
   if (role && path === "/api/me" && req.method === "GET") {
-    patched(req, res, backendURL, (body) => ({ ...body, role }));
+    // A member who is not an owner or admin does not manage secrets either.
+    const manages = role === "owner" || role === "admin";
+    patched(req, res, backendURL, (body) => ({ ...body, role, permissions: (body["permissions"] as string[] | undefined ?? []).filter((permission) => manages || permission !== "secrets.write") }));
     return true;
   }
   if (!state) return false;
@@ -166,6 +182,56 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
   }
   if (/^\/api\/projects\/[^/]+\/environments\/[^/]+\/sessions\/[^/]+$/.test(path) && req.method === "GET") {
     patched(req, res, backendURL, (body) => ({ ...body, slack_channel_id: "C0DEMO" }));
+    return true;
+  }
+  return false;
+}
+
+// Keys saved while the setup fixture is on; choosing a setup state forgets them.
+const savedKeys = new Set<string>();
+
+function setupFixture(req: IncomingMessage, res: ServerResponse, url: URL): boolean {
+  const setting = cookie(req, "helmr_dev_setup");
+  if (!setting) return false;
+  const [deployment, secret] = setting.split(":");
+  const path = url.pathname;
+  const environment = /^(\/api\/projects\/[^/]+\/environments\/[^/]+)\//.exec(path)?.[1];
+  if (!environment) return false;
+  const rest = path.slice(environment.length);
+  if (rest === "/deployments/current" && req.method === "GET") {
+    if (deployment === "none") json(res, 404, { error: { code: "no_current_deployment", message: "Environment has no current Deployment" } });
+    else json(res, 200, { id: id(961), version: "20261018.1", bundle_digest: "sha256:demo", created_at: ago(30) });
+    return true;
+  }
+  if (rest === `/deployments/${id(961)}/events` && req.method === "GET") {
+    json(res, 200, { events: [{ id: "1", kind: "deployment.promoted", message: "Deployment promoted", at: ago(30), attributes: {} }] });
+    return true;
+  }
+  if (rest === "/agents" && req.method === "GET") {
+    json(res, 200, { deployment_id: id(961), agents: deployment === "agents" ? [{ agent: "noether", template: "noether" }] : [] });
+    return true;
+  }
+  // Like the server, only people who manage secrets can list them.
+  const role = cookie(req, "helmr_dev_role");
+  if (rest === "/secrets" && req.method === "GET" && role && role !== "owner" && role !== "admin") {
+    json(res, 403, { error: { code: "forbidden", message: "secrets.write is required" } });
+    return true;
+  }
+  if (rest === "/secrets" && req.method === "GET") {
+    const keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENCODE_GO_API_KEY"];
+    const status = (key: string) => (savedKeys.has(`${environment}/${key}`) ? "active" : secret);
+    json(res, 200, { secrets: keys.filter((key) => status(key) !== "missing").map((key) => ({ secret: key, status: status(key), created_at: ago(90), ...(status(key) === "revoked" ? { revoked_at: ago(10) } : {}) })) });
+    return true;
+  }
+  const write = /^\/secrets(?:\/([^/]+)\/rotate)?$/.exec(rest);
+  if (write && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const key = write[1] ? decodeURIComponent(write[1]) : (JSON.parse(body || "{}") as { secret?: string }).secret ?? "";
+      savedKeys.add(`${environment}/${key}`);
+      json(res, 200, { secret: key, status: "active", created_at: now() });
+    });
     return true;
   }
   return false;

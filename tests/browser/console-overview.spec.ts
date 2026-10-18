@@ -26,7 +26,7 @@ type State = {
   items: Item[];
   slack: boolean;
   current: boolean;
-  anySession: boolean;
+  agents: boolean;
   writes: string[];
 };
 
@@ -40,7 +40,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     items: [hold, failed, lost, oldest, later],
     slack: true,
     current: true,
-    anySession: true,
+    agents: true,
     writes: [],
     ...overrides,
   };
@@ -66,7 +66,8 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
       { id: "1", kind: "deployment.registered", message: "Deployment registered", at: ago(600), attributes: {} },
       { id: "2", kind: "deployment.promoted", message: "Deployment promoted", at: ago(125), attributes: {} },
     ] };
-    else if (path === `${base}/sessions`) json = { sessions: state.anySession ? [{ id: sessions.asked, agent: "support", status: "open", holds: [], created_at: ago(500) }] : [] };
+    else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: state.agents ? [{ agent: "support", template: "support" }] : [] };
+    else if (path === `${base}/secrets`) json = { secrets: [] };
     else if (ask && method === "GET") json = { id: ask[3], session_id: ask[1], turn_id: ask[2], status: "pending", created_at: ago(120), question: { type: "text", prompt: [{ type: "text", text: "Ship the release today?" }] } };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
@@ -177,19 +178,18 @@ test("with nothing waiting the Overview says so and links to Sessions", async ({
   await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
 });
 
-test("before the first Deployment the Overview shows the CLI steps for this tab's scope", async ({ page }) => {
-  await fixture(page, { items: [], current: false, anySession: false });
+test("before the first Deployment the Overview shows setup for this tab's scope", async ({ page }) => {
+  await fixture(page, { items: [], current: false });
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  const setup = page.getByRole("region", { name: "Set up Preview" });
-  await expect(setup.getByRole("list", { name: "First deployment" }).getByRole("listitem")).toHaveCount(3);
-  await expect(setup.getByLabel("Create and deploy")).toContainText(`helmr deploy . --project ${projectID} --env ${environmentID}`);
-  await expect(setup.getByLabel("Start a session")).toHaveText(`helmr session create hello --project ${projectID} --env ${environmentID}`);
+  const setup = page.getByRole("region", { name: "Set up" });
+  await expect(setup.getByLabel("Setup prompt")).toContainText(`Project: ${projectID}\nEnvironment: ${environmentID}`);
   await expect(page.getByText("No current deployment")).toBeVisible();
+  await expect(page.getByText("Nothing is waiting on you.")).toHaveCount(0);
 });
 
-test("an Environment with Sessions but no current Deployment is not treated as new", async ({ page }) => {
-  await fixture(page, { items: [], current: false, anySession: true });
+test("a current Deployment without agents still shows setup, with anything waiting below it", async ({ page }) => {
+  await fixture(page, { agents: false });
   await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
-  await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Set up" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Waiting on you" })).toBeVisible();
 });

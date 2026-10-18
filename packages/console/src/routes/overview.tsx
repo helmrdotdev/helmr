@@ -3,12 +3,12 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { attentionTotal, useAttention, type AttentionCounts, type AttentionItem, type AttentionKind } from "../lib/attention";
-import { agentHref } from "../lib/definitions";
+import { SetUpPanel } from "../features/onboarding/SetUpPanel";
+import { agentHref, listAgentDefinitions } from "../lib/definitions";
 import { getCurrentDeployment, getDeploymentEvents } from "../lib/deployments";
 import { errorDetails, loadError } from "../lib/error";
-import { useScope, useScopeIDs } from "../lib/scope";
-import { askConsolePath, listSessions, sessionConsolePath } from "../lib/sessions";
-import { CodeBlock } from "../ui/CodeBlock";
+import { useScopeIDs } from "../lib/scope";
+import { askConsolePath, sessionConsolePath } from "../lib/sessions";
 import { Segmented } from "../ui/Field";
 import { IDText } from "../ui/IDText";
 import { List, ListItem } from "../ui/List";
@@ -19,7 +19,6 @@ import { EmptyState, ErrorState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
-import { Steps } from "../ui/Steps";
 import { cx, ui } from "../ui/styles";
 
 const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.");
@@ -105,47 +104,6 @@ function DeploymentContext() {
   );
 }
 
-// Before the first Deployment: the CLI steps with this tab's Project and
-// Environment filled in.
-function FirstDeployment(props: { projectID: string; environmentID: string; environmentName: string }) {
-  const origin = window.location.origin;
-  const scope = () => `--project ${props.projectID} --env ${props.environmentID}`;
-  return (
-    <Panel title={`Set up ${props.environmentName}`}>
-        <p class={cx(ui.muted, "m-0")}>Deploy an agent to this environment. This page lists what waits on you afterwards.</p>
-        <Steps
-          label="First deployment"
-          steps={[
-            {
-              title: "Install the CLI and sign in",
-              state: "current",
-              description: <>
-                <span>Signing in opens this console to approve the device.</span>
-                <CodeBlock code={`curl -fsSL https://helmr.dev/install | bash\nhelmr login ${origin}`} copy label="Install and sign in" />
-              </>,
-            },
-            {
-              title: "Create and deploy an agent",
-              state: "upcoming",
-              description: <>
-                <span>The starter project defines the hello agent.</span>
-                <CodeBlock code={`helmr init --dir ./my-agent\ncd ./my-agent\nbun install\nhelmr deploy . ${scope()}`} copy label="Create and deploy" />
-              </>,
-            },
-            {
-              title: "Start a session",
-              state: "upcoming",
-              description: <>
-                <span>From the CLI, or from Slack once the agent is connected.</span>
-                <CodeBlock code={`helmr session create hello ${scope()}`} copy label="Start a session" />
-              </>,
-            },
-          ]}
-        />
-    </Panel>
-  );
-}
-
 function QueueItem(props: { item: AttentionItem }) {
   return (
     <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
@@ -197,7 +155,6 @@ function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts
 }
 
 export function Overview() {
-  const scope = useScope();
   const ids = useScopeIDs();
   const enabled = () => !!ids().projectID && !!ids().environmentID;
   const attention = useAttention();
@@ -208,18 +165,22 @@ export function Overview() {
     retry: false,
     refetchInterval: 15_000,
   }));
-  // Only an Environment without a current Deployment asks whether it ever had a Session.
-  const anySession = createQuery(() => ({
-    queryKey: ["sessions", "any", ids().projectID, ids().environmentID],
-    queryFn: async () => (await listSessions({ ...ids(), limit: 1 })).sessions.length > 0,
-    enabled: enabled() && current.data === null,
+  // An Environment shows setup until its current Deployment defines an Agent.
+  const hasAgents = createQuery(() => ({
+    queryKey: ["agents", "any", ids().projectID, ids().environmentID, current.data?.id],
+    queryFn: async () => (await listAgentDefinitions({ ...ids(), deploymentID: current.data!.id, limit: 1 })).agents.length > 0,
+    enabled: enabled() && !!current.data,
     retry: false,
+    // A new Deployment in the same Environment keeps the last answer while it
+    // loads, so setup in progress is not replaced by the loading state.
+    placeholderData: (previous: boolean | undefined, query?: { queryKey: readonly unknown[] }) =>
+      query?.queryKey[2] === ids().projectID && query?.queryKey[3] === ids().environmentID ? previous : undefined,
   }));
   const total = () => (attention.data ? attentionTotal(attention.data.counts) : 0);
-  const firstRun = () => current.data === null && anySession.data === false && total() === 0;
-  // With nothing waiting, wait to tell a new Environment from a quiet one; a
-  // failed check shows the quiet state rather than loading forever.
-  const deciding = () => total() === 0 && (current.isPending || (current.data === null && anySession.isPending));
+  const setUp = () => current.data === null || hasAgents.data === false;
+  // Wait to tell a new Environment from a quiet one; a failed check shows the
+  // queue rather than loading forever.
+  const deciding = () => current.isPending || (!!current.data && hasAgents.isPending);
 
   return (
     <Page>
@@ -232,8 +193,13 @@ export function Overview() {
           <Match when={!attention.data || deciding()}>
             <PageSkeleton label="Loading overview" sections={["Waiting on you"]} />
           </Match>
-          <Match when={firstRun()}>
-            <FirstDeployment projectID={ids().projectID} environmentID={ids().environmentID} environmentName={scope.selectedEnvironment()?.name ?? ids().environmentID} />
+          <Match when={setUp()}>
+            <div class={ui.sectionStack}>
+              <SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} />
+              <Show when={attention.data && total() > 0}>
+                <Queue items={attention.data!.items} counts={attention.data!.counts} />
+              </Show>
+            </div>
           </Match>
           <Match when={total() === 0}>
             <EmptyState title="Nothing is waiting on you." hint="Questions, holds, failed turns and Slack connections that need you appear here as they happen.">
