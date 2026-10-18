@@ -64,7 +64,7 @@ collisions fail at launch. Managed runtime paths, runtime variables such as
 Use the environment variable directly in an HTTP header, such as
 `Authorization: Bearer <value>`. Helmr's proxy checks the Computer's execution
 authorization and the destination before replacing the placeholder with the
-current Secret value. Invalid or revoked placeholders in inspected headers fail
+owner's pinned Secret version. Invalid or revoked placeholders in inspected headers fail
 before the request is sent upstream.
 
 ### Allowed origins
@@ -119,7 +119,10 @@ grant Secret access; HTTP authority must match the selected HTTPS origin.
 The placeholder must remain unchanged in an HTTP header. Basic authentication
 encoding, local request signing, SSH authentication, and other transformations are
 not supported. Helmr does not substitute values in request bodies, query strings,
-or files. Protected CONNECT, WebSocket upgrades, and request trailers return an
+or files. HTTP/1.1 WebSocket Upgrade over TLS is supported: authentication
+headers are resolved during the handshake, then frames pass through unchanged.
+Placeholders in `Sec-WebSocket-*` negotiation headers are rejected. HTTP/2
+extended CONNECT, general CONNECT, and request trailers return an
 unsupported-mode error; these limits do not apply to guest-local services or
 unrelated end-to-end traffic. Non-HTTP ALPN on a protected origin fails TLS
 negotiation. Clients with unsupported trust or TLS modes receive a TLS error; the
@@ -131,6 +134,10 @@ Secret policy again. The transport does not replay a request the upstream may
 have processed. The maintained HTTP/2 transport may retry an explicitly
 unprocessed request within the same authorized request context. Guest HTTP/2
 streams are independent; upstream connections are not pooled across requests.
+
+An established WebSocket holds one captured connection and one active request
+slot until both transfer directions have terminated. There is no proxy idle
+timeout after Upgrade; endpoints control their application-level idle behavior.
 
 Each runtime admits up to 256 simultaneous TCP connections on protected-origin
 ports, including unrelated traffic sharing those ports, and up to 256 active
@@ -159,9 +166,21 @@ restrict authorized administrators from choosing raw delivery.
 
 ## Rotation and revocation
 
-Protected requests use the current Secret value. Rotation affects the next
-authorized request without recreating the Computer. Revocation blocks subsequent
-credential resolution, but requests already authorized or sent may finish.
+Protected requests use the Secret version pinned to the executing Command or
+Session process. Rotation does not change that pin or reset an established WebSocket.
+Restoring the same process from a Computer checkpoint preserves its pin.
+Reconstructing a Session process after process loss creates a new execution
+owner that selects the current version when admitted.
+
+Revocation blocks subsequent credential resolution and prevents renewal of the
+Computer lease. Existing sockets close when the Computer's shutdown completes;
+this can affect other Commands and Sessions on the same Computer. Loss of a
+Command's or Session process's authority denies new handshakes and its existing
+shutdown path closes its sockets. WebSocket authority is checked at the handshake,
+not for each frame or Turn. Traffic may continue between authority loss and
+completed shutdown; no fixed cutoff time is promised. Work already sent upstream
+cannot be recalled. Deleting or revoking a Helmr Secret does not invalidate the
+credential at its provider.
 
 Raw env and file values are selected when execution is admitted. Rotation does
 not rewrite running processes or values restored from snapshots. Revocation

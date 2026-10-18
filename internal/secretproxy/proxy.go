@@ -257,7 +257,7 @@ func markers(header http.Header) ([]string, error) {
 			if !containsMarker(value) {
 				continue
 			}
-			if forbiddenHeader(name) || connectionNominates(header, name) {
+			if forbiddenHeader(name) || strings.HasPrefix(strings.ToLower(name), "sec-websocket-") || connectionNominates(header, name) {
 				return nil, errors.New("invalid marker header")
 			}
 			matches := markerPattern.FindAllString(value, -1)
@@ -309,7 +309,7 @@ func stripHopHeaders(header http.Header) {
 	}
 }
 
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string, destination netip.AddrPort, dialRequest func(context.Context) (net.Conn, error)) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string, destination netip.AddrPort, dialRequest func(context.Context) (net.Conn, error)) (hijacked bool) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -327,8 +327,9 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 		http.Error(w, "Protected HTTPS concurrent request limit reached", http.StatusServiceUnavailable)
 		return
 	}
-	if r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" || len(r.Trailer) != 0 {
-		http.Error(w, "Protected HTTPS does not support CONNECT, upgrades, or request trailers", http.StatusNotImplemented)
+	upgrade := r.Header.Get("Upgrade") != "" || connectionNominates(r.Header, "Upgrade")
+	if r.Method == http.MethodConnect || upgrade && !websocketRequest(r) || len(r.Trailer) != 0 {
+		http.Error(w, "Protected HTTPS requires an HTTP/1.1 WebSocket handshake and does not support CONNECT or request trailers", http.StatusNotImplemented)
 		return
 	}
 	if containsMarker(r.RequestURI) || containsMarker(r.Host) {
@@ -401,7 +402,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 	tlsConfig.ServerName = u.Hostname()
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
-	protocols.SetHTTP2(true)
+	protocols.SetHTTP2(!upgrade)
 	transport := &http.Transport{Proxy: nil, Protocols: protocols, TLSClientConfig: tlsConfig,
 		HTTP2:             &http.HTTP2Config{MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
 		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return dialRequest(ctx) },
@@ -420,9 +421,25 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, expected string,
 			pr.Out.Header.Del("X-Forwarded-Host")
 			pr.Out.Header.Del("X-Forwarded-Proto")
 		},
+		ModifyResponse: func(response *http.Response) error {
+			if response.StatusCode == http.StatusSwitchingProtocols {
+				return errors.New("unexpected upstream upgrade")
+			}
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) { deny(w) },
 	}
+	if upgrade {
+		out := r.Clone(r.Context())
+		proxy.Rewrite(&httputil.ProxyRequest{In: r, Out: out})
+		out.RequestURI = ""
+		out.Close = false
+		out.Header.Set("Connection", "Upgrade")
+		out.Header.Set("Upgrade", "websocket")
+		return forwardWebSocket(w, out, transport)
+	}
 	proxy.ServeHTTP(w, r)
+	return false
 }
 func validHeaderValue(value []byte) bool {
 	for _, c := range value {
