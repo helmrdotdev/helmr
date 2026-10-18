@@ -107,7 +107,11 @@ func (p *Proxy) serveConn(conn net.Conn) {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.forward(w, r, target, destination, dialRequest) }),
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p.forward(w, r, target, destination, dialRequest) {
+			listener.Close()
+		}
+	}),
 		// Bound pre-handler H2 streams/headers as well as DATA buffering. A
 		// instance request admission alone cannot bound library-parsed streams.
 		HTTP2:     &http.HTTP2Config{MaxConcurrentStreams: 4, MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},

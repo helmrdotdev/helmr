@@ -175,6 +175,14 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 
+	var protectedModel *protectedModelFixture
+	if os.Getenv("HELMR_PROTECTED_STARTER_PROOF") == "1" {
+		if mode != nativeExecutionBaseline {
+			t.Fatal("protected starter proof requires baseline execution mode")
+		}
+		protectedModel = startProtectedModel(t, input.Evidence)
+	}
+
 	duration, driverTimeout := 15*time.Minute, 600000
 	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1" {
 		if mode != nativeExecutionBaseline {
@@ -187,6 +195,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			t.Fatal("native SDK proof requires the baseline execution mode")
 		}
 		duration, driverTimeout = 39*time.Minute, 34*60*1000
+	}
+	if protectedModel != nil {
+		duration, driverTimeout = 50*time.Minute, 45*60*1000
 	}
 	// Performance includes eight native Turns, ordinary peer/model Saves and
 	// two full RAM releases/restores. Keep the full baseline observable without
@@ -232,6 +243,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if secretBindings {
 		extraPermissions = []auth.Permission{auth.PermissionComputersCreate, auth.PermissionSecretsWrite}
 	}
+	if protectedModel != nil {
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt, auth.PermissionComputersCreate, auth.PermissionSecretsWrite)
+	}
 	env, key, enrollment := seedNativeExecution(t, database.Pool, extraPermissions...)
 	platform, err := cass3.NewImmutable(ctx, input.PlatformURI)
 	if err != nil {
@@ -256,7 +270,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	cp := startNativeControlPlane(t, cancel, nativeControlPlaneInput{DSN: database.DSN, Key: keyBytes, Config: input})
 	defer cp.close()
 	handler := cp.proxy
-	gate := nativePublicationGate{pool: database.Pool, environment: env, next: handler, workRoot: workRoot, cancelSave: cancelSave, deadlineSave: deadlineSave, backgroundSaves: backgroundSaves, checkpointRetry: checkpointRetry, evidence: input.Evidence}
+	gate := nativePublicationGate{protectedModel: protectedModel, pool: database.Pool, environment: env, next: handler, workRoot: workRoot, cancelSave: cancelSave, deadlineSave: deadlineSave, backgroundSaves: backgroundSaves, checkpointRetry: checkpointRetry, evidence: input.Evidence}
 	if performanceCase {
 		gate.performance = &nativePerformanceGate{pool: database.Pool, environment: env, next: handler, degraded: input.Performance.Degraded}
 		defer func() {
@@ -307,6 +321,11 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	gate.reader = deploymentClient
 
+	if protectedModel != nil {
+		workerEnv["WORKER_NETWORK_BLOCKED_IPV4_CIDRS"] = protectedModelBlocked()
+		workerEnv["SSL_CERT_FILE"] = protectedModel.CA
+		workerEnv["WORKER_NETWORK_RESOLVER_IPV4"] = protectedModelIP
+	}
 	worker, err := startNativeWorker(input, workerEnv, "worker.log")
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +501,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			}
 		}()
 	}
-	driverConfig, err := json.Marshal(map[string]any{"url": server.URL, "apiKey": key, "modelScript": input.Model, "timeoutMs": driverTimeout, "nativeProcessLoss": nativeProcessLoss, "cancelSave": cancelSave, "deadlineSave": deadlineSave, "evidence": input.Evidence, "healthyRAM": healthyRAM, "performanceKind": performanceKind, "sessionDiscovery": sessionDiscovery, "secretBindings": secretBindings, "longIdle": longIdle, "checkpointKeyMismatch": keyMismatch, "checkpointFault": checkpointFault, "checkpointObservations": checkpointObservations, "backgroundSaves": backgroundSaves, "crossHost": crossHost, "sourceHostId": input.SourceHostID, "targetHostId": input.TargetHostID})
+	driverConfig, err := json.Marshal(map[string]any{"protectedModel": protectedModel, "url": server.URL, "apiKey": key, "modelScript": input.Model, "timeoutMs": driverTimeout, "nativeProcessLoss": nativeProcessLoss, "cancelSave": cancelSave, "deadlineSave": deadlineSave, "evidence": input.Evidence, "healthyRAM": healthyRAM, "performanceKind": performanceKind, "sessionDiscovery": sessionDiscovery, "secretBindings": secretBindings, "longIdle": longIdle, "checkpointKeyMismatch": keyMismatch, "checkpointFault": checkpointFault, "checkpointObservations": checkpointObservations, "backgroundSaves": backgroundSaves, "crossHost": crossHost, "sourceHostId": input.SourceHostID, "targetHostId": input.TargetHostID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,6 +607,10 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var receipt struct {
+		ProtectedStarters []struct {
+			Kind      string `json:"kind"`
+			SessionID string `json:"sessionId"`
+		} `json:"protectedStarters"`
 		CodexStarter *struct {
 			Retained, Steering, Questions, JoinedBackgroundStop, HeldOwnerFailure, Reconstruction, OrphanReaping bool
 		} `json:"codexStarter"`
@@ -620,6 +643,18 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	if err := json.Unmarshal(result.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
+	}
+	if protectedModel != nil {
+		expected := []string{"claude", "codex", "opencode-anthropic", "opencode-openai", "opencode-go", "pi-anthropic", "pi-openai", "pi-go"}
+		if len(receipt.ProtectedStarters) != len(expected) {
+			t.Fatal("missing protected starter qualification")
+		}
+		for i, kind := range expected {
+			if receipt.ProtectedStarters[i].Kind != kind || receipt.ProtectedStarters[i].SessionID == "" {
+				t.Fatal("incomplete protected starter qualification")
+			}
+		}
+		return
 	}
 	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" {
 		proof := receipt.CodexStarter
@@ -999,6 +1034,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
 }
 
 type nativePublicationGate struct {
+	protectedModel      *protectedModelFixture
 	performance         *nativePerformanceGate
 	retiring            atomic.Bool
 	clientReconnect     bool
@@ -1101,6 +1137,12 @@ func TestNativePublicationRetirementPreservesFailureAndForwards(t *testing.T) {
 func (g *nativePublicationGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if g.retiring.Load() {
 		g.next.ServeHTTP(w, r)
+		return
+	}
+	if g.protectedModel != nil {
+		if !g.protectedModel.blockWorkerControl(w, r) {
+			g.next.ServeHTTP(w, r)
+		}
 		return
 	}
 	if g.performance != nil {

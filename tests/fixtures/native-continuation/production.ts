@@ -17,7 +17,7 @@ import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/c
 
 const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
 // Match the Claude starter's native process-inspection dependency.
-const claudeStarterImage = process.env.HELMR_CLAUDE_STARTER_PROOF === "1"
+const claudeStarterImage = (process.env.HELMR_CLAUDE_STARTER_PROOF === "1" || process.env.HELMR_PROTECTED_STARTER_PROOF === "1")
   ? baseImage
       .run(["node", "-e", "const fs = require('node:fs'); fs.mkdirSync('/etc/ssl/certs', { recursive: true }); fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt', require('node:tls').rootCertificates.join(String.fromCharCode(10)) + String.fromCharCode(10))"])
       .run(["sh", "-ceu", "sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*"])
@@ -301,3 +301,13 @@ export const claudeStarter = createClaudeStarter(workspace)
 import { createEmbeddedStarter } from "./embedded-starters"
 export const opencodeStarter = createEmbeddedStarter("opencode", workspace)
 export const piStarter = createEmbeddedStarter("pi", workspace)
+
+import { createProtectedStarter } from "./protected-starters"
+export const protectedClaude = createProtectedStarter("claude", workspace)
+export const protectedCodex = createProtectedStarter("codex", workspace)
+export const protectedOpenCodeAnthropic = createProtectedStarter("opencode-anthropic", workspace)
+export const protectedOpenCodeOpenAI = createProtectedStarter("opencode-openai", workspace)
+export const protectedOpenCodeGo = createProtectedStarter("opencode-go", workspace)
+export const protectedPiAnthropic = createProtectedStarter("pi-anthropic", workspace)
+export const protectedPiOpenAI = createProtectedStarter("pi-openai", workspace)
+export const protectedPiGo = createProtectedStarter("pi-go", workspace)

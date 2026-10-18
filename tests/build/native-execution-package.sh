@@ -16,6 +16,8 @@ starter_fixture=${HELMR_CODEX_STARTER_PROOF:-0}
 [[ "$starter_fixture" == 0 || "$starter_fixture" == 1 ]]
 embedded_starter_fixture=${HELMR_EMBEDDED_STARTER_PROOF:-0}
 [[ "$embedded_starter_fixture" == 0 || "$embedded_starter_fixture" == 1 ]]
+protected_starter_fixture=${HELMR_PROTECTED_STARTER_PROOF:-0}
+[[ "$protected_starter_fixture" == 0 || "$protected_starter_fixture" == 1 ]]
 sdk_fixture=${HELMR_NATIVE_SDK_PROOF:-0}
 [[ "$sdk_fixture" == 0 || "$sdk_fixture" == 1 ]]
 [[ "$sdk_fixture" == 0 || "$performance_fixture" == 0 ]]
@@ -104,6 +106,7 @@ bun build tests/fixtures/native-continuation/production.ts --target=node \
   --tsconfig-override tests/fixtures/native-continuation/tsconfig.json \
   --define "process.env.HELMR_NATIVE_PERFORMANCE=\"$performance_fixture\"" \
   --define "process.env.HELMR_NATIVE_SDK_PROOF=\"$sdk_fixture\"" \
+  --define "process.env.HELMR_PROTECTED_STARTER_PROOF=\"$protected_starter_fixture\"" \
   --define "process.env.HELMR_CLAUDE_STARTER_PROOF=\"$claude_starter_fixture\"" \
   --external '@anthropic-ai/claude-agent-sdk' --external '@opencode/*' --external effect --external '@earendil-works/*' --outfile "$tmp/project/agents/agents.mjs"
 if [[ "$performance_fixture" == 1 ]]; then
@@ -148,7 +151,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 go test -c ./internal/nbd -o "$
 cp tests/build/native-execution-kvm.sh "$output/run.sh"
 git archive --format=tar "$commit" > "$output/source.tar"
 [[ $(git rev-parse HEAD) == "$commit" && -z $(git status --porcelain) ]] || { echo 'source changed during candidate build' >&2; exit 1; }
-python3 - "$output" "$commit" "$digest" "$(readlink -f "$tmp/builder-image")" "$(readlink -f "$tmp/runtime-release")" "$performance_fixture" "$sdk_fixture" "$starter_fixture" "$claude_starter_fixture" "$embedded_starter_fixture" <<'PY'
+python3 - "$output" "$commit" "$digest" "$(readlink -f "$tmp/builder-image")" "$(readlink -f "$tmp/runtime-release")" "$performance_fixture" "$sdk_fixture" "$starter_fixture" "$claude_starter_fixture" "$embedded_starter_fixture" "$protected_starter_fixture" <<'PY'
 import hashlib,json,sys
 from pathlib import Path
 p=Path(sys.argv[1])
@@ -157,7 +160,7 @@ def digest(path):
  with path.open('rb') as f:
   for b in iter(lambda:f.read(1024*1024),b''): h.update(b)
  return h.hexdigest()
-(p/'source.json').write_text(json.dumps({'product_commit':sys.argv[2],'builder_digest':sys.argv[3],'native_performance':sys.argv[6]=='1','native_sdk':sys.argv[7]=='1','codex_starter':sys.argv[8]=='1','claude_starter':sys.argv[9]=='1','embedded_starters':sys.argv[10]=='1',
+(p/'source.json').write_text(json.dumps({'product_commit':sys.argv[2],'builder_digest':sys.argv[3],'native_performance':sys.argv[6]=='1','native_sdk':sys.argv[7]=='1','codex_starter':sys.argv[8]=='1','claude_starter':sys.argv[9]=='1','embedded_starters':sys.argv[10]=='1','protected_starters':sys.argv[11]=='1',
  'builder_derivation_output':sys.argv[4],'runtime_derivation_output':sys.argv[5],
  'source_archive_sha256':digest(p/'source.tar'),'worker_sha256':digest(p/'agent-worker'),
  'test_sha256':digest(p/'agent-execution.test'),'nbd_test_sha256':digest(p/'nbd-recovery.test')},indent=2)+'\n')

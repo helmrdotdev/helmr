@@ -5,7 +5,7 @@ destination sockets stay in the listener namespace. Outbound sockets originate
 in the host namespace, use the original numeric public IPv4 destination, and
 verify the exact protected service hostname with ordinary TLS. Shared IPs do not
 convey credential authority. Every HTTP request checks its authority and resolves
-header selectors against the immutable live runtime binding.
+header selectors against the immutable live runtime binding and the admitted Command or Session process's pinned Secret version.
 
 The proxy admits 256 captured workers before starting goroutines or dialing.
 Each worker owns an accepted socket, at most one speculative/opaque upstream,
@@ -31,6 +31,39 @@ connection and 64KiB per stream on both sides. These bound work before handler
 admission, including HEADERS, which DATA flow control cannot bound. Clients may
 queue or open more connections. There is no separate mediated-connection limit,
 byte-accounting pool, persisted quota, scheduler, or per-stream response timeout.
+
+## WebSocket lifetime
+
+An HTTP/1.1 GET with a valid WebSocket Upgrade handshake can use the same
+protected authentication headers. The upstream leg uses HTTP/1.1 with the same
+pinned destination and verified TLS hostname. General CONNECT, HTTP/2 extended
+CONNECT, request bodies/trailers on Upgrade, and other upgrade protocols remain
+unsupported. Secret markers in all `Sec-WebSocket-*` headers are rejected before
+resolution; ordinary negotiation values pass through. Trusted upstream services
+can still reflect credentials they receive, so allowed origins must be trusted.
+
+After a validated 101 response, two opaque copy loops relay bytes, including
+bytes buffered alongside handshake headers. The proxy does not parse frames,
+substitute frame contents, replay requests, or reauthorize each frame/Turn.
+Either transport termination closes both sides and joins both loops. Request
+cancellation interrupts the handshake response and relay; a started cancellation
+callback is joined before return. The one-connection listener closes only after
+the hijacked handler returns, preserving captured and active-request admission
+through completion. Proxy Close closes owned sockets and joins their owners.
+Terminal Computer close drains credential mediation before waiting for disk
+serialization, so a failed barrier wait or checkpoint discard cannot leave
+protected connections active. Network teardown repeats closure idempotently.
+There is no additional idle deadline after Upgrade. Non-101 responses return to
+the guest without following redirects.
+
+Rotation preserves the admitted Command or Session process's version pin and
+does not reset admitted connections. Restoring the same process preserves its
+pin; reconstructing a Session process creates a new owner that selects the
+current version. New handshakes resolve current authority. Authority-loss closure
+belongs to the existing Command/Session process shutdown or Computer lease and
+network shutdown; this package does not add a revalidation loop or promise a
+cutoff deadline. Secret revocation may stop the shared Computer. Proxy unit tests
+prove the transport termination boundary, not every authority-to-shutdown path.
 
 ## Resource envelope and qualification
 

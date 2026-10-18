@@ -1,3 +1,4 @@
+import { runProtectedStarters } from "./protected-starters-driver"
 import { runEmbeddedStarter } from "./embedded-starters-driver"
 import { runClaudeStarter } from "./claude-starter-driver"
 import { runCodexStarter } from "./codex-starter-driver"
@@ -15,9 +16,17 @@ import { runHealthyContinuation } from "./healthy-driver"
 import type { CommandRef } from "../../../sdk/typescript/src/command"
 
 const options = JSON.parse(await readFile(process.argv[2]!, "utf8")) as {
-  url: string; apiKey: string; modelScript: string; timeoutMs: number; nativeProcessLoss?: boolean; cancelSave?: boolean; deadlineSave?: boolean; evidence: string; healthyRAM?: boolean; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; checkpointFault?: "corrupt-config" | "missing-memory"; checkpointObservations: string; performanceKind?: "no-op" | "edit-test" | "dependencies"; backgroundSaves?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string
+  protectedModel?: { origin: string; state: string }; url: string; apiKey: string; modelScript: string; timeoutMs: number; nativeProcessLoss?: boolean; cancelSave?: boolean; deadlineSave?: boolean; evidence: string; healthyRAM?: boolean; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; checkpointFault?: "corrupt-config" | "missing-memory"; checkpointObservations: string; performanceKind?: "no-op" | "edit-test" | "dependencies"; backgroundSaves?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string
 }
 assert(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0)
+if (options.protectedModel) {
+  const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
+  const protectedStarters = await runProtectedStarters(client, options.protectedModel, options.evidence, AbortSignal.timeout(options.timeoutMs))
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(JSON.stringify({ protectedStarters }) + "\n", error => error ? reject(error) : resolve())
+  })
+  process.exit(0)
+}
 if (options.healthyRAM || options.checkpointFault) { await runHealthyContinuation(options); process.exit(0) }
 const signal = AbortSignal.timeout(options.timeoutMs)
 const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
