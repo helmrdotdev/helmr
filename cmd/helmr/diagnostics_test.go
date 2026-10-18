@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func runDiagnosticTest(t *testing.T, args ...string) (diagnosticReport, error, string) {
+func runDiagnosticTest(t *testing.T, args ...string) (diagnosticReport, string, error) {
 	t.Helper()
 	var output bytes.Buffer
 	cmd := newRootCommand()
@@ -24,7 +24,7 @@ func runDiagnosticTest(t *testing.T, args ...string) (diagnosticReport, error, s
 	if decodeErr := json.Unmarshal(output.Bytes(), &report); decodeErr != nil {
 		t.Fatalf("invalid diagnostic JSON: %v: %s", decodeErr, output.String())
 	}
-	return report, err, output.String()
+	return report, output.String(), err
 }
 
 func clearDiagnosticEnvironment(t *testing.T) {
@@ -44,7 +44,7 @@ func TestDiagnosticOfflinePrecedenceAndCredentialPrivacy(t *testing.T) {
 	t.Setenv(helmrAPIKeyEnv, "NEVER_PRINT_THIS_KEY")
 	t.Setenv("HELMR_PROJECT", "env-project")
 	t.Setenv("HELMR_ENV", "env-environment")
-	report, err, output := runDiagnosticTest(t, "status", "--offline", "--api-url", server.URL, "--project", "flag-project")
+	report, output, err := runDiagnosticTest(t, "status", "--offline", "--api-url", server.URL, "--project", "flag-project")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestDiagnosticOfflinePrecedenceAndCredentialPrivacy(t *testing.T) {
 func TestDiagnosticNoCredentialProducesReportAndFailure(t *testing.T) {
 	clearDiagnosticEnvironment(t)
 	for _, command := range []string{"status", "doctor"} {
-		report, err, _ := runDiagnosticTest(t, command)
+		report, _, err := runDiagnosticTest(t, command)
 		if err == nil || (report.Credential.Present != nil && *report.Credential.Present) || len(report.Checks) == 0 {
 			t.Fatalf("%s: %+v, %v", command, report, err)
 		}
@@ -76,7 +76,7 @@ func TestDiagnosticInvalidOriginDoesNotLeakCredentials(t *testing.T) {
 	clearDiagnosticEnvironment(t)
 	t.Setenv(helmrAPIKeyEnv, "NEVER_PRINT_TOKEN")
 	for _, origin := range []string{"https://user:NEVER_PRINT_PASSWORD@example.com", "http://example.com", "https://example.com/?token=NEVER_PRINT_QUERY"} {
-		report, err, output := runDiagnosticTest(t, "status", "--offline", "--api-url", origin)
+		report, output, err := runDiagnosticTest(t, "status", "--offline", "--api-url", origin)
 		if err == nil || report.APIURL != nil {
 			t.Fatalf("accepted %s", origin)
 		}
@@ -90,7 +90,7 @@ func TestDiagnosticSavedLoginOffline(t *testing.T) {
 	clearDiagnosticEnvironment(t)
 	state := installTestCLIConfig(t)
 	_ = state.SaveLogin("https://saved.example", "NEVER_PRINT_LOGIN")
-	report, err, output := runDiagnosticTest(t, "status", "--offline")
+	report, output, err := runDiagnosticTest(t, "status", "--offline")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestDiagnosticEmptyEnvironmentIsHealthy(t *testing.T) {
 	server := diagnosticFixture(t, api.AttentionCounts{}, "owner", nil)
 	useDiagnosticLogin(t, server)
 	for _, command := range []string{"status", "doctor"} {
-		report, err, _ := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
+		report, _, err := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +170,7 @@ func TestDiagnosticStatusReportsProblemButDoctorFails(t *testing.T) {
 	server := diagnosticFixture(t, api.AttentionCounts{Hold: 1, FailedTurn: 2}, "member", nil)
 	useDiagnosticLogin(t, server)
 	for _, command := range []string{"status", "doctor"} {
-		report, err, _ := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
+		report, _, err := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
 		if (err != nil) != (command == "doctor") {
 			t.Fatalf("%s err=%v", command, err)
 		}
@@ -185,14 +185,14 @@ func TestDiagnosticAPIKeyAndScopeBoundary(t *testing.T) {
 	server := diagnosticFixture(t, api.AttentionCounts{}, "", nil)
 	t.Setenv(helmrAPIKeyEnv, "api-key")
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	report, err, _ := runDiagnosticTest(t, "doctor")
+	report, _, err := runDiagnosticTest(t, "doctor")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Identity != nil || report.Live == nil {
 		t.Fatalf("report=%+v", report)
 	}
-	_, err, _ = runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
+	_, _, err = runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
 	if err == nil {
 		t.Fatal("API key accepted explicit scope")
 	}
@@ -209,7 +209,7 @@ func TestDiagnosticReadFailureNeverEchoesResponseBody(t *testing.T) {
 		return true
 	})
 	useDiagnosticLogin(t, server)
-	_, err, output := runDiagnosticTest(t, "status")
+	_, output, err := runDiagnosticTest(t, "status")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -223,7 +223,7 @@ func TestDiagnosticJSONAndHumanExitParity(t *testing.T) {
 	server := diagnosticFixture(t, api.AttentionCounts{Hold: 1}, "member", nil)
 	useDiagnosticLogin(t, server)
 	for _, command := range []string{"status", "doctor"} {
-		_, jsonErr, _ := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
+		_, _, jsonErr := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
 		var out bytes.Buffer
 		cmd := newRootCommand()
 		cmd.SetOut(&out)
@@ -288,7 +288,7 @@ func TestDiagnosticAgentsPaginationAndRetainedSlack(t *testing.T) {
 		return false
 	})
 	useDiagnosticLogin(t, server)
-	report, err, output := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
+	report, output, err := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
 	if err != nil {
 		t.Fatalf("%v: %s", err, output)
 	}
@@ -323,7 +323,7 @@ func TestDiagnosticExistingSlackProblems(t *testing.T) {
 				return false
 			})
 			useDiagnosticLogin(t, server)
-			report, err, _ := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
+			report, _, err := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
 			if err == nil {
 				t.Fatal("missing Slack connection/link problem")
 			}
@@ -355,7 +355,7 @@ func TestDiagnosticReadinessFailureAndUnknownDeployment(t *testing.T) {
 		return false
 	})
 	useDiagnosticLogin(t, server)
-	report, err, _ := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
+	report, _, err := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
 	if err == nil {
 		t.Fatal("expected failure")
 	}
@@ -385,7 +385,7 @@ func TestDiagnosticOfflineDoesNotOpenKeyring(t *testing.T) {
 	state := installTestCLIConfig(t)
 	_ = state.SaveLogin("https://saved.example", "unused")
 	newCLIStateStore = func() (cliState, error) { return diagnosticNoTokenState{state, t}, nil }
-	report, err, _ := runDiagnosticTest(t, "status", "--offline")
+	report, _, err := runDiagnosticTest(t, "status", "--offline")
 	if err != nil || report.Credential.Present != nil {
 		t.Fatalf("report=%+v err=%v", report, err)
 	}
@@ -413,7 +413,7 @@ func TestDiagnosticAPIKeyRecentTurnsFollowPages(t *testing.T) {
 	})
 	t.Setenv(helmrAPIKeyEnv, "api-key")
 	t.Setenv(helmrAPIURLEnv, server.URL)
-	report, err, _ := runDiagnosticTest(t, "doctor")
+	report, _, err := runDiagnosticTest(t, "doctor")
 	if err == nil || !sawNext {
 		t.Fatalf("err=%v sawNext=%t", err, sawNext)
 	}
@@ -438,7 +438,7 @@ func TestDiagnosticPermissionFailureDoesNotEraseOtherState(t *testing.T) {
 		return false
 	})
 	useDiagnosticLogin(t, server)
-	report, err, _ := runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
+	report, _, err := runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
 	if err == nil || report.Identity == nil || report.Live == nil || report.Live.Attention == nil {
 		t.Fatalf("lost partial evidence: %+v, %v", report, err)
 	}
