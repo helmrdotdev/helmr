@@ -1,96 +1,102 @@
-# OpenCode assistant
+# Build a small website with OpenCode
 
-An editable Helmr Agent using OpenCode and OpenCode Go. One native server and
-conversation belong to each Helmr Session. Slack and Console use the same Agent;
-the application does not store Slack credentials or host another Slack endpoint.
+Turn a short brief into local website files, then improve them in the same
+conversation. This editable Agent uses the embedded OpenCode SDK **2.0.31** and
+OpenCode Go. Each Helmr Session keeps one native conversation and workspace.
 
-Create the `OPENCODE_GO_API_KEY` Secret in the target Environment for your
-OpenCode Go API key. The declaration uses that same identifier. Never put the key in source,
-an image, a prompt or a Slack message. Protected Secret delivery substitutes the
-key only on authorized HTTPS requests to `https://opencode.ai`; the Computer and
-its commands receive a placeholder. The sample selects `opencode-go/glm-5.3`
-for both the main and small model, with no other enabled provider. Change those
-two model fields together if you prefer another model in your Go subscription.
+## Try it
 
-Deploy this directory through the ordinary Helmr CLI. Open `opencode-assistant`
-in Console and connect its dedicated Slack app. Invite that app to the intended
-workspace channel. Each Agent has one configured Slack connection.
-Mention the installed Helmr app with a plain-language request. OpenCode questions
-become Helmr questions that can be answered in Slack; command and edit permissions
-use one-time choices. A final response is staged until successful Turn settlement.
-Reasoning and raw tool output are not copied into the public conversation.
+From the repository root, prepare the SDK with
+`nix develop -c ./scripts/build-npm-packages.sh`. In this directory, run
+`bun install --frozen-lockfile --ignore-scripts` through the repository Nix
+environment. This checkout uses locally built SDK packages; it is not a
+standalone download with published dependencies already substituted.
 
-The Computer starts with an empty `/workspace` and ordinary Node, Git and ripgrep.
-The slim Debian Node image bootstraps HTTPS package installation with Node's
-bundled root certificates, then installs the system CA bundle. Package installation
-uses HTTPS repositories, and the small base keeps initial Computer preparation light.
-It has no GitHub authentication or repository access. Use a small scratch project
-first, or deliberately prepare a selected repository before deployment. Native
-commands and edits request approval, external-directory access and subagents are
-disabled, and automatic sharing and project OpenCode configuration are disabled.
-Repository `AGENTS.md`/`CLAUDE.md` instructions are also not automatically loaded;
-put trusted application instructions in this adapter's system prompt instead.
-Edit approvals include the native diff; denying an operation lets the model
-explain or propose another approach. These are application policies, not a
-security boundary between OpenCode and approved code in the same Computer.
-Approved commands have the Computer's filesystem and local process access,
-including the native server's environment. Review commands and edits accordingly;
-the platform's protected Secret and Computer isolation are separate boundaries.
+Create `OPENCODE_GO_API_KEY` in the target Environment through your existing
+Secret-management workflow. The Computer binds that Secret to `OPENCODE_API_KEY`
+in protected mode for `https://opencode.ai`. The workspace receives a placeholder;
+the platform substitutes the key only on authorized upstream requests. Do not
+put a key in source, image layers or Turn input.
 
-Completed follow-ups reuse the native conversation. While a Turn is running,
-answer its question or enqueue another instruction; live message steering is
-explicitly rejected. Stop aborts the current native prompt and pending questions;
-an unresponsive server is closed and cannot be silently reused. Native history
-is retained under `/workspace/.helmr/opencode/` with the Computer.
-The sample's local HTTP client allows human answers to take longer than five
-minutes. Turn deadlines and native cancellation still bound the operation.
+```bash
+helmr deploy PATH/TO/opencode-assistant --project PROJECT --env ENVIRONMENT
+helmr session create opencode-assistant --text 'Build a small website for a community event. Ask me about the audience and date before creating files.' --project PROJECT --env ENVIRONMENT --json
+```
 
-For local checks, first build the repository's SDK with
-`scripts/build-npm-packages.sh`, then run `bun install --frozen-lockfile
---ignore-scripts`, `bun run typecheck`, `bun run test`
-and `bun run test:native`
-inside this example through the repository Nix environment. The native check
-uses OpenCode 1.18.30 and a local synthetic model. It does not use your Go key,
-call paid models, or establish deployed VM/Slack acceptance.
-The native check includes a permission answer delayed for 310 seconds and then
-checks that the same process and conversation can complete another Turn.
+Use the returned Session and Turn IDs. Open the Session in Console to answer
+questions and approve individual operations, then inspect the outcome:
 
-Assistant explanations preceding a tool boundary are written as retained human
-output. The final text candidate is held until the owned native prompt completes
-and is then staged once as the response. Tool events, arguments and results do
-not become public text. Questions and permission requests remain explicit human
-interactions; Helmr shows processing through the channel’s native status.
+```bash
+helmr session turn wait TURN_ID --session SESSION_ID --timeout 5m --project PROJECT --env ENVIRONMENT --json
+helmr session enqueue SESSION_ID --text 'Add a schedule and make the layout work on a phone.' --project PROJECT --env ENVIRONMENT --json
+```
 
-## Try a conversation
+The second request uses the same conversation and working files. The Agent should
+explain what it changed and which checks it ran. Inspect `/workspace/index.html`
+and any accompanying CSS/JavaScript with the Computer shell or download the files
+through your existing workflow. These are local files; this example supplies no
+hosting or preview URL. The model may produce different layouts on different runs.
 
-Start with ordinary conversation; there are no fixture commands to memorize.
-For example, mention the connected Agent and send:
+Optionally connect the Agent's Slack app in Console and invite it to a channel.
+Mention it with the same brief, answer its questions, and mention it again in the
+same thread for follow-ups. No Slack credentials belong in application code.
 
-> Help me plan a small personal website. Ask one question with two short choices
-> about its purpose before proposing the page structure. Allow me to write my own answer.
+## Application choices
 
-Answer in Slack, then mention the same Agent in the same thread to continue:
+- OpenCode Go uses `opencode-go/glm-5.3`. The provider policy enables only
+  `opencode-go`; provider/model choices live in `agents/settings.ts`.
+- Native commands and file edits ask for **one-time** human approval. The example
+  does not offer persistent permission grants. Ordinary reads and searches are
+  allowed, with additional questions for `.env` files. Subagents and access
+  outside the working directory through native file tools are denied.
+- Sharing, updates and project/Claude configuration discovery are disabled for
+  this scratch-workspace application. Change `nativeOptions` deliberately if
+  your application should load project instructions or other native configuration.
+- These are native tool policies, not a sandbox around an approved shell command.
+  Such a command has the Computer's ordinary filesystem/process access. There is
+  no repository authentication, account provisioning or publication workflow.
+- Live messages steer the running native task. Stop joins native cancellation;
+  pending questions are withdrawn. Native failures do not become successful
+  responses. Follow-ups reuse the Session, and reconstruction opens saved native
+  history without replaying the old request.
 
-> Use that choice. Suggest three sections and a short title for each.
+The SDK runs in the Agent process; there is no separately installed `opencode
+serve` process. Native state lives under `/var/lib/helmr/opencode/`. This version
+does not migrate old example state from `/workspace/.helmr/opencode/`; use a new
+Session when trying the updated example.
 
-To exercise descriptions and multiple selection, ask:
+## Code and checks
 
-> Ask me which website features to include, with three explained choices and
-> multiple selection enabled. Wait for my answer before continuing.
+`agents/assistant.ts` defines the Computer, protected Secret and Agent. Its small
+factory makes paths and native options editable for local use. `settings.ts`
+owns the website instructions and application policy. The bridge, content and
+recovery files match the OpenCode starter; `questions.ts` keeps this example's
+one-time permission choices.
 
-Short choices appear as buttons; explained choices use radios, and multiple
-choices use checkboxes. Radios and checkboxes require Submit answer. Writing a
-custom answer opens a modal. Answering a question does not require another mention.
-An ordinary follow-up does require the Agent mention.
+In this directory, run `bun run typecheck` and `bun run test` through Nix. Tests
+use the real native SDK with a local synthetic model and the example's permission
+configuration. They create and revise files, deny an operation, answer/cancel
+questions, steer, handle model failure and reopen saved history. They do not
+establish real-model website quality, OpenCode Go connectivity, VM behavior or
+Slack/browser acceptance.
 
-To try Stop, request a scratch task that takes enough time to interrupt, such as
-creating a small multi-page website in `/workspace`. Approve only the native
-operations you intend to run, then use Slack's native Stop while it is working.
-After cessation, mention the Agent again to continue. A question-only wait is
-suspended and has no native Slack Stop; answer it, or interrupt the exact Turn
-through the CLI. Stop does not undo files already written by an approved command.
+After preparing the compiler entries and installing both examples, run
+`bun scripts/check-example-projects.ts` from the repository root to check shared
+source/dependency alignment and compile the projects. The Nix TypeScript checks
+run this automatically. These local checks do not build the Linux Computer image.
 
-The editable entry point is `agents/assistant.ts`: it selects the workspace,
-Secret and model, and delegates each Turn to the native adapter. The other files
-own OpenCode process lifetime, question translation and human-text routing.
-The sample is conversational but is not granted repository or account access.
+## Dependency maintenance
+
+The example overrides transitive MCP client/core and provider-utils versions to
+include the fixes for [MCP OAuth credential routing](https://github.com/advisories/GHSA-6qxp-vccf-f47h)
+and [provider response limits](https://github.com/advisories/GHSA-866g-f22w-33x8).
+The deployment's runtime installation preserves these overrides.
+
+At these pins, `bun audit` also reports [braces](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+and [sprintf-js](https://github.com/advisories/GHSA-hp3w-g68c-fv3c), neither with a
+listed patched release. The installed watcher calls `micromatch.makeRe`, which
+uses picomatch rather than the affected braces walkers. Gray-matter uses the
+js-yaml library; its argparse/sprintf dependency belongs to the separate YAML
+CLI, not this application's YAML parsing path. This is a bounded call-path
+assessment, not a clean audit result. Recheck it when changing dependencies or
+adding integrations.
