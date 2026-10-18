@@ -12,12 +12,17 @@ async function login(page: Page) {
   await expect(page).toHaveURL("/");
 }
 
-async function secrets(page: Page, initial: SecretState, options: { manage?: boolean } = {}) {
+async function secrets(page: Page, initial: SecretState, options: { manage?: boolean; active?: string[] } = {}) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
-  const state = new Map<string, SecretState>();
+  const state = new Map<string, SecretState>((options.active ?? []).map((id) => [id, "active"]));
   await page.route("**/api/projects/*/environments/*/secrets**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    // Like the server, only people who manage secrets can list them.
+    if (options.manage === false) {
+      await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "secrets.write is required" } } });
+      return;
+    }
     if (request.method() === "GET") {
       const listed = Object.values(PROVIDERS).map((provider) => ({ id: provider.secret, status: state.get(provider.secret) ?? initial })).filter((item) => item.status !== "missing");
       await route.fulfill({ json: { secrets: listed.map((item) => ({ secret: item.id, status: item.status, created_at: new Date().toISOString() })) } });
@@ -40,6 +45,7 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
 }
 
 const panel = (page: Page) => page.getByRole("region", { name: "Set up" });
+const environmentTrigger = (page: Page) => page.locator("header").getByRole("button", { name: /^Environment:/ });
 const prompt = (page: Page) => panel(page).getByLabel("Setup prompt");
 
 test("an Environment without agents walks through agent, provider, key and prompt", async ({ page, context }) => {
@@ -107,6 +113,37 @@ test("someone who cannot manage secrets is told who adds the key and can still c
   await expect(setup.getByRole("link", { name: "Secrets" })).toHaveAttribute("href", "/settings/secrets?project=console-demo&environment=production");
   await expect(setup.getByRole("button", { name: "Save key" })).toHaveCount(0);
   await expect(setup.getByRole("button", { name: "Copy" })).toBeVisible();
+});
+
+test("moving between agents with the keyboard keeps focus as the key's state changes", async ({ page }) => {
+  await secrets(page, "missing", { active: ["ANTHROPIC_API_KEY"] });
+  await login(page);
+  const setup = panel(page);
+  await expect(setup.getByRole("button", { name: "Copy" })).toBeVisible();
+  await setup.getByRole("radio", { name: "Claude Code" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(setup.getByRole("radio", { name: "Codex" })).toBeChecked();
+  await expect(setup.getByLabel("OPENAI_API_KEY")).toBeVisible();
+  await expect(setup.getByRole("radio", { name: "Codex" })).toBeFocused();
+});
+
+test("a key typed for one environment is not kept when switching to another", async ({ page }) => {
+  await secrets(page, "missing");
+  await login(page);
+  const choose = async (name: string) => {
+    await environmentTrigger(page).click();
+    await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name }).click();
+    await expect(environmentTrigger(page)).toContainText(name);
+    await expect(panel(page).getByLabel("ANTHROPIC_API_KEY")).toBeVisible();
+  };
+  // Visit Staging first so switching back to it is answered from cache and
+  // the panel stays mounted.
+  await choose("Staging");
+  await choose("Production");
+  await panel(page).getByLabel("ANTHROPIC_API_KEY").fill("typed-for-production");
+  await choose("Staging");
+  await expect(panel(page).getByLabel("Setup prompt")).toContainText("Environment: staging");
+  await expect(panel(page).getByLabel("ANTHROPIC_API_KEY")).toHaveValue("");
 });
 
 test("the panel fits a phone without horizontal scrolling", async ({ page }) => {
