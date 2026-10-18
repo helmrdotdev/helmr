@@ -9,6 +9,7 @@ let
     ../../go.mod
     ../../go.sum
     ../../internal
+    ../../starters
   ];
   runtimeFiles = lib.fileset.intersection moduleFiles (
     lib.fileset.fileFilter (file: file.type != "regular" || !(lib.hasSuffix "_test.go" file.name)) ../..
