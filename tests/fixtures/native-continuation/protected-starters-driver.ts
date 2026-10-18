@@ -178,6 +178,7 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
     await writeFile(fixture.state + ".lease-outage.tmp", computer.id, { mode: 0o600 })
     await rename(fixture.state + ".lease-outage.tmp", fixture.state + ".lease-outage")
     const leaseState = await observed("lease-expiry", value => value.deniedRenewals > 0 && value.closed === 1)
+    const leaseClosureMs = Date.now() - faultStartedAt
     await writeFile(fixture.state + ".lease-outage", "", { mode: 0o600 })
     const expiredOutcome = await expired.wait({ signal })
     assert.equal(expiredOutcome.kind, "system_failed", "lease loss was not reflected as execution loss")
@@ -187,7 +188,7 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
       if (current.processReconciled) break
       await delay(100, undefined, { signal })
     }
-    return { computerId: computer.id, cancelledOutcome, commandState, expiredOutcome, leaseState, leaseClosureMs: Date.now() - faultStartedAt }
+    return { computerId: computer.id, cancelledOutcome, commandState, expiredOutcome, leaseState, leaseClosureMs }
   } catch (error) {
     primaryError = error
     throw error
