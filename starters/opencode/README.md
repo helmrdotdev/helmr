@@ -9,7 +9,7 @@ Choose Anthropic (default), OpenAI or OpenCode Go with
 `helmr init --template opencode --provider <provider>`. Edit the model, introduction
 and key binding in `agents/settings.ts`. Keep provider names in OpenCode model IDs.
 
-`agents/assistant.ts` defines the Computer and Agent. `opencode-bridge.ts` retains
+`agents/agent.ts` defines the Computer and Agent. `opencode-bridge.ts` retains
 one embedded OpenCode host and dedicated database per Helmr Session. Successful
 Turns reuse native state and may leave intentional background work alive. Messages
 sent during execution use native steering. Native permission requests and forms

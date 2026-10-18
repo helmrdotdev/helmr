@@ -9,7 +9,7 @@ Choose Anthropic (default), OpenAI or OpenCode Go with
 `helmr init --template pi --provider <provider>`. Edit the model, introduction and
 key binding in `agents/settings.ts`. Model IDs include their Pi provider name.
 
-`agents/assistant.ts` defines the Computer and Agent. `pi-bridge.ts` retains one
+`agents/agent.ts` defines the Computer and Agent. `pi-bridge.ts` retains one
 native AgentSession across Turns, with native tools, configuration and extensions.
 Messages sent during execution use native steering. Extension select, confirm,
 input and editor dialogs use Helmr questions. Cancelled confirmations return false;
