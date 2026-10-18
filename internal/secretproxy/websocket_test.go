@@ -89,7 +89,7 @@ func TestWebSocketDuplexBufferedBytesReconnectAndShutdown(t *testing.T) {
 	}
 	c.Close()
 	awaitResource(t, func() bool { return len(f.proxy.activeRequests) == 0 && len(f.proxy.captured) == 0 })
-	c, reader, response = openWebSocket(t, f, websocketHeaders(), "")
+	_, reader, response = openWebSocket(t, f, websocketHeaders(), "")
 	if response.StatusCode != 101 || f.resolutions.Load() != 2 {
 		t.Fatal("reconnect bypassed handshake")
 	}
