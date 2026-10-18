@@ -2,11 +2,23 @@ import assert from "node:assert/strict"
 import { readFile, writeFile, rename } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import type { HelmrClient } from "../../../sdk/typescript/src/client"
+import type { ComputerRef, ComputerCommandRequest } from "../../../sdk/typescript/src/computer"
+import { isHelmrError } from "../../../sdk/typescript/src/error"
 import type { SessionRef, TurnRef } from "../../../sdk/typescript/src/contract"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 
 type Observation = { operations: number[]; versions: number[]; requests: unknown[] | null; handshakes: number; closed: number; http: number; activeHTTP: number; unauthorized: number; fallback: number }
 const kinds = ["claude", "codex", "opencode-anthropic", "opencode-openai", "opencode-go", "pi-anthropic", "pi-openai", "pi-go"] as const
+
+async function execPrepared(computer: ComputerRef, request: ComputerCommandRequest, signal: AbortSignal) {
+  for (;;) {
+    try { return await computer.exec(request, { signal }) }
+    catch (error) {
+      if (!isHelmrError(error) || error.code !== "computer_busy") throw error
+      await delay(100, undefined, { signal })
+    }
+  }
+}
 
 export async function runProtectedStarters(client: HelmrClient, fixture: { origin: string; state: string }, evidence: string, signal: AbortSignal) {
   const records: Record<string, unknown>[] = []
@@ -23,7 +35,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       }, { signal })
       const commands = client.computers.ref(computer.id)
       async function command(script: string, phase: string) {
-        const command = await commands.exec({ command: ["/usr/local/bin/node", "--input-type=module", "-e", script], timeout: "60s", idempotencyKey: `${name}-${phase}` }, { signal })
+        const command = await execPrepared(commands, { command: ["/usr/local/bin/node", "--input-type=module", "-e", script], timeout: "60s", idempotencyKey: `${name}-${phase}` }, signal)
         const result = await command.wait({ signal })
         assert.equal(result.kind, "exited"); assert.equal(result.exitCode, 0, phase)
       }
@@ -146,7 +158,7 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
       secrets: [{ secret: name, env: { name: "NATIVE_PROTECTED_KEY", mode: "protected", allowedOrigins: [fixture.origin] } }],
     }, { signal })
     async function socket(owner: string) {
-      const command = await client.computers.ref(computer.id).exec({ command: ["/usr/local/bin/node", "--input-type=module", "-e", `
+      const command = await execPrepared(client.computers.ref(computer.id), { command: ["/usr/local/bin/node", "--input-type=module", "-e", `
         import https from 'node:https'; import {randomBytes} from 'node:crypto';
         const request=https.request(${JSON.stringify(fixture.origin)}+'/command/'+${JSON.stringify(owner)}+'/v1/responses', {headers:{
           Authorization:'Bearer '+process.env.NATIVE_PROTECTED_KEY, Connection:'Upgrade', Upgrade:'websocket',
@@ -155,7 +167,7 @@ async function runProtectedAuthority(client: HelmrClient, fixture: { origin: str
         request.on('upgrade', (response,socket)=>{socket.on('error',()=>{});socket.resume()});
         request.on('response',response=>{throw new Error('upgrade refused '+response.statusCode)});
         request.on('error',error=>{throw error});request.end();
-      `], timeout: "5m", idempotencyKey: owner }, { signal })
+      `], timeout: "5m", idempotencyKey: owner }, signal)
       commands.push(command)
       return command
     }
