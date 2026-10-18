@@ -1,14 +1,48 @@
 package session_test
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 )
+
+func TestShortStoragePressureClearNotifiesWaitingWorker(t *testing.T) {
+	f := newFixture(t)
+	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := f.pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Release()
+	if _, err = listener.Exec(t.Context(), "LISTEN helmr_changes"); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	want := map[string]bool{"dispatch": true, "worker:" + f.host().HostID.String(): true}
+	for len(want) > 0 {
+		notification, err := listener.Conn().WaitForNotification(ctx)
+		if err != nil {
+			t.Fatalf("pressure clear missing notifications %v: %v", want, err)
+		}
+		delete(want, notification.Payload)
+	}
+	var holds int
+	if err = f.pool.QueryRow(t.Context(), "SELECT count(*) FROM session_holds").Scan(&holds); err != nil || holds != 0 {
+		t.Fatalf("short pressure unexpectedly created holds: %d %v", holds, err)
+	}
+}
 
 func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T) {
 	f := newFixture(t)

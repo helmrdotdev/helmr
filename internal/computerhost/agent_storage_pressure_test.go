@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,28 @@ import (
 type uncertainPressureClient struct {
 	AgentSaveClient
 	report func(workerapi.AgentStoragePressure) error
+}
+
+type pressureCollectionCapture struct{ saveHostCapture }
+
+func (c pressureCollectionCapture) Collect(context.Context, int) (int64, error) {
+	return 4096, c.f.step("collect")
+}
+
+func TestStoragePressureCollectsWithoutPublicationAuthority(t *testing.T) {
+	saves, client := agentSaveFixture(t, "")
+	saves.changes = func() disk.VersionChanges {
+		return disk.VersionChanges{PressureSince: time.Now()}
+	}
+	saves.pinCommitted = func(context.Context) (disk.RetainedVersion, error) {
+		return pressureCollectionCapture{saveHostCapture{client.fixture}}, nil
+	}
+	if err := saves.relievePressure(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"collect", "release"}; !reflect.DeepEqual(client.fixture.steps, want) {
+		t.Fatalf("collection without save authority: got %v, want %v", client.fixture.steps, want)
+	}
 }
 
 func (c uncertainPressureClient) ReportAgentStoragePressure(_ context.Context, r workerapi.AgentStoragePressure) error {

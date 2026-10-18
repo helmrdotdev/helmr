@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,7 +74,12 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	}
 	wrongAllocation := allocation
 	wrongAllocation.AllocationID = uuid.NewV7().String()
-	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: wrongAllocation}); err == nil {
+	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: wrongAllocation}); err != nil {
+		var response *httpclient.Error
+		if !errors.As(err, &response) || response.Code != workerapi.SaveAuthorityLost {
+			t.Fatalf("foreign allocation did not lose save authority: %v", err)
+		}
+	} else {
 		t.Fatal("foreign physical allocation discovered save")
 	}
 	keyID, key := bindFixtureLeaseDisk(t, f.Pool, host, f.Environment, f.Computer, 1)
