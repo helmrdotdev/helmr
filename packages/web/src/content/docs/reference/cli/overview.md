@@ -34,6 +34,8 @@ an Environment require both flags; each accepts the public ID shown in the Conso
 | `helmr login` | | Authenticate the CLI with a control plane. | [login](/docs/reference/cli/login) |
 | `helmr logout` | | Revoke and delete a saved login. | [login](/docs/reference/cli/login#helmr-logout) |
 | `helmr whoami` | | Show the active credentials. | [login](/docs/reference/cli/login#helmr-whoami) |
+| `helmr status` | | Show CLI context and existing resources. | [status](/docs/reference/cli/status) |
+| `helmr doctor` | | Diagnose existing resources. | [doctor](/docs/reference/cli/status) |
 | `helmr build` | | Build a verified deployment bundle locally. | [build](/docs/reference/cli/build) |
 | `helmr deploy` | | Build, upload, finalize and promote a deployment bundle. | [deploy](/docs/reference/cli/deploy) |
 | `helmr deployment` | `list`, `get`, `promote` | Inspect Deployments and promote one to current. | [deployment](/docs/reference/cli/deployment) |

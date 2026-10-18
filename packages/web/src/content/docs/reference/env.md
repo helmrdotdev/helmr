@@ -30,6 +30,8 @@ entirely by the guest image, tests, or development tooling remain internal.
 | --- | --- |
 | `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
+| `HELMR_PROJECT` | Project ID for `status` and `doctor` when `--project` is absent. |
+| `HELMR_ENV` | Environment ID for `status` and `doctor` when `--env` is absent. |
 | `HELMR_CONFIG_DIR` | CLI state directory override. |
 
 `HelmrClient` does not read these variables automatically. Pass the URL and API

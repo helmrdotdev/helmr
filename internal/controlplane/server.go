@@ -320,6 +320,7 @@ func (s *Server) methodNotAllowed(routes chi.Routes, w http.ResponseWriter, r *h
 }
 
 func (s *Server) mountRoutes(router chi.Router) {
+	router.Get("/agent-setup/{harness}.md", s.agentSetup)
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
 	router.Route("/api", s.mountManagementRoutes)
