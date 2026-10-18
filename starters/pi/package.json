@@ -1,0 +1,22 @@
+{
+  "name": "helmr-starter-pi",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
+    "test": "bun build tests/*.test.ts --target=node --tsconfig-override tests/tsconfig.json --external \"@earendil-works/*\" --outdir dist --entry-naming \"[name].mjs\" && node --test dist/*.test.mjs"
+  },
+  "dependencies": {
+    "@helmr/sdk": "file:../../dist/npm/sdk/package",
+    "@earendil-works/pi-coding-agent": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "7.0.2",
+    "@earendil-works/pi-ai": "1.3.0"
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package"
+  }
+}
