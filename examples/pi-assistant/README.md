@@ -28,7 +28,7 @@ folder alone does not supply those dependencies.
 Create the `ANTHROPIC_API_KEY` Secret in the target Environment through your
 existing Secret-management workflow. The Computer uses protected delivery for
 `https://api.anthropic.com`. Never supply the value as model input or source.
-The default model is `anthropic/claude-sonnet-5-5`, selected in `agents/settings.ts`.
+The default model is `anthropic/claude-opus-5-5`, selected in `agents/settings.ts`.
 
 ```bash
 helmr deploy PATH/TO/pi-assistant --project PROJECT --env ENVIRONMENT

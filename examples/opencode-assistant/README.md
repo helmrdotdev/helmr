@@ -44,7 +44,8 @@ same thread for follow-ups. No Slack credentials belong in application code.
 ## Application choices
 
 - OpenCode Go uses `opencode-go/glm-5.3`. The provider policy enables only
-  `opencode-go`; provider/model choices live in `agents/settings.ts`.
+  `opencode-go`; provider/model choices live in `agents/settings.ts`. Title
+  generation also uses `opencode-go/glm-5.3`, set separately by `smallModel`.
 - Native commands and file edits ask for **one-time** human approval. The example
   does not offer persistent permission grants. Ordinary reads and searches are
   allowed, with additional questions for `.env` files. Subagents and access

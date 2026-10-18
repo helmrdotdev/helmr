@@ -25,7 +25,7 @@ func TestCommittedSettingsMatchTheDefaultRendering(t *testing.T) {
 }
 
 func TestSettingsNameTheNamesakeOnlyForPoolNames(t *testing.T) {
-	binding := Binding{Provider: providers["anthropic"], Model: "claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"}
+	binding := Binding{Provider: providers["anthropic"], Model: "claude-opus-5-5", Env: "ANTHROPIC_API_KEY"}
 	pooled := Settings("noether", binding)
 	if !strings.Contains(pooled, `"You are noether, a Helmr agent named after the mathematician Emmy Noether.`) {
 		t.Fatalf("pooled settings = %s", pooled)
@@ -90,5 +90,41 @@ func TestBindingRejectsUnsupportedProviders(t *testing.T) {
 	starter, _ := Lookup("claude-code")
 	if _, err := starter.Binding("openai"); err == nil || !strings.Contains(err.Error(), "supported: anthropic") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestProviderModelsAndGeneratedTitleSettings(t *testing.T) {
+	cases := []struct{ starter, provider, model, small string }{
+		{"claude-code", "anthropic", "claude-opus-5-5", ""},
+		{"codex", "openai", "gpt-6.1-sol", ""},
+		{"opencode", "anthropic", "anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"},
+		{"opencode", "openai", "openai/gpt-6.1-sol", "openai/gpt-6-luna"},
+		{"opencode", "opencode-go", "opencode-go/glm-5.3", "opencode-go/glm-5.3"},
+		{"pi", "anthropic", "anthropic/claude-opus-5-5", ""},
+		{"pi", "openai", "openai/gpt-6.1-sol", ""},
+		{"pi", "opencode-go", "opencode-go/glm-5.3", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.starter+"/"+c.provider, func(t *testing.T) {
+			starter, _ := Lookup(c.starter)
+			binding, err := starter.Binding(c.provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.Model != c.model || binding.SmallModel != c.small {
+				t.Fatalf("binding = %+v", binding)
+			}
+			settings := Settings("assistant", binding)
+			if !strings.Contains(settings, `export const model = "`+c.model+`"`) {
+				t.Fatal(settings)
+			}
+			if c.small == "" {
+				if strings.Contains(settings, "smallModel") {
+					t.Fatal(settings)
+				}
+			} else if !strings.Contains(settings, `export const smallModel = "`+c.small+`"`) {
+				t.Fatal(settings)
+			}
+		})
 	}
 }

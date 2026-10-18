@@ -1,6 +1,7 @@
 import type { OpenCode } from "@opencode/sdk/effect"
 
 export const model = "opencode-go/glm-5.3"
+export const smallModel = "opencode-go/glm-5.3"
 export const introduction = `Help the user build a small website in the current workspace.
 Ask about missing requirements before making a substantial change. Write ordinary
 HTML, CSS and JavaScript files that the user can inspect and edit. Explain which
@@ -15,6 +16,7 @@ export function nativeOptions(directory: string): OpenCode.CreateOptions {
       directory, project: false, claude: false,
       content: JSON.stringify({
         update: "disable", share: "disabled",
+        agents: { title: { model: smallModel } },
         permissions: [
           { action: "*", resource: "*", effect: "ask" },
           { action: "read", resource: "*", effect: "allow" },

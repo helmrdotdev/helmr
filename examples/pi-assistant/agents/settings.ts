@@ -1,4 +1,4 @@
-export const model = "anthropic/claude-sonnet-5-5"
+export const model = "anthropic/claude-opus-5-5"
 export const introduction = `Analyze the synthetic sales data in data/sales.csv.
 Read data/README.md for the schema and scope. Ask when the requested comparison
 is ambiguous. Write a reusable analysis.mjs using Node's standard library, run it,

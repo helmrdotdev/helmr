@@ -60,7 +60,8 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
   const port = (server.address() as import("node:net").AddressInfo).port
   const options: OpenCodeOptions = { cwd, stateDirectory: join(root, "state"), sessionId: "test", model: "fixture/probe", introduction: "You are a fixture assistant.", recovery: "initial",
     native: { config: { directory: join(root, "config"), project: false, claude: false, content: JSON.stringify({
-      permissions: [{ action: "*", resource: "*", effect: "ask" }], model: "fixture/probe", providers: { fixture: { name: "Offline model", package: "@opencode/ai/providers/anthropic", settings: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "local-fixture" }, models: { probe: { name: "Probe", limit: { context: 100000, output: 1000 }, capabilities: { tools: true, input: ["text"], output: ["text"] } } } } },
+      agents: { title: { model: "fixture/small" } },
+      permissions: [{ action: "*", resource: "*", effect: "ask" }], model: "fixture/probe", providers: { fixture: { name: "Offline model", package: "@opencode/ai/providers/anthropic", settings: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "local-fixture" }, models: { small: { name: "Small", limit: { context: 100000, output: 1000 }, capabilities: { tools: true, input: ["text"], output: ["text"] } }, probe: { name: "Probe", limit: { context: 100000, output: 1000 }, capabilities: { tools: true, input: ["text"], output: ["text"] } } } } },
     }) }, models: { fetch: false, snapshot: false }, fs: { filewatcher: false, fff: false }, plugins: [] },
   }
   let bridge: OpenCodeSession | undefined, sequence = 0, initCount = 0
@@ -87,6 +88,8 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
   const dispatch = (text: string) => { const n = ++sequence; return { id: `turn-${n}`, result: runtime.dispatch({ id: `turn-${n}`, sequence: n, createdAt: new Date().toISOString(), input: [{ type: "text", text }], source: { kind: "api_key" } }) } }
   try {
     assert.equal((await dispatch("remember first input").result).status, "completed")
+    await until(() => calls.some(call => call.model === "small"))
+    assert.ok(calls.some(call => call.model === "probe"), "conversation uses the main model")
     assert.equal((await dispatch("second input").result).status, "completed")
     assert.equal(initCount, 1)
     assert.ok(JSON.stringify(calls.at(-1)).includes("remember first input"))

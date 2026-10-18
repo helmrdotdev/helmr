@@ -65,8 +65,18 @@ approval. Questions and approvals appear in Slack or the Console.
 
 | Template | Provider | Model | Secret | Sent only to |
 | --- | --- | --- | --- | --- |
-| `claude-code` | `anthropic` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
-| `codex` | `openai` | `gpt-5.5` | `OPENAI_API_KEY` | `https://api.openai.com` |
+| `claude-code` | `anthropic` | `claude-opus-5-5` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
+| `codex` | `openai` | `gpt-6.1-sol` | `OPENAI_API_KEY` | `https://api.openai.com` |
+| `opencode`, `pi` | `anthropic` (default) | `anthropic/claude-opus-5-5` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
+| `opencode`, `pi` | `openai` | `openai/gpt-6.1-sol` | `OPENAI_API_KEY` | `https://api.openai.com` |
+| `opencode`, `pi` | `opencode-go` | `opencode-go/glm-5.3` | `OPENCODE_GO_API_KEY` | `https://opencode.ai` |
+
+For OpenCode, `smallModel` in `agents/settings.ts` separately controls title
+generation through the native `agents.title.model` configuration: Anthropic uses
+`anthropic/claude-haiku-5-5`, OpenAI uses `openai/gpt-6-luna`, and OpenCode Go keeps
+`opencode-go/glm-5.3`. Pi 1.3.0 has no equivalent dedicated setting; its built-in
+summaries continue to use the selected session model.
+
 
 The command refuses a directory whose `agents/` holds other `.ts` files, even
 with `--force`, since they would deploy beside the new Agent. The command prints the Agent name, the model and the Secret to add. Add that
