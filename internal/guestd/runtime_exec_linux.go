@@ -157,7 +157,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 		return fmt.Errorf("invalid Session init flag: %w", err)
 	}
 	if sessionInit && !startProof {
-		return errors.New("Session init requires start proof")
+		return errors.New("session init requires start proof")
 	}
 	secretRoot := args[10]
 	runtimePath := args[11]

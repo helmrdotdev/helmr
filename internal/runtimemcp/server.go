@@ -86,6 +86,7 @@ func NewHandler(invoke Invoke) http.Handler {
 		Instructions: skillInstructions(),
 		// This catalog is fixed for the lifetime of the Session process. Advertising
 		// changes makes clients retain notification streams for work that never occurs.
+		//lint:ignore SA1019 Preserve the SDK default logging capability during its supported deprecation window.
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Logging: &mcp.LoggingCapabilities{}},
 	})
 	addSkills(server)
