@@ -208,10 +208,10 @@ test("terminal notification remains live while questions wait and no late native
 
 for (const status of ["completed", "failed", "declined"]) test(`a yielded ${status} command receipt may arrive after native Turn completion`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-late-command-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     void pending.catch(() => {})
     let settled = false
     void pending.then(() => { settled = true }, () => { settled = true })
@@ -225,26 +225,26 @@ for (const status of ["completed", "failed", "declined"]) test(`a yielded ${stat
     }
     await new Promise<void>(resolve => setImmediate(resolve))
     expect(settled).toBe(false)
-    expect(harness.idle).toBe(false)
+    expect(bridge.idle).toBe(false)
     expect(requested).not.toContain("thread/backgroundTerminals/clean")
     messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status, exitCode: status === "completed" ? 0 : null } } })
     await expect(pending).resolves.toEqual({ nativeThreadId: "native", nativeTurnId: "native-turn" })
-    expect(harness.reusable).toBe(true)
-    const next = harness.run(turn, "next")
+    expect(bridge.reusable).toBe(true)
+    const next = bridge.run(turn, "next")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await next
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const failure of ["cancel", "cancel-race", "reader-error", "reader-end", "cancel-reader-error"]) test(`outstanding command receipt joins through ${failure}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-command-join-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const abort = new AbortController()
   const turn = { id: "turn", signal: abort.signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   const receipt = { method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "completed", exitCode: 0 } } }
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     let settled = false
     void pending.then(() => { settled = true }, () => { settled = true })
     await new Promise<void>(resolve => setImmediate(resolve))
@@ -268,9 +268,9 @@ for (const failure of ["cancel", "cancel-race", "reader-error", "reader-end", "c
       finishExit()
     }
     await expect(pending).rejects.toThrow(failure.startsWith("cancel") ? "owned Turn cancelled" : failure === "reader-end" ? "Native message stream ended" : "lost native reader")
-    expect(harness.reusable).toBe(!failure.includes("reader"))
-    expect(harness.idle).toBe(true)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    expect(bridge.reusable).toBe(!failure.includes("reader"))
+    expect(bridge.idle).toBe(true)
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const status of ["completed", "failed", "declined"]) test(`terminal command ${status} without exit code drains before Turn completion`, async () => {
