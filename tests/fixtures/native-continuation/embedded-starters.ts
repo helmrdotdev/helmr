@@ -41,11 +41,12 @@ export function createEmbeddedStarter(kind: "opencode" | "pi", template: Templat
     }
     const server = createServer(async (request, response) => {
       try {
+        const pathname = new URL(request.url ?? "/", "http://fixture").pathname
         const admission = { toolRunning: await toolRunning(), toolFinished: existsSync(join(cwd, "tool.finished")) }
         let raw = ""
         for await (const chunk of request) raw += chunk
         const body = JSON.parse(raw || "{}")
-        if (request.url === "/control") {
+        if (pathname === "/control") {
           actions.push(...(body.actions ?? []))
           if (body.release) held.shift()?.()
           response.setHeader("content-type", "application/json")
@@ -53,8 +54,8 @@ export function createEmbeddedStarter(kind: "opencode" | "pi", template: Templat
           if (body.crash) setImmediate(() => process.kill(process.pid, "SIGKILL"))
           return
         }
-        if (request.url?.includes("count_tokens")) { response.end(JSON.stringify({ input_tokens: 10 })); return }
-        if (!request.url?.endsWith("/messages")) { response.writeHead(404); response.end(); return }
+        if (pathname.endsWith("/count_tokens")) { response.end(JSON.stringify({ input_tokens: 10 })); return }
+        if (!pathname.endsWith("/messages")) { response.writeHead(404); response.end(); return }
         requests.push(body); admissions.push(admission)
         const action = actions.shift()
         if (action === "hold") held.push(() => reply(response, undefined))
