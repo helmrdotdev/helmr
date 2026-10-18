@@ -13,3 +13,17 @@ test("the website example never offers or accepts a persistent native permission
     assert.equal(await askPermission(turn, request, new AbortController().signal), value === "once" ? "once" : "reject")
   }
 })
+
+
+test("permission details remain complete and oversized previews are rejected", async () => {
+  const request = { id: "per_edit", sessionID: "ses_example", action: "edit", resources: ["index.html"], save: ["*"], metadata: { files: [{ file: "index.html", patch: "+<h1>Event</h1>" }] } } as unknown as Parameters<typeof askPermission>[1]
+  let asks = 0
+  const turn = { ask: async (question: any) => {
+    asks++
+    assert.match(JSON.stringify(question.prompt), /Event/)
+    return { answer: { selected: [{ id: "once", value: "once" }] } }
+  } } as unknown as Turn
+  assert.equal(await askPermission(turn, request, new AbortController().signal), "once")
+  assert.equal(await askPermission(turn, { ...request, metadata: { patch: "x".repeat(48 * 1024) } }, new AbortController().signal), "reject")
+  assert.equal(asks, 1, "oversized details never offer approval")
+})

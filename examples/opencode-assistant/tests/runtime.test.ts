@@ -71,6 +71,20 @@ test("website example creates and revises files with one-time permissions, quest
     assert.ok(session.questions.length > beforeEdit, "a later operation asks again")
     assert.ok(JSON.stringify(requests.at(-1)).includes("Build a small event website"))
 
+    const beforeWrite = session.questions.length
+    actions.push({ name: "write", input: { path: "style.css", content: "h1 { color: blue; }\n" } })
+    assert.equal((await session.dispatch("Use blue headings").result).status, "completed")
+    assert.equal(await readFile(join(cwd, "style.css"), "utf8"), "h1 { color: blue; }\n")
+    assert.ok(session.questions.length > beforeWrite, "native file writes ask permission")
+    assert.match(JSON.stringify(session.questions.slice(beforeWrite)), /h1 \{ color: blue;/, "approval includes the proposed patch")
+    for (const path of [".helmr/metadata", "nested/.helmr/metadata"]) {
+      const beforeProtectedWrite = session.questions.length
+      actions.push({ name: "write", input: { path, content: "must not be written" } })
+      assert.equal((await session.dispatch(`Try to write ${path}`).result).status, "completed")
+      assert.equal(await stat(join(cwd, path)).then(() => true, () => false), false)
+      assert.equal(session.questions.length, beforeProtectedWrite, "protected metadata is denied without offering approval")
+    }
+
     const answer = session.controls.answer
     session.controls.answer = async q => ({ answer: q.type === "text" ? "no" : { selected: [q.options.find(o => o.id === "reject")!] }, answeredBy: { kind: "user", id: "tester" } })
     actions.push({ name: "shell", input: { command: "touch denied.txt", description: "An operation the human denies" } })

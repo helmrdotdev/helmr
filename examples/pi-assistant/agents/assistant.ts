@@ -26,7 +26,7 @@ export function createAnalysisAssistant(options: Partial<Pick<PiOptions, "cwd" |
     },
     async turn(turn, { initResult }) {
       const { response, ...result } = await initResult.run(turn)
-      if (response !== undefined) await turn.respond(response)
+      if (response) await turn.respond(response)
       return result
     },
   })

@@ -5,11 +5,14 @@ import type { Permission } from "@opencode/schema/permission"
 // This example grants each operation once; it never saves native permissions.
 export async function askPermission(turn: Turn, request: Permission.Request, signal: AbortSignal): Promise<Permission.Reply> {
   signal.throwIfAborted()
+  const details = JSON.stringify({ action: request.action, resources: request.resources, metadata: request.metadata, message: request.message }, null, 2)
+  // Keep the complete operation reviewable; never approve a truncated preview.
+  if (Buffer.byteLength(details) > 48 * 1024) return "reject"
   const options = [
     { id: "once", label: "Allow once", value: "once" },
     { id: "reject", label: "Deny", value: "reject" },
   ]
-  const { answer } = await turn.ask({ type: "choice", prompt: [{ type: "text", text: request.message ?? `Allow ${request.action}?` }, { type: "json", value: [...request.resources] }], options }, { signal })
+  const { answer } = await turn.ask({ type: "choice", prompt: [{ type: "text", text: request.message ?? `Allow ${request.action}?` }, { type: "text", text: details }], options }, { signal })
   signal.throwIfAborted()
   const selected = answer.selected[0]?.value
   return answer.selected.length === 1 && selected === "once" ? selected : "reject"

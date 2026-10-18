@@ -27,7 +27,7 @@ For a minimal starting project for a chosen harness, use
 
 These small recipes explain a particular API rather than a complete model task:
 
-- [Hello World](hello-world/) — Agent input, response, questions and retained files.
+- [Hello World](hello-world/) — Agent input, response and retained files.
 - [CLI tooling](cli-tooling/) — install and invoke a CLI in a Computer.
 - [Computer Secrets](agent-secrets/) — bind a Secret ID without printing its value.
 - [GitHub PR summary](github-pr-review/) — read PR metadata and summarize changed

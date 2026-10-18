@@ -29,7 +29,7 @@ export function createWebsiteAssistant(options: Partial<Pick<OpenCodeOptions, "c
     },
     async turn(turn, { initResult }) {
       const { response, ...result } = await initResult.run(turn)
-      if (response !== undefined) await turn.respond(response)
+      if (response) await turn.respond(response)
       return result
     },
   })
