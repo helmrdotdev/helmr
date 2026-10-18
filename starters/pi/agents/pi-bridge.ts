@@ -48,7 +48,6 @@ export class PiSession {
     let manager: SessionManager
     if (options.recovery === "initial") {
       manager = SessionManager.create(options.cwd, directory)
-      await writeFile(manifest, JSON.stringify({ id: manager.getSessionId(), file: manager.getSessionFile() }), { mode: 0o600, flag: "wx" })
     } else {
       const saved = JSON.parse(await readFile(manifest, "utf8")) as { id: string; file: string }
       await stat(saved.file)
@@ -98,7 +97,11 @@ export class PiSession {
       await rename(`${manifest}.tmp`, manifest)
       await bind()
     })
-    try { await bind(); return bridge }
+    try {
+      await bind()
+      if (options.recovery === "initial") await writeFile(manifest, JSON.stringify({ id: manager.getSessionId(), file: manager.getSessionFile() }), { mode: 0o600, flag: "wx" })
+      return bridge
+    }
     catch (error) { await bridge.close(); throw error }
   }
 

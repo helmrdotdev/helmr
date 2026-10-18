@@ -70,6 +70,8 @@ test("Pi starter retains native history, joins cancellation and restores only sa
   let runtime = createRuntime()
   const dispatch = (text: string) => { const n = ++sequence; return { id: `turn-${n}`, result: runtime.dispatch({ id: `turn-${n}`, sequence: n, createdAt: new Date().toISOString(), input: [{ type: "text", text }], source: { kind: "api_key" } }) } }
   try {
+    await assert.rejects(PiSession.open({ ...options, model: "fixture/missing" }), /model is unavailable/)
+    assert.equal(existsSync(join(options.stateDirectory, options.sessionId, "session.json")), false)
     assert.equal((await dispatch("remember first input").result).status, "completed")
     assert.equal((await dispatch("second input").result).status, "completed")
     assert.ok(calls.at(-1)?.includes("remember first input"))

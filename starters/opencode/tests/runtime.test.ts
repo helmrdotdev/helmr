@@ -8,6 +8,7 @@ import { join } from "node:path"
 import { OpenCode } from "@opencode/sdk/effect"
 import { Effect, Schema } from "effect"
 import { Form } from "@opencode/schema/form"
+import { askForm } from "../agents/questions"
 import { OpenCodeSession, type OpenCodeOptions } from "../agents/opencode-bridge"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import type { InitContext, Turn } from "../../../sdk/typescript/src/agent"
@@ -195,5 +196,14 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test("required native form text and numbers reject blank responses", async () => {
+  for (const type of ["string", "number", "integer"]) {
+    const form = { fields: Schema.decodeUnknownSync(Form.Fields)([{ type, key: "required", required: true }]) } as Form.Info
+    const turn = { ask: async () => ({ answer: "   " }) } as unknown as Turn
+    await assert.rejects(askForm(turn, form, new AbortController().signal), /requires an answer/)
   }
 })

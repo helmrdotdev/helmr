@@ -25,7 +25,9 @@ The bridge does not undo external effects or promise termination of detached wor
 
 Reconstruction verifies the saved native file and session identity, loads history
 through SessionManager, then waits for new input. Missing history fails initialization
-instead of silently starting an empty conversation. Native startup extensions remain
+instead of silently starting an empty conversation. The manifest is saved only after
+initialization succeeds; a process lost before its first persisted prompt also fails
+closed on reconstruction because Pi has not written history yet. Native startup extensions remain
 application-owned and need qualification for any autonomous behavior they introduce.
 The SDK is pinned to 1.3.0. Source and mock-model tests do not establish live provider
 or protected transport compatibility.

@@ -36,7 +36,10 @@ export async function askForm(turn: Turn, form: Form.Info, signal: AbortSignal):
     signal.throwIfAborted()
     if (question.type === "text") {
       const text = result.answer as string
-      if (!text && !field.required) continue
+      if (!text.trim()) {
+        if (field.required) throw new Error("OpenCode form requires an answer")
+        continue
+      }
       if (field.type === "number" || field.type === "integer") {
         const number = Number(text)
         if (!Number.isFinite(number) || (field.type === "integer" && !Number.isInteger(number))) throw new Error("OpenCode form requires a valid number")
