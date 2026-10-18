@@ -111,7 +111,7 @@ export async function runEmbeddedStarter(kind: "opencode" | "pi", client: HelmrC
     assert.ok(JSON.stringify(state.inputs[0]).includes("starter fresh reconstructed"))
     assert.equal(state.admissions[0].toolRunning, false); assert.equal(state.admissions[0].toolFinished, false)
     observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, hold, reconstructed, state }
-    return { sessionId: session.id, retained: true, steering: true, questions: true, joinedNativeStop: true, heldOwnerFailure: true, reconstruction: true }
+    return { kind, sessionId: session.id, retained: true, steering: true, questions: true, joinedNativeStop: true, heldOwnerFailure: true, reconstruction: true }
   } finally {
     try { await writeFile(`${evidence}/${kind}-starter.json`, JSON.stringify(observations, null, 2) + "\n", { mode: 0o600 }) }
     finally { await session.cancel(undefined, { signal: AbortSignal.timeout(15_000) }) }
