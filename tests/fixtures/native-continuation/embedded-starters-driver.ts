@@ -98,7 +98,10 @@ export async function runEmbeddedStarter(kind: "opencode" | "pi", client: HelmrC
       const holds = (await session.get({ signal })).holds
       hold = holds.find(value => value.kind === "control" && value.scope === "local" &&
         ["session_continuation_lost", "turn_drain_failed", "Session runtime control failed"].includes(value.reason))
-      if (hold) break
+      if (hold) {
+        assert.equal(holds.length, 1, `unexpected additional owner-failure holds: ${JSON.stringify(holds)}`)
+        break
+      }
       assert.equal(holds.length, 0, `unexpected owner-failure hold: ${JSON.stringify(holds)}`)
       await delay(100, undefined, { signal })
     }
