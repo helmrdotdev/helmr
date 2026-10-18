@@ -78,6 +78,7 @@ let
           bun run typecheck
           bun run test:ts
           scripts/check-starters.sh
+          (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           (cd examples/pi-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           bun run check:web
