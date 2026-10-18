@@ -29,14 +29,14 @@ export const PROVIDERS: Record<ProviderID, Provider> = {
 };
 
 const MULTI = [
-  { provider: "anthropic", model: "anthropic/claude-sonnet-5-5" },
-  { provider: "openai", model: "openai/gpt-5.5" },
+  { provider: "anthropic", model: "anthropic/claude-opus-5-5" },
+  { provider: "openai", model: "openai/gpt-6.1-sol" },
   { provider: "opencode-go", model: "opencode-go/glm-5.3" },
 ] as const;
 
 export const HARNESSES: readonly Harness[] = [
-  { id: "claude-code", label: "Claude Code", logo: "/logos/claude.svg", bindings: [{ provider: "anthropic", model: "claude-sonnet-5-5" }] },
-  { id: "codex", label: "Codex", logo: "/logos/openai.svg", bindings: [{ provider: "openai", model: "gpt-5.5" }] },
+  { id: "claude-code", label: "Claude Code", logo: "/logos/claude.svg", bindings: [{ provider: "anthropic", model: "claude-opus-5-5" }] },
+  { id: "codex", label: "Codex", logo: "/logos/openai.svg", bindings: [{ provider: "openai", model: "gpt-6.1-sol" }] },
   { id: "opencode", label: "OpenCode", logo: "/logos/opencode.svg", bindings: MULTI },
   { id: "pi", label: "Pi", logo: "/logos/pi.svg", bindings: MULTI },
 ];

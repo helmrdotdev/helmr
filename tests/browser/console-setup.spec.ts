@@ -59,7 +59,7 @@ test("an Environment without agents walks through agent, provider, key and promp
   await expect(setup.getByRole("radio")).toHaveCount(4);
   await expect(setup.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   await expect(setup.getByText("Claude Code uses Anthropic.")).toBeVisible();
-  await expect(setup.getByText("claude-sonnet-5-5", { exact: true })).toBeVisible();
+  await expect(setup.getByText("claude-opus-5-5", { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Copy" })).toHaveCount(0);
 
   await setup.getByText("OpenCode", { exact: true }).click();
