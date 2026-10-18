@@ -1,5 +1,6 @@
 import { agent, template, image } from "@helmr/sdk"
 import { readFile } from "node:fs/promises"
+import { hasUsableDefaultIPv6Route } from "./ipv6-route"
 
 const base = image("helmr-network-smoke")
   .from("node:24-bookworm-slim")
@@ -26,15 +27,7 @@ export const networkSmoke = agent({
     }
 
     const ipv6Routes = await readFile("/proc/net/ipv6_route", "utf8")
-    const hasDefaultIPv6Route = ipv6Routes
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .some((line) => {
-        const fields = line.trim().split(/\s+/)
-        return fields[0] === "00000000000000000000000000000000" &&
-          fields[1] === "00"
-      })
-    if (hasDefaultIPv6Route) {
+    if (hasUsableDefaultIPv6Route(ipv6Routes)) {
       throw new Error("guest unexpectedly has an IPv6 default route")
     }
 
