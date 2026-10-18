@@ -128,7 +128,11 @@ func collectDiagnosticSlack(ctx context.Context, cp *client.Client, scope client
 	if complete {
 		report.Live.Slack = connections
 	}
-	if !doctor || len(teams) == 0 {
+	if !doctor {
+		report.check("slack.identity", "skip", "Caller identity links are checked by doctor.", nil)
+		return
+	}
+	if len(teams) == 0 {
 		report.check("slack.identity", "skip", "No connected workspace requiring a caller identity check.", nil)
 		return
 	}

@@ -333,7 +333,7 @@ func diagnosticConnection(cmd *cobra.Command, report *diagnosticReport) *client.
 		cp, err := client.New(parsed.String())
 		if err != nil {
 			report.APIURL = nil
-			report.readError("server.origin", err)
+			report.check("server.origin", "error", "Server must be an HTTPS origin (HTTP is allowed only for loopback), without credentials, path, query or fragment.", &diagnosticRemedy{"Correct --api-url or HELMR_API_URL.", false})
 		}
 		return cp
 	}

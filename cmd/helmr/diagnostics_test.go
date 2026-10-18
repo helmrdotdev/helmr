@@ -452,6 +452,15 @@ func TestDiagnosticOfflineRejectsMissingHost(t *testing.T) {
 	if err == nil || report.APIURL != nil {
 		t.Fatalf("report=%+v err=%v", report, err)
 	}
+	found := false
+	for _, check := range report.Checks {
+		if check.ID == "server.origin" && check.Remedy != nil && check.Remedy.Title == "Correct --api-url or HELMR_API_URL." {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing configuration remedy: %+v", report.Checks)
+	}
 }
 
 func TestDiagnosticRecoveredClosedAndExpiredTurns(t *testing.T) {
