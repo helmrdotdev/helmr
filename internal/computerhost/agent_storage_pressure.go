@@ -93,7 +93,7 @@ func (s *agentComputerSaves) relievePressure(ctx context.Context) error {
 	s.pressureMu.Lock()
 	save := s.pressureSave
 	s.pressureMu.Unlock()
-	if save == nil || s.changes().PressureSince.IsZero() {
+	if s.changes().PressureSince.IsZero() {
 		return nil
 	}
 	capture, err := s.pinCommitted(ctx)
@@ -106,7 +106,7 @@ func (s *agentComputerSaves) relievePressure(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.changes().PressureSince.IsZero() {
+	if save == nil || s.changes().PressureSince.IsZero() {
 		return nil
 	}
 	err = capture.Publish(ctx, agentSavePublisher{client: s.client, objects: s.objects, save: *save})

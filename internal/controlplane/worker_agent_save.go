@@ -113,7 +113,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentSaveError(w, err)
 		return
 	}
 	result := workerapi.AgentSavePending{}

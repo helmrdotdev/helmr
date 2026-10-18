@@ -102,6 +102,15 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
         self.assertNotIn("systemctl", calls)
         self.assertIn("--lifecycle-hook-name launch", calls)
 
+    def test_watch_observes_termination_after_boot_launch_deadline(self):
+        for state in ("Terminated", "Warmed:Terminated"):
+            with self.subTest(state=state):
+                result, calls = self.run_watch(state=state, expired=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("--lifecycle-hook-name terminate", calls)
+                self.assertNotIn("--lifecycle-hook-name launch", calls)
+                self.assertNotIn("systemctl start", calls)
+
     def test_worker_restart_keeps_ami_failure_retry_and_nonfatal_credentials_dependency(self):
         template = TEMPLATE.read_text()
         self.assertIn("Wants=helmr-worker-enrollment-token.service", template)

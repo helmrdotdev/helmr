@@ -211,6 +211,12 @@ case "$${1:-watch}" in
         else
           now="$(date +%s)"
           if [ $((now - launch_started_at)) -ge "$launch_timeout" ]; then
+            # A restarted watcher may no longer have a launch action. Keep
+            # observing provider termination after this boot's launch deadline.
+            if termination_observed; then
+              drain_and_complete_termination
+              exit 0
+            fi
             complete_lifecycle_action "$launch_hook" ABANDON || true
             exit 1
           fi
