@@ -74,6 +74,16 @@ Fast PR CI keeps its existing source checks. The broader Nix CI entrypoints
 compose the same checks explicitly; changing file layout does not add real-host
 or all-case execution to PRs. Absence from fast CI does not mean a test is unused.
 
+Both `ci-fast-typescript` and `ci-typescript` run `scripts/check-starters.sh`
+after building the SDK. This checks every starter source and generated project,
+including native runtime tests against local mock models. On Linux, the Nix
+toolset supplies `bubblewrap` and `flock`. Ubuntu 24.04 also requires an AppArmor
+profile permitting the sandbox helper to create user namespaces; see the
+helper-specific setup in [source CI](../.github/workflows/ci.yaml) and
+[Ubuntu's user namespace documentation](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/#apparmor-unprivileged-user-namespace-restrictions).
+The CI profile permits the helper and its descendants without disabling the
+runner's global user namespace restriction.
+
 ## Reusing TypeScript build inputs
 
 `nix run .#ci-typescript` builds fresh SDK/proto packages once, packs them into a
