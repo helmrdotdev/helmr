@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -336,6 +337,9 @@ func protectedModelBlocked() string {
 		blocked = append(blocked, netip.PrefixFrom(netip.AddrFrom4(raw), bits).Masked().String())
 		prefix = netip.PrefixFrom(address, bits-1).Masked()
 	}
+	slices.SortFunc(blocked, func(a, b string) int {
+		return netip.MustParsePrefix(a).Addr().Compare(netip.MustParsePrefix(b).Addr())
+	})
 	raw, _ := json.Marshal(blocked)
 	return string(raw)
 }
