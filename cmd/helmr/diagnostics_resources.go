@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 )
 
 func collectDiagnosticAgents(ctx context.Context, cp *client.Client, scope client.EnvironmentScopeOptions, report *diagnosticReport) {
+	agents := []string{}
 	cursor := ""
 	for {
 		page, err := cp.ListAgentDefinitions(ctx, client.DefinitionListOptions{EnvironmentScopeOptions: scope, DeploymentID: report.Live.Deployment.ID, Cursor: cursor, Limit: 100})
@@ -17,7 +19,7 @@ func collectDiagnosticAgents(ctx context.Context, cp *client.Client, scope clien
 			return
 		}
 		for _, agent := range page.AgentDefinitions {
-			report.Live.Agents = append(report.Live.Agents, agent.ID)
+			agents = append(agents, agent.ID)
 		}
 		if page.NextCursor == "" {
 			break
@@ -28,12 +30,18 @@ func collectDiagnosticAgents(ctx context.Context, cp *client.Client, scope clien
 		}
 		cursor = page.NextCursor
 	}
+	report.Live.Agents = agents
 	report.check("agents.registered", "pass", fmt.Sprintf("%d Agents in the selected deployment.", len(report.Live.Agents)), nil)
 }
 
 func collectDiagnosticRecentTurns(ctx context.Context, cp *client.Client, scope client.EnvironmentScopeOptions, sessions []api.AgentSession, report *diagnosticReport) {
 	var failed, holds int64
+	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, s := range sessions {
+		if s.Status != "open" {
+			continue
+		}
+		var latest *api.AgentTurn
 		holds += int64(len(s.Holds))
 		cursor := ""
 		for {
@@ -43,8 +51,8 @@ func collectDiagnosticRecentTurns(ctx context.Context, cp *client.Client, scope 
 				return
 			}
 			for _, turn := range page.Turns {
-				if turn.Status == "failed" {
-					failed++
+				if latest == nil || turn.Sequence > latest.Sequence {
+					latest = &turn
 				}
 			}
 			if page.NextCursor == "" {
@@ -56,9 +64,12 @@ func collectDiagnosticRecentTurns(ctx context.Context, cp *client.Client, scope 
 			}
 			cursor = page.NextCursor
 		}
+		if latest != nil && latest.Status == "failed" && latest.TerminalAt != nil && latest.TerminalAt.After(cutoff) {
+			failed++
+		}
 	}
 	diagnosticCount(report, "sessions.holds", holds, "holds in the latest 10 Sessions", "Inspect held Sessions and resolve their hold reasons.", true)
-	diagnosticCount(report, "turns.failed", failed, "failed Turns in the latest 10 Sessions", "Read the affected Session events before retrying.", false)
+	diagnosticCount(report, "turns.failed", failed, "latest failed Turns within 24 hours in open Sessions among the latest 10 Sessions", "Read the affected Session events before retrying.", false)
 }
 
 func collectDiagnosticSlack(ctx context.Context, cp *client.Client, scope client.EnvironmentScopeOptions, doctor bool, report *diagnosticReport) {
@@ -83,13 +94,16 @@ func collectDiagnosticSlack(ctx context.Context, cp *client.Client, scope client
 		}
 		cursor = page.NextCursor
 	}
+	connections := []diagnosticSlack{}
+	complete := true
 	for _, agent := range agents {
 		connection, err := cp.GetAgentSlackConnection(ctx, agent, scope)
 		if err != nil {
 			report.readError("slack.connection."+agent, err)
+			complete = false
 			continue
 		}
-		report.Live.Slack = append(report.Live.Slack, diagnosticSlack{agent, connection})
+		connections = append(connections, diagnosticSlack{agent, connection})
 		if connection == nil {
 			continue
 		}
@@ -110,6 +124,9 @@ func collectDiagnosticSlack(ctx context.Context, cp *client.Client, scope client
 			}
 			report.check("slack.connection."+agent, status, "Existing connection status: "+connection.Status, remedy)
 		}
+	}
+	if complete {
+		report.Live.Slack = connections
 	}
 	if !doctor || len(teams) == 0 {
 		report.check("slack.identity", "skip", "No connected workspace requiring a caller identity check.", nil)

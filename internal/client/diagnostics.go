@@ -73,7 +73,7 @@ func (c *Client) CheckReadiness(ctx context.Context) error {
 	if err := c.readDiagnostic(ctx, "/readyz", &result); err != nil {
 		return err
 	}
-	if result.Status != "ok" {
+	if result.Status != "ready" {
 		return errors.New("server did not report readiness")
 	}
 	return nil

@@ -54,7 +54,10 @@ inferred from an Agent name, harness or Secret name.
 
 `doctor` reports existing Session holds and failed Turns as problems. With a saved
 login, it uses the server's Environment-wide attention counts. With an API key,
-it checks holds and Turns in the latest ten Sessions; this is a bounded view, not
+it checks open Sessions among the latest ten Sessions. A failed Turn requires
+attention only while it is the latest Turn in an open Session and terminated
+within the past 24 hours; a newer Turn or Session closure clears that condition.
+For API keys, this is a bounded view, not
 an Environment-wide health guarantee. Questions awaiting a reply are reported as
 state, not failures.
 

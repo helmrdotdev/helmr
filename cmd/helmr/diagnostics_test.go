@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 )
@@ -118,7 +119,7 @@ func diagnosticFixture(t *testing.T, attention api.AttentionCounts, role string,
 			if r.Header.Get("Authorization") != "" {
 				t.Error("readiness received credential")
 			}
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			_, _ = w.Write([]byte(`{"status":"ready"}`))
 		case "/api/me":
 			_ = json.NewEncoder(w).Encode(api.MeResponse{UserID: "user", Role: role})
 		case "/api/projects/project":
@@ -403,7 +404,8 @@ func TestDiagnosticAPIKeyRecentTurnsFollowPages(t *testing.T) {
 		if r.URL.Path == "/v1/sessions/"+sessionID+"/turns" {
 			if r.URL.Query().Get("cursor") == "1" {
 				sawNext = true
-				_, _ = w.Write([]byte(`{"turns":[{"id":"turn2","status":"failed"}]}`))
+				terminal := time.Now().Add(-time.Hour)
+				_ = json.NewEncoder(w).Encode(api.AgentTurnsPage{Turns: []api.AgentTurn{{ID: "turn2", Sequence: 2, Status: "failed", TerminalAt: &terminal}}})
 			} else {
 				_, _ = w.Write([]byte(`{"turns":[{"id":"turn1","status":"completed"}],"next_cursor":"1"}`))
 			}
@@ -439,7 +441,89 @@ func TestDiagnosticPermissionFailureDoesNotEraseOtherState(t *testing.T) {
 	})
 	useDiagnosticLogin(t, server)
 	report, _, err := runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
-	if err == nil || report.Identity == nil || report.Live == nil || report.Live.Attention == nil {
+	if err == nil || report.Identity == nil || report.Live == nil || report.Live.Attention == nil || report.Live.RecentSessions != nil || report.Live.Slack != nil {
 		t.Fatalf("lost partial evidence: %+v, %v", report, err)
+	}
+}
+
+func TestDiagnosticOfflineRejectsMissingHost(t *testing.T) {
+	clearDiagnosticEnvironment(t)
+	report, _, err := runDiagnosticTest(t, "status", "--offline", "--api-url", "https://")
+	if err == nil || report.APIURL != nil {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+}
+
+func TestDiagnosticRecoveredClosedAndExpiredTurns(t *testing.T) {
+	for _, scenario := range []string{"recovered", "closed", "expired", "pending"} {
+		t.Run(scenario, func(t *testing.T) {
+			clearDiagnosticEnvironment(t)
+			const sessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+			server := diagnosticFixture(t, api.AttentionCounts{}, "", func(w http.ResponseWriter, r *http.Request) bool {
+				if r.URL.Path == "/v1/sessions" {
+					status := "open"
+					if scenario == "closed" {
+						status = "closed"
+					}
+					_ = json.NewEncoder(w).Encode(api.AgentSessionsPage{Sessions: []api.AgentSession{{ID: sessionID, Status: status}}})
+					return true
+				}
+				if r.URL.Path == "/v1/sessions/"+sessionID+"/turns" {
+					if scenario == "closed" {
+						t.Error("read history for closed Session")
+					}
+					terminal := time.Now().Add(-time.Hour)
+					if scenario == "expired" {
+						terminal = time.Now().Add(-25 * time.Hour)
+					}
+					turns := []api.AgentTurn{{ID: "failed", Sequence: 1, Status: "failed", TerminalAt: &terminal}}
+					if scenario == "recovered" {
+						turns = append(turns, api.AgentTurn{ID: "newer", Sequence: 2, Status: "completed"})
+					}
+					if scenario == "pending" {
+						turns = append(turns, api.AgentTurn{ID: "newer", Sequence: 2, Status: "pending"})
+					}
+					_ = json.NewEncoder(w).Encode(api.AgentTurnsPage{Turns: turns})
+					return true
+				}
+				return false
+			})
+			t.Setenv(helmrAPIKeyEnv, "api-key")
+			t.Setenv(helmrAPIURLEnv, server.URL)
+			report, output, err := runDiagnosticTest(t, "doctor")
+			if err != nil {
+				t.Fatalf("%v: %s", err, output)
+			}
+			for _, check := range report.Checks {
+				if check.ID == "turns.failed" && check.Status != "pass" {
+					t.Fatalf("stale failure: %+v", check)
+				}
+			}
+		})
+	}
+}
+
+func TestDiagnosticIncompleteAgentListRemainsUnknown(t *testing.T) {
+	clearDiagnosticEnvironment(t)
+	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	server := diagnosticFixture(t, api.AttentionCounts{}, "member", func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/deployments/current") {
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: deploymentID})
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") {
+			if r.URL.Query().Get("cursor") == "next" {
+				w.WriteHeader(503)
+			} else {
+				_, _ = w.Write([]byte(`{"agents":[{"agent":"partial"}],"next_cursor":"next"}`))
+			}
+			return true
+		}
+		return false
+	})
+	useDiagnosticLogin(t, server)
+	report, _, err := runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
+	if err == nil || report.Live.Agents != nil || report.Live.RecentSessions == nil {
+		t.Fatalf("report=%+v err=%v", report.Live, err)
 	}
 }

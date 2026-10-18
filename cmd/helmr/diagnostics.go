@@ -210,7 +210,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 	} else {
 		report.check("scope.environment", "skip", "API-key scope is enforced by the server; its Project and Environment names are not available through introspection.", nil)
 	}
-	report.Live = &diagnosticLive{Agents: []string{}, RecentSessions: []diagnosticSession{}, Slack: []diagnosticSlack{}}
+	report.Live = &diagnosticLive{}
 	deployment, err := cp.GetCurrentDeployment(ctx, scope)
 	var apiErr *httpclient.Error
 	noDeployment := errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "no_current_deployment"
@@ -219,6 +219,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 		report.Live.Deployment = &deployment
 		report.check("deploy.current", "pass", "Current deployment is readable.", nil)
 	case noDeployment:
+		report.Live.Agents = []string{}
 		report.check("deploy.current", "skip", "No current deployment.", nil)
 	default:
 		report.readError("deploy.current", err)
@@ -232,6 +233,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 	if err != nil {
 		report.readError("sessions.recent", err)
 	} else {
+		report.Live.RecentSessions = []diagnosticSession{}
 		for _, s := range sessions.Sessions {
 			report.Live.RecentSessions = append(report.Live.RecentSessions, diagnosticSession{s.ID, s.AgentDefinitionID, s.Status, len(s.Holds)})
 		}
@@ -328,7 +330,11 @@ func diagnosticConnection(cmd *cobra.Command, report *diagnosticReport) *client.
 	if session && report.Offline {
 		report.Credential.Present = nil
 		report.check("auth.credential", "skip", "Offline: saved credential presence is unknown; the OS credential store was not opened.", nil)
-		cp, _ := client.New(parsed.String())
+		cp, err := client.New(parsed.String())
+		if err != nil {
+			report.APIURL = nil
+			report.readError("server.origin", err)
+		}
 		return cp
 	}
 	if session {
@@ -387,7 +393,17 @@ func printDiagnostics(cmd *cobra.Command, report diagnosticReport) {
 		} else {
 			fmt.Fprintf(out, "Deployment: %s\n", live.Deployment.ID)
 		}
-		fmt.Fprintf(out, "Agents: %s\n", strings.Join(live.Agents, ", "))
+		if live.Agents == nil {
+			fmt.Fprintln(out, "Agents: unknown (see checks)")
+		} else {
+			fmt.Fprintf(out, "Agents: %s\n", strings.Join(live.Agents, ", "))
+		}
+		if live.RecentSessions == nil {
+			fmt.Fprintln(out, "Sessions: unknown (see checks)")
+		}
+		if live.Slack == nil {
+			fmt.Fprintln(out, "Slack: unknown (see checks)")
+		}
 		for _, s := range live.RecentSessions {
 			fmt.Fprintf(out, "Session: %s · %s · %s · %d holds\n", s.ID, s.Agent, s.Status, s.Holds)
 		}
