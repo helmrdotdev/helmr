@@ -22,7 +22,9 @@ assert(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0)
 if (options.protectedModel) {
   const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
   const protectedStarters = await runProtectedStarters(client, options.protectedModel, options.evidence, AbortSignal.timeout(options.timeoutMs))
-  process.stdout.write(JSON.stringify({ protectedStarters }) + "\n")
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(JSON.stringify({ protectedStarters }) + "\n", error => error ? reject(error) : resolve())
+  })
   process.exit(0)
 }
 if (options.healthyRAM || options.checkpointFault) { await runHealthyContinuation(options); process.exit(0) }
