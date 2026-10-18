@@ -151,5 +151,9 @@ func collectDiagnosticSlack(ctx context.Context, cp *client.Client, scope client
 		}
 		cursor = page.NextCursor
 	}
-	diagnosticCount(report, "slack.identity", int64(len(teams)), "connected Slack workspaces without a caller identity link", "Mention the Agent in Slack and follow its account-link prompt, then mention it again.", true)
+	if len(teams) > 0 {
+		report.check("slack.identity", "skip", fmt.Sprintf("Caller is not linked to %d connected Slack workspaces; a personal link is optional until the caller uses an Agent there.", len(teams)), &diagnosticRemedy{"When you want to use an Agent in Slack, mention it and follow its account-link prompt, then mention it again.", true})
+	} else {
+		report.check("slack.identity", "pass", "Caller has an identity link for each inspected connected workspace.", nil)
+	}
 }

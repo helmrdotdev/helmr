@@ -325,12 +325,12 @@ func TestDiagnosticExistingSlackProblems(t *testing.T) {
 			})
 			useDiagnosticLogin(t, server)
 			report, _, err := runDiagnosticTest(t, "doctor", "--project", "project", "--env", "environment")
-			if err == nil {
-				t.Fatal("missing Slack connection/link problem")
+			if (err != nil) != (status != "connected") {
+				t.Fatalf("status=%s err=%v", status, err)
 			}
 			found := false
 			for _, check := range report.Checks {
-				if check.Status == "fail" && check.Remedy != nil && check.Remedy.RequiresHuman {
+				if (check.Status == "fail" || (status == "connected" && check.ID == "slack.identity" && check.Status == "skip")) && check.Remedy != nil && check.Remedy.RequiresHuman {
 					found = true
 				}
 			}

@@ -80,7 +80,8 @@ change or probe the key. A successful deployment alone does not validate a model
 **Run:** In a new empty directory, run
 `helmr init --template {{.Harness}} --provider {{.Binding.Provider.ID}}`.
 Do not pass `--name` or `--force`. Read the `Agent:` line from its output and retain
-that generated name for the Slack link and mention. Run `npm install` in that directory.
+only the generated name before any parenthetical namesake text for the Slack link
+and mention. Run `npm install` in that directory.
 
 **Check:** Initialization and dependency installation succeed. Preserve the generated
 files and protected binding. Do not substitute a different starter or SDK version.
