@@ -45,6 +45,7 @@ GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
+GET /agent-setup/{harness}.md
 GET /api/auth/device/status
 GET /api/invitations
 GET /api/me

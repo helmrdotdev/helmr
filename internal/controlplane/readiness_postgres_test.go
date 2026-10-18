@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -44,6 +45,15 @@ func TestReadinessRejectsReadOnlyServingPool(t *testing.T) {
 			}
 			if response.Code != test.status {
 				t.Fatalf("readiness = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+			httpServer := httptest.NewServer(http.HandlerFunc(server.readyz))
+			defer httpServer.Close()
+			diagnosticClient, err := client.New(httpServer.URL, client.WithHTTPClient(httpServer.Client()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := diagnosticClient.CheckReadiness(t.Context()); (err == nil) != (test.status == http.StatusOK) {
+				t.Fatalf("diagnostic client readiness error=%v, server status=%d", err, test.status)
 			}
 		})
 	}
