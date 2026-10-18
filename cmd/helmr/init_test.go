@@ -209,7 +209,7 @@ func TestInitTemplateWritesTheNamedAgentProject(t *testing.T) {
 	if !strings.Contains(string(settings), `export const agentName = "noether"`) || !strings.Contains(string(settings), "Emmy Noether") {
 		t.Fatalf("settings = %s", settings)
 	}
-	if _, err := os.Stat(filepath.Join(root, "agents", "assistant.ts")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "agents", "agent.ts")); !os.IsNotExist(err) {
 		t.Fatalf("template Agent file was not renamed: %v", err)
 	}
 	pkg, err := os.ReadFile(filepath.Join(root, "package.json"))

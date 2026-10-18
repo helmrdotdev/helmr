@@ -23,7 +23,7 @@ var files embed.FS
 
 const (
 	// AgentFile is the starter's Agent definition; init renames it after the Agent.
-	AgentFile = "agents/assistant.ts"
+	AgentFile = "agents/agent.ts"
 	// SettingsFile holds the Agent name, introduction, model and model key binding.
 	SettingsFile = "agents/settings.ts"
 	// PackageFile is rewritten to depend on the released SDK.

@@ -4,7 +4,7 @@ Create this project with `helmr init --template codex`. Add the `OPENAI_API_KEY`
 Secret in the Console for each deployment Environment, install dependencies with
 `bun install`, then run `helmr dev`.
 
-`agents/assistant.ts` defines the Computer and Agent. `agents/settings.ts` selects
+`agents/agent.ts` defines the Computer and Agent. `agents/settings.ts` selects
 the name, model and key binding. The other files in `agents/` are editable
 application code that connects the Codex app-server to Helmr.
 

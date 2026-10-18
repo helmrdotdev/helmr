@@ -215,6 +215,7 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     actions.push(tool("exec_command", { cmd: lifetimeCommand(backgroundPID, `echo $$ > ${backgroundPID}; sleep 30; echo done > ${completedBackground}`), login: false, yield_time_ms: 10 }), "hold")
     const backgroundCompletion = dispatch("start a Session background command")
     await until(() => held.length > completedHeld, "normal command yielded")
+    assert.ok(existsSync(backgroundPID), `background command did not start: ${JSON.stringify(calls().at(-1).input.filter((item: any) => item.type === "function_call_output"))}`)
     held[completedHeld].send(message("background response"))
     assert.equal((await backgroundCompletion.result).status, "completed")
     assert.equal(existsSync(completedBackground), false)
