@@ -169,14 +169,20 @@ rec {
     pkgs.protobuf
   ];
 
-  ciTypescript = ciShell ++ [
-    helmrPackages.goPackage # Builds the CLI that writes the starter projects.
-    helmrPackages.bun
-    helmrPackages.nodejs
-    pkgs.rsync
-    pkgs.gnutar
-    pkgs.gzip
-  ];
+  ciTypescript =
+    ciShell
+    ++ [
+      helmrPackages.goPackage # Builds the CLI that writes the starter projects.
+      helmrPackages.bun
+      helmrPackages.nodejs
+      pkgs.rsync
+      pkgs.gnutar
+      pkgs.gzip
+    ]
+    ++ lib.optionals stdenv.isLinux [
+      pkgs.bubblewrap # Native sandbox setup for the starter tests.
+      pkgs.util-linux # flock observes command lifetime across PID namespaces.
+    ];
 
   ciPostgres = ciGoConsole ++ [
     pkgs.postgresql_18
