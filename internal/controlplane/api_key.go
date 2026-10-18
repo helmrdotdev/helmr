@@ -222,6 +222,8 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeComputersCreate, true
 	case string(api.APIKeyScopeComputersRead):
 		return api.APIKeyScopeComputersRead, true
+	case string(api.APIKeyScopeComputersUpdate):
+		return api.APIKeyScopeComputersUpdate, true
 	case string(api.APIKeyScopeComputersDelete):
 		return api.APIKeyScopeComputersDelete, true
 	case string(api.APIKeyScopeComputerCommandCreate):
