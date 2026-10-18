@@ -191,9 +191,10 @@ identity and source. Schedules create Turns and are not live message sources.
 
 Await initialization in `init` and invocation work in `turn`. Ordinary Node child
 processes, including children created during a Turn, belong to the Session and
-can remain alive between Turns. The handler must join native completion and its
-callbacks on both success and failure; a returned SDK Promise alone may not mean
-that its server has stopped working.
+can remain alive between Turns. Join the invocation and callbacks according to
+the native SDK's documented completion contract on both success and failure.
+Request acknowledgement, native Turn completion and server shutdown can be
+different events. None implies universal cessation of arbitrary OS descendants.
 
 Use `turn.signal` with signal-aware APIs. For an asynchronous interruption API,
 register `turn.onCancel(reason => ...)`. The runtime starts registered callbacks
@@ -203,7 +204,8 @@ registration runs at most once in that runtime execution. Successful completion
 does not run cancellation callbacks. A callback registered after cancellation
 starts immediately while drainage is still open; registration after closure throws.
 
-The handler and callbacks share a bounded cleanup period. A rejected cancellation
+The handler and callbacks share a bounded cleanup period, currently 10 seconds
+in the managed runtime. A rejected cancellation
 callback or expired cleanup period prevents Session reuse and requires explicit
 recovery; the platform terminates the entire Session process tree. A fully drained
 ordinary handler failure can preserve a healthy Session. Retain native connection

@@ -168,6 +168,10 @@ explicitly.
 A Command runs one argv command inside a Computer, independent of any Session.
 It has its own ID, outcome and output logs, and it can change the Computer's
 files. Commands default to `/workspace` as their working directory.
+A Command owns a bounded process scope: when its main process exits, including
+a successful exit, Helmr terminates remaining descendants. Starting a background
+server with `sh -c 'server &'` therefore does not keep that server running after
+the Command finishes.
 
 ```sh
 helmr computer exec --id "$COMPUTER_ID" --idempotency-key status:1 -- git status --short

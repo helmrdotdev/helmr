@@ -72,6 +72,14 @@ Commands can change the Computer's disk; changes persist for later commands and
 Sessions on the same Computer. Do not pass Secret values in arguments or
 `--set-env`; bind them to the Computer instead.
 
+Commands are bounded executions. When the main process exits, Helmr terminates
+remaining descendants, including children started with `&`. To run a process
+within the execution limit while your client does other work, start it as the
+command's main process and keep the returned command ID. There is no background
+option; the command ID is returned immediately.
+Each command has a private process scope, so use its ID to observe or cancel it
+rather than relying on a PID from another command.
+
 ## Wait for the outcome and read output
 
 ```sh

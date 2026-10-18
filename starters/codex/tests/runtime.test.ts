@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { once } from "node:events"
-import { execFileSync, type ChildProcess } from "node:child_process"
+import { execFileSync, spawnSync, type ChildProcess } from "node:child_process"
 import { channel } from "node:diagnostics_channel"
 import { test } from "node:test"
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises"
@@ -13,6 +13,25 @@ import { CodexSession, nativeHome } from "../agents/codex-bridge"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import type { InitContext, Turn } from "../../../sdk/typescript/src/agent"
 
+const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'"
+function lifetimeCommand(marker: string, body: string): string {
+  // The Linux native sandbox has its own PID namespace. A file lock measures
+  // command lifetime across that boundary without mistaking its PID for ours.
+  return process.platform === "linux" ? `flock --exclusive ${quote(marker + ".lock")} /bin/sh -c ${quote(body)}` : body
+}
+function commandRunning(marker: string, pid: number): boolean {
+  if (process.platform === "linux") {
+    assert.ok(existsSync(marker + ".lock"), "native command acquired its lifetime lock")
+    const result = spawnSync("flock", ["--nonblock", "--exclusive", marker + ".lock", "/bin/true"])
+    assert.ok(result.status === 0 || result.status === 1, "valid lifetime lock observation")
+    return result.status === 1
+  }
+  try { process.kill(pid, 0); return true }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false
+    throw error
+  }
+}
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 async function until(check: () => boolean, label: string) {
   for (let n = 0; n < 1000; n++) { if (check()) return; await delay(20) }
@@ -29,6 +48,7 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
   const cwd = join(root, "workspace"), stateDirectory = join(root, "state")
   await mkdir(cwd)
   const requests: any[] = [], held: any[] = [], actions: any[] = [], output: unknown[] = [], questions: unknown[] = [], holds: string[] = []
+  let childScenario: { marker: string; action: unknown; rootCalls: number; childCalls: number; rootSend?: (item: any) => void } | undefined
   const server = createServer(async (request, response) => {
     if (!request.url?.endsWith("/responses")) { response.end(JSON.stringify({ data: [] })); return }
     let payload = ""
@@ -43,6 +63,15 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
       for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`)
       response.end()
     }
+    if (body.generate !== false && childScenario) {
+      const scenario = childScenario
+      const child = body.input.some((item: any) => item.role === "user" && item.content?.some((part: any) => part.text === scenario.marker))
+      if (child) { send(++scenario.childCalls === 1 ? scenario.action : message("child-only response", "final_answer")); return }
+      if (++scenario.rootCalls === 1) send({ ...tool("spawn_agent", { message: scenario.marker }), namespace: "multi_agent_v1" })
+      else if (scenario.rootCalls === 2) scenario.rootSend = send
+      else send(message("root-only response", "final_answer"))
+      return
+    }
     const action = body.generate === false ? null : actions.shift() ?? message()
     if (action === "hold") held.push({ body, send })
     else send(action)
@@ -50,9 +79,20 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
   server.listen(0, "127.0.0.1")
   await once(server, "listening")
   const port = (server.address() as import("node:net").AddressInfo).port
-  const launchers: ChildProcess[] = []
+  const launchers: ChildProcess[] = [], sent: any[] = []
   const launches = channel("child_process")
-  const observe = (value: unknown) => { const child = (value as { process: ChildProcess }).process; child.once("spawn", () => { if (child.spawnargs.some(arg => arg.endsWith("/bin/codex.js"))) launchers.push(child) }) }
+  const observe = (value: unknown) => {
+    const child = (value as { process: ChildProcess }).process
+    child.once("spawn", () => {
+      if (!child.spawnargs.some(arg => arg.endsWith("/bin/codex.js"))) return
+      launchers.push(child)
+      const write = child.stdin!.write.bind(child.stdin) as (...args: any[]) => boolean
+      child.stdin!.write = ((chunk: any, ...args: any[]) => {
+        sent.push(JSON.parse(String(chunk)))
+        return write(chunk, ...args)
+      }) as NonNullable<ChildProcess["stdin"]>["write"]
+    })
+  }
   launches.subscribe(observe)
   const sessionId = "starter-test"
   const home = nativeHome(stateDirectory, sessionId)
@@ -172,14 +212,14 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     const backgroundPID = join(cwd, "completed-background-pid")
     const completedBackground = join(cwd, "completed-background")
     const completedHeld = held.length
-    actions.push(tool("exec_command", { cmd: `echo $$ > ${backgroundPID}; sleep 30; echo done > ${completedBackground}`, login: false, yield_time_ms: 10 }), "hold")
+    actions.push(tool("exec_command", { cmd: lifetimeCommand(backgroundPID, `echo $$ > ${backgroundPID}; sleep 30; echo done > ${completedBackground}`), login: false, yield_time_ms: 10 }), "hold")
     const backgroundCompletion = dispatch("start a Session background command")
     await until(() => held.length > completedHeld, "normal command yielded")
     held[completedHeld].send(message("background response"))
     assert.equal((await backgroundCompletion.result).status, "completed")
     assert.equal(existsSync(completedBackground), false)
     const backgroundOwner = Number(await readFile(backgroundPID, "utf8"))
-    const backgroundAlive = () => { try { process.kill(backgroundOwner, 0); return true } catch { return false } }
+    const backgroundAlive = () => commandRunning(backgroundPID, backgroundOwner)
     assert.equal(backgroundAlive(), true)
     assert.equal((await dispatch("next Turn while background runs").result).status, "completed")
     assert.equal(backgroundAlive(), true)
@@ -200,7 +240,7 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     assert.equal(output.length, outputAfterNaturalTurn, "late command receipts cannot write to a closed Turn")
 
     const finalizingPID = join(cwd, "finalizing-pid")
-    actions.push(tool("exec_command", { cmd: `echo $$ > ${finalizingPID}; sleep 30`, login: false, yield_time_ms: 10 }))
+    actions.push(tool("exec_command", { cmd: lifetimeCommand(finalizingPID, `echo $$ > ${finalizingPID}; sleep 30`), login: false, yield_time_ms: 10 }))
     let releaseResponse!: () => void
     responseGate = new Promise<void>(resolve => { releaseResponse = resolve })
     responseEntered = false
@@ -212,17 +252,17 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     await stopping
     responseGate = undefined
     assert.equal((await finalizing.result).status, "interrupted")
-    assert.throws(() => process.kill(finalizingOwner, 0), "finalization cancellation stopped background command")
+    assert.equal(commandRunning(finalizingPID, finalizingOwner), false, "finalization cancellation stopped background command")
 
     for (const background of [false, true]) {
       const marker = join(cwd, `pid-${background}`), finished = join(cwd, `finished-${background}`)
-      actions.push(tool("exec_command", { cmd: `echo $$ > ${marker}; sleep 30; echo late > ${finished}`, login: false, yield_time_ms: background ? 10 : 10000 }), "hold")
+      actions.push(tool("exec_command", { cmd: lifetimeCommand(marker, `echo $$ > ${marker}; sleep 30; echo late > ${finished}`), login: false, yield_time_ms: background ? 10 : 10000 }), "hold")
       const previousHeld = held.length
       const execution = dispatch(`cancel command ${background}`)
       await until(() => existsSync(marker), "actual command started")
       if (background) await until(() => held.length > previousHeld, "command yielded and next model request started")
       const pid = Number(await readFile(marker, "utf8"))
-      const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
+      const alive = () => commandRunning(marker, pid)
       assert.equal(alive(), true)
       await runtime.interrupt(execution.id, new Error("stop command"))
       assert.equal((await execution.result).status, "interrupted")
@@ -249,6 +289,66 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     assert.ok(!JSON.stringify(calls().at(-1).input).includes("cancelled queued marker"))
     assert.ok(JSON.stringify(calls().at(-1).input).includes("remember first input"))
     assert.deepEqual(holds, [])
+    for (const mode of ["approve", "decline", "question", "parent-completes", "cancel", "background"] as const) {
+      const marker = `native child ${mode} ${crypto.randomUUID()}`
+      const file = join(mode === "background" ? cwd : root, `child-${mode}`)
+      const approval = mode !== "question" && mode !== "background"
+      allowApproval = mode !== "decline"
+      answerQuestion = mode !== "parent-completes" && mode !== "cancel"
+      childScenario = { marker, rootCalls: 0, childCalls: 0, action: mode === "background"
+        ? tool("exec_command", { cmd: lifetimeCommand(file, `echo $$ > '${file}'; sleep 60`), login: false, yield_time_ms: 10 })
+        : approval
+        ? tool("exec_command", { cmd: `echo child > '${file}'`, login: false, sandbox_permissions: "require_escalated", justification: "Fixture child approval" })
+        : tool("request_user_input", { questions: [{ id: "child-choice", header: "Child", question: "Child choice?", options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] }) }
+      const scenario = childScenario, questionCount = questions.length, outputStart = output.length, sentStart = sent.length
+      const running = dispatch(`start child ${mode}`)
+      let settled = false
+      void running.result.then(() => { settled = true })
+      await until(() => (mode === "question" || mode === "background" ? scenario.childCalls >= 2 : questions.length > questionCount) && !!scenario.rootSend, `native child ${mode} request`).catch(error => {
+        console.error("CHILD_FIXTURE", JSON.stringify({ mode, rootCalls: scenario.rootCalls, childCalls: scenario.childCalls,
+          outputs: calls().filter(body => body.input.some((item: any) => item.role === "user" && item.content?.some((part: any) => part.text === marker))).flatMap(body => body.input.filter((item: any) => item.type === "function_call_output")) }))
+        throw error
+      })
+      if (mode === "cancel") {
+        await runtime.interrupt(running.id, new Error("cancel child question"))
+        assert.equal((await running.result).status, "interrupted")
+        assert.ok(launchers.at(-1)!.exitCode !== null || launchers.at(-1)!.signalCode !== null)
+      } else {
+        if (mode !== "parent-completes" && mode !== "decline") {
+          await until(() => scenario.childCalls >= 2, `native child ${mode} continuation`)
+          assert.equal(settled, false, "child completion must not settle its parent's Helmr Turn")
+        }
+        scenario.rootSend!(message("root-only response", "final_answer"))
+        assert.equal((await running.result).status, "completed")
+        if (mode === "parent-completes") assert.ok(sent.slice(sentStart).some(item => item.error?.message === "Helmr Turn is closed"), "pending child receives explicit rejection")
+        const published = output.slice(outputStart).map(content => (content as { text: string }[]).map(part => part.text).join(""))
+        assert.ok(published.length > 0)
+        assert.ok(published.every(value => value.trim() === "root-only response"), "only root output is published")
+      }
+      if (approval) assert.equal(existsSync(file), mode === "approve")
+      else if (mode === "question") {
+        assert.equal(questions.length, questionCount, "native child question restriction is preserved")
+        assert.ok(calls().some(body => body.input.some((item: any) => item.type === "function_call_output" && String(item.output).includes("request_user_input can only be used by the root thread"))))
+      }
+      childScenario = undefined; answerQuestion = true; allowApproval = true
+      assert.equal((await dispatch(`fresh after child ${mode}`).result).status, "completed")
+      if (mode === "background") {
+        const pid = Number(await readFile(file, "utf8"))
+        assert.equal(commandRunning(file, pid), true)
+        const heldBefore = held.length, cleanupStart = sent.length
+        actions.push("hold")
+        const stop = dispatch("cancel retained child background")
+        await until(() => held.length > heldBefore, "root model before child cleanup")
+        await runtime.interrupt(stop.id, new Error("stop native child work"))
+        assert.equal((await stop.result).status, "interrupted")
+        assert.ok(launchers.at(-1)!.exitCode !== null || launchers.at(-1)!.signalCode !== null)
+        const cleanedThreads = new Set(sent.slice(cleanupStart).filter(item => item.method === "thread/backgroundTerminals/clean").map(item => item.params.threadId))
+        assert.ok(cleanedThreads.size >= 2, "native cleanup covers root and known child command threads")
+        console.log(JSON.stringify({ case: "native-child-background-observation", platform: process.platform, running: commandRunning(file, pid) }))
+        assert.equal((await dispatch("fresh after child background cancellation").result).status, "completed")
+      }
+      console.log(`PASS native child ${mode}`)
+    }
     // A real owner failure must poison this initResult and hold the Helmr Session.
     actions.push("hold")
     const heldCount = held.length

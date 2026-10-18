@@ -24,25 +24,27 @@ import (
 // attachment. A healthy RAM capture retains this object and its local pipes.
 // The supervisor owns admission/authority; this owner handles physical lifetime.
 type agentProcess struct {
-	program     *agentProgramLease
-	identity    *agentv1.SessionIdentity
-	cmd         *exec.Cmd
-	group       *linuxProcessCgroup
-	rootFD      int
-	cancel      context.CancelFunc
-	stdin       *os.File
-	events      *os.File
-	stdout      *os.File
-	stderr      *os.File
-	proof       *os.File
-	inherited   []*os.File
-	cleanup     func()
-	writeMu     sync.Mutex
-	lifecycleMu sync.Mutex
-	started     bool
-	closed      bool
-	waitDone    chan struct{}
-	waitErr     error
+	program       *agentProgramLease
+	identity      *agentv1.SessionIdentity
+	cmd           *exec.Cmd
+	group         *linuxProcessCgroup
+	rootFD        int
+	managedFD     int
+	identityProof *os.File
+	cancel        context.CancelFunc
+	stdin         *os.File
+	events        *os.File
+	stdout        *os.File
+	stderr        *os.File
+	proof         *os.File
+	inherited     []*os.File
+	cleanup       func()
+	writeMu       sync.Mutex
+	lifecycleMu   sync.Mutex
+	started       bool
+	closed        bool
+	waitDone      chan struct{}
+	waitErr       error
 }
 
 func newAgentProcess(ctx context.Context, entry *computerMountEntry, options agentProcessOptions) (_ *agentProcess, err error) {
@@ -60,7 +62,7 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(ctx)
-	process := &agentProcess{program: options.ProgramLease, identity: proto.Clone(options.Identity).(*agentv1.SessionIdentity), group: group, rootFD: -1, cancel: cancel, waitDone: make(chan struct{}), cleanup: func() {}}
+	process := &agentProcess{program: options.ProgramLease, identity: proto.Clone(options.Identity).(*agentv1.SessionIdentity), group: group, rootFD: -1, managedFD: -1, cancel: cancel, waitDone: make(chan struct{}), cleanup: func() {}}
 	// No process has started on this path. Preserve the error and close only the
 	// exclusively created scope; duplicate startup never reaches this cleanup.
 	defer func() {
@@ -69,7 +71,7 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 		}
 		cancel()
 		closeAgentFiles(process.inherited...)
-		closeAgentFiles(process.stdin, process.events, process.stdout, process.stderr, process.proof)
+		closeAgentFiles(process.stdin, process.events, process.stdout, process.stderr, process.proof, process.identityProof)
 		err = errors.Join(err, group.close())
 		process.cleanup()
 	}()
@@ -96,7 +98,7 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 	process.cleanup = func() { cleanupRuntime(); cleanupSecrets() }
 	process.cmd, err = imageCommand(lifetime, managedProgramNode, append(flags, managedProgramEntry), defaultRuntimeWorkdir, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{
 		Program: options.Program, SecretRoot: secretRoot,
-		CgroupNamespace: true, CgroupLeaf: filepath.Base(group.path), StartProof: true,
+		CgroupNamespace: true, CgroupLeaf: filepath.Base(group.path), StartProof: true, SessionInit: true,
 	})
 	if err != nil {
 		return nil, err
@@ -127,7 +129,14 @@ func newAgentProcess(ctx context.Context, entry *computerMountEntry, options age
 		writers = append(writers, writer)
 	}
 	process.cmd.Stdout, process.cmd.Stderr = writers[0], writers[1]
-	process.cmd.ExtraFiles = []*os.File{writers[2], writers[3]}
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	process.identityProof = os.NewFile(uintptr(pair[0]), "Session child identity")
+	identityWriter := os.NewFile(uintptr(pair[1]), "Session child identity sender")
+	process.inherited = append(process.inherited, identityWriter)
+	process.cmd.ExtraFiles = []*os.File{writers[2], writers[3], identityWriter}
 	return process, nil
 }
 
@@ -166,7 +175,15 @@ func (process *agentProcess) start(ctx context.Context) error {
 	if len(body) != 0 {
 		return errors.New("session process initialization failed")
 	}
-	return process.proof.Close()
+	if err := process.proof.Close(); err != nil {
+		return err
+	}
+	process.managedFD, err = receiveSessionChild(int(process.identityProof.Fd()))
+	closeAgentFiles(process.identityProof)
+	if err != nil {
+		return err
+	}
+	return liveSessionPID(process.managedFD)
 }
 
 func (process *agentProcess) write(ctx context.Context, command *agentv1.GuestCommand) error {
@@ -202,6 +219,9 @@ func (process *agentProcess) verifyRunning() error {
 	defer process.lifecycleMu.Unlock()
 	if !process.started || process.closed {
 		return errors.New("session process is not running")
+	}
+	if err := liveSessionPID(process.managedFD); err != nil {
+		return err
 	}
 	if err := liveSessionPID(process.rootFD); err != nil {
 		return err
@@ -263,7 +283,11 @@ func (process *agentProcess) close(ctx context.Context) error {
 	}
 	closeAgentFiles(process.inherited...)
 	// The relay owns log readers through EOF after physical join.
-	closeAgentFiles(process.events, process.proof)
+	closeAgentFiles(process.events, process.proof, process.identityProof)
+	if process.managedFD >= 0 {
+		_ = unix.Close(process.managedFD)
+		process.managedFD = -1
+	}
 	if process.rootFD >= 0 {
 		_ = unix.Close(process.rootFD)
 		process.rootFD = -1
@@ -298,6 +322,9 @@ func (process *agentProcess) verifyFrozen() error {
 	defer process.lifecycleMu.Unlock()
 	if !process.started || process.closed {
 		return errors.Join(errComputerCaptureUnusable, errors.New("session process is not running"))
+	}
+	if err := liveSessionPID(process.managedFD); err != nil {
+		return errors.Join(errComputerCaptureUnusable, err)
 	}
 	frozen, populated, err := process.group.state()
 	if err != nil {

@@ -176,9 +176,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 
 	duration, driverTimeout := 15*time.Minute, 600000
-	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
+	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" {
 		if mode != nativeExecutionBaseline {
-			t.Fatal("Codex starter proof requires baseline execution mode")
+			t.Fatal("starter proof requires baseline execution mode")
 		}
 		duration, driverTimeout = 24*time.Minute, 20*60*1000
 	}
@@ -226,7 +226,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var extraPermissions []auth.Permission
-	if sessionDiscovery || os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
+	if sessionDiscovery || (os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1") {
 		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt)
 	}
 	if secretBindings {
@@ -589,8 +589,11 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	var receipt struct {
 		CodexStarter *struct {
-			Retained, Steering, Questions, JoinedBackgroundStop, HeldOwnerFailure, Reconstruction bool
+			Retained, Steering, Questions, JoinedBackgroundStop, HeldOwnerFailure, Reconstruction, OrphanReaping bool
 		} `json:"codexStarter"`
+		ClaudeStarter *struct {
+			Retained, Steering, Questions, JoinedBackgroundStop, HeldOwnerFailure, Reconstruction, OrphanReaping bool
+		} `json:"claudeStarter"`
 		NativeSDK *struct {
 			PassedCases []string `json:"passedCases"`
 			FailedCases []string `json:"failedCases"`
@@ -614,11 +617,17 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if err := json.Unmarshal(result.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" {
+	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" {
 		proof := receipt.CodexStarter
-		if proof == nil || !proof.Retained || !proof.Steering || !proof.Questions || !proof.JoinedBackgroundStop || !proof.HeldOwnerFailure || !proof.Reconstruction {
-			t.Fatal("missing or incomplete Codex starter Turn evidence")
+		if os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" {
+			proof = receipt.ClaudeStarter
 		}
+		if proof == nil || !proof.Retained || !proof.Steering || !proof.Questions || !proof.JoinedBackgroundStop || !proof.HeldOwnerFailure || !proof.Reconstruction {
+			t.Fatal("missing or incomplete starter Turn evidence")
+		}
+	}
+	if os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" && !receipt.ClaudeStarter.OrphanReaping {
+		t.Fatal("missing Session orphan reaping evidence")
 	}
 	if os.Getenv("HELMR_NATIVE_SDK_PROOF") == "1" && (receipt.NativeSDK == nil || len(receipt.NativeSDK.PassedCases) != 14 || len(receipt.NativeSDK.FailedCases) != 0) {
 		t.Fatal("missing or incomplete native SDK guest evidence")

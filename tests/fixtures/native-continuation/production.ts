@@ -16,15 +16,21 @@ import { checkSecretBindings, type SecretBindingState } from "./secret-bindings"
 import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
 const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
+// Match the Claude starter's native process-inspection dependency.
+const claudeStarterImage = process.env.HELMR_CLAUDE_STARTER_PROOF === "1"
+  ? baseImage
+      .run(["node", "-e", "const fs = require('node:fs'); fs.mkdirSync('/etc/ssl/certs', { recursive: true }); fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt', require('node:tls').rootCertificates.join(String.fromCharCode(10)) + String.fromCharCode(10))"])
+      .run(["sh", "-ceu", "sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*"])
+  : baseImage
 // Replaced by the fixture packaging command, before ordinary compilation.
 const computerImage = process.env.HELMR_NATIVE_SDK_PROOF === "1"
-  ? baseImage.copy(source.directory("native-sdk-dependencies"), "/workspace/native-sdk")
+  ? claudeStarterImage.copy(source.directory("native-sdk-dependencies"), "/workspace/native-sdk")
       .run(["sh", "/workspace/native-sdk/prepare-image.sh"])
       .copy(source.directory("native-sdk"), "/workspace/native-sdk")
   : process.env.HELMR_NATIVE_PERFORMANCE === "1"
-  ? baseImage.copy(source.directory("performance"), "/opt/native-performance")
+  ? claudeStarterImage.copy(source.directory("performance"), "/opt/native-performance")
       .run(["sh", "/opt/native-performance/prepare-image.sh"])
-  : baseImage
+  : claudeStarterImage
 export const workspace = template({
   id: "native-continuation",
   image: computerImage
@@ -288,3 +294,6 @@ export const deadline = agent({
 
 import { createCodexStarter } from "./codex-starter"
 export const codexStarter = createCodexStarter(workspace)
+
+import { createClaudeStarter } from "./claude-starter"
+export const claudeStarter = createClaudeStarter(workspace)

@@ -27,7 +27,7 @@ func TestImageCommandUsesNamespaceInit(t *testing.T) {
 	if len(cmd.Args) < 13 || cmd.Args[1] != imageRuntimeInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
-	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != bootProgramMounts().Runtime || cmd.Args[7] != bootProgramMounts().Artifact || cmd.Args[8] != "true" || cmd.Args[9] != leaf || cmd.Args[10] != "true" || cmd.Args[11] != "" || cmd.Args[12] != "/usr/bin/node" {
+	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != bootProgramMounts().Runtime || cmd.Args[7] != bootProgramMounts().Artifact || cmd.Args[8] != "true" || cmd.Args[9] != leaf || cmd.Args[10] != "true" || cmd.Args[11] != "false" || cmd.Args[12] != "" || cmd.Args[13] != "/usr/bin/node" {
 		t.Fatalf("init args = %#v", cmd.Args)
 	}
 	if cmd.SysProcAttr == nil {
@@ -131,7 +131,7 @@ func TestMountImageRuntimeFilesystemsRejectsSymlinkedMountPoints(t *testing.T) {
 
 func TestImageRuntimeInitAcceptsZeroCommandArguments(t *testing.T) {
 	// Invalid uid stops before namespace syscalls while proving the fixed argv count.
-	err := runImageRuntimeInit([]string{"/image", "/", "invalid", "0", "", "", "true", "command-1", "false", "/secrets/process-1", "/bin/true"}, nil)
+	err := runImageRuntimeInit([]string{"/image", "/", "invalid", "0", "", "", "true", "command-1", "false", "false", "/secrets/process-1", "/bin/true"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "uid") || strings.Contains(err.Error(), "missing") {
 		t.Fatalf("zero-argument command rejected at argv boundary: %v", err)
 	}

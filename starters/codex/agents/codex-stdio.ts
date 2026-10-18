@@ -10,7 +10,7 @@ export type NativeMessage = { id?: string | number; method: string; params?: unk
 export function spawnCodex(home: string, environment: NodeJS.ProcessEnv = process.env): ChildProcessWithoutNullStreams {
   const require = createRequire(import.meta.url)
   const launcher = join(dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js")
-  return spawn(process.execPath, [launcher, "-c", "features.goals=false", "-c", "features.multi_agent=false", "app-server", "--listen", "stdio://"], {
+  return spawn(process.execPath, [launcher, "-c", "features.goals=false", "app-server", "--listen", "stdio://"], {
     env: { ...environment, CODEX_HOME: home }, stdio: "pipe",
   })
 }

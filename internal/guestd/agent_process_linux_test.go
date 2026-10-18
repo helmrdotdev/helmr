@@ -263,6 +263,36 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 	if err := process.verifyRunning(); err != nil {
 		t.Fatal(err)
 	}
+	fdinfo, err := os.ReadFile(fmt.Sprintf("/proc/self/fdinfo/%d", process.managedFD))
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedPID := ""
+	for _, line := range strings.Split(string(fdinfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "Pid:" {
+			managedPID = fields[1]
+		}
+	}
+	if managedPID == "" {
+		t.Fatal("managed pidfd has no live PID")
+	}
+	status, err := os.ReadFile("/proc/" + managedPID + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privileges := map[string]string{}
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 1 {
+			privileges[fields[0]] = strings.Join(fields[1:], " ")
+		}
+	}
+	for key, want := range map[string]string{"Uid:": "1001 1001 1001 1001", "Gid:": "1001 1001 1001 1001", "NoNewPrivs:": "1", "CapEff:": "0000000000000000", "CapPrm:": "0000000000000000", "CapBnd:": "0000000000000000"} {
+		if privileges[key] != want {
+			t.Fatalf("managed runtime %s = %q, want %q", key, privileges[key], want)
+		}
+	}
 	rootPID := process.cmd.Process.Pid
 	guestPID := 0
 	for index := 1; index <= 2; index++ {

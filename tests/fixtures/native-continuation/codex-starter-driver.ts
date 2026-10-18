@@ -18,7 +18,7 @@ export async function runCodexStarter(client: HelmrClient, computerId: string, e
       const response=await fetch('http://127.0.0.1:'+port+'/control',{method:'POST',body:${JSON.stringify(JSON.stringify(body))}});
       if(!response.ok)throw Error(await response.text());
       console.log(await response.text());
-    `], timeout: "60s", idempotencyKey: `starter-control-${++commandNumber}` }, { signal })
+    `], timeout: "60s", idempotencyKey: `starter-control-${session.id}-${++commandNumber}` }, { signal })
     const outcome = await command.wait({ signal })
     const chunks: Uint8Array[] = []
     for await (const record of command.logs.stream({}, { signal })) {
@@ -28,6 +28,18 @@ export async function runCodexStarter(client: HelmrClient, computerId: string, e
     const text = Buffer.concat(chunks).toString("utf8")
     assert.equal(outcome.kind, "exited", text); assert.equal(outcome.exitCode, 0, text)
     return JSON.parse(text)
+  }
+  function assertFreshAdmission(state: any, previous: any, marker: string) {
+    assert.equal(state.inputs.length, state.admissions.length)
+    const index = state.inputs.findIndex((messages: any, index: number) => index >= previous.calls && JSON.stringify(messages).includes(marker))
+    assert.ok(index >= 0, "fresh input did not reach the model")
+    const admission = state.admissions[index]
+    assert.equal(admission.toolRunning, false)
+    assert.equal(admission.toolFinished, false)
+    assert.equal(admission.owners.length, previous.owners.length + 1)
+    for (const owner of previous.owners) assert.ok(admission.owners.some((entry: any) => entry.pid === owner.pid && entry.exited))
+    assert.equal(admission.owners.at(-1).exited, false)
+    return admission
   }
   async function completed(turn: TurnRef) {
     const outcome = await turn.wait({ signal })
@@ -89,36 +101,45 @@ export async function runCodexStarter(client: HelmrClient, computerId: string, e
     const backgroundTurn = await session.enqueue(input("starter retained background"), undefined, { signal })
     await completed(backgroundTurn)
     const retainedBackground = await control()
+    assert.deepEqual(retainedBackground.owners, [{ pid: first.ownerPid, exited: false }])
     assert.equal(retainedBackground.toolRunning, true)
     assert.equal(retainedBackground.toolFinished, null)
     await completed(await session.enqueue(input("starter next Turn with background"), undefined, { signal }))
     assert.equal((await control()).toolRunning, true)
     await control({ actions: ["hold"] })
     const stopRetained = await session.enqueue(input("starter stop earlier background"), undefined, { signal })
-    await observed(value => value.held === 1)
+    const beforeRetainedStop = await observed(value => value.held === 1)
+    assert.deepEqual(beforeRetainedStop.owners, retainedBackground.owners)
     await stopRetained.interrupt(undefined, { signal })
     assert.equal((await stopRetained.wait({ signal })).status, "interrupted")
+    // Public interruption is durable before asynchronous cleanup. The successor's
+    // first model request must observe cessation after the runtime stop ACK.
+    const afterRetained = await completed(await session.enqueue(input("starter after retained cleanup"), undefined, { signal }))
     const retainedStopped = await control()
-    assert.equal(retainedStopped.toolRunning, false)
-    assert.equal(retainedStopped.toolFinished, null)
-    observations.retainedBackground = { turnId: backgroundTurn.id, retainedBackground, retainedStopped }
-    await completed(await session.enqueue(input("starter after retained cleanup"), undefined, { signal }))
+    observations.retainedBackground = { turnId: backgroundTurn.id, retainedBackground, beforeRetainedStop, retainedStopped, afterRetained }
+    const retainedAdmission = assertFreshAdmission(retainedStopped, beforeRetainedStop, "starter after retained cleanup")
+    assert.equal(afterRetained.nonce, first.nonce)
+    assert.equal(afterRetained.setups, 1)
+    assert.notEqual(afterRetained.ownerPid, first.ownerPid)
+    Object.assign(observations.retainedBackground!, { retainedAdmission })
 
     await control({ actions: [tool("exec_command", { cmd: command, login: false, yield_time_ms: 250 }), "hold"] })
     const cancelled = await session.enqueue(input("starter background stop"), undefined, { signal })
     const running = await observed(value => value.toolRunning && value.held === 2)
     await cancelled.interrupt(undefined, { signal })
     assert.equal((await cancelled.wait({ signal })).status, "interrupted")
+    const afterCancel = await completed(await session.enqueue(input("starter fresh after stop"), undefined, { signal }))
     const stopped = await control()
+    observations.cancellation = { turnId: cancelled.id, running, stopped, afterCancel }
+    const admission = assertFreshAdmission(stopped, running, "starter fresh after stop")
     assert.equal(stopped.toolRunning, false)
     assert.equal(stopped.toolFinished, null)
-    assert.ok(stopped.owners.every((owner: any) => owner.exited))
     assert.deepEqual((await session.get({ signal })).holds, [])
-    const afterCancel = await completed(await session.enqueue(input("starter fresh after stop"), undefined, { signal }))
     assert.equal(afterCancel.nativeThreadId, first.nativeThreadId)
     assert.equal(afterCancel.nonce, first.nonce)
-    assert.notEqual(afterCancel.ownerPid, first.ownerPid)
-    observations.cancellation = { turnId: cancelled.id, running, stopped, afterCancel }
+    assert.equal(afterCancel.setups, 1)
+    assert.notEqual(afterCancel.ownerPid, afterRetained.ownerPid)
+    Object.assign(observations.cancellation!, { admission })
 
     // A lost native owner requires the ordinary Helmr hold/reconstruction path.
     await control({ actions: [tool("exec_command", { cmd: command, login: false, yield_time_ms: 250 }), "hold"] })
@@ -147,7 +168,9 @@ export async function runCodexStarter(client: HelmrClient, computerId: string, e
     assert.equal(state.toolRunning, false)
     assert.equal(state.toolFinished, null)
     observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, hold, reconstructed, state }
-    await writeFile(`${evidence}/codex-starter.json`, JSON.stringify(observations, null, 2) + "\n", { mode: 0o600 })
     return { sessionId: session.id, retained: true, steering: true, questions: true, joinedBackgroundStop: true, heldOwnerFailure: true, reconstruction: true }
-  } finally { await session.cancel(undefined, { signal: AbortSignal.timeout(15_000) }) }
+  } finally {
+    try { await writeFile(`${evidence}/codex-starter.json`, JSON.stringify(observations, null, 2) + "\n", { mode: 0o600 }) }
+    finally { await session.cancel(undefined, { signal: AbortSignal.timeout(15_000) }) }
+  }
 }

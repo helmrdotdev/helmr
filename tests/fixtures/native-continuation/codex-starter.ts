@@ -2,6 +2,7 @@
 // model, fault injection and observations around the real Helmr Agent.
 import { agent, type JsonValue, type TemplateDefinition } from "../../../sdk/typescript/src/index"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
 import { createServer } from "node:http"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -27,9 +28,18 @@ export function createCodexStarter(template: TemplateDefinition) { return agent(
       const child = (value as { process: ChildProcess }).process
       child.once("spawn", () => { if (child.spawnargs.some(arg => arg.endsWith("/bin/codex.js"))) launchers.push(child) })
     })
+    const observeNative = () => {
+      const lock = spawnSync("/usr/bin/flock", ["--nonblock", "--exclusive", join(cwd, "tool.lock"), "/bin/true"], { timeout: 1000 })
+      if (lock.error || lock.signal || (lock.status !== 0 && lock.status !== 1)) throw new Error(`Invalid lifetime lock observation: ${JSON.stringify({ status: lock.status, signal: lock.signal, error: lock.error?.message })}`)
+      return { owners: launchers.map(child => ({ pid: child.pid, exited: child.exitCode !== null || child.signalCode !== null })),
+        toolRunning: lock.status === 1, toolFinished: existsSync(join(cwd, "tool.finished")) }
+    }
+    const admissions: ReturnType<typeof observeNative>[] = []
     const message = () => ({ type: "message", role: "assistant", id: `msg_${crypto.randomUUID()}`, content: [{ type: "output_text", text: "offline starter reply" }] })
     const server = createServer(async (request, response) => {
       try {
+        // Observe at request entry, before body I/O can give old cleanup time to finish.
+        const admission = request.url?.endsWith("/responses") ? observeNative() : undefined
         let raw = ""
         for await (const chunk of request) raw += chunk
         const body = raw ? JSON.parse(raw) : {}
@@ -43,18 +53,15 @@ export function createCodexStarter(template: TemplateDefinition) { return agent(
             if (children.length !== 1 || !children[0]) throw new Error("Native owner identity is ambiguous")
             process.kill(children[0], "SIGKILL")
           }
-          const lock = spawnSync("/usr/bin/flock", ["--nonblock", "--exclusive", join(cwd, "tool.lock"), "/bin/true"], { timeout: 1000 })
-          if (lock.error || lock.signal || (lock.status !== 0 && lock.status !== 1)) throw new Error(`Invalid lifetime lock observation: ${JSON.stringify({ status: lock.status, signal: lock.signal, error: lock.error?.message })}`)
           response.setHeader("content-type", "application/json")
-          response.end(JSON.stringify({ setups, held: held.length, calls: requests.length, inputs: requests.map(item => item.input),
+          response.end(JSON.stringify({ setups, held: held.length, calls: requests.length, inputs: requests.map(item => item.input), admissions, ...observeNative(),
             goalTools: requests.some(item => item.tools?.some((tool: any) => ["create_goal", "update_goal", "get_goal"].includes(tool.name))),
-            owners: launchers.map(child => ({ pid: child.pid, exited: child.exitCode !== null || child.signalCode !== null })),
             configHash: createHash("sha256").update(await readFile(join(home, "config.toml"))).digest("hex"),
-            toolRunning: lock.status === 1, toolFinished: await readFile(join(cwd, "tool.finished"), "utf8").catch(error => { if (error.code === "ENOENT") return null; throw error }) }))
+            toolFinished: await readFile(join(cwd, "tool.finished"), "utf8").catch(error => { if (error.code === "ENOENT") return null; throw error }) }))
           return
         }
         if (!request.url?.endsWith("/responses")) { response.end(JSON.stringify({ data: [] })); return }
-        if (body.generate !== false) requests.push(body)
+        if (body.generate !== false) { requests.push(body); admissions.push(admission!) }
         response.writeHead(200, { "content-type": "text/event-stream" })
         const send = (item: unknown) => {
           const id = `resp_${crypto.randomUUID()}`

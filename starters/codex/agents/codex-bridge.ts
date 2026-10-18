@@ -44,8 +44,8 @@ interface Operation {
 class Connection {
   private readonly server: CodexStdio
   private readonly reader: Promise<void>
-  private readonly commands = new Set<string>()
-  private commandsDrained = deferred<void>()
+  private readonly commands = new Map<string, Set<string>>()
+  private commandsChanged = deferred<void>()
   private active: Operation | undefined
   private pendingStart = false
   private buffered: NativeMessage[] = []
@@ -67,7 +67,7 @@ class Connection {
       this.broken ??= error instanceof Error ? error : new Error(String(error))
       this.active?.done.reject(error)
       this.active?.boundary.reject(error)
-      this.commandsDrained.reject(error)
+      this.commandsChanged.reject(error)
     })
   }
   static async open(options: CodexOptions, requireHistory: boolean): Promise<Connection> {
@@ -102,7 +102,7 @@ class Connection {
       connection.threadId = threadResponse.parse(await connection.server.request(id ? "thread/resume" : "thread/start", {
         ...(id ? { threadId: id, excludeTurns: true } : {}), cwd: options.cwd, model: options.model,
         developerInstructions: options.instructions, sandbox: "workspace-write", approvalPolicy: "on-request",
-        config: { "features.default_mode_request_user_input": true, "features.shell_snapshot": false },
+        config: { "features.default_mode_request_user_input": true },
       })).thread.id
       if (id && connection.threadId !== id) throw new Error("Native conversation changed unexpectedly")
       if (!id) {
@@ -205,8 +205,14 @@ class Connection {
           if (!operation.terminal) throw new Error("Native Turn boundary is unknown")
         }
         if (!this.closed && (operation?.nativeId || this.commands.size)) {
-          await this.server.request("thread/backgroundTerminals/clean", { threadId: this.threadId })
-          if (this.commands.size) await this.commandsDrained.promise
+          let threads = new Set([this.threadId, ...this.commands.keys()])
+          while (threads.size) {
+            const changed = this.commandsChanged.promise
+            await Promise.all([...threads].map(threadId => this.server.request("thread/backgroundTerminals/clean", { threadId })))
+            if (!this.commands.size) break
+            await changed
+            threads = new Set(this.commands.keys())
+          }
         }
       })
     } catch (error) { this.broken = error instanceof Error ? error : new Error(String(error)) }
@@ -233,24 +239,28 @@ class Connection {
     // successful Turn. Keep their exit receipts even while no Turn is active.
     if (message.method === "item/started" || message.method === "item/completed") {
       const params = target.parse(message.params)
-      if (params.threadId === this.threadId) {
+      {
         const command = z.object({ type: z.literal("commandExecution"), id: z.string(), status: z.string(), exitCode: z.number().nullable().optional() }).safeParse(params.item)
         if (command.success) {
           const ended = message.method === "item/completed" && (command.data.exitCode != null || ["completed", "failed", "declined"].includes(command.data.status))
           if (ended) {
-            this.commands.delete(command.data.id)
-            if (!this.commands.size) this.commandsDrained.resolve()
+            const commands = this.commands.get(params.threadId)
+            commands?.delete(command.data.id)
+            if (!commands?.size) this.commands.delete(params.threadId)
           } else {
-            if (!this.commands.size) this.commandsDrained = deferred<void>()
-            this.commands.add(command.data.id)
+            const commands = this.commands.get(params.threadId) ?? new Set<string>()
+            commands.add(command.data.id)
+            this.commands.set(params.threadId, commands)
           }
+          this.commandsChanged.resolve()
+          this.commandsChanged = deferred<void>()
         }
       }
     }
     if (message.method !== "serverRequest/resolved") return
     const params = z.object({ threadId: z.string(), requestId: z.union([z.string(), z.number()]) }).parse(message.params)
     const operation = this.active
-    if (!operation || params.threadId !== this.threadId) return
+    if (!operation) return
     const key = JSON.stringify(params.requestId)
     operation.resolved.add(key)
     operation.requests.get(key)?.abort(new Error("Native request resolved"))
@@ -328,12 +338,16 @@ class Connection {
   private async respond(operation: Operation, message: NativeMessage): Promise<void> {
     const key = JSON.stringify(message.id)
     const parsedTarget = target.safeParse(message.params)
-    if (!parsedTarget.success || parsedTarget.data.threadId !== this.threadId || parsedTarget.data.turnId !== operation.nativeId) {
+    // This app-server is private to one Helmr Session: its root and native child
+    // threads share approval routing. Root output and completion remain exact.
+    if (!parsedTarget.success || (parsedTarget.data.threadId === this.threadId && parsedTarget.data.turnId !== operation.nativeId)) {
       await this.server.send({ id: message.id, error: { code: -32600, message: "Native request does not belong to this Turn" } })
       return
     }
     const params = parsedTarget.data
-    if (operation.resolved.has(key) || operation.abort.signal.aborted) return
+    if (operation.resolved.has(key)) return
+    const rejectClosed = () => this.server.send({ id: message.id, error: { code: -32600, message: "Helmr Turn is closed" } }).catch(() => {})
+    if (operation.abort.signal.aborted) { await rejectClosed(); return }
     const cancel = new AbortController()
     operation.requests.set(key, cancel)
     const signal = AbortSignal.any([operation.turn.signal, operation.abort.signal, cancel.signal])
@@ -348,7 +362,7 @@ class Connection {
           return
         }
         const approval = await askApproval(operation.turn, action, signal, Array.isArray(params.availableDecisions) && !params.availableDecisions.includes("decline") ? "cancel" : "decline")
-        operation.denied ||= approval.decision !== "accept"
+        if (params.threadId === this.threadId) operation.denied ||= approval.decision !== "accept"
         result = approval
       } else {
         await this.server.send({ id: message.id, error: { code: -32601, message: "Unsupported interactive request" } })
@@ -356,7 +370,12 @@ class Connection {
       }
       signal.throwIfAborted()
       await this.server.send({ id: message.id, result })
-    } catch (error) { if (!signal.aborted) throw error }
+    } catch (error) {
+      if (!signal.aborted) throw error
+      // A native child can outlive its parent's Turn. Do not leave its request
+      // unanswered when the Helmr question is withdrawn at that boundary.
+      if (!operation.resolved.has(key)) await rejectClosed()
+    }
     finally { operation.requests.delete(key) }
   }
 }
