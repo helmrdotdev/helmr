@@ -7,7 +7,7 @@ import { isHelmrError } from "../../../sdk/typescript/src/error"
 import type { SessionRef, TurnRef } from "../../../sdk/typescript/src/contract"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 
-type Observation = { operations: number[]; versions: number[]; requests: unknown[] | null; handshakes: number; closed: number; http: number; activeHTTP: number; unauthorized: number; fallback: number }
+type Observation = { unauthenticatedPreconnects: number; operations: number[]; versions: number[]; requests: unknown[] | null; handshakes: number; closed: number; http: number; activeHTTP: number; unauthorized: number; fallback: number }
 const kinds = ["claude", "codex", "opencode-anthropic", "opencode-openai", "opencode-go", "pi-anthropic", "pi-openai", "pi-go"] as const
 
 async function execPrepared(computer: ComputerRef, request: ComputerCommandRequest, signal: AbortSignal) {
@@ -70,7 +70,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       assert.equal(second[identity], first[identity])
       const retained = await observed(value => (value.requests?.length ?? 0) >= 2)
       assert(JSON.stringify(retained.requests).includes("protected remembered first"))
-      assert.equal(retained.unauthorized, 0); assert.equal(retained.fallback, 0)
+      assert.equal(retained.unauthorized, retained.unauthenticatedPreconnects); assert.equal(retained.fallback, 0)
       if (kind === "codex" || kind === "opencode-openai") {
         assert(retained.handshakes > 0, "required WebSocket transport was unused")
       }
@@ -122,7 +122,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       const revoked = await finalTurn.wait({ signal })
       assert.notEqual(revoked.status, "completed")
       const finalState = await observed(value => value.handshakes === value.closed && value.activeHTTP === 0)
-      assert.equal(finalState.unauthorized, 0); assert.equal(finalState.fallback, 0)
+      assert.equal(finalState.unauthorized, finalState.unauthenticatedPreconnects); assert.equal(finalState.fallback, 0)
       records.push({ kind, durationMs: Date.now() - startedAt, sessionId: session.id, first, second, afterInterrupt, reconstructed, recoveryHold, newOwner, revoked, observation: finalState })
       await writeFile(`${evidence}/protected-starters.json`, JSON.stringify(records) + "\n", { mode: 0o600 })
     } catch (error) {

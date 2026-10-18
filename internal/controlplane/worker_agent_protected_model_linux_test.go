@@ -35,17 +35,27 @@ import (
 const protectedModelIP = "93.184.216.34"
 const protectedModelToken = "synthetic-protected-native-key"
 
+type protectedModelRejection struct {
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	Query         bool   `json:"queryPresent"`
+	Authorization bool   `json:"authorizationPresent"`
+	APIKey        bool   `json:"apiKeyPresent"`
+}
+
 type protectedModelObservation struct {
-	DeniedRenewals int               `json:"deniedRenewals"`
-	Operations     []int             `json:"operations"`
-	Versions       []int             `json:"versions"`
-	Handshakes     int               `json:"handshakes"`
-	Closed         int               `json:"closed"`
-	Requests       []json.RawMessage `json:"requests"`
-	ActiveHTTP     int               `json:"activeHTTP"`
-	HTTP           int               `json:"http"`
-	Unauthorized   int               `json:"unauthorized"`
-	Fallback       int               `json:"fallback"`
+	Preconnects    int                       `json:"unauthenticatedPreconnects"`
+	Rejected       []protectedModelRejection `json:"rejected"`
+	DeniedRenewals int                       `json:"deniedRenewals"`
+	Operations     []int                     `json:"operations"`
+	Versions       []int                     `json:"versions"`
+	Handshakes     int                       `json:"handshakes"`
+	Closed         int                       `json:"closed"`
+	Requests       []json.RawMessage         `json:"requests"`
+	ActiveHTTP     int                       `json:"activeHTTP"`
+	HTTP           int                       `json:"http"`
+	Unauthorized   int                       `json:"unauthorized"`
+	Fallback       int                       `json:"fallback"`
 }
 
 type protectedModelFixture struct {
@@ -190,7 +200,18 @@ func (f *protectedModelFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if version == 0 {
-		f.record(owner, func(o *protectedModelObservation) { o.Unauthorized++ })
+		_, authorizationPresent := r.Header["Authorization"]
+		_, apiKeyPresent := r.Header["X-Api-Key"]
+		rejection := protectedModelRejection{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery != "", Authorization: authorizationPresent, APIKey: apiKeyPresent}
+		f.record(owner, func(o *protectedModelObservation) {
+			// The native Claude client sends an unauthenticated HEAD preconnect.
+			// Keep rejecting it, but distinguish it from credential-bearing traffic.
+			o.Unauthorized++
+			if kind == "claude" && r.URL.Path == "/claude/"+owner+"/api/hello" && !rejection.Query && r.Method == http.MethodHead && !rejection.Authorization && !rejection.APIKey {
+				o.Preconnects++
+			}
+			o.Rejected = append(o.Rejected, rejection)
+		})
 		http.Error(w, "fixture authentication failed", 401)
 		return
 	}
@@ -395,4 +416,42 @@ func (f *protectedModelFixture) blockWorkerControl(w http.ResponseWriter, r *htt
 	}
 	http.Error(w, "fixture worker control outage", http.StatusServiceUnavailable)
 	return true
+}
+
+func TestProtectedModelPreconnectClassification(t *testing.T) {
+	cases := []struct {
+		name, method, path, header, value string
+		preconnect                        bool
+	}{
+		{name: "native preconnect", method: "HEAD", path: "/claude/owner/api/hello", preconnect: true},
+		{name: "model without credentials", method: "POST", path: "/claude/owner/v1/messages"},
+		{name: "query present", method: "HEAD", path: "/claude/owner/api/hello?probe=1"},
+		{name: "empty credential header", method: "HEAD", path: "/claude/owner/api/hello", header: "Authorization"},
+		{name: "wrong method", method: "GET", path: "/claude/owner/api/hello"},
+		{name: "other client", method: "HEAD", path: "/codex/owner/api/hello"},
+		{name: "selector not replaced", method: "HEAD", path: "/claude/owner/api/hello", header: "X-Api-Key", value: "hlmr_protected_invalid"},
+		{name: "invalid bearer", method: "HEAD", path: "/claude/owner/api/hello", header: "Authorization", value: "Bearer invalid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &protectedModelFixture{State: filepath.Join(t.TempDir(), "state.json"), observed: map[string]*protectedModelObservation{}}
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.header != "" {
+				r.Header.Set(tc.header, tc.value)
+			}
+			w := httptest.NewRecorder()
+			f.serve(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d", w.Code)
+			}
+			got := f.observed["owner"]
+			wantUnauthorized, wantPreconnect := 1, 0
+			if tc.preconnect {
+				wantPreconnect = 1
+			}
+			if got.Unauthorized != wantUnauthorized || got.Preconnects != wantPreconnect || len(got.Rejected) != 1 || got.Rejected[0].Path != r.URL.Path || len(got.Versions) != 0 {
+				t.Fatalf("observation = %+v", got)
+			}
+		})
+	}
 }
