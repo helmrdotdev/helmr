@@ -17,6 +17,7 @@ buildGoModule {
           ../../go.mod
           ../../go.sum
           ../../internal
+          ../../starters
         ])
         (
           lib.fileset.unions (
