@@ -100,10 +100,12 @@ is held until someone resumes it.
 An Agent is ordinary Node.js code running in a Linux Computer, so any agent
 harness or SDK can run inside it. Install the tool in the Computer image, start
 it in `init` and drive it from `turn`. The complete
-[OpenCode example](https://github.com/helmrdotdev/helmr/tree/main/examples/opencode-assistant)
-keeps one native conversation for the Session, filters events to that
-conversation, handles native failures, and connects Turn cancellation to native
-abort and completion.
+[OpenCode website example](https://github.com/helmrdotdev/helmr/tree/main/examples/opencode-assistant)
+uses the embedded SDK to keep one native conversation for the Session, handles
+native failures, and connects Turn cancellation to native abort and completion.
+The [Pi analysis example](https://github.com/helmrdotdev/helmr/tree/main/examples/pi-assistant)
+uses retained native sessions to produce a reproducible script and report from
+sample CSV data.
 
 Use the harness's supported SDK or CLI just as you would in a local application,
 with the Linux dependencies it needs. Keep its native configuration and permission

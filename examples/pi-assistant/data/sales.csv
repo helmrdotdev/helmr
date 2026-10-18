@@ -1,0 +1,9 @@
+month,product,region,revenue_usd
+2026-08,Atlas,East,1200
+2026-08,Atlas,West,800
+2026-08,Beacon,East,600
+2026-08,Beacon,West,400
+2026-09,Atlas,East,700
+2026-09,Atlas,West,500
+2026-09,Beacon,East,660
+2026-09,Beacon,West,440

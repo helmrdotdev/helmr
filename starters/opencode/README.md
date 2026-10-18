@@ -30,3 +30,10 @@ termination of arbitrary detached programs.
 The SDK and recovery composition are pinned to OpenCode 2.0.31. Change the package
 versions together and verify recovery before upgrading. Source and mock-model
 tests do not establish live provider or protected WebSocket compatibility.
+
+The default main model is `anthropic/claude-opus-5-5`; OpenAI selects
+`openai/gpt-6.1-sol`, and OpenCode Go selects `opencode-go/glm-5.3`.
+`smallModel` in `agents/settings.ts` selects the title-generation model separately:
+Anthropic uses `anthropic/claude-haiku-5-5`, OpenAI uses `openai/gpt-6-luna`, and
+OpenCode Go keeps `opencode-go/glm-5.3`. The starter passes this through OpenCode
+2.0's native `agents.title.model` setting (the successor to `small_model`).

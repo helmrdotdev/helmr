@@ -1,4 +1,4 @@
-# GitHub PR Review
+# GitHub PR summary
 
 An Agent reads a GitHub pull request and returns a summary of changed files.
 It does not post a review. GitHub requests carry the Turn's abort signal.

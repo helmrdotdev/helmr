@@ -1,40 +1,59 @@
-import { validateQuestion, type Question, type ChoiceAnswer, type Turn } from "@helmr/sdk"
-import type { QuestionInfo } from "@opencode-ai/sdk/v2"
+import { validateQuestion, type Question, type Turn } from "@helmr/sdk"
+import type { Form } from "@opencode/schema/form"
+import type { Permission } from "@opencode/schema/permission"
 
-export async function answerQuestions(turn: Turn, questions: readonly QuestionInfo[], signal: AbortSignal): Promise<string[][]> {
-  if (!questions.length) throw new Error("OpenCode returned an empty question batch")
-  // Validate the whole batch before showing any question to a person.
-  for (const question of questions) {
-    if (!question.question?.trim() || !Array.isArray(question.options) || question.options.some(option => !option.label?.trim()) || new Set(question.options.map(option => option.label)).size !== question.options.length) {
-      throw new Error("OpenCode returned an unsupported question")
-    }
-  }
-  const mapped = questions.map((question): Question => ({
-    ...(question.header ? { title: question.header } : {}),
-    prompt: [{ type: "text", text: question.question }],
-    ...(question.options.length ? {
-      type: "choice", multiple: question.multiple ?? false, allowCustom: question.custom ?? true,
-      options: question.options.map((option, index) => ({ id: `option-${index + 1}`, label: option.label, description: option.description, value: option.label })),
-    } : { type: "text" }),
-  }))
-  for (const question of mapped) validateQuestion(question)
-  const answers: string[][] = []
-  for (const question of mapped) {
+// This example grants each operation once; it never saves native permissions.
+export async function askPermission(turn: Turn, request: Permission.Request, signal: AbortSignal): Promise<Permission.Reply> {
+  signal.throwIfAborted()
+  const details = JSON.stringify({ action: request.action, resources: request.resources, metadata: request.metadata, message: request.message }, null, 2)
+  // Keep the complete operation reviewable; never approve a truncated preview.
+  if (Buffer.byteLength(details) > 48 * 1024) return "reject"
+  const options = [
+    { id: "once", label: "Allow once", value: "once" },
+    { id: "reject", label: "Deny", value: "reject" },
+  ]
+  const { answer } = await turn.ask({ type: "choice", prompt: [{ type: "text", text: request.message ?? `Allow ${request.action}?` }, { type: "text", text: details }], options }, { signal })
+  signal.throwIfAborted()
+  const selected = answer.selected[0]?.value
+  return answer.selected.length === 1 && selected === "once" ? selected : "reject"
+}
+
+export async function askForm(turn: Turn, form: Form.Info, signal: AbortSignal): Promise<Form.Answer> {
+  const answer: Record<string, string | number | boolean | readonly string[]> = {}
+  for (const field of form.fields) {
+    if (field.type === "external") throw new Error("OpenCode external forms require the native interface")
+    if (field.when?.some(condition => condition.op === "eq" ? answer[condition.key] !== condition.value : answer[condition.key] === condition.value)) continue
+    if (field.hidden) { if (field.default !== undefined) answer[field.key] = field.default; continue }
+    const prompt = [{ type: "text" as const, text: field.description ?? field.title ?? field.key }]
+    let question: Question
+    if (field.type === "boolean") question = { type: "choice", prompt, options: [{ id: "yes", label: "Yes", value: true }, { id: "no", label: "No", value: false }] }
+    else if (field.type === "multiselect" || (field.type === "string" && field.options?.length)) {
+      question = { type: "choice", prompt,
+        options: (field.options ?? []).map((option, index) => ({ id: `option-${index}`, label: option.label, description: option.description, value: option.value })),
+        multiple: field.type === "multiselect", allowCustom: field.type === "string" && field.custom,
+      }
+    } else question = { type: "text", prompt }
+    validateQuestion(question)
+    signal.throwIfAborted()
+    const result = await turn.ask(question, { signal })
     signal.throwIfAborted()
     if (question.type === "text") {
-      const reply = await turn.ask(question, { signal })
-      answers.push([reply.answer])
+      const text = result.answer as string
+      if (!text.trim()) {
+        if (field.required) throw new Error("OpenCode form requires an answer")
+        continue
+      }
+      if (field.type === "number" || field.type === "integer") {
+        const number = Number(text)
+        if (!Number.isFinite(number) || (field.type === "integer" && !Number.isInteger(number))) throw new Error("OpenCode form requires a valid number")
+        answer[field.key] = number
+      } else answer[field.key] = text
     } else {
-      const reply = await turn.ask(question, { signal })
-      const answer = reply.answer as unknown as ChoiceAnswer
-      const values = answer.selected.map(item => {
-        if (typeof item.value !== "string") throw new Error("Invalid OpenCode question answer")
-        return item.value
-      })
-      if (answer.custom !== undefined && answer.custom !== "") values.push(answer.custom)
-      answers.push(values)
+      const choice = result.answer as import("@helmr/sdk").ChoiceAnswer
+      if (field.type === "multiselect") answer[field.key] = choice.selected.map(item => String(item.value))
+      else if (choice.custom) answer[field.key] = choice.custom
+      else if (choice.selected.length === 1) answer[field.key] = choice.selected[0]!.value as string | boolean
     }
   }
-  signal.throwIfAborted()
-  return answers
+  return answer
 }

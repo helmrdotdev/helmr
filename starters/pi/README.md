@@ -31,3 +31,9 @@ closed on reconstruction because Pi has not written history yet. Native startup 
 application-owned and need qualification for any autonomous behavior they introduce.
 The SDK is pinned to 1.3.0. Source and mock-model tests do not establish live provider
 or protected transport compatibility.
+
+The default main model is `anthropic/claude-opus-5-5`; OpenAI selects
+`openai/gpt-6.1-sol`, and OpenCode Go selects `opencode-go/glm-5.3`.
+Pi 1.3.0 has no equivalent dedicated small-model setting. Its built-in compaction
+and branch summaries use the selected session model. This starter retains that
+native behavior rather than installing custom summarization extensions.

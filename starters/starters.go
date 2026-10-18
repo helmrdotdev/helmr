@@ -48,9 +48,10 @@ var providers = map[string]Provider{
 // Binding is how a starter uses one provider: the model and the env var that
 // carries the key inside the Computer.
 type Binding struct {
-	Provider Provider
-	Model    string
-	Env      string
+	Provider   Provider
+	Model      string
+	SmallModel string
+	Env        string
 }
 
 // Starter is one harness template.
@@ -61,19 +62,19 @@ type Starter struct {
 
 var all = []Starter{
 	{ID: "codex", bindings: []Binding{
-		{Provider: providers["openai"], Model: "gpt-5.5", Env: "CODEX_API_KEY"},
+		{Provider: providers["openai"], Model: "gpt-6.1-sol", Env: "CODEX_API_KEY"},
 	}},
 	{ID: "claude-code", bindings: []Binding{
-		{Provider: providers["anthropic"], Model: "claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
+		{Provider: providers["anthropic"], Model: "claude-opus-5-5", Env: "ANTHROPIC_API_KEY"},
 	}},
 	{ID: "opencode", bindings: []Binding{
-		{Provider: providers["anthropic"], Model: "anthropic/claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
-		{Provider: providers["openai"], Model: "openai/gpt-5.5", Env: "OPENAI_API_KEY"},
-		{Provider: providers["opencode-go"], Model: "opencode-go/glm-5.3", Env: "OPENCODE_API_KEY"},
+		{Provider: providers["anthropic"], Model: "anthropic/claude-opus-5-5", SmallModel: "anthropic/claude-haiku-5-5", Env: "ANTHROPIC_API_KEY"},
+		{Provider: providers["openai"], Model: "openai/gpt-6.1-sol", SmallModel: "openai/gpt-6-luna", Env: "OPENAI_API_KEY"},
+		{Provider: providers["opencode-go"], Model: "opencode-go/glm-5.3", SmallModel: "opencode-go/glm-5.3", Env: "OPENCODE_API_KEY"},
 	}},
 	{ID: "pi", bindings: []Binding{
-		{Provider: providers["anthropic"], Model: "anthropic/claude-sonnet-5-5", Env: "ANTHROPIC_API_KEY"},
-		{Provider: providers["openai"], Model: "openai/gpt-5.5", Env: "OPENAI_API_KEY"},
+		{Provider: providers["anthropic"], Model: "anthropic/claude-opus-5-5", Env: "ANTHROPIC_API_KEY"},
+		{Provider: providers["openai"], Model: "openai/gpt-6.1-sol", Env: "OPENAI_API_KEY"},
 		{Provider: providers["opencode-go"], Model: "opencode-go/glm-5.3", Env: "OPENCODE_API_KEY"},
 	}},
 }
@@ -140,6 +141,9 @@ func Settings(name string, binding Binding) string {
 	b.WriteString("export const agentName = " + strconv.Quote(name) + "\n")
 	b.WriteString("export const introduction = " + strconv.Quote(introduction) + "\n")
 	b.WriteString("export const model = " + strconv.Quote(binding.Model) + "\n")
+	if binding.SmallModel != "" {
+		b.WriteString("export const smallModel = " + strconv.Quote(binding.SmallModel) + "\n")
+	}
 	b.WriteString("export const modelKey = { secret: " + strconv.Quote(binding.Provider.Secret) +
 		", env: " + strconv.Quote(binding.Env) + ", origin: " + strconv.Quote(binding.Provider.Origin) + " } as const\n")
 	return b.String()

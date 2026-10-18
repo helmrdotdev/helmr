@@ -1,6 +1,6 @@
 import { agent, image, template } from "@helmr/sdk"
 import { OpenCodeSession } from "./opencode-bridge"
-import { agentName, introduction, model, modelKey } from "./settings"
+import { agentName, introduction, model, smallModel, modelKey } from "./settings"
 
 export const workspace = template({
   id: agentName,
@@ -16,7 +16,9 @@ export const workspace = template({
 export const assistant = agent({
   id: agentName, template: workspace, maxTurnDuration: "15m",
   init({ session, recovery }) {
-    return OpenCodeSession.open({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/opencode", sessionId: session.id, model, introduction, recovery: recovery.kind })
+    return OpenCodeSession.open({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/opencode", sessionId: session.id, model, introduction, recovery: recovery.kind,
+      native: { config: { content: JSON.stringify({ agents: { title: { model: smallModel } } }) } },
+    })
   },
   async turn(turn, { initResult }) {
     const { response, ...result } = await initResult.run(turn)

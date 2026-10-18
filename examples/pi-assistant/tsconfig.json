@@ -5,9 +5,17 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["agents/**/*.ts", "helmr.config.ts"]
+  "include": [
+    "agents/**/*.ts",
+    "helmr.config.ts"
+  ]
 }
