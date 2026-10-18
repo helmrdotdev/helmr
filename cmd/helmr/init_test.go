@@ -179,3 +179,85 @@ func TestInitCommandForceOverwritesStarterFiles(t *testing.T) {
 		t.Fatalf("package = %q", packageContents)
 	}
 }
+
+func runInit(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(append([]string{"init"}, args...))
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestInitTemplateWritesTheNamedAgentProject(t *testing.T) {
+	root := t.TempDir()
+	out, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"created agents/noether.ts", "created agents/settings.ts", "created package.json", "Agent: noether (named after Emmy Noether)", "ANTHROPIC_API_KEY"} {
+		if !strings.Contains(out, line) {
+			t.Fatalf("output = %q", out)
+		}
+	}
+	settings, err := os.ReadFile(filepath.Join(root, "agents", "settings.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), `export const agentName = "noether"`) || !strings.Contains(string(settings), "Emmy Noether") {
+		t.Fatalf("settings = %s", settings)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "agent.ts")); !os.IsNotExist(err) {
+		t.Fatalf("template Agent file was not renamed: %v", err)
+	}
+	pkg, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(pkg), "file:") || !strings.Contains(string(pkg), `"@anthropic-ai/claude-agent-sdk"`) {
+		t.Fatalf("package.json = %s", pkg)
+	}
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second init err = %v", err)
+	}
+}
+
+func TestInitTemplatePicksANameWhenNoneIsGiven(t *testing.T) {
+	out, err := runInit(t, "--dir", t.TempDir(), "--template", "claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Agent: ") || !strings.Contains(out, "(named after ") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestInitRejectsInvalidTemplateInput(t *testing.T) {
+	for args, want := range map[string]string{
+		"--template nope":                          `unknown template "nope"`,
+		"--template claude-code --provider openai": "does not support provider",
+		"--template claude-code --name Bad_Name":   "invalid agent name",
+		"--provider anthropic":                     "need --template",
+		"--name noether":                           "need --template",
+	} {
+		_, err := runInit(t, append([]string{"--dir", t.TempDir()}, strings.Fields(args)...)...)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: err = %v, want %q", args, err, want)
+		}
+	}
+}
+
+func TestInitTemplateRefusesOtherAgentSources(t *testing.T) {
+	root := t.TempDir()
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "meitner", "--force"); err == nil || !strings.Contains(err.Error(), "noether.ts is not part of the claude-code template") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := runInit(t, "--dir", root, "--template", "claude-code", "--name", "noether", "--force"); err != nil {
+		t.Fatalf("same name with --force: %v", err)
+	}
+}

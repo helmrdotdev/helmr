@@ -1,0 +1,22 @@
+{
+  "name": "helmr-starter-claude-code",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
+    "test": "bun build tests/runtime.test.ts --target=node --tsconfig-override tests/tsconfig.json --external @anthropic-ai/claude-agent-sdk --outfile dist/runtime.test.mjs && node --test dist/runtime.test.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.301",
+    "@helmr/sdk": "file:../../dist/npm/sdk/package",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package"
+  }
+}

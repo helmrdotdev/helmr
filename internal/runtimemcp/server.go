@@ -82,7 +82,13 @@ type waitInput struct {
 // The transport does not own Helmr Session lifetime. In particular HTTP DELETE,
 // idle clients and MCP connection loss never close or cancel a Helmr Session.
 func NewHandler(invoke Invoke) http.Handler {
-	server := mcp.NewServer(&mcp.Implementation{Name: "helmr-runtime", Version: "1"}, &mcp.ServerOptions{Instructions: skillInstructions()})
+	server := mcp.NewServer(&mcp.Implementation{Name: "helmr-runtime", Version: "1"}, &mcp.ServerOptions{
+		Instructions: skillInstructions(),
+		// This catalog is fixed for the lifetime of the Session process. Advertising
+		// changes makes clients retain notification streams for work that never occurs.
+		//lint:ignore SA1019 Preserve the SDK default logging capability during its supported deprecation window.
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Logging: &mcp.LoggingCapabilities{}},
+	})
 	addSkills(server)
 	add[agentsInput](server, invoke, "list_agents", "List Agent targets for spawn or start. Only root Sessions can create work.")
 	add[listInput](server, invoke, "list_computers", "List Computers visible to this Session.")

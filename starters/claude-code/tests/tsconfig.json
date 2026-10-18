@@ -1,0 +1,7 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["*.ts", "../../../runtime/typescript/src/node-crypto.d.ts"],
+  "compilerOptions": {
+    "paths": { "@helmr/sdk": ["../../../sdk/typescript/src/index.ts"] }
+  }
+}

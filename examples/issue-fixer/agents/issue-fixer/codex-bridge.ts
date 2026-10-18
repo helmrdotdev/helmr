@@ -46,7 +46,7 @@ interface Operation {
 // Application adapter: one native process and conversation live for the Session.
 // It accounts for protocol work; the guest must independently contain native
 // descendants before claiming convergence. Native terminal text alone is not proof.
-export class CodexHarness {
+export class CodexBridge {
   private readonly server: CodexStdio
   private readonly reader: Promise<void>
   private active: Operation | undefined
@@ -74,14 +74,14 @@ export class CodexHarness {
       this.active?.commandsDrained.reject(error)
     })
   }
-  static async open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexHarness> {
+  static async open(cwd: string, sessionId: string, environment?: NodeJS.ProcessEnv, mcp?: RuntimeMcpConnectionOptions): Promise<CodexBridge> {
     const saved = await conversation(cwd, sessionId, "codex")
-    const harness = new CodexHarness(saved.directory, environment)
+    const bridge = new CodexBridge(saved.directory, environment)
     try {
-      await harness.started
-      await harness.server.request("initialize", { clientInfo: { name: "helmr-issue-fixer", version: "1.0.0" }, capabilities: { experimentalApi: true } })
-      await harness.server.send({ method: "initialized" })
-      harness.threadId = threadResponse.parse(await harness.server.request(saved.id ? "thread/resume" : "thread/start", {
+      await bridge.started
+      await bridge.server.request("initialize", { clientInfo: { name: "helmr-issue-fixer", version: "1.0.0" }, capabilities: { experimentalApi: true } })
+      await bridge.server.send({ method: "initialized" })
+      bridge.threadId = threadResponse.parse(await bridge.server.request(saved.id ? "thread/resume" : "thread/start", {
         ...(saved.id ? { threadId: saved.id } : {}), cwd, sandbox: "workspace-write", approvalPolicy: "on-request",
         // Background shell snapshots are not joined by the native Turn boundary.
         config: {
@@ -89,9 +89,9 @@ export class CodexHarness {
           ...(mcp === undefined ? {} : { "mcp_servers.helmr": { url: mcp.url, http_headers: mcp.headers } }),
         },
       })).thread.id
-      await saved.remember(harness.threadId)
-      return harness
-    } catch (error) { await harness.close(); throw error }
+      await saved.remember(bridge.threadId)
+      return bridge
+    } catch (error) { await bridge.close(); throw error }
   }
   get idle(): boolean { return this.active === undefined }
   get processId(): number | undefined { return this.pid }

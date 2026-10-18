@@ -33,16 +33,16 @@ mock.module("../agents/issue-fixer/codex-stdio", () => ({
     close() { return this.exit }
   },
 }))
-const { CodexHarness } = await import("../agents/issue-fixer/codex-harness")
+const { CodexBridge } = await import("../agents/issue-fixer/codex-bridge")
 
 test("every close caller waits for physical exit after reader failure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-close-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   try {
     messages.end(new Error("malformed native frame"))
     await new Promise<void>(resolve => setImmediate(resolve))
     let resolved = 0
-    const first = harness.close(), second = harness.close()
+    const first = bridge.close(), second = bridge.close()
     expect(first).toBe(second)
     void first.then(() => resolved++)
     void second.then(() => resolved++)
@@ -51,13 +51,13 @@ test("every close caller waits for physical exit after reader failure", async ()
     finishExit()
     await Promise.all([first, second])
     expect(resolved).toBe(2)
-  } finally { finishExit(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 
 test("native steering rejection can precede the queued completion notification", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-steer-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   let handler!: (value: unknown) => Promise<void>, registered!: () => void
   const ready = new Promise<void>(resolve => { registered = resolve })
   const turn = { id: "turn", signal: new AbortController().signal,
@@ -65,24 +65,24 @@ test("native steering rejection can precede the queued completion notification",
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
-    const pending = harness.run(turn, "original")
+    const pending = bridge.run(turn, "original")
     await ready
     await expect(handler({ id: "message", content: [{ type:"text", text:"too late" }], source: { kind: "user" } })).rejects.toBeInstanceOf(MessageRejected)
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await expect(pending).resolves.toEqual({ nativeThreadId: "native", nativeTurnId: "native-turn" })
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 
 test("failed Codex initialization rejects the awaited open", async () => {
-  await expect(CodexHarness.open("/dev/null/invalid-native-directory", "session", {})).rejects.toThrow()
+  await expect(CodexBridge.open("/dev/null/invalid-native-directory", "session", {})).rejects.toThrow()
   await new Promise<void>(resolve => setImmediate(resolve))
 })
 
 
 for (const failure of [false, true]) test(`awaited native startup drains after application ${failure ? "failure" : "return"}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-pending-start-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   let start!: () => void
   startRequestGate = new Promise<void>(resolve => { start = resolve })
   const abort = new AbortController()
@@ -93,7 +93,7 @@ for (const failure of [false, true]) test(`awaited native startup drains after a
   } as unknown as Turn
   onInterrupt = () => messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "interrupted" } } })
   try {
-    const pending = harness.run(turn, "original")
+    const pending = bridge.run(turn, "original")
     void pending.catch(() => {})
     expect(registered).toBe(true)
     processing = false
@@ -105,74 +105,74 @@ for (const failure of [false, true]) test(`awaited native startup drains after a
       messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
       await pending
     }
-    expect(harness.reusable).toBe(true)
-  } finally { start(); startRequestGate = undefined; onInterrupt = undefined; finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    expect(bridge.reusable).toBe(true)
+  } finally { start(); startRequestGate = undefined; onInterrupt = undefined; finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 test("a caught native result failure permits an ordinary retry in the same Turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-retry-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   let registrations = 0
   const turn = { id: "turn", signal: new AbortController().signal,
     onCancel: () => {}, onMessage: async () => { if (++registrations > 1) throw new Error("duplicate message handler") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
-    const first = harness.run(turn, "first")
+    const first = bridge.run(turn, "first")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "failed" } } })
     await expect(first).rejects.toThrow("Native Turn ended")
-    expect(harness.reusable).toBe(true)
-    const second = harness.run(turn, "retry")
+    expect(bridge.reusable).toBe(true)
+    const second = bridge.run(turn, "retry")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await second
     expect(registrations).toBe(1)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 test("callback failure interrupts to reusable idle before returning the error", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-callback-failure-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal,
     onCancel: () => {}, onMessage: async () => {}, ask: async () => { throw new Error("ask registration failed") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   onInterrupt = () => messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "interrupted" } } })
   try {
-    const running = harness.run(turn, "first")
+    const running = bridge.run(turn, "first")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "native", turnId: "native-turn" } })
     await expect(running).rejects.toThrow("ask registration failed")
-    expect(harness.reusable).toBe(true)
-  } finally { onInterrupt = undefined; finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    expect(bridge.reusable).toBe(true)
+  } finally { onInterrupt = undefined; finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 
 test("registration failure before submission preserves the setup resource", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-registration-failure-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal,
     onCancel: () => {}, onMessage: () => { throw new Error("registration failed") },
     output: { write: async () => ({ sequence: 1 }) },
   } as unknown as Turn
   try {
-    await expect(harness.run(turn, "never submitted")).rejects.toThrow("registration failed")
-    expect(harness.idle).toBe(true)
-    expect(harness.reusable).toBe(true)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    await expect(bridge.run(turn, "never submitted")).rejects.toThrow("registration failed")
+    expect(bridge.idle).toBe(true)
+    expect(bridge.reusable).toBe(true)
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 test("completed snapshots publish commentary once and commit only an exact successful final", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-content-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const output: unknown[] = [], responses: unknown[] = []
   const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
     output: { write: async (value: unknown) => { output.push(value); return { sequence: 1 } } }, respond: async (value: unknown) => { responses.push(value) },
   } as unknown as Turn
   const item = (id: string, phase?: string) => ({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "agentMessage", id, text: id, phase } } })
   try {
-    const pending = harness.run(turn, [{ type: "text", text: "inspect" }])
+    const pending = bridge.run(turn, [{ type: "text", text: "inspect" }])
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "item/agentMessage/delta", params: { threadId: "native", turnId: "native-turn", delta: "duplicate" } })
     messages.push(item("progress", "commentary")); messages.push(item("progress", "commentary"))
@@ -183,18 +183,18 @@ test("completed snapshots publish commentary once and commit only an exact succe
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     expect((await pending).response).toBe("answer")
     expect(responses).toEqual([])
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 test("terminal notification remains live while questions wait and no late native reply is sent", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-questions-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   let asks = 0, withdrawals = 0
   const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
     ask: (_: unknown, { signal }: { signal: AbortSignal }) => { asks++; return new Promise((_, reject) => signal.addEventListener("abort", () => { withdrawals++; reject(signal.reason) })) },
   } as unknown as Turn
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ id: 9, method: "item/tool/requestUserInput", params: { threadId: "native", turnId: "native-turn", questions: ["one", "two"].map(id => ({ id, header: id, question: id })) } })
     await new Promise<void>(resolve => setImmediate(resolve))
@@ -203,15 +203,15 @@ test("terminal notification remains live while questions wait and no late native
     await pending
     expect(withdrawals).toBe(2)
     expect(sent.some(value => value.id === 9)).toBe(false)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const status of ["completed", "failed", "declined"]) test(`a yielded ${status} command receipt may arrive after native Turn completion`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-late-command-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     void pending.catch(() => {})
     let settled = false
     void pending.then(() => { settled = true }, () => { settled = true })
@@ -225,26 +225,26 @@ for (const status of ["completed", "failed", "declined"]) test(`a yielded ${stat
     }
     await new Promise<void>(resolve => setImmediate(resolve))
     expect(settled).toBe(false)
-    expect(harness.idle).toBe(false)
+    expect(bridge.idle).toBe(false)
     expect(requested).not.toContain("thread/backgroundTerminals/clean")
     messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status, exitCode: status === "completed" ? 0 : null } } })
     await expect(pending).resolves.toEqual({ nativeThreadId: "native", nativeTurnId: "native-turn" })
-    expect(harness.reusable).toBe(true)
-    const next = harness.run(turn, "next")
+    expect(bridge.reusable).toBe(true)
+    const next = bridge.run(turn, "next")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await next
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const failure of ["cancel", "cancel-race", "reader-error", "reader-end", "cancel-reader-error"]) test(`outstanding command receipt joins through ${failure}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-command-join-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const abort = new AbortController()
   const turn = { id: "turn", signal: abort.signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   const receipt = { method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "completed", exitCode: 0 } } }
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     let settled = false
     void pending.then(() => { settled = true }, () => { settled = true })
     await new Promise<void>(resolve => setImmediate(resolve))
@@ -268,29 +268,29 @@ for (const failure of ["cancel", "cancel-race", "reader-error", "reader-end", "c
       finishExit()
     }
     await expect(pending).rejects.toThrow(failure.startsWith("cancel") ? "owned Turn cancelled" : failure === "reader-end" ? "Native message stream ended" : "lost native reader")
-    expect(harness.reusable).toBe(!failure.includes("reader"))
-    expect(harness.idle).toBe(true)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    expect(bridge.reusable).toBe(!failure.includes("reader"))
+    expect(bridge.idle).toBe(true)
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const status of ["completed", "failed", "declined"]) test(`terminal command ${status} without exit code drains before Turn completion`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-terminal-command-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
   try {
-    const pending = harness.run(turn, "inspect")
+    const pending = bridge.run(turn, "inspect")
     await new Promise<void>(resolve => setImmediate(resolve))
     messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "inProgress", exitCode: null } } })
     messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status, exitCode: null } } })
     messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
     await pending
-    expect(harness.reusable).toBe(true)
-  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    expect(bridge.reusable).toBe(true)
+  } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 test("a retained protocol failure rejects the next prompt and its cancellation hook", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-broken-"))
-  const harness = await CodexHarness.open(directory, "session", {})
+  const bridge = await CodexBridge.open(directory, "session", {})
   let cancel!: (reason: unknown) => void | Promise<void>
   try {
     const failure = new Error("malformed native frame")
@@ -298,16 +298,16 @@ test("a retained protocol failure rejects the next prompt and its cancellation h
     await new Promise<void>(resolve => setImmediate(resolve))
     const before = sent.length
     const turn = { id: "next", signal: new AbortController().signal, onCancel: (hook: typeof cancel) => { cancel = hook } } as unknown as Turn
-    await expect(harness.run(turn, "must not be submitted")).rejects.toBe(failure)
+    await expect(bridge.run(turn, "must not be submitted")).rejects.toBe(failure)
     await expect(cancel(new Error("handler failed"))).rejects.toBe(failure)
     expect(sent.length).toBe(before)
-  } finally { finishExit(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+  } finally { finishExit(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
 })
 
 for (const scenario of ["phase-less", "continued", "unknown", "unknown-with-final", "async-question", "native-failure"] as const) {
   test(`native text classification: ${scenario}`, async () => {
     const directory = await mkdtemp(join(tmpdir(), "helmr-native-phases-"))
-    const harness = await CodexHarness.open(directory, "session", {})
+    const bridge = await CodexBridge.open(directory, "session", {})
     const output: string[] = []
     const turn = { id: "turn", signal: new AbortController().signal, onCancel: () => {}, onMessage: async () => {},
       output: { write: async (text: string) => { output.push(text); return { sequence: output.length } } },
@@ -315,7 +315,7 @@ for (const scenario of ["phase-less", "continued", "unknown", "unknown-with-fina
     } as unknown as Turn
     const item = (id: string, extra = {}) => ({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "agentMessage", id, text: id, ...extra } } })
     try {
-      const pending = harness.run(turn, "inspect")
+      const pending = bridge.run(turn, "inspect")
       await new Promise<void>(resolve => setImmediate(resolve))
       messages.push(item("candidate"))
       if (scenario === "continued") {
@@ -331,6 +331,6 @@ for (const scenario of ["phase-less", "continued", "unknown", "unknown-with-fina
       else if (scenario === "native-failure") await expect(pending).rejects.toThrow("Native Turn ended")
       else expect((await pending).response).toBe(scenario === "phase-less" ? "candidate" : "final")
       expect(output.join("")).toBe(["continued", "unknown-with-final", "native-failure"].includes(scenario) ? "candidate" : "")
-    } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+    } finally { finishExit(); messages.end(); await bridge.close(); await rm(directory, { recursive: true, force: true }) }
   })
 }

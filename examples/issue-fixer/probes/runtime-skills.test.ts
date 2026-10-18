@@ -9,8 +9,8 @@ import { createInterface } from "node:readline"
 import test from "node:test"
 import type { RuntimeMcpConnectionOptions } from "@helmr/sdk"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
-import { CodexHarness } from "../agents/issue-fixer/codex-harness"
-import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
+import { CodexBridge } from "../agents/issue-fixer/codex-bridge"
+import { ClaudeBridge } from "../agents/issue-fixer/claude-bridge"
 import { conversation } from "../agents/issue-fixer/conversation"
 import { claudeModel, codexModel } from "./native-model"
 
@@ -49,7 +49,7 @@ for (const provider of ["codex", "claude"] as const) {
       : claudeModel(requests, false, (_body, index) => index <= 2 ? {
         id: `skill_${index}`, name: "mcp__helmr__skills", input: argumentsFor(index),
       } : undefined)
-    let harness: CodexHarness | ClaudeHarness | undefined
+    let bridge: CodexBridge | ClaudeBridge | undefined
     try {
       const [line] = await once(lines, "line", { signal: stopped.signal })
       const connection = JSON.parse(line) as RuntimeMcpConnectionOptions
@@ -78,12 +78,12 @@ for (const provider of ["codex", "claude"] as const) {
         kind: "agent", id: "skills-probe", template: undefined!,
         init: async ctx => {
           const mcp = await ctx.mcp.getConnectionOptions()
-          harness = provider === "codex"
-            ? await CodexHarness.open(directory, ctx.session.id, environment, mcp)
-            : await ClaudeHarness.open(directory, ctx.session.id, environment, { helmr: { type: "http", ...mcp } })
-          return harness
+          bridge = provider === "codex"
+            ? await CodexBridge.open(directory, ctx.session.id, environment, mcp)
+            : await ClaudeBridge.open(directory, ctx.session.id, environment, { helmr: { type: "http", ...mcp } })
+          return bridge
         },
-        turn: (turn, ctx) => (ctx.initResult as CodexHarness | ClaudeHarness).run(turn, "Read the Helmr runtime skill."),
+        turn: (turn, ctx) => (ctx.initResult as CodexBridge | ClaudeBridge).run(turn, "Read the Helmr runtime skill."),
       }, {
         session: { id: "skills-session" }, computer: { id: "computer" }, deployment: { id: "deployment" },
         recovery: { kind: "initial" }, signal: stopped.signal, mcp: { getConnectionOptions: async () => connection },
@@ -95,7 +95,7 @@ for (const provider of ["codex", "claude"] as const) {
     } finally {
       clearTimeout(deadline)
       stopped.abort()
-      await harness?.close()
+      await bridge?.close()
       model.closeAllConnections()
       await new Promise<void>(resolve => model.close(() => resolve()))
       lines.close()

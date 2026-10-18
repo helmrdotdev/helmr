@@ -34,6 +34,18 @@ jobs:
             ${{ env.GOMODCACHE }}
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-
+      - name: Allow the native sandbox helper to create user namespaces
+        if: matrix.check == 'typescript'
+        run: |
+          # Ubuntu 24.04 requires an application profile for unprivileged userns.
+          # Permit the Nix-pinned helper while retaining the runner's global policy.
+          sudo tee /etc/apparmor.d/helmr-ci-bwrap >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          profile helmr-ci-bwrap /nix/store/*-bubblewrap-*/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/helmr-ci-bwrap
       - run: nix run ".#ci-fast-$CI_CHECK"
   ci-complete:
     name: ci complete

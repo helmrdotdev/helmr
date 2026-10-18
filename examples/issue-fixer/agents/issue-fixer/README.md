@@ -6,11 +6,11 @@ it across Turns. The wrappers in `codex.ts` and `claude.ts` connect the adapters
 the authored Agent lifecycle; the application owns provider configuration and
 interpretation of answers.
 
-- `codex-harness.ts` runs an app-server thread, delivers exact native steering,
+- `codex-bridge.ts` runs an app-server thread, delivers exact native steering,
   and converts native questions and one-time command/file approvals to Turn asks.
-- `claude-harness.ts` retains a streaming query, serializes follow-ups, converts
+- `claude-bridge.ts` retains a streaming query, serializes follow-ups, converts
   native questions/permissions to Turn asks, and rejects background work.
-- Both harnesses launch ordinary Node child processes and register `turn.onCancel`
+- Both bridges launch ordinary Node child processes and register `turn.onCancel`
   to stop and join native work. The managed Runtime owns the whole Session process
   tree; native terminal text alone does not establish physical convergence.
 - Codex command receipts may arrive after its Turn ends. The authored handler

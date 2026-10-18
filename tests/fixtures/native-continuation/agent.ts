@@ -5,12 +5,12 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import type { InitContext, RuntimeMcpConnectionOptions } from "../../../sdk/typescript/src/agent"
 import type { Turn } from "../../../sdk/typescript/src/agent"
-import { CodexHarness } from "../../../examples/issue-fixer/agents/issue-fixer/codex-harness"
-import { ClaudeHarness } from "../../../examples/issue-fixer/agents/issue-fixer/claude-harness"
+import { CodexBridge } from "../../../examples/issue-fixer/agents/issue-fixer/codex-bridge"
+import { ClaudeBridge } from "../../../examples/issue-fixer/agents/issue-fixer/claude-bridge"
 import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
 interface SetupState {
-  harness: CodexHarness | ClaudeHarness
+  bridge: CodexBridge | ClaudeBridge
   mcp: RuntimeMcpConnectionOptions
   count: number
   nonce: string
@@ -33,15 +33,15 @@ function specimen(provider: "codex" | "claude") {
         const saved = await conversation(directory, context.session.id, provider)
         await writeFile(join(saved.directory, "config.toml"), `model_provider = "fixture"\nmodel = "gpt-5.1-codex"\n[model_providers.fixture]\nname = "local fixture"\nbase_url = "http://${host}:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n[mcp_servers.helmr]\nurl = ${JSON.stringify(mcp.url)}\nhttp_headers = { Authorization = ${JSON.stringify(mcp.headers.Authorization)} }\n[mcp_servers.helmr.tools.enqueue]\napproval_mode = "approve"\n`)
       }
-      const harness = provider === "codex"
-        ? await CodexHarness.open(directory, context.session.id, environment)
-        : await ClaudeHarness.open(directory, context.session.id, environment, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
-      return { harness, mcp, count: 0, nonce: crypto.randomUUID() }
+      const bridge = provider === "codex"
+        ? await CodexBridge.open(directory, context.session.id, environment)
+        : await ClaudeBridge.open(directory, context.session.id, environment, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
+      return { bridge, mcp, count: 0, nonce: crypto.randomUUID() }
     },
     async turn(turn: Turn, context: { initResult: SetupState }) {
       const state = context.initResult
-      const result = await state.harness.run(turn, String(fixtureValue(turn.input)))
-      return { count: ++state.count, pid: process.pid, nativePid: state.harness.processId!, nonce: state.nonce,
+      const result = await state.bridge.run(turn, String(fixtureValue(turn.input)))
+      return { count: ++state.count, pid: process.pid, nativePid: state.bridge.processId!, nonce: state.nonce,
         result }
     },
   }

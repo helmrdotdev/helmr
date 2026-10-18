@@ -63,7 +63,14 @@ Computer's current state; there is no history of earlier saves to roll back to.
 ## Hibernation
 
 When a Computer has no running or queued Turns, no pending Commands and no save
-in progress, Helmr hibernates it. Hibernation captures memory, running processes
+in progress, Helmr can hibernate it once its Sessions are ready for capture.
+Asynchronous work started by your Agent code, such as active JavaScript timers or open sockets,
+can keep a Session from becoming capture-ready and keep compute running. Unknown
+asynchronous resource types also prevent capture until they are released. Helmr
+does not terminate that work merely to make the Computer idle. Retained native
+child processes and their standard I/O handles can be captured with the Session.
+
+Hibernation captures memory, running processes
 and disk, then releases the worker. There is no separate idle timeout for
 hibernation, and it does not close the Session. A Turn waiting for the answer to a
 [question](/docs/concepts/questions) is still running, so its Computer keeps

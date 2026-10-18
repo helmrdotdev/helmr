@@ -190,6 +190,10 @@ interface ComputerCommandRequest {
 }
 ```
 
+`exec()` returns after admission; use the returned Command's `wait()` to observe
+completion. `timeout` limits execution, defaults to `5m`, and accepts `1ms` through
+`15m`. It is separate from the timeout on `CommandRef.wait()`.
+
 `ComputerUsage` is `{ id, usageState, createdAt }`,
 where `usageState` is `admitted`, `running`, `waiting`, `parked`, `draining` or
 `unreconciled`. These are current occupancy summaries, not full history or
@@ -234,6 +238,26 @@ interface CommandRef {
 | `cancel()` | Requests termination. Returns `{ id, targetId, status: "accepted" }`; repeated calls return the same receipt. |
 | `logs.list()` | One page: `{ items, outputState, nextCursor? }`, where `outputState` is `open`, `closed` or `unavailable`. `limit` 1–100. |
 | `logs.stream()` | Retained output followed by new output until the output closes. Resume with `after: record.cursor`. |
+
+The Command process scope ends when its main process exits, including exit code
+0, or when it is cancelled or times out. Remaining descendants are terminated;
+backgrounding a child does not extend the scope. For example, `sh -c 'server &'`
+does not leave a server running after the shell exits. Run the program as the Command's main process
+and retain its Command handle when you need to observe or cancel it within the
+execution limit.
+
+Commands share the Computer's filesystem, but each has a private process scope;
+they do not provide a shared shell or cross-command process-ID visibility.
+Commands that have not finished, and finished Commands awaiting physical cleanup,
+prevent idle checkpoint capture.
+These boundaries apply to external Commands; native children inside an Agent
+Session follow the Session's lifecycle.
+
+An execution timeout or `cancel()` requests termination of the Command scope.
+A client wait timeout or disconnection does not cancel an admitted Command.
+Cancelling a terminal Command leaves its outcome unchanged. `processReconciled`
+reports physical cleanup separately from the outcome; a cancellation receipt
+alone does not establish that cleanup has finished.
 
 `CommandOutcome` has `commandId`, `terminalAt` and a `kind`:
 

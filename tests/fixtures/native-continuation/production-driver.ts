@@ -1,3 +1,6 @@
+import { runClaudeStarter } from "./claude-starter-driver"
+import { runCodexStarter } from "./codex-starter-driver"
+import { runNativeSDK } from "../native-sdk/driver"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 // Invoked by the integrated fixture after the ordinary deployment is available.
 // API credentials stay in its private input file; stdout contains only evidence.
@@ -120,7 +123,7 @@ try {
   model = await commands.exec({
     command: ["/usr/bin/env", `HELMR_NATIVE_TARGET_SESSION=${peer.session.id}`, "/usr/local/bin/node", "--input-type=module", "-", "/workspace/native-models.json"],
     stdin: await readFile(options.modelScript),
-    timeout: `${options.timeoutMs}ms`,
+    timeout: `${(process.env.HELMR_NATIVE_SDK_PROOF === "1" || process.env.HELMR_CODEX_STARTER_PROOF === "1" || process.env.HELMR_CLAUDE_STARTER_PROOF === "1") ? 600000 : options.timeoutMs}ms`,
     idempotencyKey: "fixture-model",
   }, { signal })
   const ready = await commands.exec({
@@ -548,7 +551,15 @@ try {
   const fileResult = await files.wait({ signal })
   assert.equal(fileResult.kind, "exited")
   assert.equal(fileResult.exitCode, 0, "authored disk writes differ from native/peer results")
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: peer.turn.id, peerSequence, peerOutcome, nativeSessions, nativeLosses, cancellations, deadline, turns, timings }) + "\n")
+  let nativeSDK
+  if (process.env.HELMR_NATIVE_SDK_PROOF === "1") {
+    await model.cancel({ signal })
+    await model.wait({ signal })
+    nativeSDK = await runNativeSDK(client, computer.id, options.evidence, signal)
+  }
+  const codexStarter = process.env.HELMR_CODEX_STARTER_PROOF === "1" ? await runCodexStarter(client, computer.id, options.evidence, signal) : undefined
+  const claudeStarter = process.env.HELMR_CLAUDE_STARTER_PROOF === "1" ? await runClaudeStarter(client, computer.id, options.evidence, signal) : undefined
+  process.stdout.write(JSON.stringify({ claudeStarter, codexStarter, nativeSDK, computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: peer.turn.id, peerSequence, peerOutcome, nativeSessions, nativeLosses, cancellations, deadline, turns, timings }) + "\n")
 } finally {
   activeOutcome?.controller.abort()
   await activeOutcome?.promise.catch(() => {})

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import { conversation } from "../agents/issue-fixer/conversation"
-import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
+import { ClaudeBridge } from "../agents/issue-fixer/claude-bridge"
 import { claudeModel } from "./native-model"
 
 for (const scenario of ["answer", "background", "malformed", "handler-failure", "interrupt"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
@@ -34,7 +34,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
   const cancel = new AbortController()
   let questionReached!: () => void
   const questionReady = new Promise<void>(resolve => { questionReached = resolve })
-  let harness: ClaudeHarness | undefined
+  let bridge: ClaudeBridge | undefined
   let holds = 0
   let setups = 0, questions = 0, approvals = 0, outputs = 0
   const deadline = setTimeout(() => cancel.abort(new Error("Fixture deadline")), 20000)
@@ -47,7 +47,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_TELEMETRY: "1",
     }
     if (scenario === "answer") {
-      const unstarted = await ClaudeHarness.open(directory, "same-session", environment)
+      const unstarted = await ClaudeBridge.open(directory, "same-session", environment)
       await unstarted.close()
       const reserved = await conversation(directory, "same-session", "claude")
       assert.notEqual(reserved.candidateId, undefined)
@@ -79,11 +79,11 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
       kind: "agent", id: "native-probe", template: undefined!,
       init: async () => {
         setups++
-        harness = await ClaudeHarness.open(directory, "same-session", environment)
-        return harness
+        bridge = await ClaudeBridge.open(directory, "same-session", environment)
+        return bridge
       },
       turn: async (turn: import("../../../sdk/typescript/src/agent").Turn, context) => {
-        const running = (context.initResult as ClaudeHarness).run(turn, turn.input.map(part => part.text).join(""))
+        const running = (context.initResult as ClaudeBridge).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady
@@ -96,7 +96,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, mcp: { getConnectionOptions: async () => { throw new Error("MCP is not configured in this fixture") } }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000 })
     const firstPending = runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-04T00:00:00Z", input: [{type:"text",text:"first unique input"}], source: { kind: "api_key" } })
     const first = await firstPending
-    const processId = harness!.processId
+    const processId = bridge!.processId
     assert.equal(first.status, scenario === "interrupt" ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
@@ -104,7 +104,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     assert.equal(second.status, "completed")
     assert.deepEqual(responses.find(value => value.turnId === "second")?.value, [{ type: "text", text: "native fixture response" }])
     if (["handler-failure", "malformed"].includes(scenario)) assert.equal(responses.some(value => value.turnId === "first"), false)
-    assert.equal(harness!.processId, processId)
+    assert.equal(bridge!.processId, processId)
     assert.equal(setups, 1)
     assert.equal(holds, 0)
     assert.equal(questions, blocked ? 0 : 1)
@@ -119,7 +119,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
   } finally {
     clearTimeout(deadline)
     cancel.abort()
-    await harness?.close()
+    await bridge?.close()
     http.closeAllConnections()
     await new Promise<void>(resolve => http.close(() => resolve()))
     await rm(directory, { recursive: true, force: true })

@@ -235,7 +235,14 @@ export interface TurnInterruptReceipt {
   readonly status: "accepted"
 }
 export interface TurnRef<O = JsonValue> {
+  /**
+   * Requests interruption of this Turn. The receipt and an `interrupted` outcome
+   * record the stop decision; runtime cleanup can still be in progress.
+   * Successor Turns stay gated by Session stop and hold state. Inspect
+   * `session.get()` activity and holds to observe that progress.
+   */
   interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<TurnInterruptReceipt>
+  /** Waits for a terminal Turn outcome, which does not join Session cleanup. */
   wait(options: TurnWaitOptions & { readonly timeout: import("./duration").Duration }): Promise<TimedTurnWaitResult<O>>
   wait(options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome<O>>
   wait(options: TurnWaitOptions): Promise<TurnOutcome<O> | TimedTurnWaitResult<O>>

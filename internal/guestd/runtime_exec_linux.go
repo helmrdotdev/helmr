@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -62,6 +63,7 @@ type imageCommandOptions struct {
 	CgroupNamespace bool
 	CgroupLeaf      string
 	StartProof      bool
+	SessionInit     bool
 	Pty             bool
 }
 
@@ -90,6 +92,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		strconv.FormatBool(opts.CgroupNamespace),
 		opts.CgroupLeaf,
 		strconv.FormatBool(opts.StartProof),
+		strconv.FormatBool(opts.SessionInit),
 		opts.SecretRoot,
 		runtimePath,
 	}
@@ -105,7 +108,10 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 }
 
 func runImageRuntimeInit(args []string, env []string) error {
-	if len(args) < 11 {
+	// Namespace and privilege state is thread-local and must reach the child fork.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if len(args) < 12 {
 		return errors.New("missing image runtime init arguments")
 	}
 	imageRoot := args[0]
@@ -146,9 +152,16 @@ func runImageRuntimeInit(args []string, env []string) error {
 	default:
 		return fmt.Errorf("invalid start proof flag %q", args[8])
 	}
-	secretRoot := args[9]
-	runtimePath := args[10]
-	runtimeArgs := args[11:]
+	sessionInit, err := strconv.ParseBool(args[9])
+	if err != nil {
+		return fmt.Errorf("invalid Session init flag: %w", err)
+	}
+	if sessionInit && !startProof {
+		return errors.New("session init requires start proof")
+	}
+	secretRoot := args[10]
+	runtimePath := args[11]
+	runtimeArgs := args[12:]
 	if cgroupNamespace {
 		if err := enterProcessCgroupNamespace(cgroupLeaf); err != nil {
 			return err
@@ -167,6 +180,9 @@ func runImageRuntimeInit(args []string, env []string) error {
 		return fmt.Errorf("chdir launch cwd: %w", err)
 	}
 	argv := append([]string{runtimePath}, runtimeArgs...)
+	if sessionInit {
+		return runSessionInit(runtimePath, argv, env)
+	}
 	if startProof {
 		syscall.CloseOnExec(4)
 	}

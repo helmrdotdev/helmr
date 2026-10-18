@@ -32,7 +32,7 @@ interface Operation {
 
 // This application owns the server protocol. The managed runtime separately
 // owns process containment and the Session/Turn convergence boundary.
-export class OpenCodeHarness {
+export class OpenCodeBridge {
   private client!: OpencodeClient
   private child!: ChildProcessWithoutNullStreams
   private exited = Promise.resolve()
@@ -47,10 +47,10 @@ export class OpenCodeHarness {
   get idle() { return this.active === undefined }
   get reusable() { return !this.closed }
 
-  static async open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeHarness> {
-    const harness = new OpenCodeHarness(cwd)
-    try { await harness.initialize(helmrSessionId, config, environment); return harness }
-    catch (error) { await harness.close(); throw error }
+  static async open(cwd: string, helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv = process.env): Promise<OpenCodeBridge> {
+    const bridge = new OpenCodeBridge(cwd)
+    try { await bridge.initialize(helmrSessionId, config, environment); return bridge }
+    catch (error) { await bridge.close(); throw error }
   }
 
   private async initialize(helmrSessionId: string, config: Config, environment: NodeJS.ProcessEnv) {

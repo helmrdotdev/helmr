@@ -16,11 +16,21 @@ import { checkSecretBindings, type SecretBindingState } from "./secret-bindings"
 import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
 const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
-// Replaced by the fixture packaging command, before ordinary compilation.
-const computerImage = process.env.HELMR_NATIVE_PERFORMANCE === "1"
-  ? baseImage.copy(source.directory("performance"), "/opt/native-performance")
-      .run(["sh", "/opt/native-performance/prepare-image.sh"])
+// Match the Claude starter's native process-inspection dependency.
+const claudeStarterImage = process.env.HELMR_CLAUDE_STARTER_PROOF === "1"
+  ? baseImage
+      .run(["node", "-e", "const fs = require('node:fs'); fs.mkdirSync('/etc/ssl/certs', { recursive: true }); fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt', require('node:tls').rootCertificates.join(String.fromCharCode(10)) + String.fromCharCode(10))"])
+      .run(["sh", "-ceu", "sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*"])
   : baseImage
+// Replaced by the fixture packaging command, before ordinary compilation.
+const computerImage = process.env.HELMR_NATIVE_SDK_PROOF === "1"
+  ? claudeStarterImage.copy(source.directory("native-sdk-dependencies"), "/workspace/native-sdk")
+      .run(["sh", "/workspace/native-sdk/prepare-image.sh"])
+      .copy(source.directory("native-sdk"), "/workspace/native-sdk")
+  : process.env.HELMR_NATIVE_PERFORMANCE === "1"
+  ? claudeStarterImage.copy(source.directory("performance"), "/opt/native-performance")
+      .run(["sh", "/opt/native-performance/prepare-image.sh"])
+  : claudeStarterImage
 export const workspace = template({
   id: "native-continuation",
   image: computerImage
@@ -42,7 +52,7 @@ function native(definition: typeof nativeCodex) {
       let state: Awaited<ReturnType<typeof definition.init>>
       try { state = await definition.init(context) }
       finally { launches.unsubscribe(observe) }
-      const nativeProcess = children.find(child => child.pid === state.harness.processId)
+      const nativeProcess = children.find(child => child.pid === state.bridge.processId)
       assert(nativeProcess, "expected the native launcher")
       const path = `/workspace/${context.session.id}/setup-count.json`
       let setupCount = 0
@@ -99,7 +109,7 @@ function native(definition: typeof nativeCodex) {
         await unlink(stopPath)
         const gateStartedAt = Date.now()
         const marker = `/workspace/native-stop-settled-${turn.id}.json`
-        await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.harness.processId,
+        await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.bridge.processId,
           nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, commandLock }))
         await rename(`${marker}.tmp`, marker)
         // Authored cleanup deliberately waits for the external fixture to observe
@@ -281,3 +291,9 @@ export const deadline = agent({
   id: "deadline", template: workspace, maxTurnDuration: "30s",
   turn(turn) { return { input: fixtureValue(turn.input) } },
 })
+
+import { createCodexStarter } from "./codex-starter"
+export const codexStarter = createCodexStarter(workspace)
+
+import { createClaudeStarter } from "./claude-starter"
+export const claudeStarter = createClaudeStarter(workspace)

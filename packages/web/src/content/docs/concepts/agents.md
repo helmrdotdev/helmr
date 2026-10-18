@@ -105,12 +105,25 @@ keeps one native conversation for the Session, filters events to that
 conversation, handles native failures, and connects Turn cancellation to native
 abort and completion.
 
-Follow the harness's own permission and cancellation model. Connect
-`turn.signal` to it and wait for its work to stop before the Turn handler settles.
-Helmr owns the Session and Turn lifecycle; the Agent owns adaptation to the
-harness's native protocol. If the [cleanup period](/docs/reference/sdk/agent#cancellation-and-native-sdks)
-expires, Helmr terminates the Session process tree and requires explicit recovery. Bind model
-credentials with [Secrets](/docs/concepts/secrets).
+Use the harness's supported SDK or CLI just as you would in a local application,
+with the Linux dependencies it needs. Keep its native configuration and permission
+model unless your application has a specific reason to change them. Native
+history and resume APIs should own conversation storage; Helmr does not interpret
+or rewrite that history.
+
+Helmr owns input admission, Turn drainage, Session process containment and its
+[persistence guarantees](/docs/concepts/durability). Your Agent maps native input,
+output and questions to Helmr and connects cancellation through `turn.signal` and
+`turn.onCancel`. Await the completion evidence specified by the native API. A
+successful Turn can leave a native server or background task running in the
+Session; native cancellation completion does not imply that every OS descendant
+has exited.
+
+A failed cancellation callback or expired
+[cleanup period](/docs/reference/sdk/agent#cancellation-and-native-sdks) prevents
+reuse, terminates the Session process tree and requires explicit recovery. This
+Session containment is separate from an individual harness's Turn cancellation.
+Bind model credentials with [Secrets](/docs/concepts/secrets).
 
 ## Triggers
 
