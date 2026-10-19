@@ -16,6 +16,7 @@ import (
 )
 
 type Connector struct {
+	restoreMemory   vm.MemorySource
 	cfg             Config
 	artifacts       runtimeArtifacts
 	kernelArgs      string

@@ -12,7 +12,7 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 // PostgreSQL observations are written by the surrounding qualification process.
 // They only observe checkpoint readiness and ordinary Worker physical-stop
 // receipts; the driver never manufactures an allocation or a source fence.
-export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
+export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
  const soakMS = Number(process.env["HELMR_NATIVE_PERFORMANCE_SOAK_MS"] ?? "0")
  assert(Number.isSafeInteger(soakMS) && soakMS >= 0 && soakMS <= 900000, "performance soak must be 0–900000 milliseconds")
  assert(!soakMS || options.performanceKind === "no-op", "performance soak uses the no-op native workload")
@@ -319,11 +319,38 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     assert.equal(fault.kind, options.checkpointFault)
     assert.equal(fault.role, options.checkpointFault === "corrupt-config" ? "vm_config" : "memory")
     assert.equal(fault.originalDigest, checkpoint.runtimeObjects.find(object => object.role === fault.role)?.digest)
-    if (options.checkpointFault === "corrupt-config") {
+    if (options.checkpointFault === "corrupt-config" || options.checkpointFault === "corrupt-memory") {
      assert(fault.corruptedDigest)
      assert.notEqual(fault.originalDigest, fault.corruptedDigest)
     } else { assert(fault.deleteMarkerVersionId); assert.equal(fault.observedAbsent, true) }
-    if (options.checkpointFault === "corrupt-config") {
+    if (options.checkpointFault === "corrupt-config" || options.checkpointFault === "corrupt-memory") {
+     if (options.checkpointFault === "corrupt-memory") {
+      const interrupted = await peer.session.enqueue(fixtureInput("hold"), undefined, { signal })
+      for (;;) {
+       const status = (await interrupted.get({ signal })).status
+       if (status === "running") break
+       assert.equal(status, "queued", "restore trigger terminated before fault activation")
+       await delay(50, undefined, { signal })
+      }
+      await writeFile(options.checkpointObservations + ".activate-fault-request", JSON.stringify({ checkpointId: checkpoint.checkpointId, turnId: interrupted.id }), { flag: "wx", mode: 0o600 })
+      for (;;) {
+       try {
+        const activated = JSON.parse(await readFile(options.checkpointObservations + ".activate-fault-receipt", "utf8"))
+        assert.equal(activated.checkpointId, checkpoint.checkpointId)
+        assert(activated.activatedVersionId)
+        break
+       } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+       await delay(100, undefined, { signal })
+      }
+      const lossDeadline = performance.now() + 30_000
+      for (;;) {
+       const rows: typeof checkpoint[] = JSON.parse(await readFile(options.checkpointObservations, "utf8"))
+       if (rows.some(row => row.checkpointId === checkpoint.checkpointId && row.status === "lost")) break
+       assert(performance.now() < lossDeadline, "live memory fault was not observed within 30 seconds; hydration may have finished before the object swap")
+       await delay(100, undefined, { signal })
+      }
+      assert.equal((await interrupted.wait({ signal })).status, "interrupted", "live memory loss must interrupt the running turn")
+     }
      const recovery = await peer.session.enqueue(fixtureInput("recover-check"), undefined, { signal })
      assert.equal((await recovery.wait({ signal })).status, "completed")
      const recovered = await recovery.get({ signal })
@@ -332,7 +359,9 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      assert.equal(value["count"], 0)
      const retained = value["retained"] as Record<string, unknown>
      assert.equal(retained["nonce"], peerState["nonce"])
-     assert.equal(retained["count"], peerState["count"])
+     if (options.checkpointFault === "corrupt-memory") {
+      assert(typeof retained["count"] === "number" && typeof peerState["count"] === "number" && retained["count"] >= peerState["count"], "disk recovery lost previously saved progress")
+     } else assert.equal(retained["count"], peerState["count"])
      for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds, [])
      for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
      process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns,

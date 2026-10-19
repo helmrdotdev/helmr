@@ -75,6 +75,7 @@ const (
 	nativeExecutionCheckpointRetry nativeExecutionMode = "checkpoint-retry"
 	nativeExecutionCrossHost       nativeExecutionMode = "cross-host"
 	nativeExecutionCorruptConfig   nativeExecutionMode = "corrupt-config"
+	nativeExecutionCorruptMemory   nativeExecutionMode = "corrupt-memory"
 	nativeExecutionMissingMemory   nativeExecutionMode = "missing-memory"
 )
 
@@ -111,6 +112,9 @@ func TestWorkerAgentCrossHostContinuation(t *testing.T) {
 func TestWorkerAgentCorruptCheckpoint(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionCorruptConfig)
 }
+func TestWorkerAgentCorruptMemory(t *testing.T) {
+	runWorkerAgentNativeExecution(t, nativeExecutionCorruptMemory)
+}
 func TestWorkerAgentMissingCheckpointMemory(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionMissingMemory)
 }
@@ -127,7 +131,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	secretBindings := mode == nativeExecutionSecrets
 	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory
 	checkpointFault := ""
-	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionMissingMemory {
+	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionCorruptMemory || mode == nativeExecutionMissingMemory {
 		checkpointFault = string(mode)
 	}
 
@@ -697,7 +701,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			t.Fatal(err)
 		}
 	}
-	if mode == nativeExecutionCorruptConfig {
+	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionCorruptMemory {
 		if err := verifyNativeCheckpointLoss(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
 			t.Fatal(err)
 		}

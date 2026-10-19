@@ -64,7 +64,7 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	config := []byte(`{"checkpoint":"runtime"}`)
 	digest := sha256.Sum256(result.Capture)
 	platform := "sha256:" + strings.Repeat("1", 64)
-	manifest := computercheckpoint.Manifest{CheckpointID: uuid.MustParse(request.CheckpointID), ComputerID: f.Computer, InstanceID: f.Computer, LeaseEpoch: 1, ControlVersion: capture.DesiredVersion, CaptureDigest: digest[:], Config: config, Disk: root, Runtime: vm.CheckpointIdentity{RuntimeBackend: "firecracker", RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0", RuntimeID: platform, KernelDigest: platform, InitramfsDigest: platform, RootfsDigest: platform, VMConfigDigest: sha256sum.DigestBytes(config), VMVCPUCount: 1, CPUConfigDigest: platform}}
+	manifest := computercheckpoint.Manifest{MemoryHeaderDigest: sha256sum.DigestBytes([]byte("header")), CheckpointID: uuid.MustParse(request.CheckpointID), ComputerID: f.Computer, InstanceID: f.Computer, LeaseEpoch: 1, ControlVersion: capture.DesiredVersion, CaptureDigest: digest[:], Config: config, Disk: root, Runtime: vm.CheckpointIdentity{RuntimeBackend: "firecracker", RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0", RuntimeID: platform, KernelDigest: platform, InitramfsDigest: platform, RootfsDigest: platform, VMConfigDigest: sha256sum.DigestBytes(config), VMVCPUCount: 1, CPUConfigDigest: platform}}
 	for _, m := range capture.Sessions {
 		manifest.Members = append(manifest.Members, computercheckpoint.Session{SessionID: uuid.MustParse(m.SessionId), ProcessEpoch: m.ProcessEpoch})
 	}

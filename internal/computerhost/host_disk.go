@@ -27,7 +27,7 @@ func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *
 		return 0, err
 	}
 	var total int64
-	for _, size := range []int64{scratch, disk.SeedCapacity, computerStagingBytes, artifact.MaxProgramPhysicalBytes, artifact.MaxRuntimePhysicalBytes, memory, state, capture.total} {
+	for _, size := range []int64{scratch, disk.SeedCapacity, computerStagingBytes, 2 * artifact.MaxProgramPhysicalBytes, 2 * artifact.MaxRuntimePhysicalBytes, memory, state, capture.total} {
 		if size > math.MaxInt64-total {
 			return 0, reservation.ErrOverflow
 		}

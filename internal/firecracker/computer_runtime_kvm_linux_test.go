@@ -313,16 +313,21 @@ type kvmPublication struct {
 	certified map[string]bool
 }
 
-func (p *kvmPublication) Register(context.Context, blockformat.ObjectInspection) error { return nil }
+func (p *kvmPublication) RegisterBatch(context.Context, []blockformat.ObjectInspection) error {
+	return nil
+}
 func (p *kvmPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	return p.upload(ctx, d, file)
 }
-func (p *kvmPublication) Certify(_ context.Context, e blockformat.ObjectInspection) error {
-	raw, err := json.Marshal(e)
-	if err == nil {
+func (p *kvmPublication) CertifyBatch(_ context.Context, inspections []blockformat.ObjectInspection) error {
+	for _, e := range inspections {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
 		p.certified[string(raw)] = true
 	}
-	return err
+	return nil
 }
 func (p *kvmPublication) Reuse(_ context.Context, e blockformat.ObjectInspection) error {
 	raw, err := json.Marshal(e)

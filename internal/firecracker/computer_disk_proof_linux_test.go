@@ -215,10 +215,12 @@ func computerProofDigest(t *testing.T, path string) [32]byte {
 
 type filesystemPublication struct{ *cas.File }
 
-func (filesystemPublication) Register(context.Context, blockformat.ObjectInspection) error {
+func (filesystemPublication) RegisterBatch(context.Context, []blockformat.ObjectInspection) error {
 	return nil
 }
-func (filesystemPublication) Certify(context.Context, blockformat.ObjectInspection) error { return nil }
+func (filesystemPublication) CertifyBatch(context.Context, []blockformat.ObjectInspection) error {
+	return nil
+}
 func (p filesystemPublication) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	return p.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }

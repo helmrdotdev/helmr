@@ -25,7 +25,6 @@ const (
 	snapshotMemorySuffix      = ".mem"
 	snapshotStateSuffix       = ".vmstate"
 	snapshotScratchPackSuffix = ".scratch.filepack"
-	snapshotMemoryPackSuffix  = ".memory.filepack"
 	readOnlyDriveSuffix       = ".squashfs"
 	rootfsDriveID             = "rootfs"
 	scratchDriveID            = "scratch"
@@ -38,7 +37,7 @@ const (
 	runtimeIPKernelParameter  = "helmr.ip"
 	snapshotBackend           = "firecracker"
 	snapshotCreateType        = "Full"
-	snapshotMemoryBackend     = "File"
+	snapshotMemoryBackend     = "Uffd"
 	machineHugePages          = "None"
 	// Long Sync block requests can delay VMM control traffic and execution grants.
 	// Revisit an official threaded block-device release after qualifying control
@@ -129,7 +128,6 @@ type VMRuntimePathDescriptor struct {
 	SnapshotMemorySuffix      string `json:"snapshot_memory_suffix"`
 	SnapshotStateSuffix       string `json:"snapshot_state_suffix"`
 	SnapshotScratchPackSuffix string `json:"snapshot_scratch_pack_suffix"`
-	SnapshotMemoryPackSuffix  string `json:"snapshot_memory_pack_suffix"`
 	RestoreMemory             string `json:"restore_memory"`
 }
 
@@ -203,7 +201,6 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			JailRoot:             "<jailer_chroot_base>/<firecracker_basename>/<vm_id>/root",
 			SnapshotMemorySuffix: snapshotMemorySuffix, SnapshotStateSuffix: snapshotStateSuffix,
 			SnapshotScratchPackSuffix: snapshotScratchPackSuffix,
-			SnapshotMemoryPackSuffix:  snapshotMemoryPackSuffix,
 			RestoreMemory:             restoreMemoryName,
 		},
 		Network: VMRuntimeNetworkDescriptor{
@@ -220,7 +217,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			RestoreOrder: []string{
 				"recreate_network", "load_paused", "validate_network", "resume_vm", "wait_guest_health",
 			},
-			Protocol: "memory+vmstate+scratch-filepack+manifest.v0",
+			Protocol: "memory-aead-chunks-v1+vmstate+scratch-filepack+manifest.v1",
 		},
 	}
 }

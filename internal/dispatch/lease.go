@@ -99,7 +99,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 
 	if invalidCheckpoint != uuid.Nil() {
 		var bound bool
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(cp.status IN ('ready','restoring') AND cp.disk_save_id=l.restored_from_save_id
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((cp.status IN ('ready','restoring') OR (cp.status='consumed' AND cp.target_lease_epoch=l.epoch)) AND cp.disk_save_id=l.restored_from_save_id
    AND cp.source_lease_epoch<l.epoch AND (cp.target_lease_epoch IS NULL OR cp.target_lease_epoch<=l.epoch),false)
    FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id)=(cp.environment_id,cp.computer_id)
    WHERE cp.environment_id=$1 AND cp.computer_id=$2 AND cp.id=$3 AND l.epoch=$4 FOR NO KEY UPDATE OF cp`, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint, identity.Epoch).Scan(&bound); err != nil {

@@ -10,7 +10,6 @@ locals {
   # block overhead (SpeedFastest uses 64-KiB blocks). AES-GCM adds 36 bytes
   # per 4-MiB record including the end record, plus the 73-byte magic, key fingerprint and salt.
   checkpoint_packed_bytes = {
-    memory  = ceil(var.vm_memory_mib / 4) * (4194304 + 230) + 1048609
     scratch = ceil(var.vm_scratch_disk_mib / 4) * (4194304 + 230) + 1048609
   }
   checkpoint_plain_bytes = merge(local.checkpoint_packed_bytes, { state = 10000000, config = 65536 })
@@ -18,11 +17,13 @@ locals {
     for role, size in local.checkpoint_plain_bytes : role => size + 73 + 36 * (ceil(size / 4194304) + 1)
   }
   # Each live disk Version retains 8 MiB ciphertext and 8 MiB verification cache.
-  worker_slot_memory_mib = var.vm_memory_mib + 16
+  # Restore retains bounded worker buffers and 64 bytes per 256-KiB chunk.
+  worker_slot_memory_mib  = var.vm_memory_mib + 32 + ceil(var.vm_memory_mib * 4 * 64 / 1048576)
+  checkpoint_memory_bytes = var.vm_memory_mib * 1048576 + 96 + var.vm_memory_mib * 4 * 32
   worker_slot_disk_bytes = (
-    (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 16384 + 2 * var.vm_memory_mib) * 1048576 +
+    (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 32768 + 2 * var.vm_memory_mib) * 1048576 +
     10000000 + local.checkpoint_cipher_bytes.state +
-    sum(values(local.checkpoint_packed_bytes)) + sum(values(local.checkpoint_cipher_bytes))
+    local.checkpoint_memory_bytes + sum(values(local.checkpoint_packed_bytes)) + sum(values(local.checkpoint_cipher_bytes))
   )
 
   worker_environment_values = {

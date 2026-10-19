@@ -53,6 +53,18 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 			}
 		}
 	}()
+	hydrationCtx, hydrationCancel := context.WithTimeout(ctx, 5*time.Second)
+	hydrationErr := o.machine.PrepareCheckpoint(hydrationCtx)
+	hydrationCancel()
+	if hydrationErr != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(hydrationErr, context.DeadlineExceeded) {
+			return nil
+		}
+		return hydrationErr
+	}
 	id := uuid.NewV7().String()
 	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, CheckpointID: id, LeaseEpoch: o.identity.Epoch, ChannelCredential: delivery.ChannelCredential}
 	var response workerapi.AgentComputerCaptureResponse
@@ -291,7 +303,7 @@ func (o *ComputerAllocationOwner) abortUncutCheckpoint(ctx context.Context, deli
 }
 
 func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture *agentv1.ComputerSessionCapture, encoded []byte, a vm.SnapshotArtifact) (computercheckpoint.Manifest, []string, error) {
-	m := computercheckpoint.Manifest{LeaseEpoch: o.identity.Epoch, ControlVersion: capture.GetDesiredVersion(), Config: a.Manifest, Disk: a.Computer.Capture.Root(), Runtime: vm.CheckpointIdentity{RuntimeBackend: a.RuntimeBackend, RuntimeArch: a.RuntimeArch, VMRuntimeContract: a.VMRuntimeContract, RuntimeID: a.RuntimeID, KernelDigest: a.KernelDigest, InitramfsDigest: a.InitramfsDigest, RootfsDigest: a.RootfsDigest, VMConfigDigest: a.VMConfigDigest, VMVCPUCount: a.VMVCPUCount, CPUConfigDigest: a.CPUConfigDigest}}
+	m := computercheckpoint.Manifest{BootProgram: o.bootProgram, LeaseEpoch: o.identity.Epoch, ControlVersion: capture.GetDesiredVersion(), Config: a.Manifest, Disk: a.Computer.Capture.Root(), Runtime: vm.CheckpointIdentity{RuntimeBackend: a.RuntimeBackend, RuntimeArch: a.RuntimeArch, VMRuntimeContract: a.VMRuntimeContract, RuntimeID: a.RuntimeID, KernelDigest: a.KernelDigest, InitramfsDigest: a.InitramfsDigest, RootfsDigest: a.RootfsDigest, VMConfigDigest: a.VMConfigDigest, VMVCPUCount: a.VMVCPUCount, CPUConfigDigest: a.CPUConfigDigest}}
 	var err error
 	m.CheckpointID, err = uuid.Parse(capture.GetCheckpointId())
 	if err != nil {
@@ -357,7 +369,14 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 		if err != nil {
 			return m, nil, err
 		}
-		object, path, err := encryptCheckpointObject(ctx, o.machines.CheckpointCipher, directory, capture.GetCheckpointId(), item.role, item.media, source, item.limit)
+		var object computercheckpoint.Object
+		var path string
+		if item.role == "memory" {
+			purpose := o.identity.EnvironmentID + "/" + o.identity.OwnerID + "/" + capture.GetCheckpointId() + "/memory"
+			object, path, m.MemoryHeaderDigest, err = encryptCheckpointMemory(ctx, o.machines.CheckpointCipher, directory, purpose, source, shape.MemoryBytes)
+		} else {
+			object, path, err = encryptCheckpointObject(ctx, o.machines.CheckpointCipher, directory, capture.GetCheckpointId(), item.role, item.media, source, item.limit)
+		}
 		err = errors.Join(err, source.Close())
 		if err != nil {
 			return m, nil, err

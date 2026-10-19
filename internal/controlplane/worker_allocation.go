@@ -1,8 +1,11 @@
 package controlplane
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
@@ -196,6 +199,31 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 		return
 	}
 	response := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{VersionID: source.BaseVersion, Root: source.Root, WriteKeyID: source.WriteKeyID.String(), Keys: make([]workerapi.ComputerKeyMaterial, 0, len(source.Keys))}, ImageConfig: boot.ImageConfig, RootfsDigest: boot.RootfsDigest}
+
+	selected, err := session.ReadAllocationProgram(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	if err != nil {
+		server.writeAllocationError(w, err)
+		return
+	}
+	if selected != nil {
+		prefetchCtx, prefetchCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		manifest, readErr := server.readExecutableBundle(prefetchCtx, selected.BundleDigest)
+		prefetchCancel()
+		if readErr == nil {
+			program, programErr := runtimeProgram(selected.DeploymentID.String(), manifest)
+			readErr = programErr
+			if readErr == nil {
+				response.BootProgram = &program
+			}
+		}
+		if readErr != nil {
+			if r.Context().Err() != nil {
+				server.writeAllocationError(w, r.Context().Err())
+				return
+			}
+			slog.Warn("Computer boot Program prefetch unavailable", "computer_id", identity.OwnerID, "error", readErr)
+		}
+	}
 	for _, key := range source.Keys {
 		response.Disk.Keys = append(response.Disk.Keys, workerapi.ComputerKeyMaterial{Scope: source.Scope, ID: key.ID.String(), Key: key.Key})
 	}

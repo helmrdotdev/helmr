@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/reservation"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 const mebibyte = int64(1024 * 1024)
@@ -21,9 +22,13 @@ func instanceReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64
 		guestEphemeralDiskMiB > math.MaxInt64/mebibyte {
 		return reservation.Vector{}, errors.New("instance capacity vector is invalid")
 	}
+	memoryBytes, err := HostMemoryPerSlot(memoryMiB)
+	if err != nil {
+		return reservation.Vector{}, err
+	}
 	return reservation.Vector{
 		CPUMillis:     cpuMillis,
-		MemoryBytes:   memoryMiB*mebibyte + disk.VersionCacheBytes,
+		MemoryBytes:   memoryBytes,
 		HostDiskBytes: guestEphemeralDiskMiB * mebibyte,
 		VMSlots:       1,
 	}, nil
@@ -44,4 +49,19 @@ func instanceReservationVectorWithProjection(
 	}
 	request.HostDiskBytes += projectionBytes
 	return request, nil
+}
+
+func HostMemoryPerSlot(memoryMiB int64) (int64, error) {
+	if memoryMiB <= 0 || memoryMiB > math.MaxInt64/mebibyte {
+		return 0, errors.New("invalid VM memory capacity")
+	}
+	memory := memoryMiB * mebibyte
+	overhead, err := vm.MemoryRestoreOverhead(memory)
+	if err != nil {
+		return 0, err
+	}
+	if memory > math.MaxInt64-disk.VersionCacheBytes-overhead {
+		return 0, reservation.ErrOverflow
+	}
+	return memory + disk.VersionCacheBytes + overhead, nil
 }

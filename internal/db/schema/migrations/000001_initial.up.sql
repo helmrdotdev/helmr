@@ -1676,7 +1676,7 @@ CREATE TABLE checkpoints (
     CHECK (status <> 'restoring' OR target_lease_epoch IS NOT NULL),
     CHECK (restore_identity IS NULL OR target_lease_epoch IS NOT NULL),
     FOREIGN KEY (environment_id, computer_id, target_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch),
-    CHECK (controls_reconciled_at IS NULL OR status='consumed'),
+    CHECK (controls_reconciled_at IS NULL OR status IN ('consumed','lost')),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, computer_id, id),
     UNIQUE (environment_id, computer_id, control_version),

@@ -152,3 +152,5 @@ func (unusedCheckpoint) SnapshotLimits() (vm.SnapshotLimits, error) {
 func (unusedCheckpoint) BeginCheckpoint(context.Context, vm.SnapshotRequest) (vm.CheckpointCapture, error) {
 	return nil, errors.New("unexpected checkpoint capture")
 }
+
+func (unusedCheckpoint) PrepareCheckpoint(context.Context) error { return nil }

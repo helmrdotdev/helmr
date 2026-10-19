@@ -132,3 +132,17 @@ func configureProgramLoop(image *mountedProgramImage, file *os.File) error {
 
 	return nil
 }
+
+func validateBootProgramMounts() error {
+	mounts := bootProgramMounts()
+	for _, root := range []string{mounts.Runtime, mounts.Artifact} {
+		var stat unix.Statfs_t
+		if err := unix.Statfs(root, &stat); err != nil {
+			return err
+		}
+		if stat.Type != unix.SQUASHFS_MAGIC || stat.Flags&unix.ST_RDONLY == 0 {
+			return errors.New("boot Program is not a read-only squashfs mount")
+		}
+	}
+	return nil
+}

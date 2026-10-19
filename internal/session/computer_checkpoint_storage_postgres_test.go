@@ -54,7 +54,7 @@ func checkpointStorageForSaveFixture(t *testing.T, s *saveStorageFixture) checkp
 	config := []byte(`{"config":"captured"}`)
 	digest := "sha256:" + strings.Repeat("1", 64)
 	captureDigest := sha256.Sum256(capture.Request)
-	m := computercheckpoint.Manifest{CheckpointID: req.CheckpointID, ComputerID: f.computer, InstanceID: f.computer, LeaseEpoch: 1, ControlVersion: p.DesiredVersion, CaptureDigest: captureDigest[:], Config: config, Disk: root, Runtime: vm.CheckpointIdentity{RuntimeBackend: "firecracker", RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0", RuntimeID: digest, KernelDigest: digest, InitramfsDigest: digest, RootfsDigest: digest, VMConfigDigest: sha256sum.DigestBytes(config), VMVCPUCount: 1, CPUConfigDigest: digest}}
+	m := computercheckpoint.Manifest{MemoryHeaderDigest: sha256sum.DigestBytes([]byte("header")), CheckpointID: req.CheckpointID, ComputerID: f.computer, InstanceID: f.computer, LeaseEpoch: 1, ControlVersion: p.DesiredVersion, CaptureDigest: captureDigest[:], Config: config, Disk: root, Runtime: vm.CheckpointIdentity{RuntimeBackend: "firecracker", RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0", RuntimeID: digest, KernelDigest: digest, InitramfsDigest: digest, RootfsDigest: digest, VMConfigDigest: sha256sum.DigestBytes(config), VMVCPUCount: 1, CPUConfigDigest: digest}}
 	for _, v := range p.Sessions {
 		id, err := uuid.Parse(v.SessionId)
 		if err != nil {

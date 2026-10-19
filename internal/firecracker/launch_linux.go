@@ -168,7 +168,8 @@ func (c *Connector) start(ctx context.Context, mode launchMode, instanceID strin
 	if _, err := machine.Open(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 		defer cancel()
-		return nil, errors.Join(err, machine.Close(cleanupCtx))
+		closeErr := machine.Close(cleanupCtx)
+		return nil, errors.Join(err, machine.memoryPager.failure(), closeErr)
 	}
 	return machine, nil
 }
@@ -358,6 +359,17 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	// Keep it separate from the startup request so prepared machines can outlive
 	// a background warm command after boot succeeds.
 	machineCtx, machineCancel := context.WithCancel(context.Background())
+	var pager *memoryPager
+	if c.restoreMemory != nil {
+		opts = append(opts, withLazyMemoryRestore(c.restoreMemory, machineCtx, machineCancel, &pager))
+	}
+	defer func() {
+		if retErr != nil {
+			machineCancel()
+			closeErr := pager.Close()
+			retErr = errors.Join(retErr, pager.failure(), closeErr)
+		}
+	}()
 	phaseStarted = time.Now()
 	sdkMachine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
 	reportPhase(recordPhase, vm.Phase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
@@ -408,17 +420,22 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 			return nil, fmt.Errorf("resume restored Firecracker machine: %w", err)
 		}
 		reportPhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		if pager != nil {
+			pager.recordPhase = recordPhase
+		}
+		pager.StartHydration()
 	}
 	sdkMachine.Logger().Printf("waiting for guest health")
 	phaseStarted = time.Now()
 	err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
-	reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err), Memory: pager.stats()})
 	if err != nil {
 		started = false
 		return nil, err
 	}
 	sdkMachine.Logger().Printf("guest health ready")
 	machine := &guestMachine{
+		memoryPager:     pager,
 		machine:         sdkMachine,
 		machineCancel:   machineCancel,
 		machineExit:     machineExit,

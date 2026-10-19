@@ -129,3 +129,21 @@ func checkpointObjectReadError(err error) error {
 	}
 	return err
 }
+
+func encryptCheckpointMemory(ctx context.Context, cipher *CheckpointEncryptor, directory, purpose string, plaintext io.Reader, size int64) (computercheckpoint.Object, string, string, error) {
+	file, err := os.CreateTemp(directory, "memory-encrypted-")
+	if err != nil {
+		return computercheckpoint.Object{}, "", "", err
+	}
+	hash := sha256.New()
+	header, err := cipher.encryptMemory(ctx, plaintext, io.MultiWriter(file, hash), purpose, size)
+	if err == nil {
+		err = file.Chmod(0400)
+	}
+	info, statErr := file.Stat()
+	err = errors.Join(err, statErr, file.Close())
+	if err != nil {
+		return computercheckpoint.Object{}, file.Name(), "", err
+	}
+	return computercheckpoint.Object{Digest: sha256sum.FormatDigest(hash.Sum(nil)), SizeBytes: info.Size(), MediaType: cas.CheckpointMemoryMediaType}, file.Name(), header, nil
+}

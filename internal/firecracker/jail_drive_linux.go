@@ -315,13 +315,17 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerD
 						}
 					}
 				}
-				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
-					return fmt.Errorf("link snapshot memory into jail: %w", err)
+				if memoryPath != "" {
+					if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
+						return fmt.Errorf("link snapshot memory into jail: %w", err)
+					}
 				}
 				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot state into jail: %w", err)
 				}
-				sdkMachine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
+				if memoryPath != "" {
+					sdkMachine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
+				}
 				sdkMachine.Cfg.Snapshot.SnapshotPath = path.Join("/", filepath.Base(statePath))
 				return nil
 			},

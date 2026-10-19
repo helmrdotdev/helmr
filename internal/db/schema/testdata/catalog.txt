@@ -860,6 +860,7 @@ column template_definitions.environment_id uuid not null
 column template_definitions.image_spec_id uuid not null
 column template_definitions.max_image_age_ms bigint
 column template_definitions.memory_bytes bigint not null
+column template_definitions.prepare boolean not null default false
 column template_definitions.refresh_every_ms bigint
 column template_definitions.template_id uuid not null
 column templates.environment_id uuid not null
@@ -1119,7 +1120,7 @@ constraint checkpoints c CHECK ((status <> ALL (ARRAY['ready'::text, 'restoring'
 constraint checkpoints c CHECK ((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) = (terminal_evidence IS NOT NULL))
 constraint checkpoints c CHECK ((target_lease_epoch IS NULL) = (restore_control_version IS NULL))
 constraint checkpoints c CHECK (control_version > 0)
-constraint checkpoints c CHECK (controls_reconciled_at IS NULL OR status = 'consumed'::text)
+constraint checkpoints c CHECK (controls_reconciled_at IS NULL OR (status = ANY (ARRAY['consumed'::text, 'lost'::text])))
 constraint checkpoints c CHECK (octet_length(abort_identity) = 32)
 constraint checkpoints c CHECK (octet_length(capture_digest) = 32)
 constraint checkpoints c CHECK (octet_length(capture_request) >= 1 AND octet_length(capture_request) <= 16777216)

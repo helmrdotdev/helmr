@@ -32,6 +32,9 @@ func (s *guestMachine) BeginCheckpoint(ctx context.Context, request vm.SnapshotR
 	if strings.TrimSpace(request.ID) == "" {
 		return nil, errors.New("checkpoint identity is required")
 	}
+	if err := s.PrepareCheckpoint(ctx); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
@@ -157,7 +160,6 @@ func (c *checkpointCapture) discardUntransferredSnapshot() error {
 			filepath.Join(c.machine.jailRoot, id+snapshotMemorySuffix),
 			filepath.Join(c.machine.jailRoot, id+snapshotStateSuffix),
 			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotScratchPackSuffix),
-			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotMemoryPackSuffix),
 		)
 	}
 	var result error

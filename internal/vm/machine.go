@@ -16,6 +16,8 @@ import (
 // Snapshot format bounds shared by producers and host capacity admission.
 const (
 	SnapshotStateLimit  int64 = 10_000_000
+	MemoryChunkBytes          = 256 << 10
+	MemoryReadBytes           = 1 << 20
 	SnapshotConfigLimit int64 = 65_536
 )
 
@@ -92,6 +94,8 @@ type CheckpointCapture interface {
 
 type CheckpointableMachine interface {
 	GuestControlMachine
+	// PrepareCheckpoint finishes deferred memory reads before capture admission.
+	PrepareCheckpoint(context.Context) error
 	SnapshotLimits() (SnapshotLimits, error)
 	BeginCheckpoint(context.Context, SnapshotRequest) (CheckpointCapture, error)
 	CaptureComputer(context.Context) (*ComputerSnapshot, error)
@@ -202,6 +206,15 @@ type SnapshotFile struct {
 	Filepack  *FilepackStats
 }
 
+// MemorySource authenticates each bounded logical read before returning bytes.
+// Reads fit within one MemoryReadBytes window of authenticated chunks. Its owner retains it until all
+// pager and hydration jobs have joined, including failure teardown.
+type MemorySource interface {
+	MemoryReadStats() MemoryReadStats
+	Size() int64
+	ReadAt(context.Context, []byte, int64) (int, error)
+}
+
 type RestoreRequest struct {
 	Resources            Resources
 	ID                   string
@@ -212,13 +225,14 @@ type RestoreRequest struct {
 	VMStateMediaType     string
 	ScratchDisk          string
 	ScratchDiskMediaType string
-	Memory               []string
-	MemoryMediaTypes     []string
-	Manifest             []byte
-	Checkpoint           CheckpointIdentity
-	Topology             Topology
-	ReadOnlyDrives       []ReadOnlyDrive
-	RecordPhase          func(Phase)
+	MemorySource         MemorySource
+	// EagerMemory materializes the same format for controlled diagnostics.
+	EagerMemory    bool
+	Manifest       []byte
+	Checkpoint     CheckpointIdentity
+	Topology       Topology
+	ReadOnlyDrives []ReadOnlyDrive
+	RecordPhase    func(Phase)
 }
 
 type MaterializePurpose uint8
@@ -352,6 +366,20 @@ type Phase struct {
 	MediaType  string
 	ErrorClass string
 	Filepack   *FilepackStats
+	Memory     *MemoryRestoreStats
+}
+
+type MemoryReadStats struct {
+	RangeRequests    int64
+	CiphertextBytes  int64
+	DecodeDurationMs int64
+}
+
+type MemoryRestoreStats struct {
+	MemoryReadStats
+	DemandFaults int64
+	LoadedChunks int64
+	TotalChunks  int64
 }
 
 type FilepackStats struct {
@@ -400,4 +428,15 @@ type SnapshotLimits struct {
 	ScratchBytes  int64
 	StateBytes    int64
 	ConfigBytes   int64
+}
+
+// MemoryRestoreOverhead funds four bounded decoder/copy jobs and the source
+// index plus pager chunk state. It is charged even on a fresh VM because that
+// VM may later produce a checkpoint under the same physical reservation.
+func MemoryRestoreOverhead(memoryBytes int64) (int64, error) {
+	if memoryBytes <= 0 {
+		return 0, errors.New("memory capacity must be positive")
+	}
+	chunks := (memoryBytes-1)/MemoryChunkBytes + 1
+	return 16*(1<<20) + chunks*64, nil
 }

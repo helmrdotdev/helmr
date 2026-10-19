@@ -263,8 +263,8 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		VMStateMediaType:     cas.CheckpointVMStateMediaType,
 		ScratchDisk:          scratchPack,
 		ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType,
-		Memory:               []string{memoryPack},
-		MemoryMediaTypes:     []string{cas.CheckpointMemoryMediaType},
+		MemorySource:         testMemorySource{size: cfg.MemoryMiB * (1 << 20), err: vm.ErrInvalidCheckpointContent},
+		EagerMemory:          true,
 		Manifest:             manifestBytes,
 		Checkpoint:           identity,
 		RecordPhase: func(phase vm.Phase) {
@@ -275,7 +275,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	}
 	_, err := connector.restore(context.Background(), request)
 
-	if !errors.Is(err, filepack.ErrInvalidContent) || !strings.Contains(err.Error(), "unpack checkpoint memory") {
+	if !errors.Is(err, vm.ErrInvalidCheckpointContent) {
 		t.Fatalf("err = %v, want memory unpack failure", err)
 	}
 	if !hasPhase(phases, "restore_validate_identity", "") {
@@ -284,7 +284,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if !hasPhase(phases, "restore_unpack_scratch_filepack", "") {
 		t.Fatalf("missing scratch unpack phase: %+v", phases)
 	}
-	if !hasPhase(phases, "restore_unpack_memory_filepack", "io") {
+	if !hasPhase(phases, "restore_materialize_memory", "unknown") {
 		t.Fatalf("missing memory unpack failure phase: %+v", phases)
 	}
 	entries, readErr := os.ReadDir(cfg.StateDir)
@@ -524,9 +524,33 @@ func TestRestoreRejectsResourceMismatchBeforeUnpack(t *testing.T) {
 	for _, resources := range []vm.Resources{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
 		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerInstance,
 			Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.RuntimeID}, Topology: topology, Resources: resources,
-			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, Memory: []string{"not-read"}, MemoryMediaTypes: []string{cas.CheckpointMemoryMediaType}})
+			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, MemorySource: testMemorySource{size: cfg.MemoryMiB * (1 << 20)}})
 		if err == nil || !strings.Contains(err.Error(), "does not match runtime reservation") {
 			t.Fatalf("error=%v", err)
 		}
 	}
 }
+
+type testMemorySource struct {
+	path string
+	size int64
+	err  error
+}
+
+func (s testMemorySource) Size() int64 { return s.size }
+func (s testMemorySource) ReadAt(ctx context.Context, data []byte, offset int64) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if s.err != nil {
+		return 0, s.err
+	}
+	file, err := os.Open(s.path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	return file.ReadAt(data, offset)
+}
+
+func (testMemorySource) MemoryReadStats() vm.MemoryReadStats { return vm.MemoryReadStats{} }

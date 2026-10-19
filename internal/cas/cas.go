@@ -11,7 +11,7 @@ import (
 )
 
 const CheckpointVMStateMediaType = "application/vnd.helmr.firecracker.vm-state.v0"
-const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v0+filepack"
+const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v1+aead-chunks"
 const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v0+filepack"
 const CheckpointVMConfigMediaType = "application/vnd.helmr.checkpoint.runtime-config.v0+json"
 const ExpirableTagKey = "helmr-expirable"

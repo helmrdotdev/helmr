@@ -491,15 +491,11 @@ func TestCheckpointFailureCleanup(t *testing.T) {
 			id := safeSnapshotID(c.request.ID)
 			memoryPath := filepath.Join(s.jailRoot, id+snapshotMemorySuffix)
 			statePath := filepath.Join(s.jailRoot, id+snapshotStateSuffix)
-			packedMemory := filepath.Join(filepath.Dir(s.scratchDisk), id+snapshotMemoryPackSuffix)
 			packedScratch := filepath.Join(filepath.Dir(s.scratchDisk), id+snapshotScratchPackSuffix)
 			if err := os.WriteFile(memoryPath, []byte("memory"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(statePath, []byte("state"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := filepack.Pack(t.Context(), memoryPath, packedMemory, filepack.MemoryRole); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := filepack.Pack(t.Context(), s.scratchDisk, packedScratch, filepack.ScratchRole); err != nil {
@@ -531,7 +527,7 @@ func TestCheckpointFailureCleanup(t *testing.T) {
 			if err := c.ResumeGuestControl(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{memoryPath, statePath, packedMemory, packedScratch} {
+			for _, path := range []string{memoryPath, statePath, packedScratch} {
 				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("capture residue at %s: %v", path, err)
 				}

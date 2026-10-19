@@ -99,7 +99,7 @@ func TestComputerCheckpointRestoreJoinsBoundedStaging(t *testing.T) {
 			target := &ComputerAllocationOwner{
 				identity: identity, client: client,
 				checkpointKeyUnavailable: func() { paused = true },
-				machines:                 &PreparedMachines{Backend: backend, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: store, TempDir: t.TempDir()},
+				machines:                 &PreparedMachines{Backend: backend, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: store, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()},
 			}
 			delivery := workerapi.ComputerAllocationDelivery{Identity: identity, BaseVersion: client.save, RestoredFrom: client.save, Shape: workerapi.AllocationShape{VMPlatformID: manifest.Runtime.RuntimeID, VCPUCount: 1, MemoryBytes: 4096, ScratchBytes: 4096}}
 			material := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{Root: manifest.Disk}}

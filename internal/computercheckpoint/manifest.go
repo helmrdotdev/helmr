@@ -21,20 +21,22 @@ var ErrInvalidManifest = errors.New("invalid Computer checkpoint manifest")
 // the VM identity hashes them. Runtime objects are encrypted by the host's
 // checkpoint pipeline before their descriptors are registered.
 type Manifest struct {
-	CheckpointID   uuid.UUID             `json:"checkpoint_id"`
-	ComputerID     uuid.UUID             `json:"computer_id"`
-	InstanceID     uuid.UUID             `json:"instance_id"`
-	LeaseEpoch     int64                 `json:"lease_epoch"`
-	ControlVersion int64                 `json:"control_version"`
-	CaptureDigest  []byte                `json:"capture_digest"`
-	Members        []Session             `json:"members"`
-	Runtime        vm.CheckpointIdentity `json:"runtime"`
-	Config         []byte                `json:"config"`
-	Disk           disk.VersionRoot      `json:"disk"`
-	VMConfig       Object                `json:"vm_config"`
-	VMState        Object                `json:"vm_state"`
-	Memory         Object                `json:"memory"`
-	ScratchDisk    Object                `json:"scratch_disk"`
+	BootProgram        *Program              `json:"boot_program,omitempty"`
+	MemoryHeaderDigest string                `json:"memory_header_digest,omitempty"`
+	CheckpointID       uuid.UUID             `json:"checkpoint_id"`
+	ComputerID         uuid.UUID             `json:"computer_id"`
+	InstanceID         uuid.UUID             `json:"instance_id"`
+	LeaseEpoch         int64                 `json:"lease_epoch"`
+	ControlVersion     int64                 `json:"control_version"`
+	CaptureDigest      []byte                `json:"capture_digest"`
+	Members            []Session             `json:"members"`
+	Runtime            vm.CheckpointIdentity `json:"runtime"`
+	Config             []byte                `json:"config"`
+	Disk               disk.VersionRoot      `json:"disk"`
+	VMConfig           Object                `json:"vm_config"`
+	VMState            Object                `json:"vm_state"`
+	Memory             Object                `json:"memory"`
+	ScratchDisk        Object                `json:"scratch_disk"`
 }
 
 type Session struct {
@@ -60,6 +62,12 @@ func (m Manifest) Objects() []RuntimeObject {
 	}
 }
 func (m Manifest) Encode() ([]byte, error) {
+	if !sha256sum.ValidDigest(m.MemoryHeaderDigest) {
+		return nil, ErrInvalidManifest
+	}
+	if err := m.BootProgram.Validate(); err != nil {
+		return nil, ErrInvalidManifest
+	}
 	if m.CheckpointID == uuid.Nil() || m.ComputerID == uuid.Nil() || m.InstanceID == uuid.Nil() || m.LeaseEpoch <= 0 || m.ControlVersion <= 0 || len(m.CaptureDigest) != 32 || len(m.Members) == 0 || int64(len(m.Config)) > vm.SnapshotConfigLimit || !json.Valid(m.Config) || m.Runtime.VMConfigDigest != sha256sum.DigestBytes(m.Config) {
 		return nil, ErrInvalidManifest
 	}
