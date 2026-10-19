@@ -27,6 +27,8 @@ type entry struct {
 	used       uint64
 }
 
+// Stats counts successful opens, including leases whose consumers may not read.
+// Hits is an acquisition counter, not a measure of bytes served or saved I/O.
 type Stats struct {
 	Hits, Misses, Seeds, Evictions uint64
 	SeededBytes                    int64
