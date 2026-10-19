@@ -139,7 +139,7 @@ func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch i
 	if err != nil {
 		return err
 	}
-	return dbnotify.Notify(ctx, tx, "dispatch", "worker:"+host.String())
+	return dbnotify.Notify(ctx, tx, "dispatch", "capacity", "worker:"+host.String())
 }
 
 // LoseLeaseCheckpoints settles the unfinished checkpoints owned by a lease
@@ -297,7 +297,7 @@ func RequestSave(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch 
 	if err != nil {
 		return save, err
 	}
-	return save, notifyComputerChanged(ctx, tx, env, computer)
+	return save, notifyComputerReaders(ctx, tx, env, computer)
 }
 
 // MarkPreparationFailed records that a Computer's image never became ready

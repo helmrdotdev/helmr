@@ -204,7 +204,7 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, gro
 			}
 		}
 		if row.TransitionApplied {
-			return dbnotify.Notify(ctx, tx, "dispatch")
+			return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 		}
 		return nil
 	})

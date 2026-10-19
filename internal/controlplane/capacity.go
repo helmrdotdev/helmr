@@ -58,8 +58,13 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireCapacity)
 			r.Get("/deployment", s.capacityDeployment)
+			r.Get("/updates", s.streamCapacityUpdates)
 			r.Get("/worker-groups/resolve", s.capacityResolveWorkerGroup)
 			r.Get("/worker-groups/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).
+				Post("/worker-groups/{workerGroupID}/pools", s.capacityCreateWorkerPool)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).
+				Post("/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable", s.capacityDisableWorkerPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
 				Put("/worker-groups/{workerGroupID}/primary-pool", s.capacitySelectWorkerGroupPrimaryPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
@@ -363,4 +368,60 @@ func (s *Server) capacityDeployment(w http.ResponseWriter, r *http.Request) {
 		Release: version.Version, SourceCommit: version.SourceCommit,
 		AppliedSchemaVersion: applied, SchemaDirty: dirty, WorkerRevision: workerapi.APIVersion,
 	})
+}
+
+func (s *Server) capacityCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
+	groupID, ok := capacityWorkerGroupID(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Name                      string `json:"name"`
+		ExpectedGroupClaimVersion int64  `json:"expected_group_claim_version"`
+	}
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker pool request JSON: %w", err))
+		return
+	}
+	_, created, err := workergroup.CreatePool(r.Context(), s.tx, audit.CapacityAuthority(), groupID, request.Name, request.ExpectedGroupClaimVersion)
+	if err != nil {
+		s.writeWorkerGroupError(w, err)
+		return
+	}
+	pool, err := workergroup.ResolvePool(r.Context(), s.db, groupID, created.Name)
+	if err != nil {
+		s.writeWorkerGroupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, pool)
+}
+
+func (s *Server) capacityDisableWorkerPool(w http.ResponseWriter, r *http.Request) {
+	groupID, ok := capacityWorkerGroupID(w, r)
+	if !ok {
+		return
+	}
+	poolID, err := capacityOptionalPoolID(chi.URLParam(r, "workerPoolID"))
+	if err != nil || poolID == uuid.Nil() {
+		writeError(w, badRequest(errors.New("workerPoolID must be a canonical UUIDv7")))
+		return
+	}
+	var request struct {
+		ExpectedPoolClaimVersion int64 `json:"expected_pool_claim_version"`
+	}
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker pool lifecycle JSON: %w", err))
+		return
+	}
+	_, disabled, err := workergroup.DisablePool(r.Context(), s.tx, audit.CapacityAuthority(), groupID, poolID, request.ExpectedPoolClaimVersion)
+	if err != nil {
+		s.writeWorkerGroupError(w, err)
+		return
+	}
+	pool, err := workergroup.ResolvePool(r.Context(), s.db, groupID, disabled.Name)
+	if err != nil {
+		s.writeWorkerGroupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, pool)
 }

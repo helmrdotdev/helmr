@@ -79,7 +79,7 @@ func IssueHostCredential(ctx context.Context, txb db.TxBeginner, cfg HostAuthCon
 		if err != nil {
 			return err
 		}
-		return dbnotify.Notify(ctx, tx, "dispatch")
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
 	return result, err
 }

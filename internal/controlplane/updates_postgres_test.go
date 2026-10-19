@@ -116,3 +116,66 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 		t.Fatal("revoked user reconnected")
 	}
 }
+
+func TestCapacityUpdateStreamUsesDedicatedAuthorityAndCommittedDemand(t *testing.T) {
+	f := sessiontest.New(t)
+	cfg := completeServerConfig(t)
+	cfg.DB, cfg.TX = db.New(f.Pool), f.Pool
+	cfg.CapacityToken = capacityTestToken()
+	handler, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	ready, unsubscribe := cfg.Changes.Subscribe("ready")
+	defer unsubscribe()
+	joined := make(chan error, 1)
+	go func() {
+		joined <- cfg.Changes.Run(ctx, f.Pool.Config().ConnConfig, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	defer func() { cancel(); <-joined }()
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal("listener did not start")
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	for _, token := range []string{"", "hlmr_product_token", capacityTestToken()} {
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/capacity/v1/updates", nil)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != capacityTestToken() {
+			response.Body.Close()
+			if response.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("invalid token status=%d", response.StatusCode)
+			}
+			continue
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("stream status=%d", response.StatusCode)
+		}
+		scanner := bufio.NewScanner(response.Body)
+		readChange := func() {
+			t.Helper()
+			for scanner.Scan() {
+				if scanner.Text() == "event: change" {
+					return
+				}
+			}
+			t.Fatalf("missing change: %v", scanner.Err())
+		}
+		readChange()
+		if _, err := session.ControlSession(ctx, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "capacity-stream-control"}); err != nil {
+			t.Fatal(err)
+		}
+		readChange()
+	}
+}
