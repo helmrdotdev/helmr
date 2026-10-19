@@ -53,9 +53,9 @@ func TestPreparationExecutesAuthoredCodeAndJoinsDescendants(t *testing.T) {
 		}
 	}
 	write(filepath.Join(program, "package.json"), `{"type":"module"}`)
-	write(filepath.Join(program, "helmr/definition-index.json"), `{"apiVersion":"helmr.definition-index.v1","agents":[],"computers":[{"id":"repo","modulePath":"helmr/app/entry-0.mjs","exportName":"repo","throughAgent":false}]}`)
+	write(filepath.Join(program, "helmr/definition-index.json"), `{"apiVersion":"helmr.definition-index.v1","agents":[],"templates":[{"id":"repo","modulePath":"helmr/app/entry-0.mjs","exportName":"repo","throughAgent":false}]}`)
 	write(filepath.Join(program, "helmr/app/entry-0.mjs"), `import fs from 'node:fs';import {spawn} from 'node:child_process';
-export const repo={kind:'computer',id:'repo',async prepare(build){
+export const repo={kind:'template',id:'repo',async prepare(build){
  await build.exec([process.execPath,'-e',"require('node:fs').writeFileSync('/workspace/prepared',process.env.BUILD_TOKEN)"]);
  fs.writeFileSync('/workspace/prepared-file',fs.readFileSync('/etc/helmr-preparation-token'));
  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'inherit'});

@@ -45,6 +45,19 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	if occupied {
 		return nil
 	}
+	// Existing attached Computers can consume only their original build or its
+	// direct successor. Let that chain own the next build after Secret rotation.
+	var successorPending bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
+ WHERE p.environment_id=$1 AND p.image_spec_id=$2
+ AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
+ AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
+		return err
+	}
+	if successorPending {
+		return nil
+	}
 	var timeout int64
 	if err := tx.QueryRow(ctx, `SELECT preparation_timeout_ms FROM environments WHERE id=$1`, env).Scan(&timeout); err != nil {
 		return err
