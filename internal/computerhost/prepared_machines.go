@@ -91,17 +91,19 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       program.Runtime.SizeBytes,
 	}
+	started := time.Now()
 	runtimeSnapshot, err := localcopy.ReadRuntime(
 		ctx,
 		p.PlatformStore,
 		tempDir,
 		runtimeDescriptor,
 	)
+	p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return nil, err
 	}
 	closeSnapshots := func() error { return runtimeSnapshot.Close() }
-	started := time.Now()
+	started = time.Now()
 	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (artifact.RuntimeIndex, error) {
 		return verify.Runtime(
 			ctx,
@@ -135,21 +137,25 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	programDescriptor := artifact.ProgramDescriptor{
 		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
 	}
+	started = time.Now()
 	programSnapshot, err := localcopy.ReadProgram(
 		ctx,
 		p.CAS,
 		tempDir,
 		programDescriptor,
 	)
+	p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return nil, errors.Join(err, closeSnapshots())
 	}
 	closeSnapshots = func() error {
 		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
 	}
+	started = time.Now()
 	programMetadata, err := p.verifyProgram(ctx, programDescriptor, func() (artifact.ProgramMetadata, error) {
 		return verify.Program(ctx, p.VerifierCgroupRoot, instanceID, programSnapshot)
 	})
+	p.logInfo("program artifact verified", "verification_id", instanceID, "role", "program", "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("verify program: %w", err),

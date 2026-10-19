@@ -139,7 +139,7 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		return nil, nil, err
 	}
 	defer func() { cleanupErr = errors.Join(cleanupErr, images.close()) }()
-	source := &agentProgramSource{client: client, request: request, startup: startup, grant: grant, images: images}
+	source := &agentProgramSource{logInfo: p.logInfo, invocation: invocation, client: client, request: request, startup: startup, grant: grant, images: images}
 	// Host verification can itself outlive the initial attachment grant. A fresh
 	// business release is needed before the guest will accept transfer admission.
 	grant, err = source.ReleaseStart(ctx)
@@ -170,18 +170,30 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		requestAttach.ProtectedEnv = startup.ProtectedEnv.Env
 		requestAttach.ProxyCa = startup.ProtectedEnv.CA
 	}
-	return StartAgentSession(lifetime, machine, requestAttach, source)
+	started := time.Now()
+	connection, attached, resultErr = StartAgentSession(lifetime, machine, requestAttach, source)
+	p.logInfo("Session program handshake completed", "verification_id", invocation, "session_id", grant.Identity.SessionId, "process_epoch", grant.Identity.ProcessEpoch, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+	return connection, attached, resultErr
 }
 
 type agentProgramSource struct {
-	client  AgentStartClient
-	request workerapi.AgentControlRequest
-	startup workerapi.AgentStartResponse
-	grant   *agentv1.SessionGrant
-	images  *programSnapshots
+	logInfo    func(string, ...any)
+	invocation string
+	client     AgentStartClient
+	request    workerapi.AgentControlRequest
+	startup    workerapi.AgentStartResponse
+	grant      *agentv1.SessionGrant
+	images     *programSnapshots
 }
 
-func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.SessionProgramArtifact, w io.Writer) error {
+func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.SessionProgramArtifact, w io.Writer) (resultErr error) {
+	started := time.Now()
+	role := "unknown"
+	defer func() {
+		if s.logInfo != nil {
+			s.logInfo("Session program transfer completed", "verification_id", s.invocation, "role", role, "size_bytes", d.GetSizeBytes(), "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -189,8 +201,10 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	var err error
 	switch {
 	case d.Digest == s.startup.Program.Runtime.Digest && d.SizeBytes == s.startup.Program.Runtime.SizeBytes:
+		role = "runtime"
 		file, _, err = s.images.runtime.VerifierFile()
 	case d.Digest == s.startup.Program.Artifact.Digest && d.SizeBytes == s.startup.Program.Artifact.SizeBytes:
+		role = "program"
 		file, err = s.images.artifact.VerifierFile()
 	default:
 		return errors.New("session requested an unverified Program artifact")
@@ -202,7 +216,13 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	_, err = io.Copy(w, io.NewSectionReader(file, 0, d.SizeBytes))
 	return err
 }
-func (s *agentProgramSource) ReleaseStart(ctx context.Context) (*agentv1.SessionGrant, error) {
+func (s *agentProgramSource) ReleaseStart(ctx context.Context) (_ *agentv1.SessionGrant, resultErr error) {
+	started := time.Now()
+	defer func() {
+		if s.logInfo != nil {
+			s.logInfo("Session program release completed", "verification_id", s.invocation, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+		}
+	}()
 	authority, err := s.client.ReleaseAgentStart(ctx, workerapi.AgentStartReleaseRequest{Session: s.request.Session, AttachmentSequence: s.request.AttachmentSequence, BundleDigest: s.startup.BundleDigest})
 	if err != nil {
 		return nil, err
