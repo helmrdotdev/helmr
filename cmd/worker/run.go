@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/objectcache"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
@@ -157,6 +158,20 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
+	// Hold cache ownership and remove crash residue before physical funding checks.
+	objectCache, err := objectcache.Open(filepath.Join(workDir, "object-cache"), 0)
+	if err != nil {
+		return fmt.Errorf("open worker object cache: %w", err)
+	}
+	cacheKey := reservation.Key{Kind: "object-cache", Epoch: 1, ID: "worker"}
+	defer func() {
+		log.Info("worker object cache usage", "stats", objectCache.Snapshot())
+		if err := objectCache.Close(); err != nil {
+			log.Error("close worker object cache", "error", err)
+			return
+		}
+		_ = hostReservations.Release(cacheKey)
+	}()
 	imagesDir := cfg.ImagesDir
 	if imagesDir == "" {
 		imagesDir = filepath.Join(workDir, "images")
@@ -261,12 +276,28 @@ func run(log *slog.Logger) error {
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 	}
+	// Reserve only surplus after funding every configured execution slot.
+	availableDisk, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20))
+	if err != nil {
+		return err
+	}
+	cacheBytes := max(int64(0), min(int64(4<<30), diskCapacity.HostDiskBytes-perSlotDisk*int64(cfg.WorkerExecutionSlots), availableDisk-perSlotDisk*int64(cfg.WorkerExecutionSlots)))
+	if cacheBytes > 0 {
+		if _, err := hostReservations.Reserve(cacheKey, reservation.Vector{HostDiskBytes: cacheBytes}); err != nil {
+			return err
+		}
+		if err := objectCache.Enable(cacheBytes); err != nil {
+			return err
+		}
+	}
+	log.Info("worker object cache configured", "capacity_bytes", cacheBytes)
 	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
 	preparedMachines.CommandLogLimits = &computerv0.CommandLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.SessionLogLimits = &agentv1.SessionLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.PreparationLogLimits = &computerv0.PreparationLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.TempDir = filepath.Join(workDir, "tmp")
 	preparedMachines.ComputerObjects = store
+	preparedMachines.ObjectCache = objectCache
 	preparedMachines.CheckpointCipher = checkpointEncryptor
 	preparedMachines.ComputerRanges = store
 	preparedMachines.ComputerDevices = cfg.ComputerDevices

@@ -13,6 +13,7 @@ type preparationPublisher struct {
 	client   AllocatedPreparationClient
 	executor workerapi.PreparationExecutor
 	objects  versionObjectPublisher
+	seed     func(context.Context, cas.Descriptor, *os.File)
 }
 
 func (p preparationPublisher) RegisterBatch(ctx context.Context, inspections []blockformat.ObjectInspection) error {
@@ -32,5 +33,8 @@ func (p preparationPublisher) Upload(ctx context.Context, descriptor cas.Descrip
 		result, err = p.objects.Publish(ctx, descriptor, file)
 		return err
 	})
+	if err == nil && p.seed != nil && result.Digest == descriptor.Digest && result.SizeBytes == descriptor.SizeBytes && result.MediaType == descriptor.MediaType {
+		p.seed(ctx, descriptor, file)
+	}
 	return result, err
 }

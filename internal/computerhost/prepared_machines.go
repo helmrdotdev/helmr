@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 
+	"github.com/helmrdotdev/helmr/internal/objectcache"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sync/errgroup"
 )
@@ -42,6 +43,7 @@ type PreparedMachines struct {
 	ComputerObjects      cas.ImmutableStore
 	CheckpointCipher     *CheckpointEncryptor
 	ComputerRanges       blockformat.RangeSource
+	ObjectCache          *objectcache.Cache
 	ComputerHelper       string
 	ComputerDevices      []string
 	ComputerStagingBytes int64
@@ -93,14 +95,14 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	group.Go(func() error {
 		started := time.Now()
 		var err error
-		images.runtime, err = localcopy.ReadRuntime(stageCtx, p.PlatformStore, tempDir, runtimeDescriptor)
+		images.runtime, err = localcopy.ReadRuntime(stageCtx, p.ObjectCache.Reader("runtime", p.PlatformStore), tempDir, runtimeDescriptor)
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})
 	group.Go(func() error {
 		started := time.Now()
 		var err error
-		images.artifact, err = localcopy.ReadProgram(stageCtx, p.CAS, tempDir, programDescriptor)
+		images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})

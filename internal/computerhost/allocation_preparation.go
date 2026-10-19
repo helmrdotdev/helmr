@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"math"
 	"math/rand/v2"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -217,7 +219,9 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	publisher := preparationPublisher{client: o.client, executor: o.executor, objects: o.machines.ComputerObjects}
+	publisher := preparationPublisher{client: o.client, executor: o.executor, objects: o.machines.ComputerObjects, seed: func(ctx context.Context, descriptor cas.Descriptor, file *os.File) {
+		o.machines.seedObject(ctx, "computer:"+key.Scope, descriptor, file)
+	}}
 	rootLocator, err := o.capture.Publish(ctx, publisher)
 	if err != nil {
 		return err

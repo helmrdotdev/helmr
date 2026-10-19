@@ -1,0 +1,73 @@
+//go:build linux
+
+package computerhost
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/objectcache"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+)
+
+func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
+	store := &fakeCAS{objects: map[string][]byte{}}
+	runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
+	programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
+	index := artifacttest.ProgramMetadata(t)
+	index.RuntimeDigest = runtimeObject.Digest
+	canonical, err := artifact.CanonicalProgramMetadata(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd := artifact.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: artifact.RuntimeDescriptorFormatVersion}
+	pd := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
+	cache, err := objectcache.Open(filepath.Join(t.TempDir(), "cache"), 8192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	p := &PreparedMachines{CAS: store, PlatformStore: store, ObjectCache: cache, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{rd: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}, programDescriptor: pd, programMetadata: &index}
+	program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: rd.Digest, SizeBytes: rd.SizeBytes, MediaType: rd.MediaType}, Artifact: workerapi.CASObject{Digest: pd.Digest, SizeBytes: pd.SizeBytes, MediaType: pd.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
+	firstDirectory := t.TempDir()
+	first, err := p.prepareProgramArtifacts(t.Context(), firstDirectory, "first", program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.seedProgramArtifacts(t.Context(), first, cas.Descriptor(pd))
+	if cache.Snapshot().Seeds != 2 {
+		t.Fatal("artifacts not cached")
+	}
+	if err := first.close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(firstDirectory); err != nil {
+		t.Fatal(err)
+	}
+	delete(store.objects, rd.Digest)
+	delete(store.objects, pd.Digest)
+	// A second consumer requires its own real sealed snapshots even though the
+	// original staging directory and remote bytes are gone.
+	second, err := p.prepareProgramArtifacts(t.Context(), t.TempDir(), "second", program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	if second.runtime == nil || second.artifact == nil {
+		t.Fatal("cache bypassed consumer snapshots")
+	}
+	if store.getCalls[pd.Digest] != 1 || store.getCalls[rd.Digest] != 1 {
+		t.Fatal("cache hit fetched remote artifacts")
+	}
+	program.IndexDigest = sha256sum.DigestBytes([]byte("other"))
+	if images, err := p.prepareProgramArtifacts(t.Context(), t.TempDir(), "wrong-target", program); err == nil {
+		images.close()
+		t.Fatal("cache bypassed target authority")
+	}
+}
