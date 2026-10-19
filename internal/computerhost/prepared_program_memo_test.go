@@ -3,6 +3,8 @@ package computerhost
 import (
 	"context"
 	"errors"
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	"io"
 	"os"
 	"reflect"
 	"runtime"
@@ -161,78 +163,129 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 }
 
 func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("artifact snapshots require Linux")
-	}
-	index := artifacttest.ProgramMetadata(t)
+	for _, session := range []bool{false, true} {
+		t.Run(map[bool]string{false: "preparation", true: "session"}[session], func(t *testing.T) {
+			if runtime.GOOS != "linux" {
+				t.Skip("artifact snapshots require Linux")
+			}
+			index := artifacttest.ProgramMetadata(t)
 
-	store := &fakeCAS{objects: map[string][]byte{}}
-	runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
-	programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
-	index.RuntimeDigest = runtimeObject.Digest
-	canonical, err := artifact.CanonicalProgramMetadata(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtimeDescriptor := artifact.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: artifact.RuntimeDescriptorFormatVersion}
-	descriptor := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
-	machines := &PreparedMachines{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
-	// Inject only the isolated verifier result; exercise real snapshots and the
-	// production artifact preparation authority path on every hit.
-	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return index, nil }); err != nil {
-		t.Fatal(err)
-	}
-	program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
-	run := func(want string) {
-		t.Helper()
-		dir := t.TempDir()
-		images, err := machines.prepareProgramArtifacts(t.Context(), dir, "memo-test", program)
-		if images != nil {
-			if closeErr := images.close(); closeErr != nil {
-				t.Fatal(closeErr)
+			store := &fakeCAS{objects: map[string][]byte{}}
+			runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
+			programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
+			index.RuntimeDigest = runtimeObject.Digest
+			canonical, err := artifact.CanonicalProgramMetadata(index)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if want == "" {
-			if err != nil || images == nil || images.runtime == nil || images.artifact == nil {
-				t.Fatalf("prepare: %v", err)
+			runtimeDescriptor := artifact.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: artifact.RuntimeDescriptorFormatVersion}
+			descriptor := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
+			machines := &PreparedMachines{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
+			// Inject only the isolated verifier result; exercise real snapshots and the
+			// production artifact preparation authority path on every hit.
+			if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return index, nil }); err != nil {
+				t.Fatal(err)
 			}
-		} else if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %v, want %q", err, want)
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) != 0 {
-			t.Fatalf("snapshot cleanup: %v, %v", entries, err)
-		}
+			program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
+			tampered := false
+			run := func(want string) {
+				t.Helper()
+				dir := t.TempDir()
+				prepare := machines.prepareProgramArtifacts
+				if session {
+					prepare = machines.prepareSessionProgramArtifacts
+				}
+				images, err := prepare(t.Context(), dir, "memo-test", program)
+				if session && tampered && err == nil {
+					source := &agentProgramSource{machines: machines, directory: dir, startup: workerapi.AgentStartResponse{Program: *program}, images: images}
+					err = source.WriteArtifact(t.Context(), &agentv1.SessionProgramArtifact{Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes}, io.Discard)
+				}
+				if err == nil && images != nil && !tampered {
+					if session && (images.runtime != nil || images.artifact != nil) {
+						t.Fatal("memo hit staged unrequested artifacts")
+					}
+					if !session && (images.runtime == nil || images.artifact == nil) {
+						t.Fatal("preparation omitted required snapshots")
+					}
+				}
+				if images != nil {
+					if closeErr := images.close(); closeErr != nil {
+						t.Fatal(closeErr)
+					}
+				}
+				if want == "" {
+					if err != nil || images == nil {
+						t.Fatalf("prepare: %v", err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %v, want %q", err, want)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("snapshot cleanup: %v, %v", entries, err)
+				}
+			}
+			run("")
+			run("")
+			wantGets := 2
+			if session {
+				wantGets = 0
+			}
+			if store.getCalls[programObject.Digest] != wantGets || store.getCalls[runtimeObject.Digest] != wantGets {
+				t.Fatal("hit bypassed snapshot reads")
+			}
+
+			if session {
+				for _, missing := range []string{"runtime", "program"} {
+					if missing == "runtime" {
+						delete(machines.verifiedRuntimes, runtimeDescriptor)
+					} else {
+						machines.programMetadata = nil
+					}
+					before := store.getCalls[runtimeObject.Digest]
+					images, err := machines.prepareSessionProgramArtifacts(t.Context(), t.TempDir(), "missing-receipt", program)
+					if images != nil {
+						_ = images.close()
+					}
+					// These synthetic bytes have no valid SquashFS metadata. A
+					// missing receipt must read and reject them, never authorize
+					// the guest from the other receipt alone.
+					if err == nil || store.getCalls[runtimeObject.Digest] <= before {
+						t.Fatalf("missing %s receipt bypassed full verification: %v", missing, err)
+					}
+					machines.verifiedRuntimes[runtimeDescriptor] = artifact.RuntimeIndex{Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}
+					owned := index.Clone()
+					machines.programMetadata = &owned
+				}
+			}
+			// Both artifacts have valid independent verification receipts, but a Program
+			// may only launch with the exact Runtime selected when it was built.
+			otherRuntime := store.put(artifact.RuntimeArtifactMediaType, []byte("another runtime"))
+			otherDescriptor := runtimeDescriptor
+			otherDescriptor.Digest = otherRuntime.Digest
+			otherDescriptor.SizeBytes = otherRuntime.SizeBytes
+			machines.verifiedRuntimes[otherDescriptor] = machines.verifiedRuntimes[runtimeDescriptor]
+			program.Runtime = workerapi.CASObject{Digest: otherRuntime.Digest, SizeBytes: otherRuntime.SizeBytes, MediaType: otherRuntime.MediaType}
+			run("runtime reservation authority")
+			program.Runtime = workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}
+			program.IndexDigest = "sha256:" + strings.Repeat("0", 64)
+			run("deployment authority")
+			program.IndexDigest = sha256sum.DigestBytes(canonical)
+			program.DeploymentID = ""
+			run("deployment id")
+			program.DeploymentID = "deployment"
+			for _, bad := range []artifact.ProgramMetadata{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
+				machines.mu.Lock()
+				machines.programMetadata = &bad
+				machines.mu.Unlock()
+				run("runtime reservation authority")
+			}
+			owned := index.Clone()
+			machines.programMetadata = &owned
+			tampered = true
+			store.objects[programObject.Digest] = []byte("tamper!")
+			run("digest")
+
+		})
 	}
-	run("")
-	run("")
-	if store.getCalls[programObject.Digest] != 2 || store.getCalls[runtimeObject.Digest] != 2 {
-		t.Fatal("hit bypassed snapshot reads")
-	}
-	// Both artifacts have valid independent verification receipts, but a Program
-	// may only launch with the exact Runtime selected when it was built.
-	otherRuntime := store.put(artifact.RuntimeArtifactMediaType, []byte("another runtime"))
-	otherDescriptor := runtimeDescriptor
-	otherDescriptor.Digest = otherRuntime.Digest
-	otherDescriptor.SizeBytes = otherRuntime.SizeBytes
-	machines.verifiedRuntimes[otherDescriptor] = machines.verifiedRuntimes[runtimeDescriptor]
-	program.Runtime = workerapi.CASObject{Digest: otherRuntime.Digest, SizeBytes: otherRuntime.SizeBytes, MediaType: otherRuntime.MediaType}
-	run("runtime reservation authority")
-	program.Runtime = workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}
-	program.IndexDigest = "sha256:" + strings.Repeat("0", 64)
-	run("deployment authority")
-	program.IndexDigest = sha256sum.DigestBytes(canonical)
-	program.DeploymentID = ""
-	run("deployment id")
-	program.DeploymentID = "deployment"
-	for _, bad := range []artifact.ProgramMetadata{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
-		machines.mu.Lock()
-		machines.programMetadata = &bad
-		machines.mu.Unlock()
-		run("runtime reservation authority")
-	}
-	owned := index.Clone()
-	machines.programMetadata = &owned
-	store.objects[programObject.Digest] = []byte("tamper!")
-	run("digest")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"io"
 	"os"
@@ -134,12 +135,12 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
 		resultErr = errors.Join(resultErr, cleanupErr)
 	}()
-	images, err := p.prepareProgramArtifacts(ctx, directory, invocation, &startup.Program)
+	images, err := p.prepareSessionProgramArtifacts(ctx, directory, invocation, &startup.Program)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { cleanupErr = errors.Join(cleanupErr, images.close()) }()
-	source := &agentProgramSource{logInfo: p.logInfo, invocation: invocation, releaseStage: "pre_handshake", client: client, request: request, startup: startup, grant: grant, images: images}
+	source := &agentProgramSource{machines: p, directory: directory, logInfo: p.logInfo, invocation: invocation, releaseStage: "pre_handshake", client: client, request: request, startup: startup, grant: grant, images: images}
 	// Host verification can itself outlive the initial attachment grant. A fresh
 	// business release is needed before the guest will accept transfer admission.
 	grant, err = source.ReleaseStart(ctx)
@@ -178,6 +179,8 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 }
 
 type agentProgramSource struct {
+	machines     *PreparedMachines
+	directory    string
 	releaseStage string
 	logInfo      func(string, ...any)
 	invocation   string
@@ -193,7 +196,7 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	role := "unknown"
 	defer func() {
 		if s.logInfo != nil {
-			s.logInfo("Session program transfer completed", "verification_id", s.invocation, "role", role, "size_bytes", d.GetSizeBytes(), "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+			s.logInfo("Session program transfer completed", "scope", "requested_staging_and_transfer", "verification_id", s.invocation, "role", role, "size_bytes", d.GetSizeBytes(), "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -204,9 +207,21 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	switch {
 	case d.Digest == s.startup.Program.Runtime.Digest && d.SizeBytes == s.startup.Program.Runtime.SizeBytes:
 		role = "runtime"
+		if s.images.runtime == nil {
+			s.images.runtime, err = localcopy.ReadRuntime(ctx, s.machines.PlatformStore, s.directory, s.machines.sessionRuntimeDescriptor(s.startup.Program.Runtime))
+			if err != nil {
+				return err
+			}
+		}
 		file, _, err = s.images.runtime.VerifierFile()
 	case d.Digest == s.startup.Program.Artifact.Digest && d.SizeBytes == s.startup.Program.Artifact.SizeBytes:
 		role = "program"
+		if s.images.artifact == nil {
+			s.images.artifact, err = localcopy.ReadProgram(ctx, s.machines.CAS, s.directory, sessionProgramDescriptor(s.startup.Program.Artifact))
+			if err != nil {
+				return err
+			}
+		}
 		file, err = s.images.artifact.VerifierFile()
 	default:
 		return errors.New("session requested an unverified Program artifact")

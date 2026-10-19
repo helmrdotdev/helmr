@@ -83,14 +83,7 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	if p.PlatformStore == nil {
 		return nil, errors.New("managed runtime delivery is not configured")
 	}
-	runtimeDescriptor := artifact.RuntimeDescriptor{
-		Architecture:    p.RuntimeArchitecture,
-		Digest:          program.Runtime.Digest,
-		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
-		MediaType:       program.Runtime.MediaType,
-		RuntimeContract: definition.RuntimeContract,
-		SizeBytes:       program.Runtime.SizeBytes,
-	}
+	runtimeDescriptor := p.sessionRuntimeDescriptor(program.Runtime)
 	started := time.Now()
 	runtimeSnapshot, err := localcopy.ReadRuntime(
 		ctx,
@@ -134,9 +127,7 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 			closeSnapshots(),
 		)
 	}
-	programDescriptor := artifact.ProgramDescriptor{
-		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
-	}
+	programDescriptor := sessionProgramDescriptor(program.Artifact)
 	started = time.Now()
 	programSnapshot, err := localcopy.ReadProgram(
 		ctx,
@@ -180,8 +171,8 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	return &programSnapshots{runtime: runtimeSnapshot, artifact: programSnapshot}, nil
 }
 
-// Callers must verify a fresh snapshot against descriptor before every call,
-// including memo hits.
+// The memo records isolated verification of exact content, not current launch
+// authority. Any snapshot consumed later must still be bound to its descriptor.
 func (p *PreparedMachines) verifyProgram(
 	ctx context.Context,
 	descriptor artifact.ProgramDescriptor,
