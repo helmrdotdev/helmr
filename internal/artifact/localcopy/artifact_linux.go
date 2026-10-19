@@ -67,11 +67,16 @@ func copyArtifact(
 			os.Remove(leaseDirectory),
 		)
 	}
+	// Copies are recreated from their authoritative source for each use. Their
+	// random lease is never a crash-recovery record, so synchronous writeback
+	// adds latency without establishing a retained durability boundary. Keep
+	// the sealed read-only descriptors and final content verification.
 	local, err := produceArtifactCopyWithSpec(
 		ctx,
 		leaseDirectory,
 		spec,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
 		func(destination *os.File) error {
 			return copyArtifactCopy(ctx, destination, source, expected)
 		},
@@ -104,7 +109,7 @@ func Produce(
 	if err != nil {
 		return nil, err
 	}
-	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, produce)
+	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, true, produce)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +122,7 @@ func produceArtifactCopyWithSpec(
 	directory string,
 	spec artifactSpec,
 	owner Owner,
+	syncToDisk bool,
 	produce func(*os.File) error,
 ) (_ *Artifact, returnErr error) {
 	if ctx == nil {
@@ -214,8 +220,10 @@ func produceArtifactCopyWithSpec(
 	if err := validateArtifactCopyDescriptor(spec, descriptor); err != nil {
 		return nil, err
 	}
-	if err := writer.Sync(); err != nil {
-		return nil, fmt.Errorf("sync local artifact copy: %w", err)
+	if syncToDisk {
+		if err := writer.Sync(); err != nil {
+			return nil, fmt.Errorf("sync local artifact copy: %w", err)
+		}
 	}
 	if int(before.uid) != owner.UID || int(before.gid) != owner.GID {
 		if err := writer.Chown(owner.UID, owner.GID); err != nil {
@@ -225,8 +233,10 @@ func produceArtifactCopyWithSpec(
 	if err := writer.Chmod(0o400); err != nil {
 		return nil, fmt.Errorf("seal local artifact copy mode: %w", err)
 	}
-	if err := writer.Sync(); err != nil {
-		return nil, fmt.Errorf("sync sealed local artifact copy: %w", err)
+	if syncToDisk {
+		if err := writer.Sync(); err != nil {
+			return nil, fmt.Errorf("sync sealed local artifact copy: %w", err)
+		}
 	}
 	sealed, err := inspectSealedArtifactCopy(writer, descriptor, owner)
 	if err != nil {
@@ -599,9 +609,6 @@ func (local *Artifact) LinkInto(
 		if err := local.upload.Chown(owner.UID, owner.GID); err != nil {
 			return fmt.Errorf("transfer local artifact copy owner: %w", err)
 		}
-		if err := local.upload.Sync(); err != nil {
-			return fmt.Errorf("sync local artifact copy owner: %w", err)
-		}
 		transferred, err := inspectSealedArtifactCopy(
 			local.upload,
 			local.descriptor,
@@ -617,6 +624,11 @@ func (local *Artifact) LinkInto(
 			return errors.New("local artifact copy changed during owner transfer")
 		}
 		local.platform.identity = transferred
+	}
+	// A linked drive can outlive the transfer operation. Flush its data and
+	// ownership before exposing it, including transient same-owner copies.
+	if err := local.upload.Sync(); err != nil {
+		return fmt.Errorf("sync local artifact copy before link: %w", err)
 	}
 	source, err := inspectArtifactCopyAt(
 		int(local.platform.directory.Fd()),
