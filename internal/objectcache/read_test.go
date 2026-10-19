@@ -15,7 +15,7 @@ func (f rangeFallback) GetRange(ctx context.Context, d string, s, o, l int64) (i
 	return f(ctx, d, s, o, l)
 }
 func TestRangesKeepMissExactAndHitPrivate(t *testing.T) {
-	c := newCache(t, 4096)
+	c := newCache(t, 16384)
 	data := []byte("immutable bytes")
 	d := seed(t, c, data)
 	failure := errors.New("raw miss")
@@ -42,7 +42,7 @@ func TestRangesKeepMissExactAndHitPrivate(t *testing.T) {
 	}
 }
 func TestWholeReaderVerifiesTampering(t *testing.T) {
-	c := newCache(t, 4096)
+	c := newCache(t, 16384)
 	d := seed(t, c, []byte("immutable"))
 	e := c.entries[key{"test", d.Digest}]
 	if err := os.Chmod(e.path, 0600); err != nil {
@@ -62,7 +62,7 @@ func TestWholeReaderVerifiesTampering(t *testing.T) {
 }
 
 func TestCancelledReaderCloseDoesNotDrain(t *testing.T) {
-	c := newCache(t, 4096)
+	c := newCache(t, 16384)
 	d := seed(t, c, bytes.Repeat([]byte("x"), 4096))
 	ctx, cancel := context.WithCancel(t.Context())
 	r, err := c.Reader("test", nil).Get(ctx, d.Digest)

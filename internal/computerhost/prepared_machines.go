@@ -23,12 +23,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/objectcache"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 
-	"github.com/helmrdotdev/helmr/internal/objectcache"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sync/errgroup"
 )

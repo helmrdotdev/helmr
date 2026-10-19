@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,7 +40,8 @@ func seed(t *testing.T, c *Cache, data []byte) cas.Descriptor {
 	return d
 }
 func TestPinsBudgetAndNamespace(t *testing.T) {
-	c := newCache(t, 4096)
+	c := newCache(t, 16384)
+	pinOtherEntries(t, c)
 	data := []byte("retained")
 	d := seed(t, c, data)
 	r, _, ok := c.open("test", d.Digest)
@@ -67,12 +69,12 @@ func TestPinsBudgetAndNamespace(t *testing.T) {
 	if _, _, ok := c.open("test", d.Digest); ok {
 		t.Fatal("old entry not evicted")
 	}
-	if c.used != 4096 {
+	if c.used != 16384 {
 		t.Fatalf("physical charge %d", c.used)
 	}
 }
 func TestFailedSeedsReleaseBudget(t *testing.T) {
-	c := newCache(t, 4096)
+	c := newCache(t, 16384)
 	for _, data := range [][]byte{[]byte("bad"), []byte("good-extra"), []byte("goo")} {
 		if ok, err := c.Seed(t.Context(), "test", descriptor([]byte("good")), bytes.NewReader(data)); ok || !errors.Is(err, cas.ErrDigestMismatch) {
 			t.Fatalf("bad seed: %v %v", ok, err)
@@ -103,7 +105,8 @@ func (r blockedReader) Read(p []byte) (int, error) {
 }
 func TestPendingBudgetCancellationAndClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c := newCache(t, 4096)
+		c := newCache(t, 16384)
+		releaseOthers := pinOtherEntries(t, c)
 		ctx, cancel := context.WithCancel(t.Context())
 		started, resume, done := make(chan struct{}, 1), make(chan struct{}), make(chan struct{})
 		go func() {
@@ -117,6 +120,7 @@ func TestPendingBudgetCancellationAndClose(t *testing.T) {
 		if ok, err := c.Seed(t.Context(), "test", descriptor([]byte("two")), bytes.NewReader([]byte("two"))); ok || err != nil {
 			t.Fatalf("pending bytes not charged: %v %v", ok, err)
 		}
+		releaseOthers()
 		closed := false
 		go func() {
 			if err := c.Close(); err != nil {
@@ -137,30 +141,17 @@ func TestPendingBudgetCancellationAndClose(t *testing.T) {
 		}
 	})
 }
-func TestExclusiveOwnerAndRestartCleanup(t *testing.T) {
+func TestRestartCleanup(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cache")
 	c, err := Open(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Enable(4096); err != nil {
+	if err := c.Enable(16384); err != nil {
 		t.Fatal(err)
 	}
-	d := seed(t, c, []byte("one"))
-	if other, err := Open(dir, 4096); err == nil {
-		other.Close()
-		t.Fatal("second owner admitted")
-	}
-	r, _, ok := c.open("test", d.Digest)
-	if !ok {
-		t.Fatal("conflicting owner deleted bytes")
-	}
-	r.Close()
-	// Model a process exit: its lock closes, named disposable bytes remain.
-	if err := c.lock.Close(); err != nil {
-		t.Fatal(err)
-	}
-	c.lock = nil
+	seed(t, c, []byte("one"))
+	// Model process exit: the prior owner is gone, leaving only disposable files.
 	restarted, err := Open(dir, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -170,4 +161,40 @@ func TestExclusiveOwnerAndRestartCleanup(t *testing.T) {
 	if err != nil || len(files) != 0 {
 		t.Fatalf("stale cache retained: %v %v", files, err)
 	}
+}
+
+func pinOtherEntries(t *testing.T, c *Cache) func() {
+	t.Helper()
+	var readers []io.Closer
+	for i := 0; i < 3; i++ {
+		d := seed(t, c, []byte(fmt.Sprintf("pinned-%d", i)))
+		r, _, ok := c.open("test", d.Digest)
+		if !ok {
+			t.Fatal("missing seed")
+		}
+		readers = append(readers, r)
+	}
+	release := func() {
+		for _, r := range readers {
+			if err := r.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+func TestLargeSeedDoesNotEvictWorkingSet(t *testing.T) {
+	c := newCache(t, 16384)
+	d := seed(t, c, []byte("retained"))
+	large := bytes.Repeat([]byte("x"), 4097)
+	if ok, err := c.Seed(t.Context(), "test", descriptor(large), bytes.NewReader(large)); ok || err != nil {
+		t.Fatalf("oversized admission: %v %v", ok, err)
+	}
+	r, _, ok := c.open("test", d.Digest)
+	if !ok {
+		t.Fatal("large declined seed evicted retained data")
+	}
+	r.Close()
 }

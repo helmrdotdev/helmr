@@ -4,14 +4,16 @@ import (
 	"context"
 	"io"
 	"os"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 func (p *PreparedMachines) seedObject(ctx context.Context, namespace string, d cas.Descriptor, file *os.File) {
+	started := time.Now()
 	seeded, err := p.ObjectCache.Seed(ctx, namespace, d, io.NewSectionReader(file, 0, d.SizeBytes))
 	if seeded || err != nil {
-		p.logInfo("worker object cache seed", "namespace", namespace, "size_bytes", d.SizeBytes, "seeded", seeded, "error", errorString(err))
+		p.logInfo("worker object cache seed", "namespace", namespace, "size_bytes", d.SizeBytes, "seeded", seeded, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	}
 }
 

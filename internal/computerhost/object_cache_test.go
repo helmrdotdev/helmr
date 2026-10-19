@@ -28,7 +28,7 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	}
 	rd := artifact.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: artifact.RuntimeDescriptorFormatVersion}
 	pd := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
-	cache, err := objectcache.Open(filepath.Join(t.TempDir(), "cache"), 8192)
+	cache, err := objectcache.Open(filepath.Join(t.TempDir(), "cache"), 16384)
 	if err != nil {
 		t.Fatal(err)
 	}

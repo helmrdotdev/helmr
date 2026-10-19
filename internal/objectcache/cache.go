@@ -14,7 +14,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"golang.org/x/sys/unix"
 )
 
 const MaxEntries = 4096
@@ -46,7 +45,6 @@ func (c *Cache) Snapshot() Stats {
 type Cache struct {
 	mu          sync.Mutex
 	cond        *sync.Cond
-	lock        *os.File
 	directory   string
 	limit, used int64
 	clock       uint64
@@ -56,8 +54,8 @@ type Cache struct {
 	stats       Stats
 }
 
-// Open takes exclusive ownership before removing stale disposable objects.
-// The directory and owner.lock must never be replaced while an owner is alive.
+// Open clears disposable objects. The caller must exclusively own directory
+// until Close completes; the worker holds its process singleton for this lifetime.
 func Open(directory string, limit int64) (*Cache, error) {
 	if !filepath.IsAbs(directory) || limit < 0 {
 		return nil, errors.New("invalid object cache configuration")
@@ -72,22 +70,14 @@ func Open(directory string, limit int64) (*Cache, error) {
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
 		return nil, errors.New("object cache directory must be private")
 	}
-	fd, err := unix.Open(filepath.Join(directory, "owner.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return nil, err
-	}
-	lock := os.NewFile(uintptr(fd), "object cache owner")
-	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		return nil, errors.Join(err, lock.Close())
-	}
 	objects := filepath.Join(directory, "objects")
 	if err := os.RemoveAll(objects); err != nil {
-		return nil, errors.Join(err, lock.Close())
+		return nil, err
 	}
 	if err := os.Mkdir(objects, 0700); err != nil {
-		return nil, errors.Join(err, lock.Close())
+		return nil, err
 	}
-	c := &Cache{lock: lock, directory: objects, limit: limit, entries: make(map[key]*entry), pending: make(map[key]bool)}
+	c := &Cache{directory: objects, limit: limit, entries: make(map[key]*entry), pending: make(map[key]bool)}
 	c.cond = sync.NewCond(&c.mu)
 	return c, nil
 }
@@ -123,7 +113,8 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 	charge := (d.SizeBytes + 4095) / 4096 * 4096
 	k := key{namespace, d.Digest}
 	c.mu.Lock()
-	if c.closed || c.pending[k] || c.entries[k] != nil || charge > c.limit {
+	// One large artifact must not replace most of the reusable working set.
+	if c.closed || c.pending[k] || c.entries[k] != nil || charge > c.limit/4 {
 		c.mu.Unlock()
 		return false, nil
 	}
@@ -212,6 +203,16 @@ func (r contextReader) Read(p []byte) (int, error) {
 	return r.source.Read(p)
 }
 
+func (c *Cache) descriptor(namespace, digest string) (cas.Descriptor, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[key{namespace, digest}]
+	if c.closed || e == nil {
+		return cas.Descriptor{}, false
+	}
+	return e.descriptor, true
+}
+
 func (c *Cache) open(namespace, digest string) (*reader, cas.Descriptor, bool) {
 	if c == nil {
 		return nil, cas.Descriptor{}, false
@@ -271,10 +272,10 @@ func (c *Cache) Close() error {
 		}
 		c.cond.Wait()
 	}
-	if c.lock == nil {
-		return nil
+	if err := os.RemoveAll(c.directory); err != nil {
+		return err
 	}
-	err := errors.Join(os.RemoveAll(c.directory), c.lock.Close())
-	c.lock = nil
-	return err
+	c.used = 0
+	c.entries = nil
+	return nil
 }

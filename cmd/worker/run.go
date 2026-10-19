@@ -158,7 +158,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	// Hold cache ownership and remove crash residue before physical funding checks.
+	// The process singleton already owns workDir. Clear cache residue before physical funding checks.
 	objectCache, err := objectcache.Open(filepath.Join(workDir, "object-cache"), 0)
 	if err != nil {
 		return fmt.Errorf("open worker object cache: %w", err)
@@ -170,7 +170,6 @@ func run(log *slog.Logger) error {
 			log.Error("close worker object cache", "error", err)
 			return
 		}
-		_ = hostReservations.Release(cacheKey)
 	}()
 	imagesDir := cfg.ImagesDir
 	if imagesDir == "" {

@@ -27,8 +27,8 @@ func (r cachedReader) Stat(ctx context.Context, digest string) (cas.Object, erro
 	if err := ctx.Err(); err != nil {
 		return cas.Object{}, err
 	}
-	if body, d, ok := r.cache.open(r.namespace, digest); ok {
-		return cas.Object{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}, body.Close()
+	if d, ok := r.cache.descriptor(r.namespace, digest); ok {
+		return cas.Object{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}, nil
 	}
 	return r.fallback.Stat(ctx, digest)
 }
