@@ -70,9 +70,8 @@ const computerNotes: Note[] = [
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "  },", title: "Start the agent you use.", text: "init starts Pi once, before the first turn. Hibernation keeps it running." },
-  { from: "turn.onCancel", to: "await pi.prompt", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same Pi session." },
-  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "Pi proposes, a teammate decides. The answer and who gave it are recorded." },
+  { from: "async init", to: "return pi", title: "Start the agent you use.", text: "init starts Pi once, before the first turn. Hibernation keeps it running." },
+  { from: "turn.onCancel", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same Pi session." },
   { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
 ];
 
@@ -309,8 +308,8 @@ const nav = [
         <section id="work" class="block" aria-labelledby="work-title">
           <h2 id="work-title">Write agent work like a local script.</h2>
           <p>
-            Start the coding agent you already use in <code>init</code>, then hand it each turn. When it
-            needs a decision, a teammate answers. No workflow engine, and no rewriting your agent for
+            Start the coding agent you already use in <code>init</code>, then hand it each turn. Run it
+            on a schedule or from a Slack thread. No workflow engine, and no rewriting your agent for
             someone else&rsquo;s API.
           </p>
           <a class="side-link" href={docsFor("work").href}><span>Docs</span>{docsFor("work").label} &rarr;</a>
