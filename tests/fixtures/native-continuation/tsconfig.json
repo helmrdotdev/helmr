@@ -10,6 +10,7 @@
   },
   "include": [
     "production.ts",
+    "production-starters.ts",
     "production-driver.ts",
     "../../../runtime/typescript/src/node-crypto.d.ts"
   ]

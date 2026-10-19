@@ -102,7 +102,11 @@ mkdir -p "$tmp/project/agents"
 # Close the repository-relative fixture helpers into a declaration source module.
 # The ordinary compiler still discovers, analyzes and builds this application;
 # no definition index, Program manifest or Computer seed is fabricated here.
-bun build tests/fixtures/native-continuation/production.ts --target=node \
+fixture_entry=tests/fixtures/native-continuation/production.ts
+if [[ "$embedded_starter_fixture" == 1 || "$protected_starter_fixture" == 1 ]]; then
+  fixture_entry=tests/fixtures/native-continuation/production-starters.ts
+fi
+bun build "$fixture_entry" --target=node \
   --tsconfig-override tests/fixtures/native-continuation/tsconfig.json \
   --define "process.env.HELMR_NATIVE_PERFORMANCE=\"$performance_fixture\"" \
   --define "process.env.HELMR_NATIVE_SDK_PROOF=\"$sdk_fixture\"" \
