@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/reservation"
@@ -55,6 +56,7 @@ func qualifyRecoveredRuntime(ctx context.Context, evidence worker.RecoveryEviden
 // Qualification can boot a VM, so it must follow owned-state recovery and the
 // attachment-custody barrier. Return the original evidence for Supervisor reporting.
 func recoverAndQualifyWorkerRuntime(ctx context.Context, log *slog.Logger, recover func(context.Context) (worker.RecoveryEvidence, error), attachments func() error, qualify func(context.Context, worker.RecoveryEvidence) (*firecracker.QualifiedRuntime, error)) (worker.RecoveryEvidence, *firecracker.QualifiedRuntime, error) {
+	started := time.Now()
 	evidence, err := recover(ctx)
 	// Keep the original recovery diagnosis even if a later startup step fails
 	// before Supervisor receives this evidence.
@@ -70,6 +72,7 @@ func recoverAndQualifyWorkerRuntime(ctx context.Context, log *slog.Logger, recov
 	if err := attachments(); err != nil {
 		return evidence, nil, fmt.Errorf("recover local worker state: %w", err)
 	}
+	log.InfoContext(ctx, "worker startup phase completed", "phase", "local_recovery", "duration_ms", time.Since(started).Milliseconds())
 	runtime, err := qualify(ctx, evidence)
 	if err != nil {
 		return evidence, nil, fmt.Errorf("qualify Firecracker worker runtime: %w", err)

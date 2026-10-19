@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -421,6 +423,7 @@ func inspectHostRuntime(
 		if err := ctx.Err(); err != nil {
 			return HostRuntimeEvidence{}, err
 		}
+		started := time.Now()
 		configBytes, err := canonicalCPUTemplateHelperConfig(cfg, vcpuCount)
 		if err != nil {
 			return HostRuntimeEvidence{}, err
@@ -461,6 +464,7 @@ func inspectHostRuntime(
 		if err != nil {
 			return HostRuntimeEvidence{}, fmt.Errorf("decode guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 		}
+		slog.InfoContext(ctx, "worker startup phase completed", "phase", "cpu_shape_inspection", "vcpu_count", vcpuCount, "duration_ms", time.Since(started).Milliseconds())
 		shapes = append(shapes, CPUShapeEvidence{
 			VCPUCount: vcpuCount, CPUConfigDigest: sha256sum.DigestBytes(guestCPUConfig),
 		})

@@ -619,11 +619,10 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-ticker.C:
 		}
+		// Placement needs a fresh health observation even for a newly activated Worker.
 		state := s.state.Load().(Status)
 		status, err := s.observeOnce(ctx, s.observation(ctx, state, evidence))
 		if err != nil && ctx.Err() == nil {
@@ -637,6 +636,11 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
 			statusReturned(status)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

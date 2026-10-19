@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
@@ -45,10 +47,12 @@ func NewConnector(cfg Config) (*Connector, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	artifacts, err := loadRuntimeArtifacts(cfg)
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("worker startup phase completed", "phase", "runtime_artifacts", "duration_ms", time.Since(started).Milliseconds())
 	return &Connector{
 		cfg:             cfg,
 		artifacts:       artifacts,
@@ -63,16 +67,22 @@ func (c *Connector) Qualify(ctx context.Context) (*QualifiedRuntime, error) {
 	if c == nil {
 		return nil, errors.New("the Firecracker runtime candidate is nil")
 	}
+	started := time.Now()
 	if err := c.preflight(ctx); err != nil {
 		return nil, fmt.Errorf("preflight Firecracker runtime candidate: %w", err)
 	}
+	slog.InfoContext(ctx, "worker startup phase completed", "phase", "runtime_preflight", "duration_ms", time.Since(started).Milliseconds())
+	started = time.Now()
 	evidence, err := c.hostRuntimeEvidence(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("inspect Firecracker host runtime: %w", err)
 	}
+	slog.InfoContext(ctx, "worker startup phase completed", "phase", "runtime_inspection_and_pin", "duration_ms", time.Since(started).Milliseconds())
+	started = time.Now()
 	if err := c.probeGuest(ctx); err != nil {
 		return nil, fmt.Errorf("prove jailed Firecracker Guest readiness: %w", err)
 	}
+	slog.InfoContext(ctx, "worker startup phase completed", "phase", "guest_readiness", "duration_ms", time.Since(started).Milliseconds())
 	capabilities, err := c.runtimeCapabilities()
 	if err != nil {
 		return nil, fmt.Errorf("inspect Firecracker runtime capabilities: %w", err)
