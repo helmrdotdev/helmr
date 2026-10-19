@@ -10,12 +10,82 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 )
+
+// Exercise the actual SDK handshake: mocked dials cannot reveal its initial
+// retry-tick wait or its internal retries after a rejected ACK.
+func TestGuestDial(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		timeout   time.Duration
+		acceptAt  int32
+		wantError bool
+	}{
+		{name: "ready", timeout: 80 * time.Millisecond, acceptAt: 1},
+		{name: "rejected_then_ready", timeout: time.Second, acceptAt: 3},
+		{name: "cancel_rejected", timeout: 80 * time.Millisecond, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Keep the Unix socket path below the platform limit.
+			dir, err := os.MkdirTemp("", "guest-dial-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(dir)
+			path := dir + "/socket"
+			listener, err := net.Listen("unix", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var attempts atomic.Int32
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					attempt := attempts.Add(1)
+					_ = conn.SetDeadline(time.Now().Add(time.Second))
+					_, err = bufio.NewReader(conn).ReadString('\n')
+					if err == nil {
+						if attempt == tc.acceptAt {
+							_, _ = io.WriteString(conn, "OK 5000\n")
+						} else if attempt%2 != 0 {
+							_, _ = io.WriteString(conn, "unavailable\n")
+						}
+					}
+					_ = conn.Close()
+				}
+			}()
+			defer func() { _ = listener.Close(); <-done }()
+			connector := &Connector{cfg: (Config{HealthTimeout: tc.timeout}).WithDefaults()}
+			conn, err := connector.connectGuestPort(context.Background(), path, nil)
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if tc.wantError {
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("rejected peer error = %v, want deadline", err)
+				}
+				// Fast peer rejection must stay bounded, not spin on every EOF.
+				if n := attempts.Load(); n < 1 || n > 20 {
+					t.Fatalf("rejected peer attempts = %d, want 1..20", n)
+				}
+			} else if err != nil || attempts.Load() != tc.acceptAt {
+				t.Fatalf("ready peer connection = %v after %d attempts, want success at %d", err, attempts.Load(), tc.acceptAt)
+			}
+		})
+	}
+}
 
 func TestReadHealthSendsHTTPRequest(t *testing.T) {
 	client, server := net.Pipe()
