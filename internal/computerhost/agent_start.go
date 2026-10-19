@@ -139,13 +139,14 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		return nil, nil, err
 	}
 	defer func() { cleanupErr = errors.Join(cleanupErr, images.close()) }()
-	source := &agentProgramSource{logInfo: p.logInfo, invocation: invocation, client: client, request: request, startup: startup, grant: grant, images: images}
+	source := &agentProgramSource{logInfo: p.logInfo, invocation: invocation, releaseStage: "pre_handshake", client: client, request: request, startup: startup, grant: grant, images: images}
 	// Host verification can itself outlive the initial attachment grant. A fresh
 	// business release is needed before the guest will accept transfer admission.
 	grant, err = source.ReleaseStart(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
+	source.releaseStage = "guest_requested"
 	start := &agentv1.SessionStart{LogLimits: p.SessionLogLimits, AgentId: startup.AgentKey, ComputerId: startup.ComputerID, DeploymentId: startup.Program.DeploymentID, ConversationKey: startup.SessionKey, ParentSessionId: startup.ParentSessionID, TerminalSequence: startup.TerminalSequence, RecoveryKind: agentv1.SessionStart_RECOVERY_KIND_INITIAL, Program: &agentv1.SessionProgram{
 		Runtime: &agentv1.SessionProgramArtifact{Digest: startup.Program.Runtime.Digest, SizeBytes: startup.Program.Runtime.SizeBytes}, Artifact: &agentv1.SessionProgramArtifact{Digest: startup.Program.Artifact.Digest, SizeBytes: startup.Program.Artifact.SizeBytes},
 	}}
@@ -172,18 +173,19 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 	}
 	started := time.Now()
 	connection, attached, resultErr = StartAgentSession(lifetime, machine, requestAttach, source)
-	p.logInfo("Session program handshake completed", "verification_id", invocation, "session_id", grant.Identity.SessionId, "process_epoch", grant.Identity.ProcessEpoch, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+	p.logInfo("Session program handshake completed", "scope", "handshake_including_transfer_and_release_excluding_cleanup", "verification_id", invocation, "session_id", grant.Identity.SessionId, "process_epoch", grant.Identity.ProcessEpoch, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
 	return connection, attached, resultErr
 }
 
 type agentProgramSource struct {
-	logInfo    func(string, ...any)
-	invocation string
-	client     AgentStartClient
-	request    workerapi.AgentControlRequest
-	startup    workerapi.AgentStartResponse
-	grant      *agentv1.SessionGrant
-	images     *programSnapshots
+	releaseStage string
+	logInfo      func(string, ...any)
+	invocation   string
+	client       AgentStartClient
+	request      workerapi.AgentControlRequest
+	startup      workerapi.AgentStartResponse
+	grant        *agentv1.SessionGrant
+	images       *programSnapshots
 }
 
 func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.SessionProgramArtifact, w io.Writer) (resultErr error) {
@@ -220,7 +222,7 @@ func (s *agentProgramSource) ReleaseStart(ctx context.Context) (_ *agentv1.Sessi
 	started := time.Now()
 	defer func() {
 		if s.logInfo != nil {
-			s.logInfo("Session program release completed", "verification_id", s.invocation, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
+			s.logInfo("Session program release completed", "verification_id", s.invocation, "stage", s.releaseStage, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(resultErr))
 		}
 	}()
 	authority, err := s.client.ReleaseAgentStart(ctx, workerapi.AgentStartReleaseRequest{Session: s.request.Session, AttachmentSequence: s.request.AttachmentSequence, BundleDigest: s.startup.BundleDigest})

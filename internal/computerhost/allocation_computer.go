@@ -189,7 +189,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
 		err = o.restore(ctx, delivery, source, device)
 	} else {
-		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{RecordPhase: o.recordVMPhase, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
+		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
 	}
 	if err != nil {
 		return err
@@ -372,8 +372,8 @@ func (o *ComputerAllocationOwner) phaseCompleted(phase string, started time.Time
 	slog.Info("Computer allocation phase completed", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
 }
 
-func (o *ComputerAllocationOwner) recordVMPhase(phase vm.Phase) {
-	attrs := []any{"computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase.Name, "duration_ms", phase.DurationMs, "role", phase.Role, "error_class", phase.ErrorClass}
+func (o *ComputerAllocationOwner) recordVMPhase(launch string, phase vm.Phase) {
+	attrs := []any{"launch", launch, "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase.Name, "duration_ms", phase.DurationMs, "role", phase.Role, "error_class", phase.ErrorClass}
 	if phase.Filepack != nil {
 		attrs = append(attrs, "logical_bytes", phase.Filepack.LogicalBytes, "encoded_chunks", phase.Filepack.EncodedChunks, "unpack_written_bytes", phase.Filepack.UnpackWrittenBytes)
 	}
