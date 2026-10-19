@@ -22,10 +22,10 @@ import (
 const secretRouteTable = 100
 const secretRoutePriority = 100
 
-// Only the connector-owned qualification probe has no control-plane reservation.
-// Every real runtime must complete preparation, including Computers with no bindings.
+// Fixed host and prepared-image probes receive no Control Plane Secret transport.
+// Every workload must complete preparation, including Computers with no bindings.
 func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
-	if mode == startupProbeLaunch {
+	if mode == startupProbeLaunch || mode == preparationQualificationLaunch {
 		return nil, nil
 	}
 	if c.cfg.PrepareSecretTransport == nil {

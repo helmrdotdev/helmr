@@ -73,7 +73,7 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 		return err
 	}
 	o.qualification.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{
-		ID: identity.AllocationID, OwnerKind: vm.OwnerInstance,
+		ID: identity.AllocationID, OwnerKind: vm.OwnerInstance, Purpose: vm.MaterializePreparationQualification,
 		Binding:      vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: shape.VMPlatformID},
 		RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version,
 		Resources:   vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1},

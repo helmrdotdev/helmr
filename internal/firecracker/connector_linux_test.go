@@ -88,6 +88,10 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	if err := connector.validateMaterializeRequest(request); err != nil {
 		t.Fatal(err)
 	}
+	request.Purpose = vm.MaterializePreparationQualification
+	if err := connector.validateMaterializeRequest(request); err != nil {
+		t.Fatal(err)
+	}
 	request.ReadOnlyDrives = request.ReadOnlyDrives[:1]
 	if err := connector.validateMaterializeRequest(request); err == nil {
 		t.Fatal("incomplete Program drive set was accepted")

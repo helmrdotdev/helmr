@@ -145,7 +145,12 @@ func (b *preparationOwnerBackend) Materialize(_ context.Context, r vm.Materializ
 		return nil, errors.New("invalid preparation VM topology")
 	}
 	if r.Topology.Computer.Device != nil {
+		if r.Purpose != vm.MaterializePreparationQualification {
+			return nil, errors.New("qualification requested workload Secret transport")
+		}
 		b.qualificationID = r.ID
+	} else if r.Purpose != vm.MaterializeWorkload {
+		return nil, errors.New("authored preparation skipped workload Secret transport")
 	}
 	b.starts.Add(1)
 	machine := b.machine

@@ -75,6 +75,8 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 			}{
 				{name: "probe", probe: true, failure: true},
 				{name: "probe without callback", probe: true, absent: true},
+				{name: "prepared-image qualification", mode: preparationQualificationLaunch, failure: true},
+				{name: "prepared-image qualification without callback", mode: preparationQualificationLaunch, absent: true},
 				{name: "workload rejection", failure: true},
 				{name: "workload without callback", absent: true},
 				{name: "workload empty origins"},
@@ -152,14 +154,15 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 					})
 					// The installed handler runs with an independent VM lifetime context.
 					err = sdkMachine.Start(runtimeCtx)
+					qualification := test.probe || mode == preparationQualificationLaunch
 					wantCalls := 1
-					if test.probe || test.absent {
+					if qualification || test.absent {
 						wantCalls = 0
 					}
 					if calls != wantCalls {
 						t.Errorf("Secret preparation calls = %d, want %d", calls, wantCalls)
 					}
-					if !test.probe && (test.failure || test.absent) {
+					if !qualification && (test.failure || test.absent) {
 						if test.failure && !errors.Is(err, preparationFailure) || test.absent && (err == nil || !strings.Contains(err.Error(), "preparation is not configured")) {
 							t.Errorf("preparation failure = %v", err)
 						}
