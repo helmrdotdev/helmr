@@ -319,27 +319,6 @@ func (c *checkpointPipelineClient) ReadAgentCheckpoint(context.Context, workerap
 	return c.manifests[0], nil
 }
 
-type corruptCheckpointStore struct {
-	cas.ImmutableStore
-	digest string
-}
-
-func (s corruptCheckpointStore) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
-	if digest == s.digest {
-		body, err := s.ImmutableStore.Get(ctx, digest)
-		if err != nil {
-			return nil, err
-		}
-		raw, readErr := io.ReadAll(body)
-		if err = errors.Join(readErr, body.Close()); err != nil {
-			return nil, err
-		}
-		raw[len(raw)/2] ^= 1
-		return cas.NewVerifyingReadCloser(io.NopCloser(bytes.NewReader(raw)), digest), nil
-	}
-	return s.ImmutableStore.Get(ctx, digest)
-}
-
 func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing.T) {
 	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-memory-descriptor", "wrong-key", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
 		t.Run(fault, func(t *testing.T) {

@@ -44,7 +44,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		)
 	}
 	if request.MemorySource == nil {
-		return nil, errors.New("Firecracker restore requires an authenticated memory source")
+		return nil, errors.New("the Firecracker restore requires an authenticated memory source")
 	}
 	if strings.TrimSpace(request.VMState) == "" {
 		return nil, errors.New("the Firecracker restore vm state path is required")
