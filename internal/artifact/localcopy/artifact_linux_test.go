@@ -575,6 +575,9 @@ func TestReceiveVerifiesPinnedBytesAndOwnsCleanup(t *testing.T) {
 	for _, content := range []string{"original", "modified", "short"} {
 		t.Run(content, func(t *testing.T) {
 			directory := t.TempDir()
+			if err := os.Chmod(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
 			expected := cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original")))
 			local, err := Receive(t.Context(), directory, artifact.RoleProgram, expected, func(file *os.File) error { _, err := file.WriteString(content); return err })
 			if content == "original" {
