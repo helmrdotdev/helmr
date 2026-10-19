@@ -477,7 +477,7 @@ const nav = [
             organization under the policies you already run.
           </p>
           <a class="side-link" href={docsFor("scale").href}><span>Docs</span>{docsFor("scale").label} &rarr;</a>
-          <figure class="fleet" data-fleet aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
+          <figure class="fleet" aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
             {fleetDay.map((moment, i) => (
               <Fragment>
                 {i > 0 && (
@@ -488,7 +488,7 @@ const nav = [
                     {moment.slots.map((kind, j) => (
                       <i
                         class={`is-${kind}`}
-                        style={`grid-row:${fleetSlots / fleetColumns - Math.floor(j / fleetColumns)};grid-column:${(j % fleetColumns) + 1};--i:${i * 4 + j}`}
+                        style={`grid-row:${fleetSlots / fleetColumns - Math.floor(j / fleetColumns)};grid-column:${(j % fleetColumns) + 1}`}
                       >{kind === "base" || kind === "added" ? "worker" : ""}</i>
                     ))}
                   </span>
@@ -569,17 +569,6 @@ const nav = [
   </div>
 
   <script>
-    // Replay the fleet change once it scrolls into view.
-    const fleetFigure = document.querySelector<HTMLElement>("[data-fleet]");
-    if (fleetFigure && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      fleetFigure.dataset.animate = "";
-      new IntersectionObserver((entries, observer) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        fleetFigure.dataset.shown = "";
-        observer.disconnect();
-      }, { threshold: 0.5 }).observe(fleetFigure);
-    }
-
     const wide = window.matchMedia("(min-width: 84rem)");
 
     document.querySelectorAll<HTMLElement>("[data-annotated]").forEach((block) => {
@@ -1464,8 +1453,6 @@ const nav = [
     font-size: 0.5625rem;
     font-style: normal;
     color: var(--ink-2);
-    transition: opacity 0.35s ease, transform 0.35s ease, border-color 0.35s ease;
-    transition-delay: calc(var(--i) * 45ms);
   }
 
   .fleet-hosts i.is-empty { visibility: hidden; }
@@ -1481,9 +1468,6 @@ const nav = [
     border: 1px dashed #9fb2ec;
     border-image: none;
   }
-
-  .fleet[data-animate]:not([data-shown]) i:not(.is-left) { opacity: 0; transform: translateY(6px); }
-  .fleet[data-animate]:not([data-shown]) i.is-left { background: #dfe6fb; border-style: solid; border-color: #4f6fd9; }
 
   .fleet-arrow {
     position: relative;
