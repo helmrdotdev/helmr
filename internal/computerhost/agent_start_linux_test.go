@@ -56,7 +56,7 @@ func (c *verifiedSessionStartClient) ReleaseAgentStart(_ context.Context, r work
 	return workerapi.AgentAuthorityResponse{AuthorityGeneration: 4, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
-	for _, requested := range []int{0, 1, 2, 3, 4, 5} {
+	for _, requested := range []int{0, 1, 2, 3, 4, 5, 6} {
 		t.Run(fmt.Sprint(requested), func(t *testing.T) {
 			index := artifacttest.ProgramMetadata(t)
 			store := &fakeCAS{objects: map[string][]byte{}}
@@ -79,7 +79,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 			if _, err = machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return index, nil }); err != nil {
 				t.Fatal(err)
 			}
-			if requested == 5 {
+			if requested >= 5 {
 				cache, err := objectcache.Open(filepath.Join(t.TempDir(), "cache"), 16384)
 				if err != nil {
 					t.Fatal(err)
@@ -133,11 +133,14 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 					kind  agentv1.SessionProgramRequest_Kind
 					bytes string
 				}{{agentv1.SessionProgramRequest_KIND_RUNTIME, "runtime"}, {agentv1.SessionProgramRequest_KIND_ARTIFACT, "program"}} {
-					if (part.kind == agentv1.SessionProgramRequest_KIND_RUNTIME && requested&1 == 0 && requested != 4) || (part.kind == agentv1.SessionProgramRequest_KIND_ARTIFACT && requested&2 == 0 && requested != 5) {
+					if (part.kind == agentv1.SessionProgramRequest_KIND_RUNTIME && requested&1 == 0 && requested != 4 && requested < 5) || (part.kind == agentv1.SessionProgramRequest_KIND_ARTIFACT && requested&2 == 0 && requested != 5) {
 						continue
 					}
 					if err := requestProgramPart(stream, r, part.kind); err != nil {
 						return err
+					}
+					if requested == 6 {
+						return stream.Close()
 					}
 					body := make([]byte, len(part.bytes))
 					if _, err := io.ReadFull(stream, body); err != nil {
@@ -167,7 +170,25 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 			}
 			connection, _, err := machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client, false)
-			if requested != 0 && requested != 5 {
+			if requested == 6 {
+				if err == nil || connection != nil {
+					t.Fatalf("peer loss accepted: %v %v", connection, err)
+				}
+				for range 2 {
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+				}
+				if client.releases != 1 || ledger.Snapshot().Used.HostDiskBytes != 0 || len(store.getCalls) != 0 {
+					t.Fatal("failed cached transfer retained ownership or fetched bytes")
+				}
+				// Close joins pins: returning proves the failed transfer released both.
+				if err := machines.ObjectCache.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if requested != 0 && requested < 5 {
 				if !errors.Is(err, errSessionArtifactsRequired) || connection != nil {
 					t.Fatalf("demand probe: connection=%v err=%v", connection, err)
 				}
@@ -213,7 +234,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 			}
 			wantStreams, wantReleases := int32(2), 2
-			if requested != 0 && requested != 5 {
+			if requested != 0 && requested < 5 {
 				wantStreams, wantReleases = 4, 3
 			}
 			if streams.Load() != wantStreams || client.releases != wantReleases || ledger.Snapshot().Used.HostDiskBytes != 0 {
@@ -231,7 +252,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				t.Fatalf("staging remains: %v %v", files, err)
 			}
 			wantReads := 0
-			if requested != 0 && requested != 5 {
+			if requested != 0 && requested < 5 {
 				wantReads = 1
 			}
 			if store.getCalls[runtimeObject.Digest] != wantReads || store.getCalls[programObject.Digest] != wantReads {
