@@ -156,12 +156,27 @@ const stages = [
   { kind: "vm", label: "another vm", note: "picks up where it left off" },
 ] as const;
 
-// The same fleet at three points in a working day.
+// The same fleet at three points in a working day. Every moment draws the
+// same slots, so one worker keeps its place: the overnight pair, the workers
+// added for the peak, and the ones drained once the work is done.
+const fleetSlots = 12;
+const fleetColumns = 4;
 const fleetDay = [
   { time: "03:00", workers: 2 },
   { time: "11:00", workers: 12 },
   { time: "19:00", workers: 5 },
-];
+].map((moment, i, all) => {
+  const before = all[i - 1]?.workers ?? moment.workers;
+  const base = all[0]!.workers;
+  const slots = Array.from({ length: fleetSlots }, (_, j) => {
+    if (j >= moment.workers) return j < before ? "left" : "empty";
+    return j < base ? "base" : "added";
+  });
+  const delta = moment.workers - before;
+  return { ...moment, slots, delta };
+});
+
+const fleetMoves = ["scale out", "scale in"];
 
 const scaleControls = [
   { title: "Headroom you choose", body: "Ask Helmr to keep spare slots ready, so new work starts without waiting for a host to boot." },
@@ -462,14 +477,31 @@ const nav = [
             organization under the policies you already run.
           </p>
           <a class="side-link" href={docsFor("scale").href}><span>Docs</span>{docsFor("scale").label} &rarr;</a>
-          <figure class="fleet" aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
-            {fleetDay.map((moment) => (
-              <div class="fleet-moment">
-                <span class="fleet-hosts" aria-hidden="true">
-                  {Array.from({ length: moment.workers }, () => <i>worker</i>)}
-                </span>
-                <p class="fleet-time">{moment.time}<span>{moment.workers} workers</span></p>
-              </div>
+          <figure class="fleet" data-fleet aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
+            {fleetDay.map((moment, i) => (
+              <Fragment>
+                {i > 0 && (
+                  <span class="fleet-arrow" aria-hidden="true"><span>{fleetMoves[i - 1]}</span></span>
+                )}
+                <div class="fleet-moment">
+                  <span class="fleet-hosts" aria-hidden="true">
+                    {moment.slots.map((kind, j) => (
+                      <i
+                        class={`is-${kind}`}
+                        style={`grid-row:${fleetSlots / fleetColumns - Math.floor(j / fleetColumns)};grid-column:${(j % fleetColumns) + 1};--i:${i * 4 + j}`}
+                      >{kind === "base" || kind === "added" ? "worker" : ""}</i>
+                    ))}
+                  </span>
+                  <p class="fleet-time">
+                    {moment.time}
+                    <span>
+                      {moment.delta > 0 && <b class="is-up">+{moment.delta}</b>}
+                      {moment.delta < 0 && <b class="is-down">&minus;{-moment.delta}</b>}
+                      {moment.workers} workers
+                    </span>
+                  </p>
+                </div>
+              </Fragment>
             ))}
           </figure>
           <ul class="controls">
@@ -537,6 +569,17 @@ const nav = [
   </div>
 
   <script>
+    // Replay the fleet change once it scrolls into view.
+    const fleetFigure = document.querySelector<HTMLElement>("[data-fleet]");
+    if (fleetFigure && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      fleetFigure.dataset.animate = "";
+      new IntersectionObserver((entries, observer) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        fleetFigure.dataset.shown = "";
+        observer.disconnect();
+      }, { threshold: 0.5 }).observe(fleetFigure);
+    }
+
     const wide = window.matchMedia("(min-width: 84rem)");
 
     document.querySelectorAll<HTMLElement>("[data-annotated]").forEach((block) => {
@@ -1398,17 +1441,15 @@ const nav = [
   /* scale */
   .fleet {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr) 4.5rem minmax(0, 1fr) 4.5rem minmax(0, 1fr);
     margin: 2.5rem 0 0;
   }
 
   .fleet-hosts {
-    display: flex;
-    flex-wrap: wrap-reverse;
-    align-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(3, 1.75rem);
     gap: 0.4rem;
-    min-height: 7.5rem;
     padding-bottom: 0.75rem;
     background: var(--hand-rule) bottom / 100% 4px no-repeat;
   }
@@ -1416,13 +1457,60 @@ const nav = [
   .fleet-hosts i {
     display: grid;
     place-items: center;
-    width: 3.25rem;
-    height: 1.75rem;
+    min-width: 0;
     border: 1px solid transparent;
     border-image: var(--hand-machine) 8 fill / 8px stretch;
     font-family: var(--font-mono);
-    font-size: 0.625rem;
+    font-size: 0.5625rem;
     font-style: normal;
+    color: var(--ink-2);
+    transition: opacity 0.35s ease, transform 0.35s ease, border-color 0.35s ease;
+    transition-delay: calc(var(--i) * 45ms);
+  }
+
+  .fleet-hosts i.is-empty { visibility: hidden; }
+
+  .fleet-hosts i.is-added {
+    border: 1px solid #4f6fd9;
+    border-image: none;
+    background: #dfe6fb;
+    color: #2b4fd8;
+  }
+
+  .fleet-hosts i.is-left {
+    border: 1px dashed #9fb2ec;
+    border-image: none;
+  }
+
+  .fleet[data-animate]:not([data-shown]) i:not(.is-left) { opacity: 0; transform: translateY(6px); }
+  .fleet[data-animate]:not([data-shown]) i.is-left { background: #dfe6fb; border-style: solid; border-color: #4f6fd9; }
+
+  .fleet-arrow {
+    position: relative;
+    align-self: center;
+    height: 1px;
+    margin: 0 0.6rem 2rem;
+    background-image: linear-gradient(90deg, var(--ink-1) 3px, transparent 3px);
+    background-size: 6px 1px;
+  }
+
+  .fleet-arrow::after {
+    content: "";
+    position: absolute;
+    top: -3.5px;
+    right: -1px;
+    border-block: 4px solid transparent;
+    border-left: 7px solid var(--ink-1);
+  }
+
+  .fleet-arrow span {
+    position: absolute;
+    bottom: 0.4rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    white-space: nowrap;
     color: var(--ink-2);
   }
 
@@ -1435,12 +1523,17 @@ const nav = [
     color: var(--ink-1);
   }
 
-  .fleet-time span { color: var(--ink-3); }
+  .fleet-time span { display: inline-flex; gap: 0.5rem; color: var(--ink-3); }
+  .fleet-time b { font-weight: 400; }
+  .fleet-time .is-up { color: #2b4fd8; }
+  .fleet-time .is-down { color: #7b8fcf; }
 
   @media (max-width: 480px) {
-    .fleet { gap: 0.75rem; }
-    .fleet-hosts { gap: 0.25rem; min-height: 9rem; }
-    .fleet-hosts i { width: 1.75rem; height: 1.25rem; font-size: 0; }
+    .fleet { grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr) 1.25rem minmax(0, 1fr); }
+    .fleet-hosts { grid-template-rows: repeat(3, 1rem); gap: 0.2rem; }
+    .fleet-hosts i { font-size: 0; }
+    .fleet-arrow { margin-inline: 0.15rem; }
+    .fleet-arrow span { display: none; }
     .fleet-time { flex-direction: column; gap: 0.15rem; }
   }
 
