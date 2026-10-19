@@ -43,6 +43,10 @@ func TestPromotionRechecksPublishedImageEligibility(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1`, p.f.env).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("promotion preempted attached rotation successor: %d %v", count, err)
 	}
+	observed, err := deployment.Get(t.Context(), p.f.pool, principal, scope, p.f.deployment)
+	if err != nil || observed.PreparationState != "preparing" {
+		t.Fatalf("pending successor observation: %+v %v", observed, err)
+	}
 	successor, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
 	if err != nil {
 		t.Fatal(err)

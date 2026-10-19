@@ -47,12 +47,8 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	}
 	// Existing attached Computers can consume only their original build or its
 	// direct successor. Let that chain own the next build after Secret rotation.
-	var successorPending bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
- WHERE p.environment_id=$1 AND p.image_spec_id=$2
- AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
- AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
+	successorPending, err := deploymentImageSuccessorPending(ctx, tx, env, spec)
+	if err != nil {
 		return err
 	}
 	if successorPending {
@@ -68,6 +64,16 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 		return err
 	}
 	return notifyImageBuildChanged(ctx, tx, env, id)
+}
+
+func deploymentImageSuccessorPending(ctx context.Context, q db.DBTX, env, spec uuid.UUID) (bool, error) {
+	var pending bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
+ WHERE p.environment_id=$1 AND p.image_spec_id=$2
+ AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
+ AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&pending)
+	return pending, err
 }
 
 // ImagePreparationState describes the most recent attempt without starting one.
@@ -89,6 +95,13 @@ func ImagePreparationState(ctx context.Context, q db.DBTX, env, spec uuid.UUID) 
 		return "failed", nil
 	}
 	if status == "queued" || status == "running" {
+		return "preparing", nil
+	}
+	pending, err := deploymentImageSuccessorPending(ctx, q, env, spec)
+	if err != nil {
+		return "", err
+	}
+	if pending {
 		return "preparing", nil
 	}
 	return "unprepared", nil
