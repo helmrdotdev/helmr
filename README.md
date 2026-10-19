@@ -4,31 +4,125 @@
 
 Your models, tools, and code. Helmr handles the infrastructure.
 
-Define an agent's work in plain TypeScript and run it with the coding agent you
-already use: Claude Code, Codex, OpenCode, Pi, Cursor or the AI SDK. Helmr gives it
-a computer you define in code, keeps its work through hibernation and resume, and
-lets it work alongside your team in Slack.
+## What you can build
 
-## What you get
+- **An issue fixer** that you point at your repository. It works an issue with
+  Codex or Claude Code, runs your checks before it reports back, and asks before
+  running commands that need approval.
+- **A pull request summarizer** that reads a GitHub pull request and lists its
+  changed files.
+- **A website builder** that asks about your audience first, then builds and
+  refines a small site's files across one conversation.
 
-- **Computers defined in code**: image, tools, resources, prepare steps and secrets in one definition.
-- **Agents in plain TypeScript**: start your coding agent once in `init`, then hand it each turn.
-- **Immediate replies, background file saves**: completed turns have durable results and conversation records. Computer files save in the background. If a worker is lost before files are saved, Helmr warns each affected conversation and waits for your next message or Resume before continuing from the last retained save, or the initial work environment if no save exists. Completed turns are never replayed.
-- **People in the loop**: agents ask questions with `turn.ask`, and teammates answer from Slack or the CLI.
-- **Protected secrets**: real credentials are swapped in outside the VM, only for the origins you allow.
-- **Infrastructure you control**: self-host in your own AWS account. Managed Helmr Cloud is planned.
+Each one is a TypeScript project. See [examples](examples/).
+
+## What an agent looks like
+
+A Pi coding agent on its own computer, using the Pi SDK directly:
+
+```ts
+import { agent, image, template } from "@helmr/sdk"
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"
+
+const computer = template({
+  id: "assistant",
+  image: image("assistant")
+    .from("node:24-bookworm-slim")
+    .run(["sh", "-c", "apt-get update && apt-get install -y git ripgrep"])
+    .workdir("/workspace"),
+  resources: { cpu: 2, memory: "4GiB" },
+  secrets: [{
+    secret: "ANTHROPIC_API_KEY",
+    env: { name: "ANTHROPIC_API_KEY", mode: "protected", allowedOrigins: ["https://api.anthropic.com"] },
+  }],
+})
+
+export const assistant = agent({
+  id: "assistant",
+  template: computer,
+  async init({ session }) {
+    const { session: pi } = await createAgentSession({
+      cwd: "/workspace",
+      sessionManager: SessionManager.continueRecent("/workspace", `/var/lib/helmr/pi/${session.id}`),
+    })
+    return pi
+  },
+  async turn(turn, { initResult: pi }) {
+    turn.onCancel(() => pi.abort())
+    await pi.prompt(turn.input.map(part => part.text).join(""))
+    await turn.respond(pi.getLastAssistantText() ?? "")
+    return null
+  },
+})
+```
+
+`init` starts Pi when the session's process starts, and each message becomes a
+`turn`. If the process is ever rebuilt, Pi picks up its saved conversation from
+the computer's disk. The computer, its tools and its secrets live next to the
+agent code. `helmr init --template` has fuller starters for Pi, Claude Code,
+Codex and OpenCode.
+
+## Why Helmr
+
+Running agents in the cloud usually means choosing between a hosted agent you
+can't see into, or building hibernation, checkpoints and recovery yourself.
+Helmr aims for the feel of setting up an environment and running a script: you
+write it, you can see what it's doing, and Helmr handles the lifecycle.
+
+**Keep the agent you already use.**
+Pi, Claude Code, Codex and OpenCode run as themselves, with their own sessions,
+tools and permission prompts. Helmr wraps one lifecycle around them (sessions,
+turns, cancellation, resume) instead of asking you to rewrite your agent for a
+new framework.
+
+**The computer is code you can review.**
+Image, packages, CPU and memory, and which secrets reach which origins live in
+the same TypeScript file as the agent. Changes go through a pull request like
+any other code, and every environment gets the same computer.
+
+**Work survives without checkpoint code.**
+A session can sit idle between messages and pick up where it left off. Files
+save in the background; if a worker is lost, Helmr tells you what was lost and
+continues from the last save when you resume. Completed turns are never run twice.
+
+**You can see it and step in.**
+Every session has an event history: what ran, what it is waiting on, what it
+returned. When the agent needs a decision, it asks, and your team answers from
+Slack, the Console or the CLI. You can also run a command on the computer
+yourself.
+
+**Keys can stay outside the computer.**
+With protected secrets, the agent sees a placeholder. Helmr swaps in the real
+key outside the VM, only in requests to the origins you allow.
+
+**It runs in your AWS account.**
+The control plane, workers and data stay in infrastructure you own.
 
 ## Get started
 
-Install the CLI:
+You need a Helmr control plane with at least one worker (see the
+[self-hosting guide](https://helmr.dev/docs/self-hosting/overview)) and Docker
+with Buildx.
+
+Install the CLI, sign in and create a Pi agent:
 
 ```sh
 curl -fsSL https://helmr.dev/install | bash
+helmr login https://helmr.example.com
+helmr init --template pi --dir my-agent
+cd my-agent
+bun install
 ```
 
-Follow the [quickstart](https://helmr.dev/docs/quickstart) to deploy and run your
-first agent. You need a running control plane and worker; the
-[self-hosting guide](https://helmr.dev/docs/self-hosting/overview) covers setup.
+Add the `ANTHROPIC_API_KEY` Secret for your environment in the Console, then
+deploy:
+
+```sh
+helmr deploy --project PROJECT --env ENVIRONMENT
+```
+
+The [quickstart](https://helmr.dev/docs/quickstart) walks through the whole path,
+from creating a project to running your first session.
 
 ## Build from source
 
