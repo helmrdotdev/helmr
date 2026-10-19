@@ -156,6 +156,34 @@ const stages = [
   { kind: "vm", label: "another vm", note: "picks up where it left off" },
 ] as const;
 
+// The same fleet at three points in a working day. Every moment draws the
+// same slots, so one worker keeps its place: the overnight pair, the workers
+// added for the peak, and the ones drained once the work is done.
+const fleetSlots = 12;
+const fleetColumns = 4;
+const fleetDay = [
+  { time: "03:00", workers: 2 },
+  { time: "11:00", workers: 12 },
+  { time: "19:00", workers: 5 },
+].map((moment, i, all) => {
+  const before = all[i - 1]?.workers ?? moment.workers;
+  const base = all[0]!.workers;
+  const slots = Array.from({ length: fleetSlots }, (_, j) => {
+    if (j >= moment.workers) return j < before ? "left" : "empty";
+    return j < base ? "base" : "added";
+  });
+  const delta = moment.workers - before;
+  return { ...moment, slots, delta };
+});
+
+const fleetMoves = ["scale out", "scale in"];
+
+const scaleControls = [
+  { title: "Headroom you choose", body: "Ask Helmr to keep spare slots ready, so new work starts without waiting for a host to boot." },
+  { title: "Drain before removal", body: "A host leaves only after its work is saved or finished. If a host is lost, sessions resume elsewhere." },
+  { title: "Limits per environment", body: "Cap resident computers, CPU, memory, storage and admission rate, so one workload cannot take the fleet." },
+] as const;
+
 // The docs page each section points to.
 const sectionDocs = [
   { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness" } },
@@ -164,6 +192,7 @@ const sectionDocs = [
   { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack" } },
   { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability" } },
   { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
+  { id: "scale", docs: { href: "/docs/self-hosting/capacity", label: "Capacity scaling" } },
   { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
 ] as const;
 
@@ -438,6 +467,51 @@ const nav = [
               </div>
             </div>
           </div>
+        </section>
+
+        <section id="scale" class="block" aria-labelledby="scale-title">
+          <h2 id="scale-title">Scale on your own terms.</h2>
+          <p>
+            Helmr works out how many workers the queued work needs. Your scaler decides how to get
+            them: which instances, which accounts, how fast and how far. Capacity grows with your
+            organization under the policies you already run.
+          </p>
+          <a class="side-link" href={docsFor("scale").href}><span>Docs</span>{docsFor("scale").label} &rarr;</a>
+          <figure class="fleet" aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
+            {fleetDay.map((moment, i) => (
+              <Fragment>
+                {i > 0 && (
+                  <span class="fleet-arrow" aria-hidden="true"><span>{fleetMoves[i - 1]}</span></span>
+                )}
+                <div class="fleet-moment">
+                  <span class="fleet-hosts" aria-hidden="true">
+                    {moment.slots.map((kind, j) => (
+                      <i
+                        class={`is-${kind}`}
+                        style={`grid-row:${fleetSlots / fleetColumns - Math.floor(j / fleetColumns)};grid-column:${(j % fleetColumns) + 1}`}
+                      >{kind === "base" || kind === "added" ? "worker" : ""}</i>
+                    ))}
+                  </span>
+                  <p class="fleet-time">
+                    {moment.time}
+                    <span>
+                      {moment.delta > 0 && <b class="is-up">+{moment.delta}</b>}
+                      {moment.delta < 0 && <b class="is-down">&minus;{-moment.delta}</b>}
+                      {moment.workers} workers
+                    </span>
+                  </p>
+                </div>
+              </Fragment>
+            ))}
+          </figure>
+          <ul class="controls">
+            {scaleControls.map((control) => (
+              <li>
+                <p class="control-title">{control.title}</p>
+                <p>{control.body}</p>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section id="open-source" class="block" aria-labelledby="oss-title">
@@ -1353,6 +1427,128 @@ const nav = [
     gap: 1rem;
   }
 
+  /* scale */
+  .fleet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 4.5rem minmax(0, 1fr) 4.5rem minmax(0, 1fr);
+    margin: 2.5rem 0 0;
+  }
+
+  .fleet-hosts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(3, 1.75rem);
+    gap: 0.4rem;
+    padding-bottom: 0.75rem;
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
+  }
+
+  .fleet-hosts i {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    border: 1px solid transparent;
+    border-image: var(--hand-machine) 8 fill / 8px stretch;
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-style: normal;
+    color: var(--ink-2);
+  }
+
+  .fleet-hosts i.is-empty { visibility: hidden; }
+
+  .fleet-hosts i.is-added {
+    border: 1px solid #4f6fd9;
+    border-image: none;
+    background: #dfe6fb;
+    color: #2b4fd8;
+  }
+
+  .fleet-hosts i.is-left {
+    border: 1px dashed #9fb2ec;
+    border-image: none;
+  }
+
+  .fleet-arrow {
+    position: relative;
+    align-self: center;
+    height: 1px;
+    margin: 0 0.6rem 2rem;
+    background-image: linear-gradient(90deg, var(--ink-1) 3px, transparent 3px);
+    background-size: 6px 1px;
+  }
+
+  .fleet-arrow::after {
+    content: "";
+    position: absolute;
+    top: -3.5px;
+    right: -1px;
+    border-block: 4px solid transparent;
+    border-left: 7px solid var(--ink-1);
+  }
+
+  .fleet-arrow span {
+    position: absolute;
+    bottom: 0.4rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    white-space: nowrap;
+    color: var(--ink-2);
+  }
+
+  .fleet-time {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--ink-1);
+  }
+
+  .fleet-time span { display: inline-flex; gap: 0.5rem; color: var(--ink-3); }
+  .fleet-time b { font-weight: 400; }
+  .fleet-time .is-up { color: #2b4fd8; }
+  .fleet-time .is-down { color: #7b8fcf; }
+
+  @media (max-width: 480px) {
+    .fleet { grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr) 1.25rem minmax(0, 1fr); }
+    .fleet-hosts { grid-template-rows: repeat(3, 1rem); gap: 0.2rem; }
+    .fleet-hosts i { font-size: 0; }
+    .fleet-arrow { margin-inline: 0.15rem; }
+    .fleet-arrow span { display: none; }
+    .fleet-time { flex-direction: column; gap: 0.15rem; }
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .controls li {
+    padding-top: 0.75rem;
+    background: var(--hand-rule-dashed) top / 26px 8px repeat-x;
+  }
+
+  .control-title {
+    margin-bottom: 0.35rem;
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+    color: var(--ink-1);
+  }
+
+  .controls li p:not(.control-title) {
+    font-family: var(--serif);
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+  }
+
   /* homes */
   .homes {
     display: grid;
@@ -1512,7 +1708,7 @@ const nav = [
     .carry-arrow span { bottom: auto; top: 50%; left: 0.6rem; transform: translateY(-50%); }
     .hub { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
     .dial { max-width: 22rem; margin: 0 auto; }
-    .wire-out, .homes { grid-template-columns: minmax(0, 1fr); }
+    .wire-out, .homes, .controls { grid-template-columns: minmax(0, 1fr); }
     .homes { row-gap: 4.5rem; }
 
 
