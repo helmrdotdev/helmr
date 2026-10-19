@@ -324,7 +324,16 @@ type corruptCheckpointStore struct {
 
 func (s corruptCheckpointStore) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 	if digest == s.digest {
-		return io.NopCloser(bytes.NewReader([]byte("corrupt"))), nil
+		body, err := s.ImmutableStore.Get(ctx, digest)
+		if err != nil {
+			return nil, err
+		}
+		raw, readErr := io.ReadAll(body)
+		if err = errors.Join(readErr, body.Close()); err != nil {
+			return nil, err
+		}
+		raw[len(raw)/2] ^= 1
+		return cas.NewVerifyingReadCloser(io.NopCloser(bytes.NewReader(raw)), digest), nil
 	}
 	return s.ImmutableStore.Get(ctx, digest)
 }
