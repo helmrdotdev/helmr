@@ -16,7 +16,7 @@ const (
 	VMRuntimeDescriptorContract = "helmr.vm-runtime-descriptor.v0"
 	MaxVMVCPUCount              = int64(32)
 
-	defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
+	defaultKernelArgs = "console=ttyS0 quiet loglevel=5 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
 
 	apiSocketName             = "api.sock"
 	vsockSocketName           = "vsock.sock"
