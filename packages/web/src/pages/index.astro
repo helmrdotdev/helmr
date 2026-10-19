@@ -70,9 +70,9 @@ const computerNotes: Note[] = [
 ];
 
 const agentNotes: Note[] = [
-  { from: "async init", to: "  },", title: "Start the agent you use.", text: "init starts OpenCode once, before the first turn. Hibernation keeps it running." },
+  { from: "async init", to: "  },", title: "Start the agent you use.", text: "init starts Pi once, before the first turn. Hibernation keeps it running." },
   { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
-  { from: "const { data } = await opencode.session.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
+  { from: "await pi.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same Pi session." },
   { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
 ];
 

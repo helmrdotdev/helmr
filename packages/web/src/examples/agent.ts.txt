@@ -1,19 +1,20 @@
 import { agent, triggers } from "@helmr/sdk"
-import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk/v2"
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"
 import { workspace } from "./computer"
 
 export const coder = agent({
   id: "coder",
   template: workspace,
 
-  async init() {
-    const { url } = await createOpencodeServer()
-    const opencode = createOpencodeClient({ baseUrl: url, directory: "/app" })
-    const { data } = await opencode.session.create({}, { throwOnError: true })
-    return { opencode, sessionID: data.id }
+  async init({ session }) {
+    const { session: pi } = await createAgentSession({
+      cwd: "/app",
+      sessionManager: SessionManager.continueRecent("/app", `/var/lib/helmr/pi/${session.id}`),
+    })
+    return pi
   },
 
-  async turn(turn, { initResult: { opencode, sessionID } }) {
+  async turn(turn, { initResult: pi }) {
     // Ask a teammate before choosing the scope of this task.
     const { answer } = await turn.ask({
       type: "choice",
@@ -24,13 +25,10 @@ export const coder = agent({
       ],
     })
     const prompt = turn.input.map(part => part.text).join("")
-    const { data } = await opencode.session.prompt({
-      sessionID,
-      parts: [{ type: "text", text: `${prompt}\n\n${answer.selected[0]!.value}` }],
-    }, { throwOnError: true })
-    const reply = data.parts.map(part => part.type === "text" ? part.text : "")
-    await turn.respond(reply.join(""))
-    return { sessionID }
+    turn.onCancel(() => pi.abort())
+    await pi.prompt(`${prompt}\n\n${answer.selected[0]!.value}`)
+    await turn.respond(pi.getLastAssistantText() ?? "")
+    return { piSession: pi.sessionManager.getSessionId() }
   },
 
   triggers: [
