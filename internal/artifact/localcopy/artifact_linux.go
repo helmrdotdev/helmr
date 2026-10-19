@@ -130,14 +130,7 @@ func Receive(ctx context.Context, directory string, role artifact.Role, expected
 	if err := validateArtifactCopyDescriptor(spec, expected); err != nil {
 		return nil, err
 	}
-	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, &expected, receive)
-	if err != nil {
-		return nil, err
-	}
-	if local.descriptor != expected {
-		return nil, errors.Join(errors.New("received artifact does not match pinned descriptor"), local.Close())
-	}
-	return local, nil
+	return produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, &expected, receive)
 }
 
 func produceArtifactCopyWithSpec(
