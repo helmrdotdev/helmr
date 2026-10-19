@@ -64,6 +64,14 @@ func (s localVersionSource) GetPackRange(ctx context.Context, digest string, siz
 	return r, err
 }
 
+func (s localVersionSource) GetSegmentRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	r, err := (guestIORangeSource{s.local}).GetRange(ctx, digest, size, offset, length)
+	if errors.Is(err, os.ErrNotExist) {
+		return s.reads.GetSegmentRange(ctx, digest, size, offset, length)
+	}
+	return r, err
+}
+
 // LocalVersion owns an exclusive process lock and a crash-recoverable local
 // root. Flush success means ciphertext and the selected root are fsynced locally;
 // it is not external durability and does not tolerate loss of the host's disk.
