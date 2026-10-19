@@ -29,6 +29,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"golang.org/x/sync/errgroup"
 )
 
 // PreparedMachines supplies immutable artifacts and tracked devices to allocation owners.
@@ -84,19 +85,31 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		return nil, errors.New("managed runtime delivery is not configured")
 	}
 	runtimeDescriptor := p.sessionRuntimeDescriptor(program.Runtime)
-	started := time.Now()
-	runtimeSnapshot, err := localcopy.ReadRuntime(
-		ctx,
-		p.PlatformStore,
-		tempDir,
-		runtimeDescriptor,
-	)
-	p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
-	if err != nil {
-		return nil, err
+	programDescriptor := sessionProgramDescriptor(program.Artifact)
+	images := &programSnapshots{}
+	group, stageCtx := errgroup.WithContext(ctx)
+	// Both files already fit in the caller's staging reservation. Their reads
+	// are independent; join them before verification or releasing either file.
+	group.Go(func() error {
+		started := time.Now()
+		var err error
+		images.runtime, err = localcopy.ReadRuntime(stageCtx, p.PlatformStore, tempDir, runtimeDescriptor)
+		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
+		return err
+	})
+	group.Go(func() error {
+		started := time.Now()
+		var err error
+		images.artifact, err = localcopy.ReadProgram(stageCtx, p.CAS, tempDir, programDescriptor)
+		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
+		return err
+	})
+	if err := group.Wait(); err != nil {
+		return nil, errors.Join(err, images.close())
 	}
-	closeSnapshots := func() error { return runtimeSnapshot.Close() }
-	started = time.Now()
+	runtimeSnapshot, programSnapshot := images.runtime, images.artifact
+	closeSnapshots := images.close
+	started := time.Now()
 	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (artifact.RuntimeIndex, error) {
 		return verify.Runtime(
 			ctx,
@@ -127,21 +140,6 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 			closeSnapshots(),
 		)
 	}
-	programDescriptor := sessionProgramDescriptor(program.Artifact)
-	started = time.Now()
-	programSnapshot, err := localcopy.ReadProgram(
-		ctx,
-		p.CAS,
-		tempDir,
-		programDescriptor,
-	)
-	p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
-	if err != nil {
-		return nil, errors.Join(err, closeSnapshots())
-	}
-	closeSnapshots = func() error {
-		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
-	}
 	started = time.Now()
 	programMetadata, err := p.verifyProgram(ctx, programDescriptor, func() (artifact.ProgramMetadata, error) {
 		return verify.Program(ctx, p.VerifierCgroupRoot, instanceID, programSnapshot)
@@ -168,7 +166,7 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		)
 	}
 
-	return &programSnapshots{runtime: runtimeSnapshot, artifact: programSnapshot}, nil
+	return images, nil
 }
 
 // The memo records isolated verification of exact content, not current launch

@@ -33,9 +33,8 @@ func encryptCheckpointObject(ctx context.Context, cipher *CheckpointEncryptor, d
 	if err == nil {
 		err = file.Chmod(0400)
 	}
-	if err == nil {
-		err = file.Sync()
-	}
+	// This file is upload staging, not a recovery record. Publication of the
+	// exact object establishes durability before the checkpoint becomes ready.
 	info, statErr := file.Stat()
 	err = errors.Join(err, statErr, file.Close())
 	if err != nil {
@@ -73,7 +72,7 @@ func downloadCheckpointObject(ctx context.Context, store cas.Reader, cipher *Che
 		return "", checkpointObjectReadError(err)
 	}
 	n, copyErr := io.Copy(ciphertext, io.LimitReader(body, object.SizeBytes+1))
-	err = errors.Join(copyErr, body.Close())
+	err = errors.Join(copyErr, body.Close(), ctx.Err())
 	if err != nil {
 		if errors.Is(err, cas.ErrDigestMismatch) {
 			return "", invalidCheckpoint(err)
@@ -83,12 +82,9 @@ func downloadCheckpointObject(ctx context.Context, store cas.Reader, cipher *Che
 	if n != object.SizeBytes {
 		return "", invalidCheckpoint(errors.New("checkpoint download size differs from manifest"))
 	}
-	if err := cas.VerifyDescriptorFile(ctx, descriptor, ciphertext); err != nil {
-		if errors.Is(err, cas.ErrDigestMismatch) {
-			return "", invalidCheckpoint(err)
-		}
-		return "", err
-	}
+	// Get verifies the stream's digest before successful EOF/Close. This
+	// private file needs no second hash pass; decryption authenticates its
+	// stored chunks before returning any plaintext path for restore.
 	plaintext, err := os.CreateTemp(directory, object.Role+"-plain-")
 	if err != nil {
 		return "", err
