@@ -111,6 +111,9 @@ func (o *PreparationAllocationOwner) runPreparationOn(ctx context.Context, machi
 			return nil
 		}
 		if response.State == "failed" {
+			if qualification && (response.ErrorCode == "preparation_execution_failed" || response.ErrorCode == "preparation_scope_termination_failed") {
+				o.failureCode = "preparation_execution_failed"
+			}
 			return errors.New("guest preparation failed: " + response.ErrorCode)
 		}
 

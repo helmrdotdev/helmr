@@ -66,7 +66,7 @@ export async function promoteDeployment(id: string, scope: DeploymentScope, sign
       signal?.throwIfAborted();
       result = await request<Deployment>(path, options);
     }
-    if (result.preparation_state !== "ready") {
+    if (result.preparation_state !== "ready" && result.preparation_state !== "unprepared") {
       throw new Error(`Environment preparation ${result.preparation_state}. The current deployment has not changed.`);
     }
   }

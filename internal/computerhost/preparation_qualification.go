@@ -22,8 +22,7 @@ type preparationQualification struct {
 // VM is absent. Its fresh physical identity is never a replay of that VM, and
 // all clone writes are disposable. Only the captured immutable root is published.
 func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, start workerapi.PreparationStart, shape workerapi.AllocationShape, root disk.VersionRoot, key workerapi.ComputerKeyMaterial) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
+	o.failureCode = "preparation_qualification_unavailable"
 	// Release captured raw/staging bytes before allocating the clone; preserve
 	// the already verified Runtime and Program snapshots for the fixed probe.
 	if err := o.capture.Close(); err != nil {
@@ -44,25 +43,27 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 	}
 	// Already-reserved resources are reused, but every new physical launch
 	// still observes current host health. Renew the original grant while waiting.
+	waitCtx, stopWait := context.WithTimeout(ctx, time.Minute)
+	defer stopWait()
 	for {
 		wake := o.workWake.snapshot()
-		if ctx.Err() != nil {
-			o.failureCode = "preparation_qualification_unavailable"
-			return context.Cause(ctx)
+		if waitCtx.Err() != nil {
+			return context.Cause(waitCtx)
 		}
-		err := o.admitStart(ctx)
+		err := o.admitStart(waitCtx)
 		if err == nil {
 			break
 		}
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			o.failureCode = "preparation_qualification_unavailable"
 			return err
 		}
-		if waitErr := waitAllocationWake(ctx, wake, 15*time.Second); waitErr != nil {
-			o.failureCode = "preparation_qualification_unavailable"
+		if waitErr := waitAllocationWake(waitCtx, wake, 15*time.Second); waitErr != nil {
 			return fmt.Errorf("qualification waited for host health: %w", errors.Join(err, waitErr))
 		}
 	}
+	stopWait()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	identity := o.identity
 	identity.AllocationID = uuid.NewV7().String()
 	o.qualification = &preparationQualification{identity: identity}
@@ -93,7 +94,9 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 	if err := o.runPreparationOn(ctx, o.qualification.machine, identity, credential, start, version, true); err != nil {
 		return err
 	}
-	return o.cleanupQualification(ctx)
+	cleanupCtx, stopCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopCleanup()
+	return o.cleanupQualification(cleanupCtx)
 }
 
 // A failed physical/device cleanup retains the exact owner and the original

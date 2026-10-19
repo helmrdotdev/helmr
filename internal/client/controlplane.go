@@ -566,7 +566,7 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, scope
 				return api.DeploymentResponse{}, err
 			}
 		}
-		if response.PreparationState != "ready" {
+		if response.PreparationState != "ready" && response.PreparationState != "unprepared" {
 			return api.DeploymentResponse{}, fmt.Errorf("deployment %s preparation %s; current deployment was not changed", deployment, response.PreparationState)
 		}
 		// Promotion rechecks exact eligibility atomically with current cutover.

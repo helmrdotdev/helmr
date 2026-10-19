@@ -1,6 +1,8 @@
 package deployment
 
 import (
+	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"testing"
 	"uuid"
 
@@ -43,6 +45,11 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM image_builds`).Scan(&attempt); err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, attempt)
+	if _, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID, nil); !errors.Is(err, computer.ErrNotReady) {
+		t.Fatalf("unusable build reported as accepted preparation: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, attempt)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET status='failed',error_code='preparation_execution_failed' WHERE id=$1`, attempt)
 	for range 2 {
 		failed, err := Get(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID)

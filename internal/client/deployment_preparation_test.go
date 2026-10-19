@@ -10,7 +10,7 @@ import (
 )
 
 func TestPromoteDeploymentObservesPreparationBeforeRetry(t *testing.T) {
-	for _, state := range []string{"ready", "failed"} {
+	for _, state := range []string{"ready", "unprepared", "failed", "unavailable"} {
 		t.Run(state, func(t *testing.T) {
 			var posts, gets atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func TestPromoteDeploymentObservesPreparationBeforeRetry(t *testing.T) {
 			if gets.Load() != 1 {
 				t.Fatalf("observations %d", gets.Load())
 			}
-			if state == "failed" {
+			if state == "failed" || state == "unavailable" {
 				if err == nil || posts.Load() != 1 {
 					t.Fatalf("failed preparation retried: posts=%d err=%v", posts.Load(), err)
 				}

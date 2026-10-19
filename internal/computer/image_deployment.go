@@ -39,13 +39,17 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	if !active {
 		return ErrSecretUnavailable
 	}
-	var occupied bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds
- WHERE environment_id=$1 AND image_spec_id=$2 AND (status IN ('queued','running') OR (worker_host_id IS NOT NULL AND fenced_at IS NULL)))`, env, spec).Scan(&occupied); err != nil {
-		return err
-	}
-	if occupied {
+	var usable bool
+	err := tx.QueryRow(ctx, `SELECT `+usableImageBuildSQL+` FROM image_builds p
+ WHERE environment_id=$1 AND image_spec_id=$2 AND (status IN ('queued','running') OR (worker_host_id IS NOT NULL AND fenced_at IS NULL))`, env, spec).Scan(&usable)
+	if err == nil {
+		if !usable {
+			return ErrNotReady
+		}
 		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
 	}
 	// Existing attached Computers can consume only their original build or its
 	// direct successor. Let that chain own the next build after Secret rotation.

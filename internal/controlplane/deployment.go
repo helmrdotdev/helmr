@@ -214,6 +214,8 @@ func deploymentError(err error) error {
 		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
+	case errors.Is(err, computer.ErrNotReady):
+		return conflict(codedError{code: "preparation_unavailable", message: "An unusable preparation still owns this environment image; retry promotion after its cleanup"})
 	case errors.Is(err, computer.ErrSecretUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
 	case errors.Is(err, deployment.ErrFinalizationConflict):

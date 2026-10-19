@@ -137,6 +137,7 @@ type preparationOwnerBackend struct {
 	probes                                                         atomic.Int64
 	qualificationID                                                string
 	qualifiedAbsent, failQualificationCleanup, qualificationFailed atomic.Bool
+	qualificationCancelled                                         atomic.Bool
 }
 
 func (b *preparationOwnerBackend) Materialize(_ context.Context, r vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
@@ -232,11 +233,18 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 				}
 				if backend.probes.Load() > 0 {
 					state = "succeeded"
-					if backend.qualificationFailed.Load() {
+					if backend.qualificationFailed.Load() || backend.qualificationCancelled.Load() {
 						state = "failed"
 					}
 				}
-				_ = frameio.WriteProtoFrame(stream, &computerv0.PreparationControlResponse{State: state})
+				code := ""
+				if state == "failed" {
+					code = "preparation_execution_failed"
+				}
+				if backend.qualificationCancelled.Load() {
+					code = "preparation_cancelled"
+				}
+				_ = frameio.WriteProtoFrame(stream, &computerv0.PreparationControlResponse{State: state, ErrorCode: code})
 				return
 			}
 			if r.Start != nil {
@@ -516,7 +524,7 @@ func TestPreparationQualificationFailureNeverPublishes(t *testing.T) {
 	if err := owner.Run(t.Context()); err != nil || !owner.Finished() {
 		t.Fatalf("cleanup: %v", err)
 	}
-	if owner.qualification != nil || client.publications.Load() != 0 || backend.authored.Load() != 1 || backend.starts.Load() != 2 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+	if owner.failureCode != "preparation_execution_failed" || owner.qualification != nil || client.publications.Load() != 0 || backend.authored.Load() != 1 || backend.starts.Load() != 2 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("cleanup reran preparation or retained released capacity")
 	}
 }
@@ -534,7 +542,7 @@ func TestPreparationQualificationAttachmentFailureNeverPublishes(t *testing.T) {
 	if err := owner.Run(t.Context()); err == nil {
 		t.Fatal("attachment failure hidden")
 	}
-	if !owner.Finished() || client.publications.Load() != 0 || backend.starts.Load() != 1 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+	if owner.failureCode != "preparation_qualification_unavailable" || !owner.Finished() || client.publications.Load() != 0 || backend.starts.Load() != 1 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("failed attachment launched or retained capacity")
 	}
 }
@@ -543,6 +551,13 @@ func TestPreparationQualificationRenewsItsOwnGuest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		owner, client, backend := preparationOwnerFixture(t)
 		client.delivery.ExpiresAt = time.Now().Add(15 * time.Second)
+		// Admission waiting must not consume the later execution budget.
+		owner.admitStart = func(context.Context) error {
+			if backend.absent.Load() {
+				time.Sleep(50 * time.Second)
+			}
+			return nil
+		}
 		fallback := backend.machine.handle
 		var guestExpiry, renewals, started atomic.Int64
 		backend.machine.handle = func(stream net.Conn) {
@@ -616,4 +631,15 @@ func TestPreparationQualificationRechecksHostAdmission(t *testing.T) {
 			t.Fatal("health denial bypassed or reported as a defective image")
 		}
 	})
+}
+
+func TestPreparationQualificationCancellationIsUnavailable(t *testing.T) {
+	owner, client, backend := preparationOwnerFixture(t)
+	backend.qualificationCancelled.Store(true)
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("guest cancellation hidden")
+	}
+	if owner.failureCode != "preparation_qualification_unavailable" || !owner.Finished() || client.publications.Load() != 0 || owner.qualification != nil || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("cancelled qualification was published, retained, or reported as defective execution")
+	}
 }
