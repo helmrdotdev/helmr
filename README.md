@@ -6,14 +6,14 @@ Your models, tools, and code. Helmr handles the infrastructure.
 
 ## What you can build
 
-- **A teammate in Slack.** Mention it in a thread and it works on its own
-  computer, asks the thread when it needs a decision, and remembers the
+- **Cloud agents from the agent you already use.** Run Claude Code, Codex,
+  OpenCode or Pi on its own computer in the cloud, with your tools, repositories
+  and secrets.
+- **Agents your team talks to in Slack.** Mention the agent in a thread to give
+  it work. It asks in the thread when it needs a decision and remembers the
   conversation for follow-ups.
-- **An issue fixer.** Point it at your repository, and it works an issue with
-  Codex or Claude Code, runs your checks, and asks before running commands that
-  need approval.
-- **A scheduled job.** Run an agent on a cron schedule, such as a weekday
-  morning report that opens a new thread in a Slack channel.
+- **Agents that run on a schedule.** Start work on a cron schedule, such as a
+  weekday morning report that opens a new thread in a Slack channel.
 
 ## What an agent looks like
 
