@@ -570,3 +570,36 @@ func testProgramDescriptor(role artifact.Role, content []byte) artifact.ProgramD
 		MediaType: artifact.ProgramArtifactMediaType,
 	}
 }
+
+func TestReceiveVerifiesPinnedBytesAndOwnsCleanup(t *testing.T) {
+	for _, content := range []string{"original", "modified", "short"} {
+		t.Run(content, func(t *testing.T) {
+			directory := t.TempDir()
+			expected := cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original")))
+			local, err := Receive(t.Context(), directory, artifact.RoleProgram, expected, func(file *os.File) error { _, err := file.WriteString(content); return err })
+			if content == "original" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				file, err := local.VerifierFile()
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(file)
+				if err != nil || string(body) != content {
+					t.Fatalf("content %q %v", body, err)
+				}
+				if err := local.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil {
+				_ = local.Close()
+				t.Fatal("received wrong bytes")
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("cleanup %v %v", entries, err)
+			}
+		})
+	}
+}

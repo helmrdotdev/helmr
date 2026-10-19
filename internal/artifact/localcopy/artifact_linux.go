@@ -117,6 +117,28 @@ func Produce(
 	return local, nil
 }
 
+// Receive seals bytes transferred from an already-authoritative artifact. The
+// local file is disposable: its owner recreates it after loss, so publication
+// durability belongs to the source rather than this temporary copy. The callback
+// must join all writes before returning. The directory remains caller-owned.
+func Receive(ctx context.Context, directory string, role artifact.Role, expected cas.Descriptor, receive func(*os.File) error) (*Artifact, error) {
+	spec, err := artifactSpecForRole(role)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateArtifactCopyDescriptor(spec, expected); err != nil {
+		return nil, err
+	}
+	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, receive)
+	if err != nil {
+		return nil, err
+	}
+	if local.descriptor != expected {
+		return nil, errors.Join(errors.New("received artifact does not match pinned descriptor"), local.Close())
+	}
+	return local, nil
+}
+
 func produceArtifactCopyWithSpec(
 	ctx context.Context,
 	directory string,

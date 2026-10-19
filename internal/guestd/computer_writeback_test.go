@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
-	"time"
+	"testing/synctest"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -186,36 +186,47 @@ func TestComputerWritebackFinalizationRetainsFault(t *testing.T) {
 }
 
 func TestComputerWritebackFinalizationJoinsCancelledFreeze(t *testing.T) {
-	entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	w := &computerWriteback{
-		syncFilesystem:   func() error { return nil },
-		freezeFilesystem: func() error { close(entered); <-release; return nil },
-		closeFilesystem:  func() error { close(closed); return nil },
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- w.finalizePreparation(ctx) }()
-	<-entered
-	cancel()
-	go w.close()
-	select {
-	case <-closed:
+	synctest.Test(t, func(t *testing.T) {
+		entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		w := &computerWriteback{
+			syncFilesystem:   func() error { return nil },
+			freezeFilesystem: func() error { close(entered); <-release; return nil },
+			closeFilesystem:  func() error { close(closed); return nil },
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- w.finalizePreparation(ctx) }()
+		<-entered
+		cancel()
+		synctest.Wait()
+		// Mutex waits are not durably blocked for synctest. Check ownership
+		// before starting close so Wait only observes the blocked freeze.
+		if w.mu.TryLock() {
+			w.mu.Unlock()
+			close(release)
+			<-done
+			t.Fatal("freeze released writeback ownership")
+		}
+		go w.close()
+		select {
+		case <-closed:
+			close(release)
+			<-done
+			t.Fatal("close overtook freeze")
+		case <-done:
+			close(release)
+			<-closed
+			t.Fatal("cancel released syscall")
+		default:
+		}
 		close(release)
-		<-done
-		t.Fatal("close overtook freeze")
-	case <-done:
-		close(release)
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
 		<-closed
-		t.Fatal("cancel released syscall")
-	case <-time.After(10 * time.Millisecond):
-	}
-	close(release)
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-	<-closed
-	if !w.frozen {
-		t.Fatal("completed freeze not retained after cancellation")
-	}
+		if !w.frozen {
+			t.Fatal("completed freeze not retained after cancellation")
+		}
+	})
 }

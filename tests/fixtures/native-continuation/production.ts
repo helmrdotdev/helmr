@@ -39,7 +39,7 @@ export const workspace = template({
   resources: { cpu: 2, memory: "4GiB", disk: "32GiB" },
   async prepare(build) {
     await build.exec(["node", "-e", "require('node:fs').writeFileSync('/workspace/prepared-environment', 'prepared once')"])
-    await build.exec(["sh", "-ceu", "if [ -f /opt/native-performance/repository.tar ]; then mkdir /workspace/prepared-repository; tar -xf /opt/native-performance/repository.tar -C /workspace/prepared-repository; fi"])
+    await build.exec(["sh", "-ceu", "if [ -d /opt/native-performance ]; then mkdir /workspace/prepared-repository; tar -xf /opt/native-performance/repository.tar -C /workspace/prepared-repository; fi"])
   },
 })
 

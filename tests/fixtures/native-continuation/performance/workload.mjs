@@ -49,7 +49,9 @@ if (kind === "no-op") {
   }
   const file = join(repository, "sdk/typescript/src/content.ts")
   const before = await readFile(file, "utf8")
-  const limit = sequence % 2 ? 63 : 62
+  const limit = preparedArgument === "prepared"
+    ? (Number(before.match(/export const CONTENT_PARTS = (\d+)/)?.[1]) === 63 ? 62 : 63)
+    : (sequence % 2 ? 63 : 62)
   const after = before.replace(/export const CONTENT_PARTS = \d+/, `export const CONTENT_PARTS = ${limit}`)
   assert.notEqual(before, after)
   await writeFile(file, after)
