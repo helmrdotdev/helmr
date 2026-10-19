@@ -156,6 +156,19 @@ const stages = [
   { kind: "vm", label: "another vm", note: "picks up where it left off" },
 ] as const;
 
+// The same fleet at three points in a working day.
+const fleetDay = [
+  { time: "03:00", workers: 2 },
+  { time: "11:00", workers: 12 },
+  { time: "19:00", workers: 5 },
+];
+
+const scaleControls = [
+  { title: "Headroom you choose", body: "Ask Helmr to keep spare slots ready, so new work starts without waiting for a host to boot." },
+  { title: "Drain before removal", body: "A host leaves only after its work is saved or finished. If a host is lost, sessions resume elsewhere." },
+  { title: "Limits per environment", body: "Cap resident computers, CPU, memory, storage and admission rate, so one workload cannot take the fleet." },
+] as const;
+
 // The docs page each section points to.
 const sectionDocs = [
   { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness" } },
@@ -164,6 +177,7 @@ const sectionDocs = [
   { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack" } },
   { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability" } },
   { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
+  { id: "scale", docs: { href: "/docs/self-hosting/capacity", label: "Capacity scaling" } },
   { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
 ] as const;
 
@@ -438,6 +452,34 @@ const nav = [
               </div>
             </div>
           </div>
+        </section>
+
+        <section id="scale" class="block" aria-labelledby="scale-title">
+          <h2 id="scale-title">Scale on your own terms.</h2>
+          <p>
+            Helmr works out how many workers the queued work needs. Your scaler decides how to get
+            them: which instances, which accounts, how fast and how far. Capacity grows with your
+            organization under the policies you already run.
+          </p>
+          <a class="side-link" href={docsFor("scale").href}><span>Docs</span>{docsFor("scale").label} &rarr;</a>
+          <figure class="fleet" aria-label="Two workers overnight, twelve at the late-morning peak, five in the evening">
+            {fleetDay.map((moment) => (
+              <div class="fleet-moment">
+                <span class="fleet-hosts" aria-hidden="true">
+                  {Array.from({ length: moment.workers }, () => <i>worker</i>)}
+                </span>
+                <p class="fleet-time">{moment.time}<span>{moment.workers} workers</span></p>
+              </div>
+            ))}
+          </figure>
+          <ul class="controls">
+            {scaleControls.map((control) => (
+              <li>
+                <p class="control-title">{control.title}</p>
+                <p>{control.body}</p>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section id="open-source" class="block" aria-labelledby="oss-title">
@@ -1353,6 +1395,83 @@ const nav = [
     gap: 1rem;
   }
 
+  /* scale */
+  .fleet {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin: 2.5rem 0 0;
+  }
+
+  .fleet-hosts {
+    display: flex;
+    flex-wrap: wrap-reverse;
+    align-content: flex-start;
+    gap: 0.4rem;
+    min-height: 7.5rem;
+    padding-bottom: 0.75rem;
+    background: var(--hand-rule) bottom / 100% 4px no-repeat;
+  }
+
+  .fleet-hosts i {
+    display: grid;
+    place-items: center;
+    width: 3.25rem;
+    height: 1.75rem;
+    border: 1px solid transparent;
+    border-image: var(--hand-machine) 8 fill / 8px stretch;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-style: normal;
+    color: var(--ink-2);
+  }
+
+  .fleet-time {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--ink-1);
+  }
+
+  .fleet-time span { color: var(--ink-3); }
+
+  @media (max-width: 480px) {
+    .fleet { gap: 0.75rem; }
+    .fleet-hosts { gap: 0.25rem; min-height: 9rem; }
+    .fleet-hosts i { width: 1.75rem; height: 1.25rem; font-size: 0; }
+    .fleet-time { flex-direction: column; gap: 0.15rem; }
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .controls li {
+    padding-top: 0.75rem;
+    background: var(--hand-rule-dashed) top / 26px 8px repeat-x;
+  }
+
+  .control-title {
+    margin-bottom: 0.35rem;
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+    color: var(--ink-1);
+  }
+
+  .controls li p:not(.control-title) {
+    font-family: var(--serif);
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+  }
+
   /* homes */
   .homes {
     display: grid;
@@ -1512,7 +1631,7 @@ const nav = [
     .carry-arrow span { bottom: auto; top: 50%; left: 0.6rem; transform: translateY(-50%); }
     .hub { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
     .dial { max-width: 22rem; margin: 0 auto; }
-    .wire-out, .homes { grid-template-columns: minmax(0, 1fr); }
+    .wire-out, .homes, .controls { grid-template-columns: minmax(0, 1fr); }
     .homes { row-gap: 4.5rem; }
 
 
