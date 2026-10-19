@@ -71,12 +71,13 @@ func NewPreparedMachines(backend vm.Backend, store cas.Store, log *slog.Logger) 
 }
 
 type programSnapshots struct {
-	runtime  *localcopy.Runtime
-	artifact *localcopy.Program
+	runtime                  *localcopy.Runtime
+	artifact                 *localcopy.Program
+	runtimeRead, programRead *objectcache.ReadLease
 }
 
 func (s *programSnapshots) close() error {
-	return errors.Join(s.runtime.Close(), s.artifact.Close())
+	return errors.Join(s.runtime.Close(), s.artifact.Close(), s.runtimeRead.Close(), s.programRead.Close())
 }
 
 func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {

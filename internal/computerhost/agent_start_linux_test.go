@@ -3,13 +3,16 @@
 package computerhost
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/objectcache"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,7 +56,7 @@ func (c *verifiedSessionStartClient) ReleaseAgentStart(_ context.Context, r work
 	return workerapi.AgentAuthorityResponse{AuthorityGeneration: 4, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
-	for _, requested := range []int{0, 1, 2, 3, 4} {
+	for _, requested := range []int{0, 1, 2, 3, 4, 5} {
 		t.Run(fmt.Sprint(requested), func(t *testing.T) {
 			index := artifacttest.ProgramMetadata(t)
 			store := &fakeCAS{objects: map[string][]byte{}}
@@ -75,6 +78,25 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 			// checks, transfer, release ordering and cleanup use the production operation.
 			if _, err = machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return index, nil }); err != nil {
 				t.Fatal(err)
+			}
+			if requested == 5 {
+				cache, err := objectcache.Open(filepath.Join(t.TempDir(), "cache"), 16384)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer cache.Close()
+				machines.ObjectCache = cache
+				for _, part := range []struct {
+					namespace  string
+					descriptor cas.Descriptor
+					data       string
+				}{
+					{"runtime", cas.Descriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, "runtime"}, {"program", cas.Descriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, "program"},
+				} {
+					if ok, err := cache.Seed(t.Context(), part.namespace, part.descriptor, bytes.NewBufferString(part.data)); !ok || err != nil {
+						t.Fatalf("seed: %v %v", ok, err)
+					}
+				}
 			}
 			lifetime, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -111,7 +133,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 					kind  agentv1.SessionProgramRequest_Kind
 					bytes string
 				}{{agentv1.SessionProgramRequest_KIND_RUNTIME, "runtime"}, {agentv1.SessionProgramRequest_KIND_ARTIFACT, "program"}} {
-					if (part.kind == agentv1.SessionProgramRequest_KIND_RUNTIME && requested&1 == 0 && requested != 4) || (part.kind == agentv1.SessionProgramRequest_KIND_ARTIFACT && requested&2 == 0) {
+					if (part.kind == agentv1.SessionProgramRequest_KIND_RUNTIME && requested&1 == 0 && requested != 4) || (part.kind == agentv1.SessionProgramRequest_KIND_ARTIFACT && requested&2 == 0 && requested != 5) {
 						continue
 					}
 					if err := requestProgramPart(stream, r, part.kind); err != nil {
@@ -145,7 +167,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 			}
 			connection, _, err := machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client, false)
-			if requested != 0 {
+			if requested != 0 && requested != 5 {
 				if !errors.Is(err, errSessionArtifactsRequired) || connection != nil {
 					t.Fatalf("demand probe: connection=%v err=%v", connection, err)
 				}
@@ -191,7 +213,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 			}
 			wantStreams, wantReleases := int32(2), 2
-			if requested != 0 {
+			if requested != 0 && requested != 5 {
 				wantStreams, wantReleases = 4, 3
 			}
 			if streams.Load() != wantStreams || client.releases != wantReleases || ledger.Snapshot().Used.HostDiskBytes != 0 {
@@ -209,7 +231,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				t.Fatalf("staging remains: %v %v", files, err)
 			}
 			wantReads := 0
-			if requested != 0 {
+			if requested != 0 && requested != 5 {
 				wantReads = 1
 			}
 			if store.getCalls[runtimeObject.Digest] != wantReads || store.getCalls[programObject.Digest] != wantReads {

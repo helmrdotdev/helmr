@@ -207,17 +207,25 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var file *os.File
+	var file io.ReaderAt
 	var err error
 	switch {
 	case d.Digest == s.startup.Program.Runtime.Digest && d.SizeBytes == s.startup.Program.Runtime.SizeBytes:
 		role = "runtime"
+		if s.images.runtimeRead != nil {
+			file = s.images.runtimeRead
+			break
+		}
 		if s.images.runtime == nil {
 			return errSessionArtifactsRequired
 		}
 		file, _, err = s.images.runtime.VerifierFile()
 	case d.Digest == s.startup.Program.Artifact.Digest && d.SizeBytes == s.startup.Program.Artifact.SizeBytes:
 		role = "program"
+		if s.images.programRead != nil {
+			file = s.images.programRead
+			break
+		}
 		if s.images.artifact == nil {
 			return errSessionArtifactsRequired
 		}

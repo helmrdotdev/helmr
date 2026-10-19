@@ -20,7 +20,8 @@ func sessionProgramDescriptor(object workerapi.CASObject) artifact.ProgramDescri
 }
 
 // Metadata receipts authorize only exact immutable content. The guest owns its
-// live sealed artifacts and decides whether it needs bytes. A requested transfer
+// live sealed artifacts and decides whether it needs bytes. An exact cached pair
+// supplies only pinned readers for that transfer. A miss requiring bytes
 // makes the attachment job retry with descriptor-bound snapshots prepared
 // outside the VM lifecycle barrier. No remote read runs under that barrier.
 func (p *PreparedMachines) prepareSessionProgramArtifacts(ctx context.Context, directory, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
@@ -64,5 +65,17 @@ func (p *PreparedMachines) prepareSessionProgramArtifacts(ctx context.Context, d
 	if err := verifyProgramMetadataDigest(*metadata, program.IndexDigest); err != nil {
 		return nil, err
 	}
-	return &programSnapshots{}, nil
+	images := &programSnapshots{}
+	images.runtimeRead = p.ObjectCache.Lease(ctx, "runtime", cas.Descriptor{Digest: runtimeDescriptor.Digest, SizeBytes: runtimeDescriptor.SizeBytes, MediaType: runtimeDescriptor.MediaType})
+	if images.runtimeRead == nil {
+		return images, nil
+	}
+	images.programRead = p.ObjectCache.Lease(ctx, "program", cas.Descriptor(programDescriptor))
+	if images.programRead == nil {
+		if err := images.close(); err != nil {
+			return nil, err
+		}
+		return &programSnapshots{}, nil
+	}
+	return images, nil
 }

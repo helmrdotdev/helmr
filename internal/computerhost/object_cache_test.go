@@ -3,6 +3,7 @@
 package computerhost
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,7 +66,47 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	if store.getCalls[pd.Digest] != 1 || store.getCalls[rd.Digest] != 1 {
 		t.Fatal("cache hit fetched remote artifacts")
 	}
+	session, err := p.prepareSessionProgramArtifacts(t.Context(), t.TempDir(), "session", program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.runtimeRead == nil || session.programRead == nil || session.runtime != nil || session.artifact != nil {
+		t.Fatal("Session did not borrow exact cached pair")
+	}
+	if err := session.close(); err != nil {
+		t.Fatal(err)
+	}
+	// Missing second object must release the first lease, including on shutdown.
+	partial, err := objectcache.Open(filepath.Join(t.TempDir(), "partial"), 16384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := partial.Seed(t.Context(), "runtime", cas.Descriptor{Digest: rd.Digest, SizeBytes: rd.SizeBytes, MediaType: rd.MediaType}, bytes.NewBufferString("runtime")); !ok || err != nil {
+		t.Fatalf("seed: %v %v", ok, err)
+	}
+	p.ObjectCache = partial
+	session, err = p.prepareSessionProgramArtifacts(t.Context(), t.TempDir(), "partial", program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.runtimeRead != nil || session.programRead != nil {
+		t.Fatal("partial transfer retained lease")
+	}
+	session.close()
+	if err := partial.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p.ObjectCache = cache
 	program.IndexDigest = sha256sum.DigestBytes([]byte("other"))
+	before := cache.Snapshot()
+	if images, err := p.prepareSessionProgramArtifacts(t.Context(), t.TempDir(), "wrong-session", program); err == nil {
+		images.close()
+		t.Fatal("Session cache bypassed target authority")
+	}
+	if after := cache.Snapshot(); after.Hits != before.Hits {
+		t.Fatal("leased bytes before checking metadata authority")
+	}
+
 	if images, err := p.prepareProgramArtifacts(t.Context(), t.TempDir(), "wrong-target", program); err == nil {
 		images.close()
 		t.Fatal("cache bypassed target authority")
