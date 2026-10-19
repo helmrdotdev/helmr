@@ -37,6 +37,9 @@ export const workspace = template({
     .run(["mkdir", "-p", "/workspace"])
     .run(["chmod", "777", "/workspace"]),
   resources: { cpu: 2, memory: "4GiB", disk: "32GiB" },
+  async prepare(build) {
+    await build.exec(["node", "-e", "require('node:fs').writeFileSync('/workspace/prepared-environment', 'prepared once')"])
+  },
 })
 
 function native(definition: typeof nativeCodex) {
@@ -44,6 +47,7 @@ function native(definition: typeof nativeCodex) {
     id: definition.id,
     template: workspace,
     async init(context) {
+      assert.equal(await readFile("/workspace/prepared-environment", "utf8"), "prepared once")
       // Observe ordinary Node launches without replacing spawn or runtime state.
       const children: ChildProcess[] = []
       const launches = channel("child_process")
