@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"io"
@@ -572,14 +573,24 @@ func testProgramDescriptor(role artifact.Role, content []byte) artifact.ProgramD
 }
 
 func TestReceiveVerifiesPinnedBytesAndOwnsCleanup(t *testing.T) {
-	for _, content := range []string{"original", "modified", "short"} {
+	for _, content := range []string{"original", "modified", "short", "original-long"} {
 		t.Run(content, func(t *testing.T) {
 			directory := t.TempDir()
 			if err := os.Chmod(directory, 0700); err != nil {
 				t.Fatal(err)
 			}
 			expected := cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original")))
-			local, err := Receive(t.Context(), directory, artifact.RoleProgram, expected, func(file *os.File) error { _, err := file.WriteString(content); return err })
+			var writer *os.File
+			local, err := Receive(t.Context(), directory, artifact.RoleProgram, expected, func(file *os.File) error {
+				writer = file
+				_, err := file.WriteString(content)
+				return err
+			})
+			if writer != nil {
+				if _, writeErr := writer.WriteString("mutation"); !errors.Is(writeErr, os.ErrClosed) {
+					t.Fatalf("writer remains open: %v", writeErr)
+				}
+			}
 			if content == "original" {
 				if err != nil {
 					t.Fatal(err)
@@ -598,6 +609,41 @@ func TestReceiveVerifiesPinnedBytesAndOwnsCleanup(t *testing.T) {
 			} else if err == nil {
 				_ = local.Close()
 				t.Fatal("received wrong bytes")
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("cleanup %v %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestReceiveFailureDoesNotRetainBytes(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.Chmod(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			want := errors.New("transfer failed")
+			if canceled {
+				want = context.Canceled
+			}
+			expected := cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original")))
+			local, err := Receive(ctx, directory, artifact.RoleProgram, expected, func(file *os.File) error {
+				if _, err := file.WriteString("original"); err != nil {
+					return err
+				}
+				if canceled {
+					cancel()
+					return nil
+				}
+				return want
+			})
+			if local != nil || !errors.Is(err, want) {
+				t.Fatalf("received %v, %v", local, err)
 			}
 			entries, err := os.ReadDir(directory)
 			if err != nil || len(entries) != 0 {

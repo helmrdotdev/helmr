@@ -77,6 +77,7 @@ func copyArtifact(
 		spec,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		false,
+		nil,
 		func(destination *os.File) error {
 			return copyArtifactCopy(ctx, destination, source, expected)
 		},
@@ -109,7 +110,7 @@ func Produce(
 	if err != nil {
 		return nil, err
 	}
-	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, true, produce)
+	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, true, nil, produce)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func Receive(ctx context.Context, directory string, role artifact.Role, expected
 	if err := validateArtifactCopyDescriptor(spec, expected); err != nil {
 		return nil, err
 	}
-	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, receive)
+	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, &expected, receive)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +146,7 @@ func produceArtifactCopyWithSpec(
 	spec artifactSpec,
 	owner Owner,
 	syncToDisk bool,
+	expected *cas.Descriptor,
 	produce func(*os.File) error,
 ) (_ *Artifact, returnErr error) {
 	if ctx == nil {
@@ -230,14 +232,20 @@ func produceArtifactCopyWithSpec(
 			spec.maxBytes,
 		)
 	}
-	digest, err := hashArtifactCopy(ctx, writer, before.size)
-	if err != nil {
-		return nil, err
-	}
-	descriptor := cas.Descriptor{
-		Digest:    digest,
-		SizeBytes: before.size,
-		MediaType: spec.mediaType,
+	var descriptor cas.Descriptor
+	if expected != nil {
+		if before.size != expected.SizeBytes {
+			return nil, errors.New("received artifact size differs from pinned descriptor")
+		}
+		// The source already pins the content identity. Verify it after closing
+		// the writer and reopening the sealed inode, without hashing it twice.
+		descriptor = *expected
+	} else {
+		digest, err := hashArtifactCopy(ctx, writer, before.size)
+		if err != nil {
+			return nil, err
+		}
+		descriptor = cas.Descriptor{Digest: digest, SizeBytes: before.size, MediaType: spec.mediaType}
 	}
 	if err := validateArtifactCopyDescriptor(spec, descriptor); err != nil {
 		return nil, err
