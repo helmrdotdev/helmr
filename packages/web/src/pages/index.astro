@@ -1513,12 +1513,21 @@ const nav = [
   .fleet-time .is-down { color: #7b8fcf; }
 
   @media (max-width: 480px) {
-    .fleet { grid-template-columns: minmax(0, 1fr) 1.25rem minmax(0, 1fr) 1.25rem minmax(0, 1fr); }
-    .fleet-hosts { grid-template-rows: repeat(3, 1rem); gap: 0.2rem; }
-    .fleet-hosts i { font-size: 0; }
-    .fleet-arrow { margin-inline: 0.15rem; }
-    .fleet-arrow span { display: none; }
-    .fleet-time { flex-direction: column; gap: 0.15rem; }
+    /* one moment per row, read top to bottom */
+    .fleet { grid-template-columns: minmax(0, 1fr); }
+    .fleet-hosts { grid-template-rows: none; grid-auto-rows: auto; }
+    .fleet-hosts i { height: 1.75rem; }
+    .fleet-hosts i.is-empty { display: none; }
+    .fleet-arrow {
+      justify-self: start;
+      width: 1px;
+      height: 2.75rem;
+      margin: 0.75rem 0 0.75rem 1.25rem;
+      background-image: linear-gradient(var(--ink-1) 3px, transparent 3px);
+      background-size: 1px 6px;
+    }
+    .fleet-arrow::after { top: auto; bottom: -1px; right: -3.5px; border-block: 0; border-inline: 4px solid transparent; border-top: 7px solid var(--ink-1); }
+    .fleet-arrow span { bottom: auto; top: 50%; left: 0.75rem; transform: translateY(-50%); }
   }
 
   .controls {
