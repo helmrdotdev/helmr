@@ -223,9 +223,8 @@ func (r *missingCheckpointReader) Get(ctx context.Context, digest string) (io.Re
 	return r.Reader.Get(ctx, digest)
 }
 
-// Changes to stored ciphertext after its stream digest was checked must still
-// fail authentication. A canceled transport completion must not be called corrupt.
-func TestCheckpointDownloadAuthenticatesStoredBytesAndCancellation(t *testing.T) {
+// A canceled transport completion must not be called corrupt.
+func TestCheckpointDownloadRequiresTransportCompletion(t *testing.T) {
 	cipher, _ := NewCheckpointEncryptor(bytes.Repeat([]byte{7}, 32))
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -244,7 +243,7 @@ func TestCheckpointDownloadAuthenticatesStoredBytesAndCancellation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"stored corruption", "cancel at close", "close failure"} {
+	for _, mode := range []string{"cancel at close", "close failure"} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			ctx, cancel := context.WithCancel(t.Context())
@@ -257,38 +256,18 @@ func TestCheckpointDownloadAuthenticatesStoredBytesAndCancellation(t *testing.T)
 				case "close failure":
 					return syscall.EIO
 				default:
-					entries, err := os.ReadDir(directory)
-					if err != nil {
-						return err
-					}
-					for _, entry := range entries {
-						if strings.Contains(entry.Name(), "-download-") {
-							f, err := os.OpenFile(directory+"/"+entry.Name(), os.O_RDWR, 0)
-							if err != nil {
-								return err
-							}
-							// The original stream hash is intact; damage an authenticated record.
-							offset := int64(headerSize + 8 + nonceSize)
-							var b [1]byte
-							if _, err = f.ReadAt(b[:], offset); err == nil {
-								b[0] ^= 1
-								_, err = f.WriteAt(b[:], offset)
-							}
-							return errors.Join(err, f.Close())
-						}
-					}
-					return errors.New("missing private ciphertext")
+					panic("unknown failure")
 				}
 			}}
 			output, err := downloadCheckpointObject(ctx, reader, cipher, directory, "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: object}, 5)
 			if output != "" {
 				t.Fatal("returned unqualified plaintext")
 			}
-			want := map[string]error{"stored corruption": errInvalidCheckpoint, "cancel at close": context.Canceled, "close failure": syscall.EIO}[mode]
+			want := map[string]error{"cancel at close": context.Canceled, "close failure": syscall.EIO}[mode]
 			if !errors.Is(err, want) {
 				t.Fatalf("got %v, want %v", err, want)
 			}
-			if mode != "stored corruption" && errors.Is(err, errInvalidCheckpoint) {
+			if errors.Is(err, errInvalidCheckpoint) {
 				t.Fatalf("availability failure marked corrupt: %v", err)
 			}
 		})
@@ -314,3 +293,77 @@ type checkpointCloseHookBody struct {
 }
 
 func (b checkpointCloseHookBody) Close() error { return errors.Join(b.ReadCloser.Close(), b.hook()) }
+
+func TestCheckpointDownloadVerifiesStreamBeforeClassifyingEncryptedContents(t *testing.T) {
+	cipher, err := NewCheckpointEncryptor(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original bytes.Buffer
+	if err := cipher.Encrypt(t.Context(), strings.NewReader("state"), &original, "checkpoint/memory"); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"authenticated corruption", "verified unavailable key", "unverified key", "interrupted key", "invalid header close failure"} {
+		t.Run(mode, func(t *testing.T) {
+			store, err := cas.NewFile(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := bytes.Clone(original.Bytes())
+			want := errInvalidCheckpoint
+			switch mode {
+			case "authenticated corruption":
+				raw[headerSize+8+nonceSize] ^= 1
+			case "verified unavailable key":
+				raw[len(magic)] ^= 1
+				want = ErrCheckpointKeyUnavailable
+			case "interrupted key":
+				want = syscall.ECONNRESET
+			case "invalid header close failure":
+				want = syscall.EIO
+			}
+			object, err := store.Put(t.Context(), cas.CheckpointMemoryMediaType, bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reader cas.Reader = store
+			switch mode {
+			case "unverified key":
+				reader = checkpointObjectReader{Reader: store, transform: func(p []byte) []byte { p[len(magic)] ^= 1; return p }}
+			case "interrupted key":
+				header := bytes.Clone(raw[:headerSize])
+				header[len(magic)] ^= 1
+				reader = checkpointCustomBodyStore{Reader: store, body: cas.NewVerifyingReadCloser(io.NopCloser(io.MultiReader(bytes.NewReader(header), checkpointTransportFailure{})), object.Digest)}
+			case "invalid header close failure":
+				// Use a valid CAS object with an invalid encryption header so the
+				// close error, rather than a digest failure, is the transport result.
+				raw[0] ^= 1
+				object, err = store.Put(t.Context(), cas.CheckpointMemoryMediaType, bytes.NewReader(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				reader = checkpointCloseHookStore{Reader: store, hook: func() error { return syscall.EIO }}
+			}
+			directory := t.TempDir()
+			path, err := downloadCheckpointObject(t.Context(), reader, cipher, directory, "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: computercheckpoint.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}, 5)
+			if path != "" || !errors.Is(err, want) {
+				t.Fatalf("path %q, error %v, want %v", path, err, want)
+			}
+			if errors.Is(err, errInvalidCheckpoint) != errors.Is(want, errInvalidCheckpoint) {
+				t.Fatalf("invalid classification: %v", err)
+			}
+			if errors.Is(err, ErrCheckpointKeyUnavailable) != errors.Is(want, ErrCheckpointKeyUnavailable) {
+				t.Fatalf("key classification: %v", err)
+			}
+		})
+	}
+}
+
+type checkpointCustomBodyStore struct {
+	cas.Reader
+	body io.ReadCloser
+}
+
+func (s checkpointCustomBodyStore) Get(context.Context, string) (io.ReadCloser, error) {
+	return s.body, nil
+}
