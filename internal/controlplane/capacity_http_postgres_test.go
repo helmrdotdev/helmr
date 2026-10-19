@@ -43,6 +43,8 @@ func TestCapacityHTTPPreservesRequestBodyLimits(t *testing.T) {
 		length int64
 	}{
 		{name: "common limit", path: "/capacity/v1/worker-hosts/01900000-0000-7000-8000-000000000000/lost", length: apiRequestBodyLimit + 1},
+		{name: "create pool limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/pools", length: capacityRequestBodyLimit + 1},
+		{name: "disable pool limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/pools/01900000-0000-7000-8000-000000000001/disable", length: capacityRequestBodyLimit + 1},
 		{name: "mutation limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/plan", length: capacityRequestBodyLimit + 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -88,7 +90,7 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 		t.Fatalf("plan pools = %#v", plan["pools"])
 	}
 	poolPlan := capacityJSONObject(t, pools[0])
-	assertCapacityJSONKeys(t, poolPlan, "active_workers", "complete", "compatible_queued_items", "pool_id", "pool_name", "recommended_additional_workers", "registering_workers", "saturated", "scale_in_blocked")
+	assertCapacityJSONKeys(t, poolPlan, "active_workers", "complete", "compatible_queued_items", "pool_id", "pool_name", "recommended_additional_workers", "registering_workers", "saturated", "scale_in_blocked", "spare_slots_shortfall")
 	if plan["worker_group_id"] != group.ID || plan["complete"] != true || poolPlan["recommended_additional_workers"] != float64(0) {
 		t.Fatalf("plan = %#v", plan)
 	}

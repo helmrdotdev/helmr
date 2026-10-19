@@ -117,6 +117,8 @@ type PlanRequest struct {
 }
 
 type PoolRequest struct {
+	// MinSpareSlots reserves room for this pool template's full per-VM shape.
+	MinSpareSlots        int32  `json:"min_spare_slots"`
 	PoolID               string `json:"pool_id"`
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
@@ -169,6 +171,7 @@ type PlanResponse struct {
 }
 
 type PoolPlan struct {
+	SpareSlotsShortfall          int32  `json:"spare_slots_shortfall"`
 	PoolID                       string `json:"pool_id"`
 	PoolName                     string `json:"pool_name"`
 	RecommendedAdditionalWorkers int32  `json:"recommended_additional_workers"`
@@ -217,6 +220,7 @@ const (
 )
 
 type DrainWorkerHostRequest struct {
+	MinSpareSlots        int32       `json:"min_spare_slots"`
 	ExpectedEpoch        int64       `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 	Reason               DrainReason `json:"reason"`

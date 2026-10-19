@@ -389,5 +389,5 @@ func (q notifyingStaleHostQueries) RecheckAndFenceStaleWorkerHost(ctx context.Co
 	if err != nil {
 		return row, err
 	}
-	return row, dbnotify.Notify(ctx, q.tx, "dispatch")
+	return row, dbnotify.Notify(ctx, q.tx, "dispatch", "capacity")
 }

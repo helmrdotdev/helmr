@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -90,4 +92,17 @@ func streamUpdates(w http.ResponseWriter, r *http.Request, wake <-chan struct{},
 			changed = false
 		}
 	}
+}
+
+func (s *Server) streamCapacityUpdates(w http.ResponseWriter, r *http.Request) {
+	token, _ := bearerToken(r.Header.Get("Authorization"))
+	authorize := func() error {
+		if len(s.capacityTokenHash) == 0 || !hmac.Equal(auth.HashCredential(token), s.capacityTokenHash) {
+			return errors.New("capacity authentication is required")
+		}
+		return nil
+	}
+	wake, unsubscribe := s.changes.Subscribe("capacity")
+	defer unsubscribe()
+	streamUpdates(w, r, wake, authorize)
 }

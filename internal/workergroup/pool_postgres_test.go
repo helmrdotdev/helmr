@@ -272,60 +272,67 @@ func TestSelectPrimaryPoolPostgresRechecksAfterConcurrentDrain(t *testing.T) {
 }
 
 func TestPoolRetirementPostgresFencesWaitingEnrollment(t *testing.T) {
-	f := newSupplyFixture(t)
-	pool := f.activePool(t, "retiring")
-	cfg := testHostAuthConfig(t)
-	token, err := auth.ParseEnrollmentToken(f.enrollmentToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hold := f.begin(t)
-	q := db.New(hold)
-	if _, err = q.LockWorkerGroupForPoolMutation(t.Context(), f.group.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = q.LockWorkerPool(t.Context(), db.LockWorkerPoolParams{WorkerGroupID: f.group.ID, WorkerPoolID: pool.ID}); err != nil {
-		t.Fatal(err)
-	}
-	var blocker int32
-	if err = hold.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := EnrollHost(ctx, f.pool, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
-		done <- err
-	}()
-	for {
-		var blocked bool
-		if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
-			t.Fatal(err)
-		}
-		if blocked {
-			break
-		}
-		select {
-		case err := <-done:
-			t.Fatalf("enrollment did not wait: %v", err)
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
-	if _, err = q.TransitionWorkerPoolLifecycle(ctx, db.TransitionWorkerPoolLifecycleParams{TargetStatus: "draining", WorkerPoolID: pool.ID, WorkerGroupID: f.group.ID, ExpectedPoolClaimVersion: pool.ClaimVersion}); err != nil {
-		t.Fatal(err)
-	}
-	if err = hold.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err = <-done; !errors.Is(err, ErrInvalidEnrollmentToken) {
-		t.Fatalf("enrollment entered withdrawn pool: %v", err)
-	}
-	var hosts int
-	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM worker_hosts WHERE worker_pool_id=$1`, pool.ID).Scan(&hosts); err != nil || hosts != 0 {
-		t.Fatalf("hosts=%d: %v", hosts, err)
+	for _, target := range []string{"draining", "disabled"} {
+		t.Run(target, func(t *testing.T) {
+			f := newSupplyFixture(t)
+			pool := f.pendingPool(t, "retiring")
+			if target == "draining" {
+				pool = f.activePool(t, "retiring-active")
+			}
+			cfg := testHostAuthConfig(t)
+			token, err := auth.ParseEnrollmentToken(f.enrollmentToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hold := f.begin(t)
+			q := db.New(hold)
+			if _, err = q.LockWorkerGroupForPoolMutation(t.Context(), f.group.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = q.LockWorkerPool(t.Context(), db.LockWorkerPoolParams{WorkerGroupID: f.group.ID, WorkerPoolID: pool.ID}); err != nil {
+				t.Fatal(err)
+			}
+			var blocker int32
+			if err = hold.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := EnrollHost(ctx, f.pool, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
+				done <- err
+			}()
+			for {
+				var blocked bool
+				if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
+					t.Fatal(err)
+				}
+				if blocked {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("enrollment did not wait: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(5 * time.Millisecond):
+				}
+			}
+			if _, err = q.TransitionWorkerPoolLifecycle(ctx, db.TransitionWorkerPoolLifecycleParams{TargetStatus: target, WorkerPoolID: pool.ID, WorkerGroupID: f.group.ID, ExpectedPoolClaimVersion: pool.ClaimVersion}); err != nil {
+				t.Fatal(err)
+			}
+			if err = hold.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; !errors.Is(err, ErrInvalidEnrollmentToken) {
+				t.Fatalf("enrollment entered withdrawn pool: %v", err)
+			}
+			var hosts int
+			if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM worker_hosts WHERE worker_pool_id=$1`, pool.ID).Scan(&hosts); err != nil || hosts != 0 {
+				t.Fatalf("hosts=%d: %v", hosts, err)
+			}
+		})
 	}
 }
 

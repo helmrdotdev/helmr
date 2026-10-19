@@ -91,6 +91,7 @@ GET /api/slack/user-links
 GET /api/slack/user-links/callback
 GET /api/slack/user-links/first-use
 GET /capacity/v1/deployment
+GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
 GET /capacity/v1/worker-hosts
@@ -186,6 +187,8 @@ POST /api/slack/user-links/callback
 POST /api/slack/user-links/confirm
 POST /api/slack/user-links/verify
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
+POST /capacity/v1/worker-groups/{workerGroupID}/pools
+POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable
 POST /capacity/v1/worker-hosts/{workerHostID}/drain
 POST /capacity/v1/worker-hosts/{workerHostID}/lost
 POST /integrations/slack/apps/{registrationID}/events

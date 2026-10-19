@@ -89,7 +89,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 		if err != nil {
 			return err
 		}
-		if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
+		if err = dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
 			return err
 		}
 		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
@@ -204,7 +204,7 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipa
 		if err != nil {
 			return err
 		}
-		return dbnotify.Notify(ctx, tx, "dispatch")
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conflict("worker activation is stale")
@@ -354,7 +354,7 @@ func BeginHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrinci
 		if err != nil {
 			return fmt.Errorf("drain worker host %s: %w", principal.HostID, err)
 		}
-		return dbnotify.Notify(ctx, tx, "dispatch")
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
 }
 
@@ -383,7 +383,7 @@ func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPri
 		if err != nil {
 			return err
 		}
-		return dbnotify.Notify(ctx, tx, "dispatch")
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.CompleteWorkerDrainRow{}, conflict("worker drain is not complete or its claim fence is stale")
@@ -409,7 +409,7 @@ func FenceHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipal, 
 		if err := fenceHost(ctx, db.New(tx), principal); err != nil {
 			return err
 		}
-		return dbnotify.Notify(ctx, tx, "dispatch")
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
 }
 

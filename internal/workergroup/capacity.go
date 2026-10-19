@@ -136,6 +136,9 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
 		return WorkerHost{}, invalidInput("expected_epoch and expected_claim_version must be positive")
 	}
+	if request.MinSpareSlots < 0 || request.MinSpareSlots > maximumAdditionalWorkers {
+		return WorkerHost{}, invalidInput("min_spare_slots must be between 0 and 1000")
+	}
 	switch request.Reason {
 	case DrainReasonReplacement, DrainReasonCapacityReduction, DrainReasonIdleScaleIn:
 	default:
@@ -163,6 +166,13 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 			if present {
 				return ErrQueuedDemand
 			}
+			current, err := GetHost(ctx, q, hostID)
+			if err != nil {
+				return err
+			}
+			if current.DrainBlockers.UnreclaimedInstances != 0 || current.DrainBlockers.UnreconciledSessionProcesses != 0 {
+				return ErrHostBusy
+			}
 		}
 		_, err = q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
 			ID: pgvalue.UUID(hostID), WorkerGroupID: host.WorkerGroupID,
@@ -175,12 +185,17 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 		if err != nil {
 			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
 		}
+		if request.Reason == DrainReasonIdleScaleIn {
+			if err := checkSpareCapacity(ctx, tx, pgvalue.MustUUIDValue(host.WorkerGroupID), pgvalue.MustUUIDValue(host.WorkerPoolID), request.MinSpareSlots); err != nil {
+				return err
+			}
+		}
 		if locked.Host.Status == db.WorkerHostStatusActive {
 			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 				return err
 			}
 		}
-		if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
+		if err = dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
 			return err
 		}
 		result, err = GetHost(ctx, q, hostID)
@@ -235,7 +250,7 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, actor audit.Actor
 			return ConfirmedProviderAbsence{}, err
 		}
 	}
-	if err = dbnotify.Notify(ctx, tx, "dispatch"); err != nil {
+	if err = dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
 		return ConfirmedProviderAbsence{}, err
 	}
 	return ConfirmedProviderAbsence{tx: tx, hostID: hostID}, nil

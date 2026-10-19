@@ -106,6 +106,7 @@ func CanRestore(requirements RestoreRequirements, pool Pool) bool {
 type poolPlan struct {
 	id       pgtype.UUID
 	max      int32
+	reserve  int32
 	pool     Pool
 	template bin
 	bins     []bin
@@ -117,6 +118,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
 	limits := make(map[[16]byte]int32, len(request.Pools))
+	reserves := make(map[[16]byte]int32, len(request.Pools))
 	poolIDs := make([]pgtype.UUID, 0, len(request.Pools))
 	for index, requested := range request.Pools {
 		id, err := ids.Parse(requested.PoolID)
@@ -126,11 +128,15 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		if requested.MaxAdditionalWorkers < 0 || requested.MaxAdditionalWorkers > maximumAdditionalWorkers {
 			return PlanResponse{}, fmt.Errorf("%w: pools[%d].max_additional_workers must be between 0 and %d", ErrInvalidPlanRequest, index, maximumAdditionalWorkers)
 		}
+		if requested.MinSpareSlots < 0 || requested.MinSpareSlots > maximumAdditionalWorkers {
+			return PlanResponse{}, fmt.Errorf("%w: min_spare_slots must be between 0 and %d", ErrInvalidPlanRequest, maximumAdditionalWorkers)
+		}
 		key := [16]byte(id)
 		if _, duplicate := limits[key]; duplicate {
 			return PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id is duplicated", ErrInvalidPlanRequest, index)
 		}
 		limits[key] = requested.MaxAdditionalWorkers
+		reserves[key] = requested.MinSpareSlots
 		poolIDs = append(poolIDs, pgvalue.UUID(id))
 	}
 	group, err := store.GetWorkerGroup(ctx, pgvalue.UUID(workerGroupID))
@@ -162,6 +168,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		if err != nil {
 			return PlanResponse{}, fmt.Errorf("load capacity Worker pool: %w", err)
 		}
+		plan.reserve = reserves[row.ID.Bytes]
 		plans = append(plans, plan)
 	}
 	sort.Slice(plans, func(i, j int) bool { return bytes.Compare(plans[i].id.Bytes[:], plans[j].id.Bytes[:]) < 0 })
@@ -341,6 +348,9 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		} else {
 			consume()
 		}
+	}
+	for index := range plans {
+		planSpareSlots(&plans[index], bins)
 	}
 	keys := make([]string, 0, len(reasons))
 	for reason := range reasons {

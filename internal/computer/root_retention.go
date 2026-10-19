@@ -46,7 +46,7 @@ func retireDeletedComputerRoots(ctx context.Context, database db.TxDB) error {
 			if err != nil {
 				return err
 			}
-			return notifyComputerChanged(ctx, tx, c.environment, c.computer)
+			return notifyComputerReaders(ctx, tx, c.environment, c.computer)
 		})
 		if err != nil {
 			failures = append(failures, err)

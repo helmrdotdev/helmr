@@ -31,6 +31,10 @@ func workerGroupError(err error) error {
 		return notFound(err)
 	case errors.Is(err, workergroup.ErrInsufficientReadyHosts):
 		return conflict(codedError{code: "insufficient_ready_hosts", message: err.Error()})
+	case errors.Is(err, workergroup.ErrHostBusy):
+		return conflict(codedError{code: "worker_host_busy", message: err.Error()})
+	case errors.Is(err, workergroup.ErrSpareCapacity):
+		return conflict(codedError{code: "spare_capacity_required", message: workergroup.ErrSpareCapacity.Error()})
 	case errors.Is(err, workergroup.ErrQueuedDemand):
 		return conflict(codedError{code: "queued_demand_present", message: workergroup.ErrQueuedDemand.Error()})
 	case errors.As(err, &conflicting):

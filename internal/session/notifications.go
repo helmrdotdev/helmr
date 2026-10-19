@@ -15,7 +15,7 @@ func notifySessionReaders(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 // notifySessionsChanged wakes readers and execution discovery in the transaction
 // that changed the Sessions. Output-only events use notifySessionReaders instead.
 func notifySessionsChanged(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids ...uuid.UUID) error {
-	topics := []string{"dispatch", "slack_projection"}
+	topics := []string{"dispatch", "capacity", "slack_projection"}
 	for _, id := range ids {
 		topics = append(topics, "session:"+id.String())
 	}

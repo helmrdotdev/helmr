@@ -43,6 +43,7 @@ The Control Plane base URL is shown as `$CONTROL_PLANE_URL` below.
 
 | Method and path | Purpose |
 | --- | --- |
+| `GET /capacity/v1/updates` | Receive capacity invalidation hints as server-sent events. |
 | `GET /capacity/v1/deployment` | Read the live deployment release, worker API and database schema. |
 | `GET /capacity/v1/worker-groups/resolve?region_id=...&name=...` | Resolve a Worker group by canonical Region ID and name. |
 | `GET /capacity/v1/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
@@ -125,6 +126,35 @@ start a drain unless all of these are true:
 
 The drain fence and the advisory queued-demand check for `idle_scale_in` are final safety checks. They
 do not make a partial plan or incomplete inventory safe for scale-in.
+
+### Keep ready capacity
+
+A pool plan request can include `min_spare_slots` (0–1000; omitted means zero).
+A spare slot fits the pool's full per-VM CPU, memory, disk, platform and CPU-shape
+requirements after queued work has been placed. Only fresh, active, unpaused
+Workers count as ready; registering and proposed Workers do not.
+
+`spare_slots_shortfall` reports the remaining ready-slot deficit. The additional
+Worker recommendation includes reserve replenishment within the requested
+headroom. `saturated` means that headroom cannot satisfy the plan. The provider
+owner chooses the reserve policy and ceilings; Helmr owns placement feasibility.
+
+Send the same `min_spare_slots` with `idle_scale_in` drains. Under the admission
+lock, Helmr rejects a busy host with `worker_host_busy` or a drain that would
+violate the requested reserve with `spare_capacity_required` (HTTP 409). Concurrent
+drains cannot each count the other's departing capacity. Maintenance drains
+using `replacement` or `capacity_reduction` do not enforce this reserve.
+
+### React to capacity changes
+
+Connect to `GET /capacity/v1/updates` with the capacity token and
+`Accept: text/event-stream`. The stream emits `event: change` on connection and
+on committed capacity-relevant changes, with heartbeat comments during idle
+periods. Treat each event as an invalidation hint and re-read durable state.
+Events are coalesced, have no replay cursor, and do not contain a capacity plan.
+Reconnect after disconnects and reconcile periodically to cover lost hints and
+provider-only changes. Save and output progress alone do not trigger capacity
+notifications.
 
 ### Select a primary pool
 
@@ -254,3 +284,13 @@ overlap window:
 
 The old token stops working only after the last old Control Plane replica has
 stopped.
+
+The capacity authority can create a pending pool with
+`POST /capacity/v1/worker-groups/{workerGroupID}/pools` using `name` and
+`expected_group_claim_version`, and disable an eligible pool with
+`POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable`
+using `expected_pool_claim_version`. These use the same group/pool locks,
+claim checks, primary protection and custody checks as administration. Both
+return the capacity WorkerPool projection. A disabled name cannot enroll again;
+use a new generation name. Controllers must reobserve after a conflict or lost
+response and must not infer a terminal fence from provider absence alone.
