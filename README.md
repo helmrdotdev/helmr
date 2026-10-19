@@ -6,15 +6,14 @@ Your models, tools, and code. Helmr handles the infrastructure.
 
 ## What you can build
 
-- **An issue fixer** that you point at your repository. It works an issue with
-  Codex or Claude Code, runs your checks before it reports back, and asks before
-  running commands that need approval.
-- **A pull request summarizer** that reads a GitHub pull request and lists its
-  changed files.
-- **A website builder** that asks about your audience first, then builds and
-  refines a small site's files across one conversation.
-
-Each one is a TypeScript project. See [examples](examples/).
+- **A teammate in Slack.** Mention it in a thread and it works on its own
+  computer, asks the thread when it needs a decision, and remembers the
+  conversation for follow-ups.
+- **An issue fixer.** Point it at your repository, and it works an issue with
+  Codex or Claude Code, runs your checks, and asks before running commands that
+  need approval.
+- **A scheduled job.** Run an agent on a cron schedule, such as a weekday
+  morning report that opens a new thread in a Slack channel.
 
 ## What an agent looks like
 
@@ -158,7 +157,6 @@ entries with local generation byte-for-byte.
 - [How Helmr works](https://helmr.dev/docs/concepts/how-helmr-works)
 - [TypeScript SDK](https://helmr.dev/docs/reference/sdk/overview)
 - [REST API](https://helmr.dev/docs/reference/api/overview)
-- [Examples](examples/)
 
 Early, active development. APIs and deployment details may change before a
 stable release.
