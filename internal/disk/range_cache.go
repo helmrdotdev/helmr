@@ -157,8 +157,8 @@ func (c *versionRangeCache) clear() {
 	c.windowBytes = 0
 }
 
-// GetPackRange explicitly fetches a bounded metadata pack. Segment reads keep
-// their ordinary range semantics and do not amplify a single block into a pack.
+// GetPackRange explicitly fetches a bounded metadata pack. Segment frame
+// read-ahead is separate and requires GetSegmentRange.
 func (c *versionRangeCache) GetPackRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	if size < 8 || size > 4<<20 || offset < 0 || length <= 0 || offset > size-length {
 		return nil, errors.New("invalid cached pack range")

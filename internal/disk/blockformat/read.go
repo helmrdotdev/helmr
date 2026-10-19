@@ -10,13 +10,14 @@ import (
 // RangeSource opens only the requested range of an immutable object. Adapters
 // must check the object's total size, honor cancellation, and never fall back to
 // downloading the whole object. The caller owns closing a successful response.
-// Authentication is performed here, independently of the transport adapter.
+// Optional PackRangeSource and SegmentRangeSource capabilities permit bounded
+// read-ahead. Authentication is performed here, independently of the adapter.
 type RangeSource interface {
 	GetRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
 }
 
 // PackRangeSource opts into bounded whole-pack caching for metadata pages.
-// It returns only the requested authenticated page bytes.
+// It returns only the requested ciphertext page bytes; callers authenticate them.
 type PackRangeSource interface {
 	GetPackRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
 }

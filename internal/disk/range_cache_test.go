@@ -310,3 +310,32 @@ func TestSegmentWindowAuthenticatesCachedNeighbor(t *testing.T) {
 		t.Fatal("neighbor did not use cached ciphertext")
 	}
 }
+
+func TestSegmentWindowEvictionPreservesMetadata(t *testing.T) {
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(make([]byte, length))), nil
+	}))
+	readCachedRange(t, c, "header", 2<<20, 0, 100)
+	r, err := c.GetPackRange(t.Context(), "pack", 1<<20, 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	for i := range 6 {
+		r, err := c.GetSegmentRange(t.Context(), fmt.Sprint(i), 2<<20, 100, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+	}
+	if c.entries[versionRangeKey{"header", 2 << 20, 0, 100}] == nil || c.entries[versionRangeKey{"pack", 1 << 20, 0, 1 << 20}] == nil {
+		t.Fatal("window eviction removed metadata")
+	}
+	if c.windowBytes > segmentReadCacheBytes || c.bytes > versionReadCacheBytes {
+		t.Fatal("cache budget exceeded")
+	}
+	c.clear()
+	if c.bytes != 0 || c.windowBytes != 0 {
+		t.Fatal("retained accounting after clear")
+	}
+}
