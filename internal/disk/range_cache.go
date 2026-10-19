@@ -14,6 +14,7 @@ import (
 const versionReadCacheBytes = 8 << 20
 const versionReadCacheEntries = 4096
 const segmentReadWindowBytes = 1 << 20
+const segmentReadWindowMinBytes = 64 << 10
 const segmentReadCacheBytes = 4 << 20
 
 type versionRangeKey struct {
@@ -125,13 +126,17 @@ func (c *versionRangeCache) remove(e *list.Element) {
 }
 
 // GetSegmentRange amortizes neighboring frame reads within one bounded window.
-// Cross-window requests retain exact range semantics.
+// Small and cross-window requests retain exact range semantics, bounding
+// amplification to at most sixteen times the requested bytes.
 func (c *versionRangeCache) GetSegmentRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if offset < 0 || length <= 0 || size < length || offset > size-length {
 		return nil, errors.New("invalid cached segment range")
+	}
+	if length < segmentReadWindowMinBytes {
+		return c.GetRange(ctx, digest, size, offset, length)
 	}
 	start := offset / segmentReadWindowBytes * segmentReadWindowBytes
 	windowLength := min(int64(segmentReadWindowBytes), size-start)
