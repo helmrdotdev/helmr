@@ -171,7 +171,7 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 			}
 			connection, _, err := machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client, false)
 			if requested == 6 {
-				if err == nil || connection != nil {
+				if err == nil || errors.Is(err, errSessionArtifactsRequired) || connection != nil {
 					t.Fatalf("peer loss accepted: %v %v", connection, err)
 				}
 				for range 2 {
@@ -181,6 +181,9 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 				if client.releases != 1 || ledger.Snapshot().Used.HostDiskBytes != 0 || len(store.getCalls) != 0 {
 					t.Fatal("failed cached transfer retained ownership or fetched bytes")
+				}
+				if machines.ObjectCache.Snapshot().Hits != 2 {
+					t.Fatal("peer loss did not acquire both cache leases")
 				}
 				// Close joins pins: returning proves the failed transfer released both.
 				if err := machines.ObjectCache.Close(); err != nil {
