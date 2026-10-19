@@ -455,7 +455,7 @@ variable "computer_staging_mib" {
 }
 
 variable "warm_pool_size" {
-  description = "Caller-provisioned stopped standby count. Used Workers never return to standby."
+  description = "Caller-provisioned stopped standby count; zero removes the warm pool. Used Workers never return to standby."
   type        = number
   default     = 0
   validation {
