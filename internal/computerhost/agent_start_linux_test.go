@@ -26,13 +26,21 @@ import (
 
 type verifiedSessionStartClient struct {
 	retainedSessionStartClient
-	startup  workerapi.AgentStartResponse
-	ledger   *reservation.Ledger
-	releases int
+	startup   workerapi.AgentStartResponse
+	ledger    *reservation.Ledger
+	releases  int
+	delivered []workerapi.SecretDelivery
 }
 
 func (c *verifiedSessionStartClient) AuthorizeAgentStart(context.Context, workerapi.AgentControlRequest) (workerapi.AgentStartResponse, error) {
-	return c.startup, nil
+	result := c.startup
+	result.Secrets = make([]workerapi.SecretDelivery, len(c.startup.Secrets))
+	for i, v := range c.startup.Secrets {
+		result.Secrets[i] = v
+		result.Secrets[i].Value = append([]byte(nil), v.Value...)
+	}
+	c.delivered = result.Secrets
+	return result, nil
 }
 func (c *verifiedSessionStartClient) ReleaseAgentStart(_ context.Context, r workerapi.AgentStartReleaseRequest) (workerapi.AgentAuthorityResponse, error) {
 	if r.BundleDigest != c.startup.BundleDigest || r.AttachmentSequence != 5 {
@@ -86,7 +94,8 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 			client.startup.ProtectedEnv = &workerapi.ProtectedEnv{Env: map[string]string{"TOKEN": "hlmr_protected_test"}, CA: []byte("public-ca")}
 			var streams atomic.Int32
 			machine, done := programTransferMachine(t, func(stream net.Conn, r *agentv1.SessionAttach) error {
-				if streams.Add(1) == 1 {
+				streams.Add(1)
+				if r.Start == nil {
 					if r.Start != nil || len(r.Secrets) != 0 || len(r.ProtectedEnv) != 0 || len(r.ProxyCa) != 0 {
 						return errors.New("startup preceded absence observation")
 					}
@@ -128,14 +137,41 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 				}
 				return attachProgramReceipt(stream, r)
 			})
-			connection, _, err := machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client)
+			if blocked, ok := machines.PlatformStore.(*blockedSessionArtifactStore); ok {
+				blocked.beforeGet = func() {
+					if machine.running.Load() {
+						t.Error("remote staging held guest lifecycle barrier")
+					}
+				}
+			}
+			connection, _, err := machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client, false)
+			if requested != 0 {
+				if !errors.Is(err, errSessionArtifactsRequired) || connection != nil {
+					t.Fatalf("demand probe: connection=%v err=%v", connection, err)
+				}
+				if len(store.getCalls) != 0 || client.releases != 1 || ledger.Snapshot().Used.HostDiskBytes != 0 {
+					t.Fatalf("probe performed I/O, released execution or retained disk: gets=%v releases=%d ledger=%+v", store.getCalls, client.releases, ledger.Snapshot())
+				}
+				probeClosed := 0
+				for range 2 {
+					if err := <-done; errors.Is(err, io.EOF) {
+						probeClosed++
+					} else if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if probeClosed != 1 {
+					t.Fatalf("probe did not close exactly its transfer stream: %d", probeClosed)
+				}
+
+				connection, _, err = machines.StartAllocatedAgentSession(lifetime, machine, "env", sessionTransportGrant(), client, true)
+			}
+
 			if requested == 4 {
 				if !errors.Is(err, context.Canceled) || connection != nil {
 					t.Fatalf("blocked artifact read: connection=%v err=%v", connection, err)
 				}
-				for range 2 {
-					<-done
-				}
+				<-done
 				if client.releases != 1 || ledger.Snapshot().Used.HostDiskBytes != 0 {
 					t.Fatalf("failed transfer released execution or leaked reservation: releases=%d ledger=%+v", client.releases, ledger.Snapshot())
 				}
@@ -154,10 +190,14 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if streams.Load() != 2 || client.releases != 2 || ledger.Snapshot().Used.HostDiskBytes != 0 {
+			wantStreams, wantReleases := int32(2), 2
+			if requested != 0 {
+				wantStreams, wantReleases = 4, 3
+			}
+			if streams.Load() != wantStreams || client.releases != wantReleases || ledger.Snapshot().Used.HostDiskBytes != 0 {
 				t.Fatalf("startup ownership: streams=%d releases=%d ledger=%+v", streams.Load(), client.releases, ledger.Snapshot())
 			}
-			for _, delivery := range client.startup.Secrets {
+			for _, delivery := range client.delivered {
 				for _, b := range delivery.Value {
 					if b != 0 {
 						t.Fatal("host retained plaintext startup material")
@@ -168,7 +208,11 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 			if err != nil || len(files) != 0 {
 				t.Fatalf("staging remains: %v %v", files, err)
 			}
-			if store.getCalls[runtimeObject.Digest] != requested&1 || store.getCalls[programObject.Digest] != (requested>>1)&1 {
+			wantReads := 0
+			if requested != 0 {
+				wantReads = 1
+			}
+			if store.getCalls[runtimeObject.Digest] != wantReads || store.getCalls[programObject.Digest] != wantReads {
 				t.Fatal("staged unrequested artifact", store.getCalls)
 			}
 		})
@@ -177,10 +221,14 @@ func TestStartAllocatedAgentSessionTransfersVerifiedSnapshots(t *testing.T) {
 
 type blockedSessionArtifactStore struct {
 	cas.Store
-	entered chan struct{}
+	entered   chan struct{}
+	beforeGet func()
 }
 
 func (s *blockedSessionArtifactStore) Get(ctx context.Context, _ string) (io.ReadCloser, error) {
+	if s.beforeGet != nil {
+		s.beforeGet()
+	}
 	close(s.entered)
 	<-ctx.Done()
 	return nil, ctx.Err()

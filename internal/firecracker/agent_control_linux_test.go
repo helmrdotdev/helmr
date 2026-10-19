@@ -201,31 +201,3 @@ func TestCheckpointGuestPreparationRejectsSnapshotAndClose(t *testing.T) {
 		})
 	}
 }
-
-func TestAgentControlPreservesArtifactExchangeBudget(t *testing.T) {
-	machine := &guestMachine{}
-	for _, budget := range []time.Duration{10 * time.Minute, 5 * time.Second} {
-		ctx, cancel := context.WithTimeout(t.Context(), budget)
-		expected, _ := ctx.Deadline()
-		err := machine.WithRunningGuestControl(ctx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-			actual, ok := ctx.Deadline()
-			if !ok || !actual.Equal(expected) {
-				t.Errorf("exchange deadline %v, want caller deadline %v", actual, expected)
-			}
-			return nil
-		})
-		cancel()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	ctx, done, err := machine.captureContext(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer done()
-	deadline, ok := ctx.Deadline()
-	if !ok || time.Until(deadline) > computerCaptureTimeout {
-		t.Fatal("capture budget changed")
-	}
-}

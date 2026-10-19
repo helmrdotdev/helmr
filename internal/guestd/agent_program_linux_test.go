@@ -312,3 +312,66 @@ func TestSessionProgramRechecksAdmissionAfterTransfer(t *testing.T) {
 		})
 	}
 }
+
+// A host may discover missing guest bytes before staging them. Its aborted
+// transfer must leave admission reusable by a fresh, fully authorized attempt.
+func TestSessionProgramAbortedDemandProbeReleasesAdmission(t *testing.T) {
+	if os.Getenv("HELMR_SESSION_PROGRAM_TESTS") != "1" {
+		t.Skip("requires disposable privileged Linux container")
+	}
+	for _, kind := range []agentv1.SessionProgramRequest_Kind{agentv1.SessionProgramRequest_KIND_RUNTIME, agentv1.SessionProgramRequest_KIND_ARTIFACT} {
+		t.Run(kind.String(), func(t *testing.T) {
+			session, _ := agentSessionFixture(t)
+			registry := newComputerOperationRegistry()
+			registry.entries[session.entry.computerInstanceID] = session.entry
+			registry.agentPrograms.root = t.TempDir()
+			runtime, runtimePath := squashProgramFixture(t, t.TempDir())
+			programRoot := t.TempDir()
+			if err := os.WriteFile(filepath.Join(programRoot, "program"), []byte("program"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			program, programPath := squashProgramFixture(t, programRoot)
+			start := proto.Clone(session.start).(*agentv1.SessionStart)
+			start.Program = &agentv1.SessionProgram{Runtime: runtime, Artifact: program}
+			releaseReached := errors.New("verified retry reached execution release")
+			releases := 0
+			source := &fileAgentProgramInput{files: map[string]string{runtime.Digest: runtimePath, program.Digest: programPath}, release: func(context.Context) (*agentv1.SessionGrant, error) { releases++; return nil, releaseReached }}
+			aborted := &abortedAgentProgramInput{fileAgentProgramInput: source, kind: kind}
+			relay, err := registry.openAgentSession(t.Context(), &agentv1.SessionAttach{Grant: session.grant, Start: start, AttachmentSequence: 1}, aborted)
+			if relay != nil || !errors.Is(err, io.EOF) || releases != 0 {
+				t.Fatalf("aborted transfer reached execution: %v %v releases=%d", relay, err, releases)
+			}
+			assertClean := func() {
+				t.Helper()
+				if len(registry.agentStarting) != 0 || len(registry.agentSessions) != 0 || session.entry.active != 0 || session.entry.recoveryRequired {
+					t.Fatal("failed demand probe retained admission or poisoned Computer")
+				}
+				entries, err := os.ReadDir(registry.agentPrograms.root)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("failed demand probe retained artifacts: %v %v", entries, err)
+				}
+			}
+			assertClean()
+			if _, err := registry.openAgentSession(t.Context(), &agentv1.SessionAttach{Grant: session.grant, AttachmentSequence: 2}, nil); !errors.Is(err, errAgentSessionAbsent) {
+				t.Fatalf("retry absence probe: %v", err)
+			}
+			relay, err = registry.openAgentSession(t.Context(), &agentv1.SessionAttach{Grant: session.grant, Start: start, AttachmentSequence: 2}, source)
+			if relay != nil || !errors.Is(err, releaseReached) || releases != 1 {
+				t.Fatalf("retry did not materialize before execution release: %v %v releases=%d", relay, err, releases)
+			}
+			assertClean()
+		})
+	}
+}
+
+type abortedAgentProgramInput struct {
+	*fileAgentProgramInput
+	kind agentv1.SessionProgramRequest_Kind
+}
+
+func (s *abortedAgentProgramInput) copyArtifact(ctx context.Context, kind agentv1.SessionProgramRequest_Kind, d *agentv1.SessionProgramArtifact, w io.Writer) error {
+	if kind == s.kind {
+		return io.EOF
+	}
+	return s.fileAgentProgramInput.copyArtifact(ctx, kind, d, w)
+}

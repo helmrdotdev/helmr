@@ -56,18 +56,12 @@ func (s *guestMachine) lockComputer(ctx context.Context) (func(), error) {
 // its device or backing descriptors. The caller owns computerBarrier. The finite
 // capture budget includes synchronous disk I/O and guest acknowledgement.
 func (s *guestMachine) captureContext(ctx context.Context) (context.Context, func(), error) {
-	return s.computerOperationContext(ctx, computerCaptureTimeout)
-}
-
-// computerOperationContext retains Close cancellation and joining for every
-// operation holding computerBarrier, with its own finite operation budget.
-func (s *guestMachine) computerOperationContext(ctx context.Context, timeout time.Duration) (context.Context, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, nil, errors.New("computer machine is closed")
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, computerCaptureTimeout)
 	s.computerCancel = cancel
 	return ctx, func() {
 		cancel()
@@ -407,10 +401,7 @@ func (s *guestMachine) WithRunningGuestControl(ctx context.Context, stage vm.Gue
 	if (s.checkpointHold != nil && !s.checkpointHold.resumed) || (s.computerCaptureBlocked && s.checkpointHold == nil) {
 		return errors.New("computer guest control is paused or fenced")
 	}
-	// Program installation may include remote artifact I/O. Its exchange budget
-	// is independent of the shorter disk-capture budget; caller deadlines still
-	// bound ordinary controls and attachments.
-	ctx, done, err := s.computerOperationContext(ctx, 10*time.Minute)
+	ctx, done, err := s.captureContext(ctx)
 	if err != nil {
 		return err
 	}

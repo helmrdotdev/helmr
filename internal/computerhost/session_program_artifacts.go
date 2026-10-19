@@ -21,7 +21,8 @@ func sessionProgramDescriptor(object workerapi.CASObject) artifact.ProgramDescri
 
 // Metadata receipts authorize only exact immutable content. The guest owns its
 // live sealed artifacts and decides whether it needs bytes. A requested transfer
-// always obtains a new descriptor-bound snapshot under the startup reservation.
+// makes the attachment job retry with descriptor-bound snapshots prepared
+// outside the VM lifecycle barrier. No remote read runs under that barrier.
 func (p *PreparedMachines) prepareSessionProgramArtifacts(ctx context.Context, directory, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -3,8 +3,6 @@ package computerhost
 import (
 	"context"
 	"errors"
-	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
-	"io"
 	"os"
 	"reflect"
 	"runtime"
@@ -192,14 +190,10 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 				t.Helper()
 				dir := t.TempDir()
 				prepare := machines.prepareProgramArtifacts
-				if session {
+				if session && !tampered {
 					prepare = machines.prepareSessionProgramArtifacts
 				}
 				images, err := prepare(t.Context(), dir, "memo-test", program)
-				if session && tampered && err == nil {
-					source := &agentProgramSource{machines: machines, directory: dir, startup: workerapi.AgentStartResponse{Program: *program}, images: images}
-					err = source.WriteArtifact(t.Context(), &agentv1.SessionProgramArtifact{Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes}, io.Discard)
-				}
 				if err == nil && images != nil && !tampered {
 					if session && (images.runtime != nil || images.artifact != nil) {
 						t.Fatal("memo hit staged unrequested artifacts")

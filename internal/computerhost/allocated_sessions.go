@@ -78,9 +78,17 @@ func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine v
 					defer close(done)
 					grant := &agentv1.SessionGrant{Identity: &agentv1.SessionIdentity{SessionId: process.SessionID, ProcessEpoch: process.Epoch}, ComputerId: identity.OwnerID, ComputerInstanceId: identity.AllocationID, WriterGeneration: identity.Epoch, WorkerHostId: hostID, ComputerLeaseEpoch: identity.Epoch, ChannelCredential: allocation.ChannelCredential}
 					retryDelay := 250 * time.Millisecond
+					stageArtifacts := false
 					for ctx.Err() == nil {
 						attachmentWake := wake.snapshot()
-						connection, attached, err := p.StartAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client)
+						connection, attached, err := p.StartAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client, stageArtifacts)
+						if errors.Is(err, errSessionArtifactsRequired) && !stageArtifacts {
+							// The guest requested bytes before execution release.
+							// Re-enter full admission with staging outside the VM
+							// lifecycle barrier. Normal retries join guest cleanup.
+							stageArtifacts = true
+							continue
+						}
 						if err == nil {
 							connection.workWake = wake
 							servingSince := time.Now()
