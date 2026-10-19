@@ -280,15 +280,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	cacheBytes := max(int64(0), min(int64(4<<30), diskCapacity.HostDiskBytes-perSlotDisk*int64(cfg.WorkerExecutionSlots), availableDisk-perSlotDisk*int64(cfg.WorkerExecutionSlots)))
+	// Retain filesystem overhead headroom outside the rounded payload budget.
+	// Directory and extent metadata are not represented by logical object sizes.
+	const cacheFilesystemHeadroom = int64(64 << 20)
+	if cacheBytes <= cacheFilesystemHeadroom {
+		cacheBytes = 0
+	}
+	cachePayloadBytes := max(int64(0), cacheBytes-cacheFilesystemHeadroom)
 	if cacheBytes > 0 {
 		if _, err := hostReservations.Reserve(cacheKey, reservation.Vector{HostDiskBytes: cacheBytes}); err != nil {
 			return err
 		}
-		if err := objectCache.Enable(cacheBytes); err != nil {
+		if err := objectCache.Enable(cachePayloadBytes); err != nil {
 			return err
 		}
 	}
-	log.Info("worker object cache configured", "capacity_bytes", cacheBytes)
+	log.Info("worker object cache configured", "reserved_bytes", cacheBytes, "capacity_bytes", cachePayloadBytes)
 	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
 	preparedMachines.CommandLogLimits = &computerv0.CommandLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.SessionLogLimits = &agentv1.SessionLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
