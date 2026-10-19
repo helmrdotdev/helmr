@@ -188,6 +188,9 @@ func pinOtherEntries(t *testing.T, c *Cache) func() {
 func TestLargeSeedDoesNotEvictWorkingSet(t *testing.T) {
 	c := newCache(t, 16384)
 	d := seed(t, c, []byte("retained"))
+	for i := 0; i < 3; i++ {
+		seed(t, c, []byte(fmt.Sprintf("working-%d", i)))
+	}
 	large := bytes.Repeat([]byte("x"), 4097)
 	if ok, err := c.Seed(t.Context(), "test", descriptor(large), bytes.NewReader(large)); ok || err != nil {
 		t.Fatalf("oversized admission: %v %v", ok, err)

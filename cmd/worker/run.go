@@ -168,7 +168,6 @@ func run(log *slog.Logger) error {
 		log.Info("worker object cache usage", "stats", objectCache.Snapshot())
 		if err := objectCache.Close(); err != nil {
 			log.Error("close worker object cache", "error", err)
-			return
 		}
 	}()
 	imagesDir := cfg.ImagesDir
