@@ -180,6 +180,8 @@ message PreparationIdentity {
   bytes channel_credential = 4;
 }
 message PreparationStart {
+  // Executes only the fixed managed-runtime probe; never authored preparation.
+  bool qualification_only = 6;
   string template_definition_id = 1;
   repeated ComputerSecretDelivery secrets = 2;
   PreparationLogLimits log_limits = 3;

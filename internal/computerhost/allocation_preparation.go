@@ -43,30 +43,33 @@ type AllocatedPreparationClient interface {
 // PreparationAllocationOwner is the single owner of a private preparation VM.
 // Run may retry cleanup but never reruns authored code after physical startup.
 type PreparationAllocationOwner struct {
-	workWake   allocationWake
-	machines   *PreparedMachines
-	client     AllocatedPreparationClient
-	identity   workerapi.AllocationIdentity
-	admitStart func(context.Context) error
-	hostEpoch  int64
-	stopLogs   context.CancelFunc
-	operation  sync.Mutex
-	finished   atomic.Bool
-	expires    atomic.Int64
-	closing    bool
-	reserved   bool
-	absent     bool
-	published  bool
-	stopping   atomic.Bool
-	executor   workerapi.PreparationExecutor
-	machine    vm.CheckpointableMachine
-	stage      *preparationStage
-	capture    *disk.InitialVersion
-	stageImage func(context.Context, *preparationStage, workerapi.AllocationIdentity, workerapi.PreparationStart) error
+	workWake            allocationWake
+	machines            *PreparedMachines
+	client              AllocatedPreparationClient
+	identity            workerapi.AllocationIdentity
+	admitStart          func(context.Context) error
+	hostEpoch           int64
+	stopLogs            context.CancelFunc
+	operation           sync.Mutex
+	finished            atomic.Bool
+	expires             atomic.Int64
+	closing             bool
+	reserved            bool
+	absent              bool
+	published           bool
+	failureCode         string
+	stopping            atomic.Bool
+	executor            workerapi.PreparationExecutor
+	machine             vm.CheckpointableMachine
+	stage               *preparationStage
+	capture             *disk.InitialVersion
+	stageImage          func(context.Context, *preparationStage, workerapi.AllocationIdentity, workerapi.PreparationStart) error
+	qualification       *preparationQualification
+	attachQualification func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error)
 }
 
 func NewPreparationAllocationOwner(machines *PreparedMachines, client AllocatedPreparationClient, identity workerapi.AllocationIdentity, hostEpoch int64, admitStart func(context.Context) error) (*PreparationAllocationOwner, error) {
-	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.Reservations == nil || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "preparation" || identity.Epoch <= 0 || hostEpoch <= 0 {
+	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.ComputerRanges == nil || !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || machines.Reservations == nil || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "preparation" || identity.Epoch <= 0 || hostEpoch <= 0 {
 		return nil, errors.New("preparation requires its physical backend, artifact stores, capacity and diagnostic bounds")
 	}
 	if err := wire.ValidatePreparationLogLimits(machines.PreparationLogLimits); err != nil {
@@ -77,7 +80,7 @@ func NewPreparationAllocationOwner(machines *PreparedMachines, client AllocatedP
 			return nil, errors.New("invalid preparation allocation identity")
 		}
 	}
-	return &PreparationAllocationOwner{machines: machines, client: client, identity: identity, hostEpoch: hostEpoch, admitStart: admitStart, stageImage: machines.stagePreparation}, nil
+	return &PreparationAllocationOwner{machines: machines, client: client, identity: identity, hostEpoch: hostEpoch, admitStart: admitStart, stageImage: machines.stagePreparation, attachQualification: machines.prepareAllocationDevice}, nil
 }
 func (o *PreparationAllocationOwner) Finished() bool { return o.finished.Load() }
 func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) {
@@ -230,6 +233,10 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if err := retryPreparation(ctx, func(ctx context.Context) error { return o.client.RecordPreparationCapture(ctx, receipt) }); err != nil {
 		return err
 	}
+	if err := o.qualifyPreparation(ctx, start, shape, root, key); err != nil {
+		return err
+	}
+	receipt.Evidence = "private preparation captured; isolated clone started and passed managed runtime execution; both VMs absent"
 	if err := retryPreparation(ctx, func(ctx context.Context) error { return o.client.PublishPreparation(ctx, receipt) }); err != nil {
 		return err
 	}
@@ -306,8 +313,15 @@ func (o *PreparationAllocationOwner) cleanup() error {
 	if err := o.stopMachine(ctx); err != nil {
 		return err
 	}
+	if err := o.cleanupQualification(ctx); err != nil {
+		return err
+	}
 	if !o.published && len(o.executor.ChannelCredential) == 32 {
-		if err := o.client.FailPreparation(ctx, workerapi.PreparationFailure{Executor: o.executor, Code: "preparation_execution_failed"}); err != nil {
+		code := o.failureCode
+		if code == "" {
+			code = "preparation_execution_failed"
+		}
+		if err := o.client.FailPreparation(ctx, workerapi.PreparationFailure{Executor: o.executor, Code: code}); err != nil {
 			return err
 		}
 	}

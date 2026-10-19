@@ -188,9 +188,6 @@ func (entry *computerMountEntry) executeComputerBasicExec(
 	if err := prepareLaunchPath(entry.imageRoot, launchCwd, entry.runtimeUser); err != nil {
 		return computerBasicCommandFailure(fingerprint, "computer_command_launch_failed", err)
 	}
-	if err := entry.prepareComputerOwner(); err != nil {
-		return computerBasicCommandFailure(fingerprint, "computer_command_launch_failed", err)
-	}
 
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(spec.TimeoutMS)*time.Millisecond)
 	defer cancel()
@@ -356,20 +353,6 @@ func (entry *computerMountEntry) computerProcessEnv(
 		env = setEnvValue(env, key, value)
 	}
 	return env, nil
-}
-
-func (entry *computerMountEntry) prepareComputerOwner() error {
-	if entry.runtimeUser == nil || os.Geteuid() != 0 {
-		return nil
-	}
-	if err := chownTree(
-		entry.computerRoot,
-		entry.runtimeUser.UID,
-		entry.runtimeUser.GID,
-	); err != nil {
-		return fmt.Errorf("prepare computer owner: %w", err)
-	}
-	return nil
 }
 
 func (entry *computerMountEntry) computerRuntimePath(

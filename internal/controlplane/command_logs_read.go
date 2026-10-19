@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -108,19 +109,59 @@ func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command
 	if limit < 1 || limit > 100 {
 		return api.CommandLogPage{}, errors.New("invalid command log limit")
 	}
-	if s.telemetryReader == nil {
-		return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
-	}
 	streams := []string{"stdout", "stderr"}
 	positions := []int64{position.Stdout, position.Stderr}
+	before, err := s.db.GetCommandLogState(ctx, db.GetCommandLogStateParams{OrgID: orgID, EnvironmentID: command.EnvironmentID, CommandID: command.ID})
+	if err != nil {
+		return api.CommandLogPage{}, err
+	}
+	frontiers := []int64{before.StdoutAcceptedThrough, before.StderrAcceptedThrough}
 	pages := make([][]telemetry.CommandLogChunk, 2)
 	for i, stream := range streams {
+		if positions[i] >= frontiers[i] {
+			continue
+		}
 		after := uint64(positions[i])
-		page, err := s.telemetryReader.ListCommandLogChunks(ctx, telemetry.CommandLogChunkQuery{OrgID: pgvalue.MustUUIDValue(orgID), EnvironmentID: pgvalue.MustUUIDValue(command.EnvironmentID), CommandID: pgvalue.MustUUIDValue(command.ID), Stream: stream, AfterObservedSeq: &after, Limit: min(limit, 64)})
+		query := telemetry.CommandLogChunkQuery{OrgID: pgvalue.MustUUIDValue(orgID), EnvironmentID: pgvalue.MustUUIDValue(command.EnvironmentID), CommandID: pgvalue.MustUUIDValue(command.ID), Stream: stream, AfterObservedSeq: &after, Limit: min(limit, 64)}
+		pending, err := telemetry.PendingCommandLogs(ctx, s.tx, query)
 		if err != nil {
 			return api.CommandLogPage{}, err
 		}
-		pages[i] = page.Chunks
+		if len(pending.Chunks) > 0 && pending.Chunks[0].ObservedSeq == after+1 {
+			pages[i] = pending.Chunks
+			continue
+		}
+		if s.telemetryReader == nil {
+			return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
+		}
+		history, err := s.telemetryReader.ListCommandLogChunks(ctx, query)
+		if err != nil {
+			return api.CommandLogPage{}, err
+		}
+		// A page can cross the export frontier. Keep the committed queue's copy
+		// when it overlaps history, and retain sequence/gap checks below.
+		chunks := make(map[uint64]telemetry.CommandLogChunk, len(history.Chunks)+len(pending.Chunks))
+		for _, chunk := range history.Chunks {
+			chunks[chunk.ObservedSeq] = chunk
+		}
+		for _, chunk := range pending.Chunks {
+			chunks[chunk.ObservedSeq] = chunk
+		}
+		for _, chunk := range chunks {
+			pages[i] = append(pages[i], chunk)
+		}
+		slices.SortFunc(pages[i], func(a, b telemetry.CommandLogChunk) int {
+			if a.ObservedSeq < b.ObservedSeq {
+				return -1
+			}
+			if a.ObservedSeq > b.ObservedSeq {
+				return 1
+			}
+			return 0
+		})
+		if len(pages[i]) > int(query.Limit) {
+			pages[i] = pages[i][:query.Limit]
+		}
 	}
 	// Read owner progress after the sink: publication may have advanced during either read.
 	current, err := s.db.GetCommandLogState(ctx, db.GetCommandLogStateParams{OrgID: orgID, EnvironmentID: command.EnvironmentID, CommandID: command.ID})

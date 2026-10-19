@@ -146,6 +146,12 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 						t.Error(err)
 						return
 					}
+					if request.Identity.InstanceId != owner.identity.AllocationID {
+						var payload bytes.Buffer
+						_ = frameio.WriteProtoFrame(&payload, &request)
+						fallback(&preparationReplayConn{Conn: stream, reader: io.MultiReader(bytes.NewReader(raw.Bytes()), bytes.NewReader(payload.Bytes()), stream)})
+						return
+					}
 					if request.Start != nil {
 						backend.authored.Add(1)
 					}

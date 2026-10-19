@@ -65,6 +65,15 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if incompatible {
 			return invalidInput(errors.New("a connected Slack agent must accept conversation input"))
 		}
+		ready, err := preparePromotion(ctx, tx, pgvalue.MustUUIDValue(env), id)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)
+			result.PreparationState = "preparing"
+			return err
+		}
 		var cutover time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cutover); err != nil {
 			return err

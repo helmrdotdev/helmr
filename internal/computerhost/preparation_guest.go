@@ -16,17 +16,21 @@ import (
 )
 
 func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, start workerapi.PreparationStart) error {
+	return o.runPreparationOn(ctx, o.machine, o.identity, o.executor.ChannelCredential, start, start.Seed.ArtifactDigest, false)
+}
+
+func (o *PreparationAllocationOwner) runPreparationOn(ctx context.Context, machine vm.CheckpointableMachine, allocation workerapi.AllocationIdentity, credential []byte, start workerapi.PreparationStart, baseVersion string, qualification bool) error {
 	// These are mounted-image substrate identities. There is no Session or Run
 	// admission in a private preparation VM.
-	if err := prepareAllocationImage(ctx, o.machine, o.identity, base64.RawURLEncoding.EncodeToString(o.executor.ChannelCredential), start.Seed.ArtifactDigest, start.Seed.Config); err != nil {
+	if err := prepareAllocationImage(ctx, machine, allocation, base64.RawURLEncoding.EncodeToString(credential), baseVersion, start.Seed.Config); err != nil {
 		return err
 	}
-	identity := &computerv0.PreparationIdentity{PreparationId: o.identity.OwnerID, InstanceId: o.identity.AllocationID, Epoch: o.identity.Epoch, ChannelCredential: o.executor.ChannelCredential}
+	identity := &computerv0.PreparationIdentity{PreparationId: allocation.OwnerID, InstanceId: allocation.AllocationID, Epoch: allocation.Epoch, ChannelCredential: credential}
 	// Lease delivery and execution state progress independently of both diagnostic
 	// streams. No log receipt gates the preparation result or subsequent capture.
 	ctx, cancel := context.WithCancel(ctx)
 	var renewal sync.WaitGroup
-	renewal.Go(func() { o.renewPreparationGuest(ctx, identity) })
+	renewal.Go(func() { o.renewPreparationGuest(ctx, machine, identity) })
 	defer func() { cancel(); renewal.Wait() }()
 	request := &computerv0.PreparationControlRequest{Identity: identity}
 	started := false
@@ -46,10 +50,10 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 		if request.WaitForCompletion {
 			// This observes the retained execution only. Do not hold the VM control
 			// barrier while waiting; guest lease renewals must remain independent.
-			err = allocationGuestExchange(callCtx, o.machine, wire.StreamTypePreparationControl, request, &response)
+			err = allocationGuestExchange(callCtx, machine, wire.StreamTypePreparationControl, request, &response)
 		} else {
-			err = o.machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-				return allocationGuestExchange(ctx, o.machine, wire.StreamTypePreparationControl, request, &response)
+			err = machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
+				return allocationGuestExchange(ctx, machine, wire.StreamTypePreparationControl, request, &response)
 			})
 		}
 		stop()
@@ -72,6 +76,10 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 		case "absent":
 			if started {
 				return errors.New("preparation startup outcome is unknown; authored code will not be repeated")
+			}
+			if qualification {
+				request.Start = &computerv0.PreparationStart{QualificationOnly: true, LogLimits: o.machines.PreparationLogLimits}
+				continue
 			}
 			secrets, err := o.client.PreparationSecrets(ctx, o.executor)
 			if err != nil {
@@ -109,7 +117,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 	}
 }
 
-func (o *PreparationAllocationOwner) renewPreparationGuest(ctx context.Context, identity *computerv0.PreparationIdentity) {
+func (o *PreparationAllocationOwner) renewPreparationGuest(ctx context.Context, machine vm.CheckpointableMachine, identity *computerv0.PreparationIdentity) {
 	for {
 		remaining := time.Until(time.Unix(0, o.expires.Load()))
 		if remaining <= 0 || sleepWithContext(ctx, min(10*time.Second, max(100*time.Millisecond, remaining/2), remaining)) != nil {
@@ -120,8 +128,8 @@ func (o *PreparationAllocationOwner) renewPreparationGuest(ctx context.Context, 
 		var response computerv0.PreparationControlResponse
 		// The guest still expires locally if transport is unavailable. This loop
 		// neither starts authored work nor advances the output acknowledgment cursor.
-		_ = o.machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-			return allocationGuestExchange(ctx, o.machine, wire.StreamTypePreparationControl, request, &response)
+		_ = machine.WithRunningGuestControl(callCtx, vm.GuestControlOrdinary, func(ctx context.Context) error {
+			return allocationGuestExchange(ctx, machine, wire.StreamTypePreparationControl, request, &response)
 		})
 		stop()
 	}

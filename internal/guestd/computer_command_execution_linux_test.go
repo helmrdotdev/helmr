@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,13 @@ import (
 
 func TestComputerBasicExecExecutesRetainedBytes(t *testing.T) {
 	entry, registry := testLinuxComputerCommandImage(t)
+	retained := filepath.Join(entry.computerRoot, "file")
+	if err := os.Chown(retained, 1234, 1235); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(retained, 0444); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(filepath.Join(entry.computerRoot, "file"))
 	if err != nil {
 		t.Fatal(err)
@@ -34,12 +42,31 @@ func TestComputerBasicExecExecutesRetainedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.RequestJson = string(body)
-	result := framedBasicExec(t, t.Context(), registry, req)
-	if result.GetOutcome() != "exited" || result.GetExitCode() != 0 || string(commandSpoolBytes(t, entry.commands["process-1"].output, "stdout")) != hex.EncodeToString(digest[:]) {
-		t.Fatalf("actual confined exec: %v stdout=%q stderr=%q", result, string(commandSpoolBytes(t, entry.commands["process-1"].output, "stdout")), string(commandSpoolBytes(t, entry.commands["process-1"].output, "stderr")))
+	execution, _, err := registry.startComputerBasicExec(t.Context(), entry, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-execution.done:
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	result := execution.result
+	stdout := string(commandSpoolBytes(t, execution.output, "stdout"))
+	stderr := string(commandSpoolBytes(t, execution.output, "stderr"))
+	if result.GetOutcome() != "exited" || result.GetExitCode() != 0 || stdout != hex.EncodeToString(digest[:]) {
+		t.Fatalf("actual confined exec: %v stdout=%q stderr=%q", result, stdout, stderr)
+	}
+	info, err := os.Stat(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Perm() != 0444 || owner.Uid != 1234 || owner.Gid != 1235 {
+		t.Fatalf("exec changed retained filesystem permissions: mode=%o uid=%d gid=%d", info.Mode().Perm(), owner.Uid, owner.Gid)
 	}
 	replay := framedBasicExec(t, t.Context(), registry, req)
-	if replay.GetOutcome() != "exited" || string(commandSpoolBytes(t, entry.commands["process-1"].output, "stdout")) != hex.EncodeToString(digest[:]) {
+	if replay.GetOutcome() != "exited" || replay.GetExitCode() != 0 {
 		t.Fatal("retained result changed")
 	}
 }
@@ -49,8 +76,19 @@ func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computer
 	if os.Getenv("HELMR_PRIVILEGED_PROGRAM_TEST") != "1" {
 		t.Skip("requires disposable privileged Linux namespaces; set HELMR_PRIVILEGED_PROGRAM_TEST=1")
 	}
+	if _, err := os.Stat(processCgroupRoot); errors.Is(err, os.ErrNotExist) {
+		prepareProgramTestCgroup(t)
+	}
+	resolver, err := os.OpenFile(imageRuntimeResolverPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err == nil {
+		_, _ = resolver.WriteString("nameserver 127.0.0.1\n")
+		_ = resolver.Close()
+		t.Cleanup(func() { _ = os.Remove(imageRuntimeResolverPath) })
+	} else if !errors.Is(err, os.ErrExist) {
+		t.Fatal(err)
+	}
 	image := t.TempDir()
-	entry := &computerMountEntry{computerRoot: filepath.Join(image, "computer")}
+	entry := &computerMountEntry{computerRoot: filepath.Join(image, "workspace")}
 	if err := os.Mkdir(entry.computerRoot, 0700); err != nil {
 		t.Fatal(err)
 	}

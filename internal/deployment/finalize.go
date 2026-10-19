@@ -75,12 +75,13 @@ type preparedBundle struct {
 
 // Record is a finalized Deployment scoped to its owning Environment.
 type Record struct {
-	ID            uuid.UUID
-	OrgID         uuid.UUID
-	ProjectID     uuid.UUID
-	EnvironmentID uuid.UUID
-	BundleDigest  string
-	CreatedAt     time.Time
+	PreparationState string
+	ID               uuid.UUID
+	OrgID            uuid.UUID
+	ProjectID        uuid.UUID
+	EnvironmentID    uuid.UUID
+	BundleDigest     string
+	CreatedAt        time.Time
 }
 
 // Prepare authorizes the principal to deploy into the environment, admits the

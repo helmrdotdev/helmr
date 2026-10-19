@@ -104,7 +104,7 @@ func (r *computerOperationRegistry) controlPreparation(ctx context.Context, requ
 		return &computerv0.PreparationControlResponse{State: "absent"}, nil
 	}
 	if start := request.GetStart(); start != nil {
-		if !definition.ValidDeclaredID(start.GetTemplateDefinitionId()) || wire.ValidatePreparationControl(request) != nil {
+		if (!start.GetQualificationOnly() && !definition.ValidDeclaredID(start.GetTemplateDefinitionId())) || wire.ValidatePreparationControl(request) != nil {
 			return nil, errors.New("invalid preparation start")
 		}
 		if p != nil {

@@ -62,7 +62,7 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
  if(process.env.MODE==='expiry') await new Promise(()=>{setInterval(()=>{},1000)});
  if(process.env.MODE==='failure') await build.exec([process.execPath,'-e','process.exit(7)']);
 }};`)
-	for _, mode := range []string{"success", "large secret", "expiry", "failure"} {
+	for _, mode := range []string{"success", "large secret", "expiry", "failure", "qualification"} {
 		t.Run(mode, func(t *testing.T) {
 			registry, entry, request := preparationGuestFixture(t)
 			entry.imageRoot = root
@@ -78,6 +78,24 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				secretValue = strings.Repeat("A", 80<<10)
 			}
 			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "BUILD_TOKEN", Value: []byte(secretValue)}, {PlacementKind: "env", PlacementTarget: "MODE", Value: []byte(mode)}, {PlacementKind: "file", PlacementTarget: "/etc/helmr-preparation-token", Value: []byte(secretValue)}}}
+			if mode == "qualification" {
+				request.Start = &computerv0.PreparationStart{QualificationOnly: true, LogLimits: request.Start.LogLimits}
+				entry.imageConfig.Env = []string{"NODE_OPTIONS=--require=/must-not-load", "LD_PRELOAD=/must-not-load"}
+				write(filepath.Join(program, "helmr/app/entry-0.mjs"), "throw new Error('qualification imported authored application')")
+				if err := os.Remove(filepath.Join(root, "workspace/prepared")); err != nil {
+					t.Fatal(err)
+				}
+				// No shell is needed by the managed execution probe.
+				shell := filepath.Join(root, "bin")
+				if err := os.Rename(shell, shell+".qualification"); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Rename(shell+".qualification", shell); err != nil {
+						t.Error(err)
+					}
+				})
+			}
 			if _, err := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation); err != nil {
 				t.Fatal(err)
 			}
@@ -92,12 +110,18 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				t.Fatal(err)
 			}
 			want := "succeeded"
-			if mode != "success" && mode != "large secret" {
+			if mode != "success" && mode != "large secret" && mode != "qualification" {
 				want = "failed"
 			}
 			if result.State != want {
 				t.Logf("preparation output: %v", result.Log)
 				t.Fatalf("preparation result: %s %s", result.State, result.ErrorCode)
+			}
+			if mode == "qualification" {
+				if _, err := os.Stat(filepath.Join(root, "workspace/prepared")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("qualification reran authored preparation")
+				}
+				return
 			}
 			actual, err := os.ReadFile(filepath.Join(root, "workspace/prepared"))
 			if err != nil || string(actual) != secretValue {
