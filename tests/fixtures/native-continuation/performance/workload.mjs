@@ -1,5 +1,5 @@
-// Executed by the real native tool, inside its session directory. Assets are
-// immutable image inputs; all mutations remain in this session's workload copy.
+// Native tools mutate their Session copy. The explicit prepared mode is run
+// by the no-model peer against its Computer's previously prepared repository.
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
