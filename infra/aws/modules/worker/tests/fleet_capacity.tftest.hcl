@@ -346,6 +346,15 @@ run "reject_disk_ceiling_above_root_volume" {
   expect_failures = [terraform_data.network_preconditions]
 }
 
+run "zero_standby_removes_the_warm_pool" {
+  command = plan
+  variables { warm_pool_size = 0 }
+  assert {
+    condition     = length(aws_autoscaling_group.worker.warm_pool) == 0 && aws_autoscaling_group.worker.force_delete_warm_pool != true
+    error_message = "zero standby must remove the warm pool through graceful provider draining"
+  }
+}
+
 run "stopped_standby_uses_caller_size_without_recycling_workers" {
   command = apply
   variables { warm_pool_size = 1 }

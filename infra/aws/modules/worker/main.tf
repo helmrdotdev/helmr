@@ -459,11 +459,14 @@ resource "aws_autoscaling_group" "worker" {
   }
 
 
-  warm_pool {
-    pool_state                  = "Stopped"
-    min_size                    = var.warm_pool_size
-    max_group_prepared_capacity = var.warm_pool_size
-    instance_reuse_policy { reuse_on_scale_in = false }
+  dynamic "warm_pool" {
+    for_each = var.warm_pool_size > 0 ? [var.warm_pool_size] : []
+    content {
+      pool_state                  = "Stopped"
+      min_size                    = warm_pool.value
+      max_group_prepared_capacity = warm_pool.value
+      instance_reuse_policy { reuse_on_scale_in = false }
+    }
   }
 
   initial_lifecycle_hook {
