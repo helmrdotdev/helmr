@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -78,6 +79,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
 	var platformStore cas.ImmutableStore
+	phaseStarted := time.Now()
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
 		return fmt.Errorf("prepare verifier host: %w", err)
@@ -92,16 +94,20 @@ func run(log *slog.Logger) error {
 	if err := os.MkdirAll(verifierQualificationRoot, 0o700); err != nil {
 		return fmt.Errorf("create verifier qualification root: %w", err)
 	}
+	log.Info("worker startup phase completed", "phase", "verifier_host_preparation", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	phaseStarted = time.Now()
 	if err := verify.Qualify(ctx, verifierCgroupRoot, verifierQualificationRoot); err != nil {
 		if diagnostic, ok := verify.LocalDiagnostic(err); ok {
 			log.Error("deployment artifact verifier qualification failed", "diagnostic", diagnostic)
 		}
 		return fmt.Errorf("qualify deployment artifact verifier: %w", err)
 	}
+	log.Info("worker startup phase completed", "phase", "verifier_qualification", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
 	var controlPlaneClient *workerclient.Client
+	phaseStarted = time.Now()
 	workerHostSecret, err := resolveAuthenticatedWorkerHostSecret(ctx, cfg, workDir, func(hostSecret workerHostSecretFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
 			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret),
@@ -119,6 +125,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure authenticated control client: %w", err)
 	}
+	log.Info("worker startup phase completed", "phase", "enrollment_authentication", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	reclaimCgroup := func(owner vm.Owner) error {
 		return firecracker.RemoveStoppedCgroup(networkConfig.StateDir, cfg.CgroupVersion, owner)
 	}

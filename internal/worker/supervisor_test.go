@@ -813,6 +813,76 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	}
 }
 
+type observingControlPlane struct {
+	testControlPlane
+	observations chan workerapi.Observation
+}
+
+func (c *observingControlPlane) ObserveWorker(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+	if !c.activated.Load() {
+		return workerapi.StatusResponse{}, errors.New("observation before activation")
+	}
+	status, err := c.testControlPlane.ObserveWorker(ctx, observation)
+	c.observations <- observation
+	return status, err
+}
+
+func TestActivatedWorkerReportsHealthBeforeFirstObservationInterval(t *testing.T) {
+	for _, healthy := range []bool{true, false} {
+		t.Run(map[bool]string{true: "healthy", false: "admission paused"}[healthy], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				controlPlane := &observingControlPlane{observations: make(chan workerapi.Observation, 4)}
+				health := healthyHost(time.Now())
+				health.KVMHealthy = healthy
+				gate, err := NewHardAdmission(HardAdmissionConfig{Probe: &staticHealthProbe{health: health}, DiskFloorBytes: 1, FDHeadroom: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				const interval = time.Hour
+				s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, ObservationEvery: interval, AdmissionEvaluator: gate})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- s.Run(ctx) }()
+				synctest.Wait()
+				select {
+				case observation := <-controlPlane.observations:
+					want := ""
+					if !healthy {
+						want = string(AdmissionKVMUnavailable)
+					}
+					if observation.AdmissionPausedReason != want {
+						t.Fatalf("initial admission pause = %q, want %q", observation.AdmissionPausedReason, want)
+					}
+				default:
+					t.Fatal("activated Worker waited for the first observation interval")
+				}
+				time.Sleep(interval - time.Nanosecond)
+				synctest.Wait()
+				select {
+				case <-controlPlane.observations:
+					t.Fatal("periodic observation arrived before the configured interval")
+				default:
+				}
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				select {
+				case <-controlPlane.observations:
+				default:
+					t.Fatal("periodic observations did not continue")
+				}
+				cancel()
+				if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
 func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
@@ -836,8 +906,7 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 
 func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	controlPlane := &testControlPlane{}
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	controlPlane := &observingControlPlane{observations: make(chan workerapi.Observation, 4)}
 	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
@@ -849,16 +918,17 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	deadline := time.Now().Add(time.Second)
-	for !controlPlane.activated.Load() || s.state.Load().(Status) != StatusActive {
-		if time.Now().After(deadline) {
-			t.Fatal("supervisor did not reach active select")
-		}
-		time.Sleep(time.Millisecond)
+	// Wait until the initial response is captured so it cannot observe the
+	// draining status below and publish a competing drain wakeup.
+	select {
+	case <-controlPlane.observations:
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not send its initial observation")
 	}
 	// Model the observation callback's ordering: it stores the durable latch
 	// before publishing its wakeup. Cancellation is already ready when Run
 	// resumes its select branch.
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s.state.Store(StatusDraining)
 	cancel()
 	if err := <-done; err != nil {

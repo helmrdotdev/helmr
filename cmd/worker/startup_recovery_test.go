@@ -47,7 +47,7 @@ func TestWorkerStartupRecoveryOrderingAndEvidence(t *testing.T) {
 			}
 			expectedRuntime := &firecracker.QualifiedRuntime{}
 			var logs bytes.Buffer
-			log := slog.New(slog.NewJSONHandler(&logs, nil))
+			log := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 			got, runtime, err := recoverAndQualifyWorkerRuntime(t.Context(), log, func(context.Context) (worker.RecoveryEvidence, error) {
 				calls = append(calls, "recover")
 				if tc.failureAt == "recover" {
