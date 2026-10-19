@@ -34,14 +34,7 @@ func preparationState(ctx context.Context, q db.DBTX, env, deployment uuid.UUID)
 	}
 	state := "ready"
 	for _, spec := range specs {
-		ready, err := computer.ImageReady(ctx, q, env, spec.id, spec.maxAge)
-		if err != nil {
-			return "", err
-		}
-		if ready {
-			continue
-		}
-		current, err := computer.ImagePreparationState(ctx, q, env, spec.id)
+		current, err := computer.ImagePreparationState(ctx, q, env, spec.id, spec.maxAge)
 		if err != nil {
 			return "", err
 		}
