@@ -9,7 +9,10 @@ export const coder = agent({
   async init({ session }) {
     const { session: pi } = await createAgentSession({
       cwd: "/app",
-      sessionManager: SessionManager.continueRecent("/app", `/var/lib/helmr/pi/${session.id}`),
+      sessionManager: SessionManager.continueRecent(
+        "/app",
+        `/var/lib/helmr/pi/${session.id}`,
+      ),
     })
     return pi
   },
