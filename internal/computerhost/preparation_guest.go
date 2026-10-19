@@ -6,9 +6,7 @@ import (
 	"errors"
 	"sync"
 	"time"
-	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -136,33 +134,4 @@ func (o *PreparationAllocationOwner) renewPreparationGuest(ctx context.Context, 
 		})
 		stop()
 	}
-}
-
-func flushPreparation(ctx context.Context, machine vm.GuestControlMachine, owner string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	return machine.WithRunningGuestControl(ctx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-		stream, err := machine.OpenStream(ctx)
-		if err != nil {
-			return err
-		}
-		defer stream.Close()
-		stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
-		defer stop()
-		operation := uuid.NewV7().String()
-		if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{Type: wire.StreamTypeComputerFlush, ComputerID: owner, OperationID: operation}, 0); err != nil {
-			return err
-		}
-		if err := frameio.WriteProtoFrame(stream, &computerv0.FlushComputerRequest{OperationId: operation}); err != nil {
-			return err
-		}
-		var response computerv0.FlushComputerResponse
-		if err := frameio.ReadProtoFrameBounded(stream, 4096, &response); err != nil {
-			return err
-		}
-		if response.OperationId != operation || response.Error != "" {
-			return errors.New("preparation filesystem flush was not acknowledged")
-		}
-		return nil
-	})
 }

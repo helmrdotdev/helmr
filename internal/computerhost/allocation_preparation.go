@@ -208,9 +208,6 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	}); err != nil {
 		return err
 	}
-	if err := flushPreparation(ctx, o.machine, o.identity.OwnerID); err != nil {
-		return err
-	}
 	// No guest writer may survive the source cut. Keep the allocation lease and
 	// custody until publication settles, even though the private VM is now absent.
 	if err := o.stopMachine(ctx); err != nil {

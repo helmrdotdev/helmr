@@ -7,6 +7,9 @@ import (
 	"os"
 )
 
+// Linux UAPI _IOWR('X', 119, int), identical on supported amd64/arm64.
+const computerFreezeIOCTL = 0xc0045877
+
 func openComputerWriteback() (*computerWriteback, error) {
 	root := os.Getenv("HELMR_GUESTD_COMPUTER_ROOT")
 	if root == "" {
@@ -27,7 +30,8 @@ func openComputerWriteback() (*computerWriteback, error) {
 		return nil, err
 	}
 	return &computerWriteback{
-		syncFilesystem:  func() error { return unix.Syncfs(int(file.Fd())) },
-		closeFilesystem: file.Close,
+		syncFilesystem:   func() error { return unix.Syncfs(int(file.Fd())) },
+		freezeFilesystem: func() error { return unix.IoctlSetInt(int(file.Fd()), computerFreezeIOCTL, 0) },
+		closeFilesystem:  file.Close,
 	}, nil
 }

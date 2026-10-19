@@ -327,7 +327,7 @@ func TestPreparationAllocationReconcilesLostStartPublishAndStop(t *testing.T) {
 	} else {
 		t.Logf("first operation outcome: %v", err)
 	}
-	if client.keyCalls.Load() != 2 || client.publications.Load() != 2 || backend.starts.Load() != 2 || backend.authored.Load() != 1 || backend.flushes.Load() != 1 || client.failures.Load() != 0 {
+	if client.keyCalls.Load() != 2 || client.publications.Load() != 2 || backend.starts.Load() != 2 || backend.authored.Load() != 1 || backend.flushes.Load() != 0 || client.failures.Load() != 0 {
 		t.Fatalf("ordering: publications=%d starts=%d authored=%d flushes=%d failures=%d", client.publications.Load(), backend.starts.Load(), backend.authored.Load(), backend.flushes.Load(), client.failures.Load())
 	}
 	owner.admitStart = func(context.Context) error {

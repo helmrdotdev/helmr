@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"net"
@@ -24,6 +25,7 @@ func preparationGuestFixture(t *testing.T) (*computerOperationRegistry, *compute
 	credential := bytes.Repeat([]byte{11}, 32)
 	entry := &computerMountEntry{computerID: "preparation", computerInstanceID: "instance", writerGeneration: 1, channelCredential: base64.RawURLEncoding.EncodeToString(credential)}
 	registry := newComputerOperationRegistry()
+	registry.writeback = &computerWriteback{syncFilesystem: func() error { return nil }, freezeFilesystem: func() error { return nil }}
 	if err := registry.register("instance", entry); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +204,73 @@ func TestPreparationControlSecretFrameBounds(t *testing.T) {
 				}
 			} else if err == nil || err.Error() != "preparation does not own mounted image" {
 				t.Fatalf("valid Secret frame did not reach authorization: %v", err)
+			}
+		})
+	}
+}
+
+func TestPreparationFinalizesAfterCleanupBeforeSuccess(t *testing.T) {
+	registry, entry, request := preparationGuestFixture(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var cleaned atomic.Bool
+	registry.writeback.freezeFilesystem = func() error {
+		if !cleaned.Load() {
+			return errors.New("cleanup not joined")
+		}
+		close(entered)
+		<-release
+		return nil
+	}
+	run := func(_ *computerMountEntry, _ context.Context, _ *computerv0.PreparationStart, _ *preparationOutput) (error, error) {
+		defer cleaned.Store(true)
+		return nil, nil
+	}
+	request.Start = &computerv0.PreparationStart{TemplateDefinitionId: "repo", LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}}
+	if _, err := registry.controlPreparation(t.Context(), request, run); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	request.Start = nil
+	response, err := registry.controlPreparation(t.Context(), request, run)
+	entry.processesMu.Lock()
+	admissions := entry.processAdmissions
+	entry.processesMu.Unlock()
+	close(release)
+	<-entry.preparation.done
+	if err != nil || response.State != "running" || admissions != 1 {
+		t.Fatalf("premature completion: %+v %v admissions=%d", response, err, admissions)
+	}
+	response, err = registry.controlPreparation(t.Context(), request, run)
+	if err != nil || response.State != "succeeded" {
+		t.Fatalf("completion: %+v %v", response, err)
+	}
+}
+
+func TestPreparationFinalizationFailureAndQualification(t *testing.T) {
+	for _, qualification := range []bool{false, true} {
+		t.Run(fmt.Sprint(qualification), func(t *testing.T) {
+			registry, entry, request := preparationGuestFixture(t)
+			var freezes atomic.Int32
+			registry.writeback.freezeFilesystem = func() error { freezes.Add(1); return errors.New("io") }
+			run := func(_ *computerMountEntry, _ context.Context, _ *computerv0.PreparationStart, _ *preparationOutput) (error, error) {
+				return nil, nil
+			}
+			request.Start = &computerv0.PreparationStart{TemplateDefinitionId: "repo", QualificationOnly: qualification, LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}}
+			if qualification {
+				request.Start.TemplateDefinitionId = ""
+			}
+			if _, err := registry.controlPreparation(t.Context(), request, run); err != nil {
+				t.Fatal(err)
+			}
+			<-entry.preparation.done
+			request.Start = nil
+			response, err := registry.controlPreparation(t.Context(), request, run)
+			want, count := "failed", int32(1)
+			if qualification {
+				want, count = "succeeded", 0
+			}
+			if err != nil || response.State != want || freezes.Load() != count {
+				t.Fatalf("result: %+v %v freezes=%d", response, err, freezes.Load())
 			}
 		})
 	}

@@ -39,6 +39,7 @@ export const workspace = template({
   resources: { cpu: 2, memory: "4GiB", disk: "32GiB" },
   async prepare(build) {
     await build.exec(["node", "-e", "require('node:fs').writeFileSync('/workspace/prepared-environment', 'prepared once')"])
+    await build.exec(["sh", "-ceu", "if [ -f /opt/native-performance/repository.tar ]; then mkdir /workspace/prepared-repository; tar -xf /opt/native-performance/repository.tar -C /workspace/prepared-repository; fi"])
   },
 })
 
@@ -223,6 +224,18 @@ export const peer = agent({
     }
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
+    let preparedWork: JsonValue | undefined
+    if (performanceProbe && state.count === 0) {
+      // Useful edit/build/test runs against the repository prepared before this
+      // Computer existed. The workload must not extract a repository on demand.
+      const result = spawnSync("node", ["/opt/native-performance/workload.mjs", "edit-test", "1", "/opt/native-performance", "prepared"], {
+        cwd: "/workspace", encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024,
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status, 0, result.stderr)
+      preparedWork = JSON.parse(result.stdout)
+      assert.equal((preparedWork as { detail: { assertions: number } }).detail.assertions, 5)
+    }
     if (input !== "hold" && input !== "hold-discovery" && !secretInput && !performanceProbe) return { received: input }
     if (secretInput || state.secrets) state.secrets = await checkSecretBindings(input, state.secrets)
     if (input === "hold-discovery" || state.discovery) {
@@ -241,13 +254,14 @@ export const peer = agent({
         assert.deepEqual(await readFile(path), data)
         io = { bytes: data.length * 2, writeReadMs: performance.now() - started, observedAt: new Date().toISOString() }
       }
-      const progress = { nonce: state.nonce, count: ++state.count, pid: process.pid, ...(io ? { io } : {}),
+      const progress = { nonce: state.nonce, count: ++state.count, pid: process.pid, ...(io ? { io } : {}), ...(preparedWork ? { preparedWork } : {}),
         ...(state.secrets ? { secretChecks: state.secrets.checks } : {}),
         ...(state.discovery ? { discovery: { owned: state.discovery.owned.id, requested: state.discovery.requested.id,
           ownedTurn: state.discovery.ownedTurn, requestedTurn: state.discovery.requestedTurn,
           controls: state.discovery.controls, checks: state.discovery.checks } } : {}) }
       await writeFile(`/workspace/peer-${session.id}.json`, JSON.stringify(progress))
       await turn.output.write(JSON.stringify(progress))
+      preparedWork = undefined
       await delay(100, undefined, { signal: turn.signal })
     }
     return { nonce: state.nonce, count: state.count, pid: process.pid }
