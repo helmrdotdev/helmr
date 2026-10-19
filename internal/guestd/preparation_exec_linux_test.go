@@ -3,6 +3,7 @@
 package guestd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -82,7 +83,7 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				request.Start = &computerv0.PreparationStart{QualificationOnly: true, LogLimits: request.Start.LogLimits}
 				entry.imageConfig.Env = []string{"NODE_OPTIONS=--require=/must-not-load", "LD_PRELOAD=/must-not-load"}
 				write(filepath.Join(program, "helmr/app/entry-0.mjs"), "throw new Error('qualification imported authored application')")
-				if err := os.Remove(filepath.Join(root, "workspace/prepared")); err != nil {
+				if err := os.Remove(filepath.Join(root, "workspace/prepared")); err != nil && !errors.Is(err, os.ErrNotExist) {
 					t.Fatal(err)
 				}
 				// No shell is needed by the managed execution probe.
@@ -96,7 +97,13 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 					}
 				})
 			}
-			if _, err := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation); err != nil {
+			if _, err := registry.controlPreparation(t.Context(), request, func(entry *computerMountEntry, ctx context.Context, start *computerv0.PreparationStart, output *preparationOutput) (error, error) {
+				runErr, cleanupErr := entry.executePreparation(ctx, start, output)
+				if runErr != nil || cleanupErr != nil {
+					t.Logf("preparation execution: %v; cleanup: %v", runErr, cleanupErr)
+				}
+				return runErr, cleanupErr
+			}); err != nil {
 				t.Fatal(err)
 			}
 			request.Start = nil
@@ -114,7 +121,11 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				want = "failed"
 			}
 			if result.State != want {
-				t.Logf("preparation output: %v", result.Log)
+				for _, stream := range []string{"stdout", "stderr"} {
+					request.LogStream = stream
+					logged, logErr := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation)
+					t.Logf("preparation %s: %s (%v)", stream, logged.GetLog().GetData(), logErr)
+				}
 				t.Fatalf("preparation result: %s %s", result.State, result.ErrorCode)
 			}
 			if mode == "qualification" {
