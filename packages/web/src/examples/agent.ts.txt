@@ -18,18 +18,20 @@ export const coder = agent({
   },
 
   async turn(turn, { initResult: pi }) {
-    // Ask a teammate before choosing the scope of this task.
+    turn.onCancel(() => pi.abort())
+    const request = turn.input.map(part => part.text).join("")
+    await pi.prompt(`${request}\n\nPropose a plan. Do not edit files yet.`)
+
+    // Ask a teammate before Pi changes anything.
     const { answer } = await turn.ask({
       type: "choice",
-      prompt: "Apply dependency updates, or inspect them first?",
+      prompt: pi.getLastAssistantText() ?? "Pi has a plan.",
       options: [
-        { id: "apply", label: "Apply updates", value: "Apply the updates." },
-        { id: "inspect", label: "Inspect first", value: "Inspect only; do not edit." },
+        { id: "apply", label: "Apply", value: "Apply the plan and run the tests." },
+        { id: "skip", label: "Not now", value: "Leave the files unchanged." },
       ],
     })
-    const prompt = turn.input.map(part => part.text).join("")
-    turn.onCancel(() => pi.abort())
-    await pi.prompt(`${prompt}\n\n${answer.selected[0]!.value}`)
+    await pi.prompt(answer.selected[0]!.value)
     await turn.respond(pi.getLastAssistantText() ?? "")
     return { piSession: pi.sessionManager.getSessionId() }
   },

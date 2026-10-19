@@ -71,8 +71,8 @@ const computerNotes: Note[] = [
 
 const agentNotes: Note[] = [
   { from: "async init", to: "  },", title: "Start the agent you use.", text: "init starts Pi once, before the first turn. Hibernation keeps it running." },
-  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "An explicit question records the selected scope and who answered." },
-  { from: "await pi.prompt", to: "await turn.respond", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same Pi session." },
+  { from: "turn.onCancel", to: "await pi.prompt", title: "Run it on each turn.", text: "Each turn sends the next instruction to the same Pi session." },
+  { from: "Ask a teammate", to: "    })", title: "Questions go to your team.", text: "Pi proposes, a teammate decides. The answer and who gave it are recorded." },
   { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
 ];
 
