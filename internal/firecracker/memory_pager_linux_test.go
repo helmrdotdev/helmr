@@ -9,10 +9,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,6 +124,19 @@ func testUserfaultMemory(t *testing.T, size int, kernelFaults bool) (int, []byte
 		t.Skipf("userfaultfd unavailable: %v", errno)
 	}
 	fd := int(raw)
+	// These nonparallel fixtures fault inside the pager's Go process. A GC
+	// stop-the-world would wait for that fault while blocking its resolution.
+	// Production faults originate in the separate VMM process. Disable both GC
+	// triggers until the mapping is gone, and leave a P free for the pager.
+	limit := debug.SetMemoryLimit(math.MaxInt64)
+	gc := debug.SetGCPercent(-1)
+	procs := runtime.GOMAXPROCS(0)
+	runtime.GOMAXPROCS(max(procs, 2))
+	t.Cleanup(func() {
+		runtime.GOMAXPROCS(procs)
+		debug.SetMemoryLimit(limit)
+		debug.SetGCPercent(gc)
+	})
 	t.Cleanup(func() { _ = unix.Close(fd) })
 	api := struct{ API, Features, Ioctls uint64 }{API: 0xaa}
 	if _, _, errno = unix.Syscall(unix.SYS_IOCTL, uintptr(fd), 0xc018aa3f, uintptr(unsafe.Pointer(&api))); errno != 0 {
@@ -342,7 +357,7 @@ func TestMemoryPagerDenseWorkingSet(t *testing.T) {
 	// spare Ps for the in-process pager while all eight readers may be faulting.
 	previous := runtime.GOMAXPROCS(0)
 	runtime.GOMAXPROCS(max(previous, 16))
-	defer runtime.GOMAXPROCS(previous)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
 	const size = 256 << 20
 	fd, memory := testUserfaultMemory(t, size, false)
 	owned, err := unix.Dup(fd)
