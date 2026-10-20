@@ -181,7 +181,7 @@ func referencedBundleObjects(
 	for _, output := range preparations {
 		object := bundle.Object(output.Artifact)
 		if previous, ok := objectsByDigest[object.Digest]; ok && previous != object {
-			return nil, errors.New("Program artifact has conflicting descriptor")
+			return nil, errors.New("program artifact has conflicting descriptor")
 		}
 		objectsByDigest[object.Digest] = object
 	}

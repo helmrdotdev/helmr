@@ -55,7 +55,7 @@ func validatePreparations(m Manifest) error {
 			return errors.New("preparation Runtime differs from Session Program")
 		}
 		if previous, ok := programs[output.Artifact.Digest]; ok && !reflect.DeepEqual(previous, output) {
-			return errors.New("Program artifact has conflicting metadata")
+			return errors.New("program artifact has conflicting metadata")
 		}
 		programs[output.Artifact.Digest] = output
 	}

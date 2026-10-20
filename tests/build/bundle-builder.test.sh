@@ -333,6 +333,25 @@ jq -e \
   '.contract == "helmr.deployment-bundle.v0" and (.computerSeeds | length) == 1 and .computerSeeds[0].declaredId == "machine"' \
   "$tmp/computer/bundle.json" >/dev/null
 
+# Build one callback Template through the complete CLI graph, including the
+# exported preparation tree and final independent SquashFS artifact.
+preparation_project="$tmp/preparation-project"
+cp -a "$computer_project" "$preparation_project"
+cat >"$preparation_project/agents/hello.ts" <<TS
+import { agent, template, image } from "@helmr/sdk"
+export const machine = template({
+  id: "machine", image: image("machine").from("$builder_image"),
+  resources: { cpu: 1, memory: "1GiB" },
+  async prepare(build) { await build.exec(["node", "-e", "process.stdout.write('prepared')"]) },
+})
+export const hello = agent({ id: "hello", template: machine, turn: () => "hello" })
+TS
+"$tmp/helmr" build "$preparation_project" --output "$tmp/preparation-program"
+jq -e '(.preparations | length) == 1 and
+  (.preparations[0].metadata.definitions | length) == 1 and
+  .preparations[0].artifact.digest != .program.artifact.digest' \
+  "$tmp/preparation-program/bundle.json" >/dev/null
+
 # Native environment: build.builder copies and runs a setup script that installs
 # an OS tool, node-gyp compiles an addon against a distribution library, a
 # dependency ships a real postinstall executable, and a declaration module
@@ -460,6 +479,16 @@ HELMR_NATIVE_BUNDLE="$tmp/native-recipe-input" bash "$repo_root/tests/build/gues
 agentic_project="$tmp/agentic-project"
 cp -a "$repo_root/tests/fixtures/agentic-work" "$agentic_project"
 prepare_host_sdk "$agentic_project"
+mkdir -p "$agentic_project/vendor"
+cp -R "$repo_root/dist/npm/sdk/package" "$agentic_project/vendor/sdk"
+cp -R "$repo_root/dist/npm/proto/package" "$agentic_project/vendor/proto"
+cp -RL "$repo_root/sdk/typescript/node_modules/@bufbuild/protobuf" "$agentic_project/vendor/protobuf"
+python3 - "$agentic_project/package.json" <<'PYSDK'
+import json,sys,pathlib
+p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
+d['dependencies'].update({'@helmr/sdk':'file:vendor/sdk','@helmr/proto':'file:vendor/proto','@bufbuild/protobuf':'file:vendor/protobuf'})
+p.write_text(json.dumps(d))
+PYSDK
 "$tmp/helmr" build "$agentic_project" --output "$tmp/agentic" 2>"$tmp/agentic.log" ||
   { tail -n 120 "$tmp/agentic.log" >&2; exit 1; }
 jq -e '[.computerSeeds[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null

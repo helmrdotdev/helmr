@@ -49,17 +49,17 @@ func (c *Client) WaitTemplateBuild(ctx context.Context, build api.TemplateBuildR
 		switch build.Status {
 		case "succeeded":
 			if !build.Ready {
-				return build, fmt.Errorf("Template %s preparation is no longer eligible; request another refresh", build.TemplateID)
+				return build, fmt.Errorf("template %s preparation is no longer eligible; request another refresh", build.TemplateID)
 			}
 			return build, nil
 		case "failed", "cancelled":
-			return build, fmt.Errorf("Template %s preparation %s: %s", build.TemplateID, build.Status, build.ErrorCode)
+			return build, fmt.Errorf("template %s preparation %s: %s", build.TemplateID, build.Status, build.ErrorCode)
 		case "queued", "running":
 		default:
 			return build, fmt.Errorf("unknown preparation state %q", build.Status)
 		}
 		if build.ErrorCode == "deadline_exceeded" {
-			return build, fmt.Errorf("Template %s preparation deadline exceeded", build.TemplateID)
+			return build, fmt.Errorf("template %s preparation deadline exceeded", build.TemplateID)
 		}
 		timer := time.NewTimer(time.Second)
 		select {

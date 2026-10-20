@@ -76,7 +76,7 @@ func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth
 				return idempotency.Completion{}, err
 			}
 			if !prepare {
-				return idempotency.Completion{}, invalidInput(errors.New("Template does not define preparation"))
+				return idempotency.Completion{}, invalidInput(errors.New("template does not define preparation"))
 			}
 			if err := computer.LockImageSpecSecrets(ctx, tx, env, result.ImageSpecID); err != nil {
 				return idempotency.Completion{}, err
