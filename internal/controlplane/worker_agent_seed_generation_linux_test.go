@@ -66,9 +66,11 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 			}
 		})
 	}
+	// A ready-image selection need not attach a Computer build waiter.
+	// Resolve the generation through its immutable image pin.
 	var oldImage, oldBuild string
 	var cpuMillis, memoryBytes int64
-	if err := pool.QueryRow(ctx, `SELECT image_id::text,image_build_id::text,cpu_millis,memory_bytes FROM computers WHERE environment_id=$1 AND id=$2`, env, oldComputer).Scan(&oldImage, &oldBuild, &cpuMillis, &memoryBytes); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT c.image_id::text,i.image_build_id::text,c.cpu_millis,c.memory_bytes FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, env, oldComputer).Scan(&oldImage, &oldBuild, &cpuMillis, &memoryBytes); err != nil {
 		t.Fatal(err)
 	}
 	// Keep interactive work active while refresh competes for the single slot.
@@ -108,13 +110,14 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 		var valid bool
 		var raw []byte
 		err := pool.QueryRow(ctx, `SELECT b.status='queued' AND b.worker_host_id IS NULL
- AND c.image_id=$4::uuid AND c.image_build_id=$5::uuid
+ AND c.image_id=$4::uuid AND i.image_build_id=$5::uuid
  AND l.initialized_at IS NOT NULL AND l.fenced_at IS NULL
  AND (SELECT count(*) FROM computer_leases x WHERE x.environment_id=$1 AND x.fenced_at IS NULL)=1
  AND NOT EXISTS(SELECT 1 FROM image_builds x WHERE x.environment_id=$1 AND x.worker_host_id IS NOT NULL AND x.fenced_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM boot_seed_builds x WHERE x.environment_id=$1 AND x.worker_host_id IS NOT NULL AND x.fenced_at IS NULL),
  jsonb_build_object('observed_at',clock_timestamp(),'build',b.id,'status',b.status,'computer',c.id,'image',c.image_id,'lease_epoch',l.epoch,'allocation',l.allocation_id)
  FROM image_builds b JOIN computers c ON c.environment_id=b.environment_id AND c.id=$3
+ JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
  JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
  WHERE b.environment_id=$1 AND b.id=$2`, env, build.ImageBuildID, oldComputer, oldImage, oldBuild).Scan(&valid, &raw)
 		if err != nil || !valid {
@@ -234,12 +237,14 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 		nonces[work.Nonce] = true
 		var computer string
 		var valid bool
-		err = pool.QueryRow(ctx, `SELECT c.id::text,c.image_id=$3::uuid AND c.image_build_id=$4::uuid AND l.boot_seed_build_id=$5::uuid
+		err = pool.QueryRow(ctx, `SELECT c.id::text,c.image_id=$3::uuid AND i.image_build_id=$4::uuid AND l.boot_seed_build_id=$5::uuid
  AND l.initialized_at IS NOT NULL AND l.boot_seed_failed_at IS NULL AND l.fenced_at IS NULL
- AND old.image_id=$6::uuid AND old.image_build_id=$7::uuid AND old.deleted_at IS NULL
+ AND old.image_id=$6::uuid AND old_image.image_build_id=$7::uuid AND old.deleted_at IS NULL
  FROM sessions s JOIN computers c ON(c.environment_id,c.id)=(s.environment_id,s.computer_id)
+ JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
  JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.id,1)
  JOIN computers old ON old.environment_id=c.environment_id AND old.id=$8
+ JOIN images old_image ON (old_image.environment_id,old_image.id)=(old.environment_id,old.image_id)
  WHERE s.environment_id=$1 AND s.id=$2`, env, r.SessionID, image, build.ImageBuildID, seed, oldImage, oldBuild, oldComputer).Scan(&computer, &valid)
 		if err != nil || !valid {
 			t.Fatalf("fresh generation first lease is not initialized on the new seed, or the old pin changed: %v", err)

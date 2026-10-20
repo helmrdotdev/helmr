@@ -288,8 +288,10 @@ func verifyNativeConcurrentRestores(t *testing.T, parent context.Context, pool *
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A ready-image selection need not attach a Computer build waiter.
+	// Resolve the generation through its immutable image pin.
 	var oldImage, oldBuild string
-	if err := pool.QueryRow(ctx, `SELECT image_id::text,image_build_id::text FROM computers WHERE environment_id=$1 AND id=$2`, env, samples[0].Computer).Scan(&oldImage, &oldBuild); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT c.image_id::text,i.image_build_id::text FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, env, samples[0].Computer).Scan(&oldImage, &oldBuild); err != nil {
 		t.Fatal(err)
 	}
 	refresh, err := c.RefreshTemplate(ctx, "native-continuation", "concurrent-preparation-refresh", client.EnvironmentScopeOptions{})
@@ -302,13 +304,14 @@ func verifyNativeConcurrentRestores(t *testing.T, parent context.Context, pool *
 		var active, terminal bool
 		var raw []byte
 		err := pool.QueryRow(ctx, `SELECT b.started_at IS NOT NULL AND b.fenced_at IS NULL
- AND b.worker_host_id=l.worker_host_id AND c.image_id=$4::uuid AND c.image_build_id=$5::uuid
+ AND b.worker_host_id=l.worker_host_id AND c.image_id=$4::uuid AND i.image_build_id=$5::uuid
  AND l.initialized_at IS NOT NULL AND l.fenced_at IS NULL,
  b.status IN ('succeeded','failed'),l.epoch,
  jsonb_build_object('observed_at',clock_timestamp(),'build',b.id,'preparation_started_at',b.started_at,'preparation_allocation',b.allocation_id,
  'computer',c.id,'image',c.image_id,'lease_epoch',l.epoch,'computer_allocation',l.allocation_id,'worker',l.worker_host_id,
  'reserved_cpu_millis',b.reserved_cpu_millis+l.reserved_cpu_millis,'reserved_memory_bytes',b.reserved_memory_bytes+l.reserved_memory_bytes)
  FROM image_builds b JOIN computers c ON c.environment_id=b.environment_id AND c.id=$3
+ JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
  JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
  WHERE b.environment_id=$1 AND b.id=$2`, env, refresh.ImageBuildID, samples[0].Computer, oldImage, oldBuild).Scan(&active, &terminal, &heldEpoch, &raw)
 		if err != nil {

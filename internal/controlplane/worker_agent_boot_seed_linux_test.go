@@ -75,19 +75,7 @@ func verifyNativeBootSeedSelection(t *testing.T, ctx context.Context, pool *pgxp
 		if err != nil {
 			t.Fatal(err)
 		}
-		restored := false
-		for _, line := range bytes.Split(logs, []byte{'\n'}) {
-			var event struct {
-				Message    string `json:"msg"`
-				Allocation string `json:"allocation_id"`
-				Seed       string `json:"boot_seed_id"`
-			}
-			if json.Unmarshal(line, &event) == nil && event.Message == "Computer boot seed initialized" && event.Allocation == allocationID && event.Seed == seedID && seedID != "" {
-				restored = true
-				break
-			}
-		}
-		if !restored {
+		if !nativeBootSeedInitialized(logs, allocationID, seedID) {
 			t.Errorf("%s has no actual seed initialization evidence for allocation %s seed %s", provider, allocationID, seedID)
 		}
 		samples[provider] = raw
@@ -101,5 +89,51 @@ func verifyNativeBootSeedSelection(t *testing.T, ctx context.Context, pool *pgxp
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Guest serial output can end mid-record before the host writes a complete JSON
+// event. Require an intact matching host event without assuming line boundaries.
+func nativeBootSeedInitialized(logs []byte, allocationID, seedID string) bool {
+	if allocationID == "" || seedID == "" {
+		return false
+	}
+	prefix := []byte(`{"time":`)
+	for {
+		start := bytes.Index(logs, prefix)
+		if start < 0 {
+			return false
+		}
+		logs = logs[start:]
+		var event struct {
+			Message    string `json:"msg"`
+			Allocation string `json:"allocation_id"`
+			Seed       string `json:"boot_seed_id"`
+		}
+		if json.NewDecoder(bytes.NewReader(logs)).Decode(&event) == nil && event.Message == "Computer boot seed initialized" && event.Allocation == allocationID && event.Seed == seedID {
+			return true
+		}
+		logs = logs[len(prefix):]
+	}
+}
+
+func TestNativeBootSeedInitializationEvidence(t *testing.T) {
+	event := `{"time":"now","msg":"Computer boot seed initialized","allocation_id":"allocation","boot_seed_id":"seed"}`
+	for _, test := range []struct {
+		name, logs, allocation, seed string
+		want                         bool
+	}{
+		{"ordinary", event + "\n", "allocation", "seed", true},
+		{"partial guest prefix", `{"time":"earlier","msg":"computer materialize registered","duration_` + event + "\ngc diagnostic", "allocation", "seed", true},
+		{"wrong allocation", event, "another", "seed", false},
+		{"wrong seed", event, "allocation", "another", false},
+		{"missing seed", event, "allocation", "", false},
+		{"incomplete event", event[:len(event)-1], "allocation", "seed", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nativeBootSeedInitialized([]byte(test.logs), test.allocation, test.seed); got != test.want {
+				t.Fatalf("initialization evidence=%v, want %v", got, test.want)
+			}
+		})
 	}
 }
