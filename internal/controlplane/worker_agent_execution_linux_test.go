@@ -236,7 +236,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	var extraPermissions []auth.Permission
+	extraPermissions := []auth.Permission{auth.PermissionComputersCreate}
 	if sessionDiscovery || (os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1") {
 		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt)
 	}
@@ -244,7 +244,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		extraPermissions = []auth.Permission{auth.PermissionComputersCreate, auth.PermissionSecretsWrite}
 	}
 	if protectedModel != nil {
-		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt, auth.PermissionComputersCreate, auth.PermissionSecretsWrite)
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt, auth.PermissionSecretsWrite)
 	}
 	env, key, enrollment := seedNativeExecution(t, database.Pool, extraPermissions...)
 	platform, err := cass3.NewImmutable(ctx, input.PlatformURI)
