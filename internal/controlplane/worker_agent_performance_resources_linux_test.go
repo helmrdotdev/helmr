@@ -55,7 +55,7 @@ func observeNativePerformanceResources(ctx context.Context, input nativeExecutio
 		}
 		group := filepath.Dir(input.WorkerCgroup)
 		cgroup := map[string]string{}
-		for _, name := range []string{"cpu.stat", "memory.current", "memory.peak"} {
+		for _, name := range []string{"cpu.stat", "memory.current", "memory.peak", "memory.stat"} {
 			cgroup[name] = read(filepath.Join(group, name))
 		}
 		if data, err := os.ReadFile(filepath.Join(group, "io.stat")); err == nil {
@@ -410,7 +410,7 @@ func nativeVMResources(workRoot, cgroupRoot string) (map[string]nativeVMResource
 			return result, err
 		}
 		value := nativeVMResource{Counters: map[string]string{}, Processes: map[string]map[string]string{}}
-		for _, name := range []string{"cpu.stat", "memory.current", "memory.peak", "io.stat"} {
+		for _, name := range []string{"cpu.stat", "memory.current", "memory.peak", "memory.stat", "io.stat"} {
 			data, err := os.ReadFile(filepath.Join(group, name))
 			if errors.Is(err, fs.ErrNotExist) {
 				value.Unavailable = append(value.Unavailable, name)

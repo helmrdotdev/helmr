@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/filepack"
@@ -554,3 +556,83 @@ func (s testMemorySource) ReadAt(ctx context.Context, data []byte, offset int64)
 }
 
 func (testMemorySource) MemoryReadStats() vm.MemoryReadStats { return vm.MemoryReadStats{} }
+
+type eagerConcurrentSource struct {
+	started chan struct{}
+	release chan struct{}
+	fail    error
+}
+
+func (*eagerConcurrentSource) Size() int64                         { return 5*vm.MemoryReadBytes + 4096 }
+func (*eagerConcurrentSource) MemoryReadStats() vm.MemoryReadStats { return vm.MemoryReadStats{} }
+func (s *eagerConcurrentSource) ReadAt(ctx context.Context, data []byte, offset int64) (int, error) {
+	if offset < 4*vm.MemoryReadBytes {
+		s.started <- struct{}{}
+		if offset == 0 {
+			for range 4 {
+				select {
+				case <-s.started:
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				}
+			}
+			if s.fail != nil {
+				return 0, s.fail
+			}
+			close(s.release)
+		} else {
+			// The owner releases this first batch only after all four reads start.
+			select {
+			case <-s.release:
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	for i := range data {
+		data[i] = byte((offset + int64(i)) % 251)
+	}
+	return len(data), nil
+}
+
+func TestEagerMemoryJoinsParallelReadsAndRemovesFailedFile(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			source := &eagerConcurrentSource{started: make(chan struct{}, 4), release: make(chan struct{})}
+			if fail {
+				source.fail = errors.New("source unavailable")
+			}
+			path := filepath.Join(t.TempDir(), "memory")
+			err := materializeEagerMemory(ctx, path, source)
+			if fail {
+				if !errors.Is(err, source.fail) {
+					t.Fatalf("error=%v", err)
+				}
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("failed backing remains: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if int64(len(data)) != source.Size() {
+				t.Fatal("size mismatch")
+			}
+			for i, v := range data {
+				if v != byte(i%251) {
+					t.Fatalf("byte %d=%d", i, v)
+				}
+			}
+		})
+	}
+}

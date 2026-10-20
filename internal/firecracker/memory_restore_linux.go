@@ -17,6 +17,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sync/errgroup"
 )
 
 // Only snapshot loading differs from the pinned SDK. Jailer, network, devices,
@@ -122,19 +123,29 @@ func materializeEagerMemory(ctx context.Context, path string, source vm.MemorySo
 			_ = os.Remove(path)
 		}
 	}()
-	buffer := make([]byte, vm.MemoryReadBytes)
-	for offset := int64(0); offset < source.Size(); offset += int64(len(buffer)) {
-		data := buffer[:min(int64(len(buffer)), source.Size()-offset)]
-		n, err := source.ReadAt(ctx, data, offset)
-		if err != nil {
-			return err
-		}
-		if n != len(data) {
-			return errors.New("incomplete eager memory read")
-		}
-		if _, err = file.Write(data); err != nil {
-			return err
-		}
+	if err := file.Truncate(source.Size()); err != nil {
+		return err
 	}
-	return nil
+	group, readCtx := errgroup.WithContext(ctx)
+	// Match the pager's bounded read budget while writing disjoint file ranges.
+	for worker := range 4 {
+		group.Go(func() error {
+			buffer := make([]byte, vm.MemoryReadBytes)
+			for offset := int64(worker * vm.MemoryReadBytes); offset < source.Size(); offset += 4 * vm.MemoryReadBytes {
+				data := buffer[:min(int64(len(buffer)), source.Size()-offset)]
+				n, err := source.ReadAt(readCtx, data, offset)
+				if err != nil {
+					return err
+				}
+				if n != len(data) {
+					return errors.New("incomplete eager memory read")
+				}
+				if _, err := file.WriteAt(data, offset); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return group.Wait()
 }

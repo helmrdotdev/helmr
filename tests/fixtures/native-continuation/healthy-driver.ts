@@ -445,10 +445,6 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     resumeTiming.outputSequence = resumedOutput.sequence
    }
    const modelTurn = await model.session.enqueue(fixtureInput(modelInput), undefined, { signal })
-   const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
-   const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
-   for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
-   assert.equal(restoredModel["count"], cycle + 1)
    const before = Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous]))
    for (const provider of ["codex", "claude"]) {
     const started = performance.now(), at = new Date().toISOString()
@@ -457,8 +453,20 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
           nativeInput(`${provider} after idle ${cycle}`), options.checkpointObservations + ".stops", signal, nativeStops)
       : await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} after idle ${cycle}`)), undefined, { signal })
     admitted(provider, `after-resume-${cycle}`, turn, started, at)
-    await finish(turn, provider, cycle + 2)
+    let successor: TurnRef | undefined
+    if (options.performanceKind) {
+     const enqueueMS = performance.now(), enqueueAt = new Date().toISOString()
+     successor = await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} immediate after idle ${cycle}`)), undefined, { signal })
+     admitted(provider, `after-resume-${cycle}-successor`, successor, enqueueMS, enqueueAt)
+    }
+    const count = options.performanceKind ? 2 * cycle + 1 : cycle + 2
+    await finish(turn, provider, count)
+    if (successor) await finish(successor, provider, count + 1)
    }
+   const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
+   const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
+   for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
+   assert.equal(restoredModel["count"], cycle + 1)
    const evidence = { cycle, checkpoint, keyFault, releaseRequestToCheckpointObservedMS, resumeTiming, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples, idleAndResumeMs: performance.now() - idleStarted, before,
     after: Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous])), model: restoredModel }
    continuations.push(evidence)
