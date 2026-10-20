@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -410,7 +411,7 @@ func TestMemoryDemandJoinObservationIncludesDeadline(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 			defer cancel()
 			observation := vm.MemoryFaultObservation{}
-			if err := pager.loadChunkFor(ctx, 0, true, &observation); !errors.Is(err, context.DeadlineExceeded) {
+			if err := pager.loadDemandWindow(ctx, 0, &observation); !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("join error: %v", err)
 			}
 			if background {
@@ -420,6 +421,191 @@ func TestMemoryDemandJoinObservationIncludesDeadline(t *testing.T) {
 			} else {
 				if pager.joinDemand.Load() != 1 || pager.joinBackground.Load() != 0 || observation.JoinDemandNs != int64(10*time.Millisecond) || observation.JoinBackgroundNs != 0 {
 					t.Fatalf("demand join: %+v", observation)
+				}
+			}
+		})
+	}
+}
+
+func readTestMemoryWindow(ctx context.Context, source vm.MemorySource, offset int64, consume func(int64, []byte) error) (int64, error) {
+	data := make([]byte, min(int64(vm.MemoryReadBytes), source.Size()-offset))
+	defer clear(data)
+	n, err := source.ReadAt(ctx, data, offset)
+	if err != nil {
+		return offset, err
+	}
+	if n != len(data) {
+		return offset, vm.ErrInvalidCheckpointContent
+	}
+	if err := consume(offset, data); err != nil {
+		return offset, err
+	}
+	return offset + int64(len(data)), nil
+}
+func (s *pagerTestSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	return readTestMemoryWindow(ctx, s, offset, consume)
+}
+func (s stalledPagerSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	return readTestMemoryWindow(ctx, s, offset, consume)
+}
+func (s *interruptedPagerSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	return readTestMemoryWindow(ctx, s, offset, consume)
+}
+
+func TestMemoryBackgroundWaitsForDemandBeforeAdvancing(t *testing.T) {
+	for _, success := range []bool{true, false} {
+		t.Run(fmt.Sprint(success), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				demandDone := make(chan struct{})
+				p := &memoryPager{ctx: ctx, fd: -1, chunks: []memoryChunkState{{loading: demandDone}}}
+				finished := make(chan error, 1)
+				go func() { finished <- p.populateBackgroundWindow(0, make([]byte, 4096)) }()
+				synctest.Wait()
+				select {
+				case err := <-finished:
+					t.Fatalf("advanced while demand owns window: %v", err)
+				default:
+				}
+				p.mu.Lock()
+				p.chunks[0].loaded = success
+				p.chunks[0].loading = nil
+				close(demandDone)
+				p.mu.Unlock()
+				err := <-finished
+				if success {
+					if err != nil || p.backgroundDiscardedWindows.Load() != 1 || p.backgroundLoads.Load() != 0 {
+						t.Fatalf("did not discard after demand success: %v", err)
+					}
+				} else {
+					if !errors.Is(err, errMemoryPager) || p.chunks[0].loaded || p.backgroundLoads.Load() != 1 {
+						t.Fatalf("did not reclaim failed demand window: %v", err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestMemoryBackgroundDemandWaitCancels(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		p := &memoryPager{ctx: ctx, chunks: []memoryChunkState{{loading: done}}}
+		finished := make(chan error, 1)
+		go func() { finished <- p.populateBackgroundWindow(0, make([]byte, 4096)) }()
+		synctest.Wait()
+		cancel()
+		if err := <-finished; !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		if p.chunks[0].loading != done || p.chunks[0].loaded {
+			t.Fatal("changed demand owner on cancellation")
+		}
+	})
+}
+
+type gatedStreamSource struct {
+	pagerTestSource
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *gatedStreamSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	close(s.started)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return offset, ctx.Err()
+	}
+	return readTestMemoryWindow(ctx, &s.pagerTestSource, offset, consume)
+}
+func TestMemoryStreamingDoesNotReserveDemandWindow(t *testing.T) {
+	fd, memory := testUserfaultMemory(t, vm.MemoryReadBytes, false)
+	owned, err := unix.Dup(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &gatedStreamSource{pagerTestSource: pagerTestSource{data: bytes.Repeat([]byte{17}, len(memory))}, started: make(chan struct{}), release: make(chan struct{})}
+	p := newMemoryPager(t.Context(), owned, []memoryRegion{{Base: uint64(uintptr(unsafe.Pointer(&memory[0]))), Size: uint64(len(memory)), PageSize: 4096}}, s, func() {})
+	defer p.Close()
+	p.StartHydration()
+	<-s.started
+	got := make(chan byte, 1)
+	go func() { got <- memory[0] }()
+	select {
+	case value := <-got:
+		if value != 17 {
+			t.Fatal(value)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("demand waited for background network")
+	}
+	memory[0] = 99
+	close(s.release)
+	if err := p.WaitHydration(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if memory[0] != 99 || p.backgroundDiscardedWindows.Load() != 1 || p.joinBackground.Load() != 0 {
+		t.Fatalf("guest write/ownership changed: %+v", p.stats())
+	}
+}
+
+type partialStreamSource struct {
+	pagerTestSource
+	calls   []int64
+	failure error
+}
+
+func (s *partialStreamSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	s.calls = append(s.calls, offset)
+	stop := s.Size()
+	if len(s.calls) == 1 {
+		stop = 2 * vm.MemoryReadBytes
+	}
+	for offset < stop {
+		next, err := readTestMemoryWindow(ctx, &s.pagerTestSource, offset, consume)
+		if err != nil {
+			return next, err
+		}
+		offset = next
+	}
+	if len(s.calls) == 1 {
+		return offset, s.failure
+	}
+	return offset, nil
+}
+func TestMemoryStreamingHydrationRetainsPartialProgress(t *testing.T) {
+	for _, integrity := range []bool{false, true} {
+		t.Run(fmt.Sprint(integrity), func(t *testing.T) {
+			fd, memory := testUserfaultMemory(t, 4*vm.MemoryReadBytes, false)
+			owned, err := unix.Dup(fd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failure := error(context.DeadlineExceeded)
+			if integrity {
+				failure = vm.ErrInvalidCheckpointContent
+			}
+			s := &partialStreamSource{pagerTestSource: pagerTestSource{data: bytes.Repeat([]byte{54}, len(memory))}, failure: failure}
+			stopped := atomic.Bool{}
+			p := newMemoryPager(t.Context(), owned, []memoryRegion{{Base: uint64(uintptr(unsafe.Pointer(&memory[0]))), Size: uint64(len(memory)), PageSize: 4096}}, s, func() { stopped.Store(true) })
+			defer p.Close()
+			p.StartHydration()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			err = p.WaitHydration(ctx)
+			if integrity {
+				if !errors.Is(err, vm.ErrInvalidCheckpointContent) || !stopped.Load() || len(s.calls) != 1 || p.chunkCount.Load() != 8 {
+					t.Fatalf("integrity failure not terminal: %v %+v", err, p.stats())
+				}
+			} else {
+				if err != nil || stopped.Load() || len(s.calls) != 2 || s.calls[1] != 2*vm.MemoryReadBytes || p.chunkCount.Load() != 16 || p.backgroundLoads.Load() != 4 || p.backgroundLoadErrors.Load() != 1 {
+					t.Fatalf("lost/repeated progress: %v calls=%v %+v", err, s.calls, p.stats())
+				}
+				if !bytes.Equal(memory, s.data) {
+					t.Fatal("restored memory differs")
 				}
 			}
 		})

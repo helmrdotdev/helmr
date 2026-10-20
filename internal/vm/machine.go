@@ -207,12 +207,18 @@ type SnapshotFile struct {
 }
 
 // MemorySource authenticates each bounded logical read before returning bytes.
-// Reads fit within one MemoryReadBytes window of authenticated chunks. Its owner retains it until all
+// Demand reads fit within one MemoryReadBytes window. Background reads stream
+// authenticated windows with bounded buffering. Its owner retains it until all
 // pager and hydration jobs have joined, including failure teardown.
 type MemorySource interface {
 	MemoryReadStats() MemoryReadStats
 	Size() int64
 	ReadAt(context.Context, []byte, int64) (int, error)
+	// ReadWindows streams one bounded segment starting at an aligned logical
+	// window. consume is synchronous; its authenticated buffer is borrowed until
+	// it returns. The result is the first unconsumed offset, including on error.
+	// A successful call advances toward Size. The caller owns retries.
+	ReadWindows(context.Context, int64, func(int64, []byte) error) (int64, error)
 }
 
 type RestoreRequest struct {
@@ -370,13 +376,17 @@ type Phase struct {
 }
 
 type MemoryReadStats struct {
-	RangeRequests    int64
-	CiphertextBytes  int64
-	DecodeDurationMs int64
-	RangeHeaderMs    int64
-	RangeBodyMs      int64
-	RangeActive      int64
-	RangePeak        int64
+	BackgroundRangeRequests   int64
+	BackgroundCiphertextBytes int64
+	BackgroundRangeHeaderMs   int64
+	BackgroundRangeBodyMs     int64
+	RangeRequests             int64
+	CiphertextBytes           int64
+	DecodeDurationMs          int64
+	RangeHeaderMs             int64
+	RangeBodyMs               int64
+	RangeActive               int64
+	RangePeak                 int64
 }
 
 // MemoryFaultObservation records reader/worker timings, not kernel fault latency.
@@ -400,25 +410,27 @@ type MemoryRestoreStats struct {
 	ObservedDemandWindows int64
 	ObservationStartedAt  time.Time
 	MemoryReadStats
-	DemandFaults             int64
-	DemandLoads              int64
-	BackgroundLoads          int64
-	DemandLoadErrors         int64
-	BackgroundLoadErrors     int64
-	JoinBackground           int64
-	JoinDemand               int64
-	JoinBackgroundMs         int64
-	JoinDemandMs             int64
-	FaultQueueMs             int64
-	FaultServiceMs           int64
-	DemandSourceReadMs       int64
-	BackgroundSourceReadMs   int64
-	DemandPopulateMs         int64
-	BackgroundPopulateMs     int64
-	LoadedChunks             int64
-	TotalChunks              int64
-	FaultObservations        []MemoryFaultObservation
-	DroppedFaultObservations int64
+	DemandFaults               int64
+	DemandLoads                int64
+	BackgroundLoads            int64
+	BackgroundDiscardedWindows int64
+	BackgroundDemandWaitMs     int64
+	DemandLoadErrors           int64
+	BackgroundLoadErrors       int64
+	JoinBackground             int64
+	JoinDemand                 int64
+	JoinBackgroundMs           int64
+	JoinDemandMs               int64
+	FaultQueueMs               int64
+	FaultServiceMs             int64
+	DemandSourceReadMs         int64
+	BackgroundSourceReadMs     int64
+	DemandPopulateMs           int64
+	BackgroundPopulateMs       int64
+	LoadedChunks               int64
+	TotalChunks                int64
+	FaultObservations          []MemoryFaultObservation
+	DroppedFaultObservations   int64
 }
 
 type FilepackStats struct {

@@ -651,3 +651,10 @@ func TestEagerMemoryJoinsParallelReadsAndRemovesFailedFile(t *testing.T) {
 		})
 	}
 }
+
+func (s testMemorySource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	return readTestMemoryWindow(ctx, s, offset, consume)
+}
+func (s *eagerConcurrentSource) ReadWindows(ctx context.Context, offset int64, consume func(int64, []byte) error) (int64, error) {
+	return readTestMemoryWindow(ctx, s, offset, consume)
+}
