@@ -440,7 +440,9 @@ func (o *ComputerAllocationOwner) phaseCompleted(phase string, started time.Time
 	attrs := []any{"computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started)) / float64(time.Millisecond)}
 	if phase == "agent_ready" {
 		if diagnostic, ok := o.machine.(interface{ MemoryRestoreDiagnostics() *vm.MemoryRestoreStats }); ok {
-			o.recordVMPhase("restore", vm.Phase{Name: "restore_memory_agent_ready", Memory: diagnostic.MemoryRestoreDiagnostics()})
+			if stats := diagnostic.MemoryRestoreDiagnostics(); stats != nil {
+				o.recordVMPhase("restore", vm.Phase{Name: "restore_memory_agent_ready", Memory: stats})
+			}
 		}
 	}
 	if phase == "agent_ready" && o.restoreMemory != nil {
