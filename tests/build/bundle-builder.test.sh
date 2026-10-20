@@ -533,7 +533,7 @@ test ! -e "$tmp/program/tsconfig.json"
 test ! -e "$tmp/program/node_modules/@helmr/sdk"
 test -f "$tmp/program/mixed/asset.txt"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/builder.test" ./internal/builder
-docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
+docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -v "$tmp/native-program-bundle/bundle.json:/fixture-bundle.json:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
 grep -E '^--- PASS: TestPreparedProgramFinalization ' "$tmp/finalization.log"
 if grep -E '^\s*--- (SKIP|FAIL)' "$tmp/finalization.log"; then
   echo "prepared Program finalization test did not run every case" >&2
