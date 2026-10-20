@@ -42,14 +42,18 @@ func TestIndependentPreparationPrograms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeds := make([]bundle.ComputerSeed, 0, 3)
-	for _, id := range []string{"first", "second", "seed"} {
-		seeds = append(seeds, bundle.ComputerSeed{DeclaredID: id, Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664, Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}})
-	}
 	var sessions []string
 	outputs := map[string][]ProgramResult{}
-	for _, variant := range []string{"baseline", "agent-edit", "dependency-edit"} {
+	for _, variant := range []string{"baseline", "agent-edit", "dependency-edit", "external-edit", "nested", "nested-agent-edit"} {
 		work := t.TempDir()
+		ids := []string{"first", "second", "seed"}
+		if strings.HasPrefix(variant, "nested") {
+			ids = []string{"first"}
+		}
+		seeds := make([]bundle.ComputerSeed, 0, len(ids))
+		for _, id := range ids {
+			seeds = append(seeds, bundle.ComputerSeed{DeclaredID: id, Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664, Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}})
+		}
 		input := PreparedProgramInput{PreparedDirectory: filepath.Join(root, variant, "prepared"), WorkDirectory: work, ProgramObjectPath: filepath.Join(work, "session.squashfs"), SquashFSEncoder: "/opt/helmr/bin/mksquashfs", Compiler: compiler, Runtime: runtime, RuntimeMetadata: metadata, ComputerSeeds: seeds}
 		session, err := BuildPreparedProgram(t.Context(), input)
 		if err != nil {
@@ -60,7 +64,11 @@ func TestIndependentPreparationPrograms(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(prepared) != 2 {
+		want := 2
+		if strings.HasPrefix(variant, "nested") {
+			want = 1
+		}
+		if len(prepared) != want {
 			t.Fatalf("%s: got %d callback artifacts", variant, len(prepared))
 		}
 		for i, result := range prepared {
@@ -92,4 +100,13 @@ func TestIndependentPreparationPrograms(t *testing.T) {
 	if outputs["baseline"][0].Program.Artifact.Digest == outputs["dependency-edit"][0].Program.Artifact.Digest {
 		t.Fatal("readable dependency change reused preparation")
 	}
+	for i := range outputs["baseline"] {
+		if outputs["baseline"][i].Program.Artifact.Digest == outputs["external-edit"][i].Program.Artifact.Digest {
+			t.Fatalf("readable external bytes did not invalidate Template %d", i)
+		}
+	}
+	if outputs["nested"][0].Program.Artifact.Digest == outputs["nested-agent-edit"][0].Program.Artifact.Digest {
+		t.Fatal("enclosing module source-map change did not invalidate nested Template")
+	}
+
 }

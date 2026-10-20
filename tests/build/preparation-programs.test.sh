@@ -9,15 +9,19 @@ for package in sdk proto; do
   cp -R "$repo_root/dist/npm/$package/package" "$work/source/node_modules/@helmr/$package"
 done
 cp -RL "$repo_root/sdk/typescript/node_modules/@bufbuild/protobuf" "$work/source/node_modules/@bufbuild/protobuf"
-printf '%s' '{"type":"module","private":true}' > "$work/source/package.json"
+printf '%s' '{"type":"module","private":true,"dependencies":{"readable-tool":"1.0.0"}}' > "$work/source/package.json"
+mkdir -p "$work/source/node_modules/readable-tool"
+printf '%s' '{"name":"readable-tool","version":"1.0.0","type":"module","exports":"./index.js"}' > "$work/source/node_modules/readable-tool/package.json"
+printf '%s' 'export const value="external-v1";' > "$work/source/node_modules/readable-tool/index.js"
 printf '%s' 'asset-v1' > "$work/source/asset.txt"
 printf '%s' 'export const value="shared-v1";' > "$work/source/shared.ts"
 cat > "$work/source/agents/templates.ts" <<'TS'
 import { template, image } from "@helmr/sdk"
 import { value } from "../shared.ts"
 import { readFile } from "node:fs/promises"
+import { value as externalValue } from "readable-tool"
 const base = image("base").from("node:24-bookworm-slim")
-export const first = template({id:"first", image:base, resources:{cpu:1,memory:"1GiB"}, prepare:async()=>{if(!value)throw new Error("missing");await readFile("asset.txt")}})
+export const first = template({id:"first", image:base, resources:{cpu:1,memory:"1GiB"}, prepare:async()=>{if(!value || !externalValue)throw new Error("missing");await readFile("asset.txt")}})
 export const second = template({id:"second", image:base, resources:{cpu:1,memory:"1GiB"}, prepare:async()=>{await readFile("asset.txt")}})
 export const seed = template({id:"seed", image:base, resources:{cpu:1,memory:"1GiB"}})
 TS
@@ -29,23 +33,30 @@ TS
 python3 - "$work" <<'PY'
 import json, pathlib, shutil, sys
 root=pathlib.Path(sys.argv[1])
-for variant in ['baseline','agent-edit','dependency-edit','missing-asset']:
+for variant in ['baseline','agent-edit','dependency-edit','external-edit','nested','nested-agent-edit','missing-asset']:
  p=root/variant;p.mkdir();shutil.copytree(root/'source',p/'source')
- config=dict(dirs=['agents'],ignorePatterns=[],external=[],assets=[] if variant=='missing-asset' else ['asset.txt'])
+ config=dict(dirs=['agents'],ignorePatterns=[],external=['readable-tool'],assets=[] if variant=='missing-asset' else ['asset.txt'])
  (p/'config.json').write_text(json.dumps(config,sort_keys=True,separators=(',',':')))
  if variant=='agent-edit':
   f=p/'source/agents/main.ts';f.write_text(f.read_text().replace('agent-v1','agent-v2'))
+ if variant=='external-edit':
+  f=p/'source/node_modules/readable-tool/index.js';f.write_text(f.read_text().replace('external-v1','external-v2'))
+ if variant.startswith('nested'):
+  (p/'source/agents/templates.ts').unlink()
+  body='agent-v2' if variant=='nested-agent-edit' else 'agent-v1'
+  (p/'source/agents/main.ts').write_text('import {agent,template,image} from "@helmr/sdk";import {readFile} from "node:fs/promises";export const hello=agent({id:"hello",template:template({id:"first",image:image("base").from("node:24-bookworm-slim"),resources:{cpu:1,memory:"1GiB"},prepare:async()=>{await readFile("asset.txt")}}),turn:()=>"'+body+'"});')
  if variant=='dependency-edit':
   f=p/'source/shared.ts';f.write_text(f.read_text().replace('shared-v1','shared-v2'))
 PY
 cat > "$work/prepare.sh" <<'SH'
 set -eu
 version=$(node -p process.versions.node)
-for variant in baseline agent-edit dependency-edit missing-asset; do
+for variant in baseline agent-edit dependency-edit external-edit nested nested-agent-edit missing-asset; do
  root=/fixture/$variant
  node /nix/helmr/program-compiler.mjs --bundle "$root/source" "$root/config.json" "$version" "$root/bundle"
  mkdir -p "$root/installed/node_modules" "$root/work"
- printf '%s' '{"lockfileVersion":3,"packages":{"":{}}}' > "$root/installed/package-lock.json"
+ cp -R "$root/source/node_modules/readable-tool" "$root/installed/node_modules/readable-tool"
+ printf '%s' '{"lockfileVersion":3,"packages":{"":{},"node_modules/readable-tool":{"version":"1.0.0","inBundle":true}}}' > "$root/installed/package-lock.json"
  node /nix/helmr/program-compiler.mjs --assemble "$root/bundle" "$root/installed" "$root/payload"
  /opt/helmr/bin/bundle-builder --project "$root/payload" --work "$root/work" --prepare-output "$root/prepared" \
   --runtime-descriptor /opt/helmr/release/runtime.descriptor.json --runtime-metadata /opt/helmr/runtime/helmr/runtime.json \
