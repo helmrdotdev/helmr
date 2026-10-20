@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/bootseed"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -151,6 +152,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	o.machines.seedProgramArtifacts(ctx, o.images, cas.Descriptor(program.Artifact))
 	request, err := o.prepareVM(ctx, source, shape, bootProgramDrives(program, o.images))
 	if err != nil {
 		return err
