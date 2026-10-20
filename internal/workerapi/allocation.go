@@ -65,6 +65,7 @@ type ComputerProcessesResponse struct {
 }
 
 type ComputerAllocationSource struct {
+	BootProgram  *RuntimeProgram        `json:"boot_program,omitempty"`
 	Disk         ComputerSourceMaterial `json:"disk"`
 	ImageConfig  oci.RuntimeConfig      `json:"image_config"`
 	RootfsDigest string                 `json:"rootfs_digest"`

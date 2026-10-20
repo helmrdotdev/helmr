@@ -60,6 +60,16 @@ message RuntimeImageConfig {
   repeated string cmd = 5;
 }
 
+message BootProgramArtifact {
+  string digest = 1;
+  int64 size_bytes = 2;
+}
+
+message BootProgram {
+  BootProgramArtifact runtime = 1;
+  BootProgramArtifact artifact = 2;
+}
+
 message PrepareComputerRuntimeRequest {
   reserved 3;
   string computer_id = 5;
@@ -68,6 +78,7 @@ message PrepareComputerRuntimeRequest {
   string mount_path = 2;
   // The substrate is already mounted; the request supplies its admitted settings.
   RuntimeImageConfig mounted_image_config = 4;
+  BootProgram boot_program = 7;
 }
 
 message PrepareComputerRuntimeResponse {

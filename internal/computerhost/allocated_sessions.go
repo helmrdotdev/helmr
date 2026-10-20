@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -28,10 +29,10 @@ type AllocatedSessionClient interface {
 // Whole-Computer restoration first uses AgentComputerOwner to install and
 // activate retained members before starting this ordinary discovery loop.
 func (p *PreparedMachines) ServeAllocatedSessions(ctx context.Context, machine vm.GuestControlMachine, allocation workerapi.ComputerAllocationDelivery, hostID string, client AllocatedSessionClient, observe func(context.Context, *agentv1.GuestSessionMessage) error) error {
-	return p.serveAllocatedSessions(ctx, machine, allocation, hostID, client, observe, nil)
+	return p.serveAllocatedSessions(ctx, machine, allocation, hostID, client, observe, nil, nil)
 }
 
-func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine vm.GuestControlMachine, allocation workerapi.ComputerAllocationDelivery, hostID string, client AllocatedSessionClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, wake *allocationWake) error {
+func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine vm.GuestControlMachine, allocation workerapi.ComputerAllocationDelivery, hostID string, client AllocatedSessionClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, wake *allocationWake, boot *computercheckpoint.Program) error {
 	identity := allocation.Identity
 	if p == nil || machine == nil || client == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || allocation.ChannelCredential == "" {
 		return errors.New("session discovery requires an owned Computer and authenticated client")
@@ -81,7 +82,7 @@ func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine v
 					stageArtifacts := false
 					for ctx.Err() == nil {
 						attachmentWake := wake.snapshot()
-						connection, attached, err := p.StartAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client, stageArtifacts)
+						connection, attached, err := p.startAllocatedAgentSession(ctx, machine, identity.EnvironmentID, grant, client, stageArtifacts, boot)
 						if errors.Is(err, errSessionArtifactsRequired) && !stageArtifacts {
 							// The guest requested bytes before execution release.
 							// Re-enter full admission with staging outside the VM

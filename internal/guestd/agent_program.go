@@ -21,13 +21,16 @@ type agentProgramInput interface {
 }
 
 type agentProgramStore struct {
-	loopMu sync.Mutex
-	mu     sync.Mutex
-	root   string
-	images map[string]*agentProgramImage
+	bootInstalled bool
+	boot          *agentv1.SessionProgram
+	loopMu        sync.Mutex
+	mu            sync.Mutex
+	root          string
+	images        map[string]*agentProgramImage
 }
 
 type agentProgramImage struct {
+	boot       bool
 	descriptor *agentv1.SessionProgramArtifact
 	ready      chan struct{}
 	references int
@@ -98,6 +101,13 @@ func (s *agentProgramStore) acquire(ctx context.Context, kind agentv1.SessionPro
 
 func (s *agentProgramStore) release(image *agentProgramImage) error {
 	s.mu.Lock()
+	if image.boot {
+		if image.references > 0 {
+			image.references--
+		}
+		s.mu.Unlock()
+		return nil
+	}
 	if image.references > 1 {
 		image.references--
 		s.mu.Unlock()
@@ -169,3 +179,44 @@ func (l *agentProgramLease) close() error {
 type programCleanupError struct{ error }
 
 func (e programCleanupError) Unwrap() error { return e.error }
+
+// Platform boot mounts outlive every Session reference and survive a coherent
+// checkpoint. Descriptor installation never authorizes Session execution.
+func (s *agentProgramStore) installBoot(program *agentv1.SessionProgram, mounts programMounts) error {
+	if program != nil {
+		if err := validateAgentProgram(program); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bootInstalled {
+		if !proto.Equal(s.boot, program) {
+			return errors.New("boot Program declaration changed")
+		}
+		return nil
+	}
+	if len(s.images) != 0 {
+		return errors.New("boot Program declared after Session materialization")
+	}
+	if program != nil {
+		if err := mounts.validate(); err != nil {
+			return err
+		}
+		if s.images == nil {
+			s.images = make(map[string]*agentProgramImage)
+		}
+		for _, item := range []struct {
+			kind       agentv1.SessionProgramRequest_Kind
+			descriptor *agentv1.SessionProgramArtifact
+			root       string
+		}{{agentv1.SessionProgramRequest_KIND_RUNTIME, program.Runtime, mounts.Runtime}, {agentv1.SessionProgramRequest_KIND_ARTIFACT, program.Artifact, mounts.Artifact}} {
+			image := &agentProgramImage{descriptor: proto.Clone(item.descriptor).(*agentv1.SessionProgramArtifact), ready: make(chan struct{}), image: &mountedProgramImage{root: item.root}, boot: true}
+			close(image.ready)
+			s.images[fmt.Sprintf("%d:%s", item.kind, item.descriptor.Digest)] = image
+		}
+		s.boot = proto.Clone(program).(*agentv1.SessionProgram)
+	}
+	s.bootInstalled = true
+	return nil
+}

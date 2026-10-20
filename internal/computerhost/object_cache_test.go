@@ -41,6 +41,43 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	boot, err := bootProgram(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeProgram, beforeRuntime := store.getCalls[pd.Digest], store.getCalls[rd.Digest]
+	savedRuntimeMemo := p.verifiedRuntimes
+	p.verifiedRuntimes = nil
+	mounted, err := p.prepareProgramArtifactsWithBoot(t.Context(), t.TempDir(), "boot-mounted", program, boot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.verifiedRuntimes) != 0 {
+		t.Fatal("boot drive reuse created a host verification receipt")
+	}
+	p.verifiedRuntimes = savedRuntimeMemo
+	if !mounted.bootArtifact || !mounted.bootRuntime || mounted.runtime != nil || mounted.artifact != nil || store.getCalls[pd.Digest] != beforeProgram || store.getCalls[rd.Digest] != beforeRuntime {
+		t.Fatal("matching boot drives were staged again")
+	}
+	if err = mounted.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later Program can reuse its verified metadata without restaging either
+	// image; its Runtime remains supplied by the boot mount.
+	otherBoot := *boot
+	otherBoot.Artifact.Digest = sha256sum.DigestBytes([]byte("other boot program"))
+	reused, err := p.prepareSessionProgramArtifactsWithBoot(t.Context(), t.TempDir(), "later-session", program, &otherBoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused.bootRuntime || reused.bootArtifact || reused.runtime != nil || reused.artifact != nil || store.getCalls[pd.Digest] != beforeProgram || store.getCalls[rd.Digest] != beforeRuntime {
+		t.Fatal("later cached Session Program was restaged")
+	}
+	if err := reused.close(); err != nil {
+		t.Fatal(err)
+	}
 	p.seedProgramArtifacts(t.Context(), first, cas.Descriptor(pd))
 	if cache.Snapshot().Seeds != 2 {
 		t.Fatal("artifacts not cached")

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -16,7 +17,13 @@ import (
 )
 
 func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, source workerapi.ComputerAllocationSource, device vm.ComputerDevice) (resultErr error) {
-	m, err := o.client.ReadAgentCheckpoint(ctx, o.identity)
+	var m computercheckpoint.Manifest
+	var err error
+	if o.checkpoint != nil {
+		m = *o.checkpoint
+	} else {
+		m, err = o.client.ReadAgentCheckpoint(ctx, o.identity)
+	}
 	if err != nil {
 		return err
 	}
@@ -56,6 +63,15 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	// The reservation already covers every ciphertext and plaintext together.
 	// Overlap two bounded transfers; join them before VM creation or cleanup.
 	group.SetLimit(2)
+	var images *programSnapshots
+	defer func() { resultErr = errors.Join(resultErr, images.close()) }()
+	if m.BootProgram != nil {
+		group.Go(func() error {
+			var err error
+			images, err = o.machines.restoreBootProgram(stageCtx, directory, m.BootProgram)
+			return err
+		})
+	}
 	for i, object := range objects {
 		group.Go(func() error {
 			if err := stageCtx.Err(); err != nil {
@@ -70,10 +86,10 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 			return err
 		})
 	}
-	if group.Wait() != nil {
+	if stageErr := group.Wait(); stageErr != nil {
 		// Preserve every observed failure identity, even if another transfer's
 		// cancellation wins the group's first-error race.
-		err := errors.Join(stageErrors...)
+		err := errors.Join(stageErr, errors.Join(stageErrors...))
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			// Pause before cleanup can release this allocation for redispatch.
 			o.checkpointKeyUnavailable()
@@ -92,7 +108,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if !bytes.Equal(config, m.Config) {
 		return invalidCheckpoint(errors.New("encrypted checkpoint config differs from manifest"))
 	}
-	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("restore", phase) }, ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
+	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("restore", phase) }, ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, ReadOnlyDrives: bootProgramDrives(m.BootProgram, images), Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
 	if err != nil {
 		if errors.Is(err, filepack.ErrInvalidContent) || errors.Is(err, vm.ErrInvalidCheckpointContent) {
 			return invalidCheckpoint(err)
@@ -112,6 +128,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	}
 
 	o.checkpoint = &m
+	o.bootProgram = m.BootProgram
 	return nil
 }
 

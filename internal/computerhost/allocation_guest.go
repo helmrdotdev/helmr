@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -16,10 +17,14 @@ import (
 )
 
 func prepareAllocationImage(ctx context.Context, machine vm.GuestControlMachine, identity workerapi.AllocationIdentity, channelCredential, baseVersion string, config oci.RuntimeConfig) error {
+	return prepareAllocationImageWithProgram(ctx, machine, identity, channelCredential, baseVersion, config, nil)
+}
+
+func prepareAllocationImageWithProgram(ctx context.Context, machine vm.GuestControlMachine, identity workerapi.AllocationIdentity, channelCredential, baseVersion string, config oci.RuntimeConfig, program *computercheckpoint.Program) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	return machine.WithRunningGuestControl(ctx, vm.GuestControlOrdinary, func(ctx context.Context) error {
-		prepared := &computerv0.PrepareComputerRuntimeRequest{ComputerInstanceId: identity.AllocationID, ComputerId: identity.OwnerID, WriterGeneration: identity.Epoch, MountPath: "/workspace", MountedImageConfig: &computerv0.RuntimeImageConfig{Env: config.Env, WorkingDir: config.WorkingDir, User: config.User, Entrypoint: config.Entrypoint, Cmd: config.Cmd}}
+		prepared := &computerv0.PrepareComputerRuntimeRequest{BootProgram: bootProgramProto(program), ComputerInstanceId: identity.AllocationID, ComputerId: identity.OwnerID, WriterGeneration: identity.Epoch, MountPath: "/workspace", MountedImageConfig: &computerv0.RuntimeImageConfig{Env: config.Env, WorkingDir: config.WorkingDir, User: config.User, Entrypoint: config.Entrypoint, Cmd: config.Cmd}}
 		var ready computerv0.PrepareComputerRuntimeResponse
 		if err := allocationGuestExchange(ctx, machine, wire.StreamTypeComputerRuntimePrepare, prepared, &ready); err != nil {
 			return err

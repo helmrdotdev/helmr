@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file computer.proto.
  */
 export const file_computer: GenFile = /*@__PURE__*/
-  fileDesc("Cg5jb21wdXRlci5wcm90bxIRaGVsbXIuY29tcHV0ZXIudjAiLAoURmx1c2hDb21wdXRlclJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJIjwKFUZsdXNoQ29tcHV0ZXJSZXNwb25zZRIUCgxvcGVyYXRpb25faWQYASABKAkSDQoFZXJyb3IYAiABKAkiqgIKGUNvbXB1dGVyT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhwKFGNvbXB1dGVyX2luc3RhbmNlX2lkGAIgASgJEhMKC2NvbXB1dGVyX2lkGAMgASgJEhoKEmNoYW5uZWxfY3JlZGVudGlhbBgEIAEoCRIZChF3cml0ZXJfZ2VuZXJhdGlvbhgFIAEoBBIZChFpbnN0YW5jZV9sZWFzZV9pZBgGIAEoCRIWCg53cml0ZV9sZWFzZV9pZBgHIAEoCRIVCg1mZW5jaW5nX3Rva2VuGAggASgJEiYKHm9wZXJhdGlvbl9leHBpcmVzX2F0X3VuaXhfbmFubxgJIAEoAxIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAogASgJIroBChpNYXRlcmlhbGl6ZUNvbXB1dGVyUmVxdWVzdBI+CghlbnZlbG9wZRgBIAEoCzIsLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRI2CgZ0YXJnZXQYAyABKAsyJi5oZWxtci5jb21wdXRlci52MC5Db21wdXRlck1vdW50VGFyZ2V0SgQIBBAFSgQIBRAGSgQIBxAIIm8KEkNvbXB1dGVyTW91bnRQaGFzZRIMCgRuYW1lGAEgASgJEhMKC2R1cmF0aW9uX21zGAIgASgEEhIKCnNpemVfYnl0ZXMYAyABKAQSEwoLZW50cnlfY291bnQYBCABKA0SDQoFZXJyb3IYBSABKAkiwwEKG01hdGVyaWFsaXplQ29tcHV0ZXJSZXNwb25zZRIOCgZzdGF0dXMYASABKAkSJQodZ3Vlc3RfY2hhbm5lbF9jcmVkZW50aWFsX2hhc2gYAiABKAkSNQoGcGhhc2VzGAMgAygLMiUuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJNb3VudFBoYXNlEjYKBnRhcmdldBgEIAEoCzImLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyTW91bnRUYXJnZXQiZQoSUnVudGltZUltYWdlQ29uZmlnEgsKA2VudhgBIAMoCRITCgt3b3JraW5nX2RpchgCIAEoCRIMCgR1c2VyGAMgASgJEhIKCmVudHJ5cG9pbnQYBCADKAkSCwoDY21kGAUgAygJIswBCh1QcmVwYXJlQ29tcHV0ZXJSdW50aW1lUmVxdWVzdBITCgtjb21wdXRlcl9pZBgFIAEoCRIZChF3cml0ZXJfZ2VuZXJhdGlvbhgGIAEoAxIcChRjb21wdXRlcl9pbnN0YW5jZV9pZBgBIAEoCRISCgptb3VudF9wYXRoGAIgASgJEkMKFG1vdW50ZWRfaW1hZ2VfY29uZmlnGAQgASgLMiUuaGVsbXIuY29tcHV0ZXIudjAuUnVudGltZUltYWdlQ29uZmlnSgQIAxAEIoUBCh5QcmVwYXJlQ29tcHV0ZXJSdW50aW1lUmVzcG9uc2USDgoGc3RhdHVzGAEgASgJEhwKFGNvbXB1dGVyX2luc3RhbmNlX2lkGAIgASgJEjUKBnBoYXNlcxgDIAMoCzIlLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyTW91bnRQaGFzZSI8ChNDb21wdXRlck1vdW50VGFyZ2V0EiUKHWJhc2VfY29tcHV0ZXJfZGlza192ZXJzaW9uX2lkGAEgASgJIt8BChhDb21wdXRlckNvbW1hbmRBdXRob3JpdHkSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhwKFGNvbXB1dGVyX2luc3RhbmNlX2lkGAIgASgJEhMKC2NvbXB1dGVyX2lkGAMgASgJEhoKEmNoYW5uZWxfY3JlZGVudGlhbBgEIAEoCRIZChF3cml0ZXJfZ2VuZXJhdGlvbhgFIAEoAxImCh5vcGVyYXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YBiABKAMSGwoTcmVxdWVzdF9maW5nZXJwcmludBgHIAEoCSKjAwoYQ29tcHV0ZXJCYXNpY0V4ZWNSZXF1ZXN0Ej0KCGVudmVsb3BlGAEgASgLMisuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJDb21tYW5kQXV0aG9yaXR5EhQKDHJlcXVlc3RfanNvbhgCIAEoCRI6CgdzZWNyZXRzGAMgAygLMikuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJTZWNyZXREZWxpdmVyeRINCgVzdGRpbhgEIAEoDBJUCg1wcm90ZWN0ZWRfZW52GAUgAygLMj0uaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJCYXNpY0V4ZWNSZXF1ZXN0LlByb3RlY3RlZEVudkVudHJ5EhAKCHByb3h5X2NhGAYgASgMEjcKCmxvZ19saW1pdHMYByABKAsyIy5oZWxtci5jb21wdXRlci52MC5Db21tYW5kTG9nTGltaXRzEhEKCXRhaWxfb25seRgIIAEoCBozChFQcm90ZWN0ZWRFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIuIBChdDb21wdXRlckJhc2ljRXhlY1Jlc3VsdBISCgplcnJvcl9qc29uGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRIPCgdvdXRjb21lGAUgASgJEhsKE3JlcXVlc3RfZmluZ2VycHJpbnQYBiABKAkSOAoGc3Rkb3V0GAcgASgLMiguaGVsbXIuY29tcHV0ZXIudjAuQ29tbWFuZE91dHB1dEJvdW5kYXJ5EjgKBnN0ZGVychgIIAEoCzIoLmhlbG1yLmNvbXB1dGVyLnYwLkNvbW1hbmRPdXRwdXRCb3VuZGFyeSK3AQoSQ29tbWFuZE91dHB1dENodW5rEg4KBnN0cmVhbRgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoBBIdChVvYnNlcnZlZF9hdF91bml4X25hbm8YAyABKAMSDwoHY29udGVudBgEIAEoDBIMCgRraW5kGAUgASgJEhgKEHRocm91Z2hfc2VxdWVuY2UYBiABKAQSFQoNZHJvcHBlZF9ieXRlcxgHIAEoAxIQCghjb21wbGV0ZRgIIAEoCCJVChBDb21tYW5kTG9nTGltaXRzEhMKC2NodW5rX2J5dGVzGAEgASgFEhQKDGJ1ZmZlcl9ieXRlcxgCIAEoAxIWCg5idWZmZXJfcmVjb3JkcxgDIAEoBSJTChVDb21tYW5kT3V0cHV0Qm91bmRhcnkSGAoQdGhyb3VnaF9zZXF1ZW5jZRgBIAEoBBIQCghjb21wbGV0ZRgCIAEoCBIOCgZnYXBwZWQYAyABKAgiUQoQQ29tbWFuZE91dHB1dEFjaxIOCgZzdHJlYW0YASABKAkSGAoQdGhyb3VnaF9zZXF1ZW5jZRgCIAEoBBITCgtkaXNwb3NpdGlvbhgDIAEoCSKYAQoWQ29tcHV0ZXJCYXNpY0V4ZWNFdmVudBI3CgZvdXRwdXQYASABKAsyJS5oZWxtci5jb21wdXRlci52MC5Db21tYW5kT3V0cHV0Q2h1bmtIABI8CgZyZXN1bHQYAiABKAsyKi5oZWxtci5jb21wdXRlci52MC5Db21wdXRlckJhc2ljRXhlY1Jlc3VsdEgAQgcKBWV2ZW50IlkKFkNvbXB1dGVyU2VjcmV0RGVsaXZlcnkSFgoOcGxhY2VtZW50X2tpbmQYASABKAkSGAoQcGxhY2VtZW50X3RhcmdldBgCIAEoCRINCgV2YWx1ZRgDIAEoDCJ2Ch1Db21wdXRlckNvbW1hbmRSZWxlYXNlUmVxdWVzdBI+CglhdXRob3JpdHkYASABKAsyKy5oZWxtci5jb21wdXRlci52MC5Db21wdXRlckNvbW1hbmRBdXRob3JpdHkSFQoNb3V0cHV0X2ZlbmNlZBgCIAEoCCJBCh5Db21wdXRlckNvbW1hbmRSZWxlYXNlUmVzcG9uc2USEAoIcmVsZWFzZWQYASABKAgSDQoFZXJyb3IYAiABKAkiXgocQ29tcHV0ZXJDb21tYW5kQ2FuY2VsUmVxdWVzdBI+CglhdXRob3JpdHkYASABKAsyKy5oZWxtci5jb21wdXRlci52MC5Db21wdXRlckNvbW1hbmRBdXRob3JpdHkiQAodQ29tcHV0ZXJDb21tYW5kQ2FuY2VsUmVzcG9uc2USEAoIYWNjZXB0ZWQYASABKAgSDQoFZXJyb3IYAiABKAkibQoTUHJlcGFyYXRpb25JZGVudGl0eRIWCg5wcmVwYXJhdGlvbl9pZBgBIAEoCRITCgtpbnN0YW5jZV9pZBgCIAEoCRINCgVlcG9jaBgDIAEoAxIaChJjaGFubmVsX2NyZWRlbnRpYWwYBCABKAwi3AIKEFByZXBhcmF0aW9uU3RhcnQSGgoScXVhbGlmaWNhdGlvbl9vbmx5GAYgASgIEh4KFnRlbXBsYXRlX2RlZmluaXRpb25faWQYASABKAkSOgoHc2VjcmV0cxgCIAMoCzIpLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyU2VjcmV0RGVsaXZlcnkSOwoKbG9nX2xpbWl0cxgDIAEoCzInLmhlbG1yLmNvbXB1dGVyLnYwLlByZXBhcmF0aW9uTG9nTGltaXRzEkwKDXByb3RlY3RlZF9lbnYYBCADKAsyNS5oZWxtci5jb21wdXRlci52MC5QcmVwYXJhdGlvblN0YXJ0LlByb3RlY3RlZEVudkVudHJ5EhAKCHByb3h5X2NhGAUgASgMGjMKEVByb3RlY3RlZEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiWQoUUHJlcGFyYXRpb25Mb2dMaW1pdHMSEwoLY2h1bmtfYnl0ZXMYASABKAUSFAoMYnVmZmVyX2J5dGVzGAIgASgDEhYKDmJ1ZmZlcl9yZWNvcmRzGAMgASgFIqABCg5QcmVwYXJhdGlvbkxvZxIMCgRraW5kGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEhgKEHRocm91Z2hfc2VxdWVuY2UYAyABKAMSHQoVb2JzZXJ2ZWRfYXRfdW5peF9uYW5vGAQgASgDEgwKBGRhdGEYBSABKAwSFQoNZHJvcHBlZF9ieXRlcxgGIAEoAxIQCghjb21wbGV0ZRgHIAEoCCKKAgoZUHJlcGFyYXRpb25Db250cm9sUmVxdWVzdBI4CghpZGVudGl0eRgBIAEoCzImLmhlbG1yLmNvbXB1dGVyLnYwLlByZXBhcmF0aW9uSWRlbnRpdHkSHAoUZXhwaXJlc19hdF91bml4X25hbm8YAiABKAMSMgoFc3RhcnQYAyABKAsyIy5oZWxtci5jb21wdXRlci52MC5QcmVwYXJhdGlvblN0YXJ0EhIKCnJlbmV3X29ubHkYBCABKAgSEgoKbG9nX3N0cmVhbRgFIAEoCRIcChRhY2tub3dsZWRnZWRfdGhyb3VnaBgGIAEoAxIbChN3YWl0X2Zvcl9jb21wbGV0aW9uGAcgASgIIm8KGlByZXBhcmF0aW9uQ29udHJvbFJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEhIKCmVycm9yX2NvZGUYAiABKAkSLgoDbG9nGAMgASgLMiEuaGVsbXIuY29tcHV0ZXIudjAuUHJlcGFyYXRpb25Mb2dCRFpCZ2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9jb21wdXRlci92MDtjb21wdXRlcnYwYgZwcm90bzM");
+  fileDesc("Cg5jb21wdXRlci5wcm90bxIRaGVsbXIuY29tcHV0ZXIudjAiLAoURmx1c2hDb21wdXRlclJlcXVlc3QSFAoMb3BlcmF0aW9uX2lkGAEgASgJIjwKFUZsdXNoQ29tcHV0ZXJSZXNwb25zZRIUCgxvcGVyYXRpb25faWQYASABKAkSDQoFZXJyb3IYAiABKAkiqgIKGUNvbXB1dGVyT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhwKFGNvbXB1dGVyX2luc3RhbmNlX2lkGAIgASgJEhMKC2NvbXB1dGVyX2lkGAMgASgJEhoKEmNoYW5uZWxfY3JlZGVudGlhbBgEIAEoCRIZChF3cml0ZXJfZ2VuZXJhdGlvbhgFIAEoBBIZChFpbnN0YW5jZV9sZWFzZV9pZBgGIAEoCRIWCg53cml0ZV9sZWFzZV9pZBgHIAEoCRIVCg1mZW5jaW5nX3Rva2VuGAggASgJEiYKHm9wZXJhdGlvbl9leHBpcmVzX2F0X3VuaXhfbmFubxgJIAEoAxIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAogASgJIroBChpNYXRlcmlhbGl6ZUNvbXB1dGVyUmVxdWVzdBI+CghlbnZlbG9wZRgBIAEoCzIsLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRI2CgZ0YXJnZXQYAyABKAsyJi5oZWxtci5jb21wdXRlci52MC5Db21wdXRlck1vdW50VGFyZ2V0SgQIBBAFSgQIBRAGSgQIBxAIIm8KEkNvbXB1dGVyTW91bnRQaGFzZRIMCgRuYW1lGAEgASgJEhMKC2R1cmF0aW9uX21zGAIgASgEEhIKCnNpemVfYnl0ZXMYAyABKAQSEwoLZW50cnlfY291bnQYBCABKA0SDQoFZXJyb3IYBSABKAkiwwEKG01hdGVyaWFsaXplQ29tcHV0ZXJSZXNwb25zZRIOCgZzdGF0dXMYASABKAkSJQodZ3Vlc3RfY2hhbm5lbF9jcmVkZW50aWFsX2hhc2gYAiABKAkSNQoGcGhhc2VzGAMgAygLMiUuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJNb3VudFBoYXNlEjYKBnRhcmdldBgEIAEoCzImLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyTW91bnRUYXJnZXQiZQoSUnVudGltZUltYWdlQ29uZmlnEgsKA2VudhgBIAMoCRITCgt3b3JraW5nX2RpchgCIAEoCRIMCgR1c2VyGAMgASgJEhIKCmVudHJ5cG9pbnQYBCADKAkSCwoDY21kGAUgAygJIjkKE0Jvb3RQcm9ncmFtQXJ0aWZhY3QSDgoGZGlnZXN0GAEgASgJEhIKCnNpemVfYnl0ZXMYAiABKAMigAEKC0Jvb3RQcm9ncmFtEjcKB3J1bnRpbWUYASABKAsyJi5oZWxtci5jb21wdXRlci52MC5Cb290UHJvZ3JhbUFydGlmYWN0EjgKCGFydGlmYWN0GAIgASgLMiYuaGVsbXIuY29tcHV0ZXIudjAuQm9vdFByb2dyYW1BcnRpZmFjdCKCAgodUHJlcGFyZUNvbXB1dGVyUnVudGltZVJlcXVlc3QSEwoLY29tcHV0ZXJfaWQYBSABKAkSGQoRd3JpdGVyX2dlbmVyYXRpb24YBiABKAMSHAoUY29tcHV0ZXJfaW5zdGFuY2VfaWQYASABKAkSEgoKbW91bnRfcGF0aBgCIAEoCRJDChRtb3VudGVkX2ltYWdlX2NvbmZpZxgEIAEoCzIlLmhlbG1yLmNvbXB1dGVyLnYwLlJ1bnRpbWVJbWFnZUNvbmZpZxI0Cgxib290X3Byb2dyYW0YByABKAsyHi5oZWxtci5jb21wdXRlci52MC5Cb290UHJvZ3JhbUoECAMQBCKFAQoeUHJlcGFyZUNvbXB1dGVyUnVudGltZVJlc3BvbnNlEg4KBnN0YXR1cxgBIAEoCRIcChRjb21wdXRlcl9pbnN0YW5jZV9pZBgCIAEoCRI1CgZwaGFzZXMYAyADKAsyJS5oZWxtci5jb21wdXRlci52MC5Db21wdXRlck1vdW50UGhhc2UiPAoTQ29tcHV0ZXJNb3VudFRhcmdldBIlCh1iYXNlX2NvbXB1dGVyX2Rpc2tfdmVyc2lvbl9pZBgBIAEoCSLfAQoYQ29tcHV0ZXJDb21tYW5kQXV0aG9yaXR5EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRIcChRjb21wdXRlcl9pbnN0YW5jZV9pZBgCIAEoCRITCgtjb21wdXRlcl9pZBgDIAEoCRIaChJjaGFubmVsX2NyZWRlbnRpYWwYBCABKAkSGQoRd3JpdGVyX2dlbmVyYXRpb24YBSABKAMSJgoeb3BlcmF0aW9uX2V4cGlyZXNfYXRfdW5peF9uYW5vGAYgASgDEhsKE3JlcXVlc3RfZmluZ2VycHJpbnQYByABKAkiowMKGENvbXB1dGVyQmFzaWNFeGVjUmVxdWVzdBI9CghlbnZlbG9wZRgBIAEoCzIrLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyQ29tbWFuZEF1dGhvcml0eRIUCgxyZXF1ZXN0X2pzb24YAiABKAkSOgoHc2VjcmV0cxgDIAMoCzIpLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyU2VjcmV0RGVsaXZlcnkSDQoFc3RkaW4YBCABKAwSVAoNcHJvdGVjdGVkX2VudhgFIAMoCzI9LmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyQmFzaWNFeGVjUmVxdWVzdC5Qcm90ZWN0ZWRFbnZFbnRyeRIQCghwcm94eV9jYRgGIAEoDBI3Cgpsb2dfbGltaXRzGAcgASgLMiMuaGVsbXIuY29tcHV0ZXIudjAuQ29tbWFuZExvZ0xpbWl0cxIRCgl0YWlsX29ubHkYCCABKAgaMwoRUHJvdGVjdGVkRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASLiAQoXQ29tcHV0ZXJCYXNpY0V4ZWNSZXN1bHQSEgoKZXJyb3JfanNvbhgBIAEoCRIRCglleGl0X2NvZGUYAiABKAUSDwoHb3V0Y29tZRgFIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAYgASgJEjgKBnN0ZG91dBgHIAEoCzIoLmhlbG1yLmNvbXB1dGVyLnYwLkNvbW1hbmRPdXRwdXRCb3VuZGFyeRI4CgZzdGRlcnIYCCABKAsyKC5oZWxtci5jb21wdXRlci52MC5Db21tYW5kT3V0cHV0Qm91bmRhcnkitwEKEkNvbW1hbmRPdXRwdXRDaHVuaxIOCgZzdHJlYW0YASABKAkSEAoIc2VxdWVuY2UYAiABKAQSHQoVb2JzZXJ2ZWRfYXRfdW5peF9uYW5vGAMgASgDEg8KB2NvbnRlbnQYBCABKAwSDAoEa2luZBgFIAEoCRIYChB0aHJvdWdoX3NlcXVlbmNlGAYgASgEEhUKDWRyb3BwZWRfYnl0ZXMYByABKAMSEAoIY29tcGxldGUYCCABKAgiVQoQQ29tbWFuZExvZ0xpbWl0cxITCgtjaHVua19ieXRlcxgBIAEoBRIUCgxidWZmZXJfYnl0ZXMYAiABKAMSFgoOYnVmZmVyX3JlY29yZHMYAyABKAUiUwoVQ29tbWFuZE91dHB1dEJvdW5kYXJ5EhgKEHRocm91Z2hfc2VxdWVuY2UYASABKAQSEAoIY29tcGxldGUYAiABKAgSDgoGZ2FwcGVkGAMgASgIIlEKEENvbW1hbmRPdXRwdXRBY2sSDgoGc3RyZWFtGAEgASgJEhgKEHRocm91Z2hfc2VxdWVuY2UYAiABKAQSEwoLZGlzcG9zaXRpb24YAyABKAkimAEKFkNvbXB1dGVyQmFzaWNFeGVjRXZlbnQSNwoGb3V0cHV0GAEgASgLMiUuaGVsbXIuY29tcHV0ZXIudjAuQ29tbWFuZE91dHB1dENodW5rSAASPAoGcmVzdWx0GAIgASgLMiouaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJCYXNpY0V4ZWNSZXN1bHRIAEIHCgVldmVudCJZChZDb21wdXRlclNlY3JldERlbGl2ZXJ5EhYKDnBsYWNlbWVudF9raW5kGAEgASgJEhgKEHBsYWNlbWVudF90YXJnZXQYAiABKAkSDQoFdmFsdWUYAyABKAwidgodQ29tcHV0ZXJDb21tYW5kUmVsZWFzZVJlcXVlc3QSPgoJYXV0aG9yaXR5GAEgASgLMisuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJDb21tYW5kQXV0aG9yaXR5EhUKDW91dHB1dF9mZW5jZWQYAiABKAgiQQoeQ29tcHV0ZXJDb21tYW5kUmVsZWFzZVJlc3BvbnNlEhAKCHJlbGVhc2VkGAEgASgIEg0KBWVycm9yGAIgASgJIl4KHENvbXB1dGVyQ29tbWFuZENhbmNlbFJlcXVlc3QSPgoJYXV0aG9yaXR5GAEgASgLMisuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJDb21tYW5kQXV0aG9yaXR5IkAKHUNvbXB1dGVyQ29tbWFuZENhbmNlbFJlc3BvbnNlEhAKCGFjY2VwdGVkGAEgASgIEg0KBWVycm9yGAIgASgJIm0KE1ByZXBhcmF0aW9uSWRlbnRpdHkSFgoOcHJlcGFyYXRpb25faWQYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSDQoFZXBvY2gYAyABKAMSGgoSY2hhbm5lbF9jcmVkZW50aWFsGAQgASgMItwCChBQcmVwYXJhdGlvblN0YXJ0EhoKEnF1YWxpZmljYXRpb25fb25seRgGIAEoCBIeChZ0ZW1wbGF0ZV9kZWZpbml0aW9uX2lkGAEgASgJEjoKB3NlY3JldHMYAiADKAsyKS5oZWxtci5jb21wdXRlci52MC5Db21wdXRlclNlY3JldERlbGl2ZXJ5EjsKCmxvZ19saW1pdHMYAyABKAsyJy5oZWxtci5jb21wdXRlci52MC5QcmVwYXJhdGlvbkxvZ0xpbWl0cxJMCg1wcm90ZWN0ZWRfZW52GAQgAygLMjUuaGVsbXIuY29tcHV0ZXIudjAuUHJlcGFyYXRpb25TdGFydC5Qcm90ZWN0ZWRFbnZFbnRyeRIQCghwcm94eV9jYRgFIAEoDBozChFQcm90ZWN0ZWRFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIlkKFFByZXBhcmF0aW9uTG9nTGltaXRzEhMKC2NodW5rX2J5dGVzGAEgASgFEhQKDGJ1ZmZlcl9ieXRlcxgCIAEoAxIWCg5idWZmZXJfcmVjb3JkcxgDIAEoBSKgAQoOUHJlcGFyYXRpb25Mb2cSDAoEa2luZBgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoAxIYChB0aHJvdWdoX3NlcXVlbmNlGAMgASgDEh0KFW9ic2VydmVkX2F0X3VuaXhfbmFubxgEIAEoAxIMCgRkYXRhGAUgASgMEhUKDWRyb3BwZWRfYnl0ZXMYBiABKAMSEAoIY29tcGxldGUYByABKAgiigIKGVByZXBhcmF0aW9uQ29udHJvbFJlcXVlc3QSOAoIaWRlbnRpdHkYASABKAsyJi5oZWxtci5jb21wdXRlci52MC5QcmVwYXJhdGlvbklkZW50aXR5EhwKFGV4cGlyZXNfYXRfdW5peF9uYW5vGAIgASgDEjIKBXN0YXJ0GAMgASgLMiMuaGVsbXIuY29tcHV0ZXIudjAuUHJlcGFyYXRpb25TdGFydBISCgpyZW5ld19vbmx5GAQgASgIEhIKCmxvZ19zdHJlYW0YBSABKAkSHAoUYWNrbm93bGVkZ2VkX3Rocm91Z2gYBiABKAMSGwoTd2FpdF9mb3JfY29tcGxldGlvbhgHIAEoCCJvChpQcmVwYXJhdGlvbkNvbnRyb2xSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRISCgplcnJvcl9jb2RlGAIgASgJEi4KA2xvZxgDIAEoCzIhLmhlbG1yLmNvbXB1dGVyLnYwLlByZXBhcmF0aW9uTG9nQkRaQmdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vY29tcHV0ZXIvdjA7Y29tcHV0ZXJ2MGIGcHJvdG8z");
 
 /**
  * The owned VM transport selects the single Computer filesystem. Acknowledgement
@@ -252,6 +252,50 @@ export const RuntimeImageConfigSchema: GenMessage<RuntimeImageConfig> = /*@__PUR
   messageDesc(file_computer, 6);
 
 /**
+ * @generated from message helmr.computer.v0.BootProgramArtifact
+ */
+export type BootProgramArtifact = Message<"helmr.computer.v0.BootProgramArtifact"> & {
+  /**
+   * @generated from field: string digest = 1;
+   */
+  digest: string;
+
+  /**
+   * @generated from field: int64 size_bytes = 2;
+   */
+  sizeBytes: bigint;
+};
+
+/**
+ * Describes the message helmr.computer.v0.BootProgramArtifact.
+ * Use `create(BootProgramArtifactSchema)` to create a new message.
+ */
+export const BootProgramArtifactSchema: GenMessage<BootProgramArtifact> = /*@__PURE__*/
+  messageDesc(file_computer, 7);
+
+/**
+ * @generated from message helmr.computer.v0.BootProgram
+ */
+export type BootProgram = Message<"helmr.computer.v0.BootProgram"> & {
+  /**
+   * @generated from field: helmr.computer.v0.BootProgramArtifact runtime = 1;
+   */
+  runtime?: BootProgramArtifact | undefined;
+
+  /**
+   * @generated from field: helmr.computer.v0.BootProgramArtifact artifact = 2;
+   */
+  artifact?: BootProgramArtifact | undefined;
+};
+
+/**
+ * Describes the message helmr.computer.v0.BootProgram.
+ * Use `create(BootProgramSchema)` to create a new message.
+ */
+export const BootProgramSchema: GenMessage<BootProgram> = /*@__PURE__*/
+  messageDesc(file_computer, 8);
+
+/**
  * @generated from message helmr.computer.v0.PrepareComputerRuntimeRequest
  */
 export type PrepareComputerRuntimeRequest = Message<"helmr.computer.v0.PrepareComputerRuntimeRequest"> & {
@@ -281,6 +325,11 @@ export type PrepareComputerRuntimeRequest = Message<"helmr.computer.v0.PrepareCo
    * @generated from field: helmr.computer.v0.RuntimeImageConfig mounted_image_config = 4;
    */
   mountedImageConfig?: RuntimeImageConfig | undefined;
+
+  /**
+   * @generated from field: helmr.computer.v0.BootProgram boot_program = 7;
+   */
+  bootProgram?: BootProgram | undefined;
 };
 
 /**
@@ -288,7 +337,7 @@ export type PrepareComputerRuntimeRequest = Message<"helmr.computer.v0.PrepareCo
  * Use `create(PrepareComputerRuntimeRequestSchema)` to create a new message.
  */
 export const PrepareComputerRuntimeRequestSchema: GenMessage<PrepareComputerRuntimeRequest> = /*@__PURE__*/
-  messageDesc(file_computer, 7);
+  messageDesc(file_computer, 9);
 
 /**
  * @generated from message helmr.computer.v0.PrepareComputerRuntimeResponse
@@ -315,7 +364,7 @@ export type PrepareComputerRuntimeResponse = Message<"helmr.computer.v0.PrepareC
  * Use `create(PrepareComputerRuntimeResponseSchema)` to create a new message.
  */
 export const PrepareComputerRuntimeResponseSchema: GenMessage<PrepareComputerRuntimeResponse> = /*@__PURE__*/
-  messageDesc(file_computer, 8);
+  messageDesc(file_computer, 10);
 
 /**
  * The host has already materialized the retained Computer disk version.
@@ -334,7 +383,7 @@ export type ComputerMountTarget = Message<"helmr.computer.v0.ComputerMountTarget
  * Use `create(ComputerMountTargetSchema)` to create a new message.
  */
 export const ComputerMountTargetSchema: GenMessage<ComputerMountTarget> = /*@__PURE__*/
-  messageDesc(file_computer, 9);
+  messageDesc(file_computer, 11);
 
 /**
  * @generated from message helmr.computer.v0.ComputerCommandAuthority
@@ -381,7 +430,7 @@ export type ComputerCommandAuthority = Message<"helmr.computer.v0.ComputerComman
  * Use `create(ComputerCommandAuthoritySchema)` to create a new message.
  */
 export const ComputerCommandAuthoritySchema: GenMessage<ComputerCommandAuthority> = /*@__PURE__*/
-  messageDesc(file_computer, 10);
+  messageDesc(file_computer, 12);
 
 /**
  * @generated from message helmr.computer.v0.ComputerBasicExecRequest
@@ -433,7 +482,7 @@ export type ComputerBasicExecRequest = Message<"helmr.computer.v0.ComputerBasicE
  * Use `create(ComputerBasicExecRequestSchema)` to create a new message.
  */
 export const ComputerBasicExecRequestSchema: GenMessage<ComputerBasicExecRequest> = /*@__PURE__*/
-  messageDesc(file_computer, 11);
+  messageDesc(file_computer, 13);
 
 /**
  * @generated from message helmr.computer.v0.ComputerBasicExecResult
@@ -475,7 +524,7 @@ export type ComputerBasicExecResult = Message<"helmr.computer.v0.ComputerBasicEx
  * Use `create(ComputerBasicExecResultSchema)` to create a new message.
  */
 export const ComputerBasicExecResultSchema: GenMessage<ComputerBasicExecResult> = /*@__PURE__*/
-  messageDesc(file_computer, 12);
+  messageDesc(file_computer, 14);
 
 /**
  * @generated from message helmr.computer.v0.CommandOutputChunk
@@ -527,7 +576,7 @@ export type CommandOutputChunk = Message<"helmr.computer.v0.CommandOutputChunk">
  * Use `create(CommandOutputChunkSchema)` to create a new message.
  */
 export const CommandOutputChunkSchema: GenMessage<CommandOutputChunk> = /*@__PURE__*/
-  messageDesc(file_computer, 13);
+  messageDesc(file_computer, 15);
 
 /**
  * @generated from message helmr.computer.v0.CommandLogLimits
@@ -554,7 +603,7 @@ export type CommandLogLimits = Message<"helmr.computer.v0.CommandLogLimits"> & {
  * Use `create(CommandLogLimitsSchema)` to create a new message.
  */
 export const CommandLogLimitsSchema: GenMessage<CommandLogLimits> = /*@__PURE__*/
-  messageDesc(file_computer, 14);
+  messageDesc(file_computer, 16);
 
 /**
  * @generated from message helmr.computer.v0.CommandOutputBoundary
@@ -581,7 +630,7 @@ export type CommandOutputBoundary = Message<"helmr.computer.v0.CommandOutputBoun
  * Use `create(CommandOutputBoundarySchema)` to create a new message.
  */
 export const CommandOutputBoundarySchema: GenMessage<CommandOutputBoundary> = /*@__PURE__*/
-  messageDesc(file_computer, 15);
+  messageDesc(file_computer, 17);
 
 /**
  * Only a committed durable receipt or explicit expiry can release a head.
@@ -610,7 +659,7 @@ export type CommandOutputAck = Message<"helmr.computer.v0.CommandOutputAck"> & {
  * Use `create(CommandOutputAckSchema)` to create a new message.
  */
 export const CommandOutputAckSchema: GenMessage<CommandOutputAck> = /*@__PURE__*/
-  messageDesc(file_computer, 16);
+  messageDesc(file_computer, 18);
 
 /**
  * @generated from message helmr.computer.v0.ComputerBasicExecEvent
@@ -639,7 +688,7 @@ export type ComputerBasicExecEvent = Message<"helmr.computer.v0.ComputerBasicExe
  * Use `create(ComputerBasicExecEventSchema)` to create a new message.
  */
 export const ComputerBasicExecEventSchema: GenMessage<ComputerBasicExecEvent> = /*@__PURE__*/
-  messageDesc(file_computer, 17);
+  messageDesc(file_computer, 19);
 
 /**
  * @generated from message helmr.computer.v0.ComputerSecretDelivery
@@ -666,7 +715,7 @@ export type ComputerSecretDelivery = Message<"helmr.computer.v0.ComputerSecretDe
  * Use `create(ComputerSecretDeliverySchema)` to create a new message.
  */
 export const ComputerSecretDeliverySchema: GenMessage<ComputerSecretDelivery> = /*@__PURE__*/
-  messageDesc(file_computer, 18);
+  messageDesc(file_computer, 20);
 
 /**
  * @generated from message helmr.computer.v0.ComputerCommandReleaseRequest
@@ -688,7 +737,7 @@ export type ComputerCommandReleaseRequest = Message<"helmr.computer.v0.ComputerC
  * Use `create(ComputerCommandReleaseRequestSchema)` to create a new message.
  */
 export const ComputerCommandReleaseRequestSchema: GenMessage<ComputerCommandReleaseRequest> = /*@__PURE__*/
-  messageDesc(file_computer, 19);
+  messageDesc(file_computer, 21);
 
 /**
  * @generated from message helmr.computer.v0.ComputerCommandReleaseResponse
@@ -710,7 +759,7 @@ export type ComputerCommandReleaseResponse = Message<"helmr.computer.v0.Computer
  * Use `create(ComputerCommandReleaseResponseSchema)` to create a new message.
  */
 export const ComputerCommandReleaseResponseSchema: GenMessage<ComputerCommandReleaseResponse> = /*@__PURE__*/
-  messageDesc(file_computer, 20);
+  messageDesc(file_computer, 22);
 
 /**
  * @generated from message helmr.computer.v0.ComputerCommandCancelRequest
@@ -727,7 +776,7 @@ export type ComputerCommandCancelRequest = Message<"helmr.computer.v0.ComputerCo
  * Use `create(ComputerCommandCancelRequestSchema)` to create a new message.
  */
 export const ComputerCommandCancelRequestSchema: GenMessage<ComputerCommandCancelRequest> = /*@__PURE__*/
-  messageDesc(file_computer, 21);
+  messageDesc(file_computer, 23);
 
 /**
  * @generated from message helmr.computer.v0.ComputerCommandCancelResponse
@@ -749,7 +798,7 @@ export type ComputerCommandCancelResponse = Message<"helmr.computer.v0.ComputerC
  * Use `create(ComputerCommandCancelResponseSchema)` to create a new message.
  */
 export const ComputerCommandCancelResponseSchema: GenMessage<ComputerCommandCancelResponse> = /*@__PURE__*/
-  messageDesc(file_computer, 22);
+  messageDesc(file_computer, 24);
 
 /**
  * One private preparation owns the mounted image until capture and physical stop.
@@ -784,7 +833,7 @@ export type PreparationIdentity = Message<"helmr.computer.v0.PreparationIdentity
  * Use `create(PreparationIdentitySchema)` to create a new message.
  */
 export const PreparationIdentitySchema: GenMessage<PreparationIdentity> = /*@__PURE__*/
-  messageDesc(file_computer, 23);
+  messageDesc(file_computer, 25);
 
 /**
  * @generated from message helmr.computer.v0.PreparationStart
@@ -828,7 +877,7 @@ export type PreparationStart = Message<"helmr.computer.v0.PreparationStart"> & {
  * Use `create(PreparationStartSchema)` to create a new message.
  */
 export const PreparationStartSchema: GenMessage<PreparationStart> = /*@__PURE__*/
-  messageDesc(file_computer, 24);
+  messageDesc(file_computer, 26);
 
 /**
  * @generated from message helmr.computer.v0.PreparationLogLimits
@@ -855,7 +904,7 @@ export type PreparationLogLimits = Message<"helmr.computer.v0.PreparationLogLimi
  * Use `create(PreparationLogLimitsSchema)` to create a new message.
  */
 export const PreparationLogLimitsSchema: GenMessage<PreparationLogLimits> = /*@__PURE__*/
-  messageDesc(file_computer, 25);
+  messageDesc(file_computer, 27);
 
 /**
  * @generated from message helmr.computer.v0.PreparationLog
@@ -902,7 +951,7 @@ export type PreparationLog = Message<"helmr.computer.v0.PreparationLog"> & {
  * Use `create(PreparationLogSchema)` to create a new message.
  */
 export const PreparationLogSchema: GenMessage<PreparationLog> = /*@__PURE__*/
-  messageDesc(file_computer, 26);
+  messageDesc(file_computer, 28);
 
 /**
  * @generated from message helmr.computer.v0.PreparationControlRequest
@@ -949,7 +998,7 @@ export type PreparationControlRequest = Message<"helmr.computer.v0.PreparationCo
  * Use `create(PreparationControlRequestSchema)` to create a new message.
  */
 export const PreparationControlRequestSchema: GenMessage<PreparationControlRequest> = /*@__PURE__*/
-  messageDesc(file_computer, 27);
+  messageDesc(file_computer, 29);
 
 /**
  * @generated from message helmr.computer.v0.PreparationControlResponse
@@ -976,4 +1025,4 @@ export type PreparationControlResponse = Message<"helmr.computer.v0.PreparationC
  * Use `create(PreparationControlResponseSchema)` to create a new message.
  */
 export const PreparationControlResponseSchema: GenMessage<PreparationControlResponse> = /*@__PURE__*/
-  messageDesc(file_computer, 28);
+  messageDesc(file_computer, 30);

@@ -305,7 +305,7 @@ run "lifecycle_capacity_at_mib_boundary" {
   command = plan
   variables {
     root_volume_size_gb     = 512
-    worker_disk_mib         = 450634
+    worker_disk_mib         = 483402
     worker_disk_reserve_mib = 8192
     worker_execution_slots  = 2
     vm_scratch_disk_mib     = 32768
@@ -322,7 +322,7 @@ run "reject_lifecycle_capacity_one_mib_short" {
   command = plan
   variables {
     root_volume_size_gb     = 512
-    worker_disk_mib         = 450633
+    worker_disk_mib         = 483401
     worker_disk_reserve_mib = 8192
     worker_execution_slots  = 2
     vm_scratch_disk_mib     = 32768
