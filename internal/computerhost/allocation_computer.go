@@ -438,6 +438,11 @@ func (o *ComputerAllocationOwner) WakeSaves() {
 
 func (o *ComputerAllocationOwner) phaseCompleted(phase string, started time.Time) {
 	attrs := []any{"computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started)) / float64(time.Millisecond)}
+	if phase == "agent_ready" {
+		if diagnostic, ok := o.machine.(interface{ MemoryRestoreDiagnostics() *vm.MemoryRestoreStats }); ok {
+			o.recordVMPhase("restore", vm.Phase{Name: "restore_memory_agent_ready", Memory: diagnostic.MemoryRestoreDiagnostics()})
+		}
+	}
 	if phase == "agent_ready" && o.restoreMemory != nil {
 		stats := o.restoreMemory.MemoryReadStats()
 		attrs = append(attrs, memoryReadDiagnosticAttrs(stats)...)
@@ -451,7 +456,11 @@ func (o *ComputerAllocationOwner) recordVMPhase(launch string, phase vm.Phase) {
 	if phase.Memory != nil {
 		attrs = append(attrs, memoryReadDiagnosticAttrs(phase.Memory.MemoryReadStats)...)
 		m := phase.Memory
-		observations, _ := json.Marshal(m.FaultObservations)
+		attrs = append(attrs, "memory_demand_duration_buckets_us", m.DemandDurationBuckets, "memory_join_duration_buckets_us", m.JoinDurationBuckets)
+		var observations []byte
+		if phase.Name == "restore_memory_hydration" {
+			observations, _ = json.Marshal(m.FaultObservations)
+		}
 		attrs = append(attrs, "memory_observed_demand_pages", m.ObservedDemandPages, "memory_observed_demand_windows", m.ObservedDemandWindows, "memory_demand_load_attempts", m.DemandLoads, "memory_background_load_attempts", m.BackgroundLoads, "memory_demand_load_errors", m.DemandLoadErrors, "memory_background_load_errors", m.BackgroundLoadErrors, "memory_join_background_attempts", m.JoinBackground, "memory_join_demand_attempts", m.JoinDemand, "memory_join_background_ms", m.JoinBackgroundMs, "memory_join_demand_ms", m.JoinDemandMs, "memory_fault_queue_ms", m.FaultQueueMs, "memory_fault_service_ms", m.FaultServiceMs, "memory_demand_read_ms", m.DemandSourceReadMs, "memory_background_read_ms", m.BackgroundSourceReadMs, "memory_demand_populate_ms", m.DemandPopulateMs, "memory_background_populate_ms", m.BackgroundPopulateMs, "memory_observation_started_at", m.ObservationStartedAt.UTC().Format(time.RFC3339Nano), "memory_fault_observations_json", string(observations), "memory_dropped_fault_observations", m.DroppedFaultObservations)
 		attrs = append(attrs, "memory_demand_faults", phase.Memory.DemandFaults, "memory_loaded_chunks", phase.Memory.LoadedChunks, "memory_total_chunks", phase.Memory.TotalChunks, "memory_range_requests", phase.Memory.RangeRequests, "memory_ciphertext_bytes", phase.Memory.CiphertextBytes, "memory_decode_ms", phase.Memory.DecodeDurationMs)
 	}

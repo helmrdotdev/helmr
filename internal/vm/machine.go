@@ -393,6 +393,9 @@ type MemoryFaultObservation struct {
 	ErrorClass       string `json:"error_class"`
 }
 type MemoryRestoreStats struct {
+	// Bucket zero is under 1us; bucket i covers [2^(i-1),2^i)us, with overflow in 31.
+	DemandDurationBuckets [32]int64
+	JoinDurationBuckets   [32]int64
 	ObservedDemandPages   int64
 	ObservedDemandWindows int64
 	ObservationStartedAt  time.Time

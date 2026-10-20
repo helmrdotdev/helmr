@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"net"
 	"os"
 	"runtime"
@@ -69,6 +70,8 @@ type memoryPager struct {
 	closeOnce                sync.Once
 	closeErr                 error
 	recordPhase              func(vm.Phase)
+	demandDurationBuckets    [32]atomic.Int64
+	joinDurationBuckets      [32]atomic.Int64
 	faultCount               atomic.Int64
 	chunkCount               atomic.Int64
 	demandLoads              atomic.Int64
@@ -291,6 +294,14 @@ func (p *memoryPager) WaitHydration(ctx context.Context) (result error) {
 	if p == nil {
 		return nil
 	}
+	select {
+	case <-p.done:
+		if err := p.failure(); err != nil {
+			return err
+		}
+		return p.ctx.Err()
+	default:
+	}
 	started := time.Now()
 	defer func() {
 		reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration_wait", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: func() string {
@@ -411,6 +422,7 @@ func (p *memoryPager) serveFaults() {
 			observation := vm.MemoryFaultObservation{Window: fault.chunk, ReceivedNs: int64(fault.received.Sub(p.started)), StartedNs: int64(started.Sub(p.started))}
 			err := p.loadChunkFor(ctx, fault.chunk, true, &observation)
 			observation.FinishedNs = int64(time.Since(p.started))
+			p.demandDurationBuckets[min(31, bits.Len64(uint64(max(0, observation.FinishedNs-observation.StartedNs)/1000)))].Add(1)
 			observation.ErrorClass = vm.RuntimeErrorClass(err)
 			if observation.FinishedNs-observation.StartedNs >= int64(time.Millisecond) {
 				p.mu.Lock()
@@ -475,6 +487,7 @@ func (p *memoryPager) loadChunkFor(ctx context.Context, ordinal int64, demand bo
 			}
 			if demand {
 				elapsed := int64(time.Since(waitStarted))
+				p.joinDurationBuckets[min(31, bits.Len64(uint64(max(0, elapsed)/1000)))].Add(1)
 				if background {
 					p.joinBackgroundNanos.Add(elapsed)
 					observation.JoinBackgroundNs += elapsed
@@ -615,6 +628,10 @@ func (p *memoryPager) stats() *vm.MemoryRestoreStats {
 		FaultQueueMs: p.faultQueueNanos.Load() / int64(time.Millisecond), FaultServiceMs: p.faultServiceNanos.Load() / int64(time.Millisecond),
 		DemandSourceReadMs: p.demandReadNanos.Load() / int64(time.Millisecond), BackgroundSourceReadMs: p.backgroundReadNanos.Load() / int64(time.Millisecond), DemandPopulateMs: p.demandPopulateNanos.Load() / int64(time.Millisecond), BackgroundPopulateMs: p.backgroundPopulateNanos.Load() / int64(time.Millisecond),
 		FaultObservations: observations, DroppedFaultObservations: dropped,
+	}
+	for i := range p.demandDurationBuckets {
+		stats.DemandDurationBuckets[i] = p.demandDurationBuckets[i].Load()
+		stats.JoinDurationBuckets[i] = p.joinDurationBuckets[i].Load()
 	}
 	stats.MemoryReadStats = p.source.MemoryReadStats()
 	return stats

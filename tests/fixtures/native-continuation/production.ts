@@ -89,7 +89,7 @@ function native(definition: typeof nativeCodex) {
       }
       const handlerMonotonicNs = process.hrtime.bigint().toString()
       const performanceKind = typeof input === "string" && input.startsWith("performance:") ? input.slice("performance:".length) : undefined
-      const diagnosticPhase = (phase: string) => { if (performanceKind) console.error(JSON.stringify({event:"native.performance.handler_phase",provider:definition.id,turnId:turn.id,sequence:turn.sequence,phase,monotonicNs:process.hrtime.bigint().toString(),handlerMonotonicNs})) }
+      const diagnosticPhase = (phase: string) => { if (performanceKind) console.error(JSON.stringify({event:"native.performance.handler_phase",provider:definition.id,turnId:turn.id,sequence:turn.sequence,phase,wallMs:Date.now(),monotonicNs:process.hrtime.bigint().toString(),handlerMonotonicNs})) }
       diagnosticPhase("entry")
       if (performanceKind) {
         assert(["no-op", "edit-test", "dependencies"].includes(performanceKind))
@@ -251,14 +251,15 @@ export const peer = agent({
     let previousProgressDelivery: { startedNs: string; stateWrittenNs: string; completedNs: string } | undefined
     while (!released) {
       turn.signal.throwIfAborted()
-      let io: { bytes: number; writeReadMs: number; observedAt: string } | undefined
+      let io: { bytes: number; writeReadMs: number; observedAt: string; startedNs: string; completedNs: string } | undefined
       if (performanceProbe) {
         const data = Buffer.alloc(32 * 1024, state.count % 256)
         const started = performance.now()
+        const startedNs = process.hrtime.bigint().toString()
         const path = `/workspace/peer-io-${session.id}`
         await writeFile(path, data)
         assert.deepEqual(await readFile(path), data)
-        io = { bytes: data.length * 2, writeReadMs: performance.now() - started, observedAt: new Date().toISOString() }
+        io = { startedNs, completedNs: process.hrtime.bigint().toString(), bytes: data.length * 2, writeReadMs: performance.now() - started, observedAt: new Date().toISOString() }
       }
       const progress = { nonce: state.nonce, count: ++state.count, pid: process.pid, ...(io ? { io, previousProgressDelivery } : {}), ...(preparedWork ? { preparedWork } : {}),
         ...(state.secrets ? { secretChecks: state.secrets.checks } : {}),

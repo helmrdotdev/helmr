@@ -654,7 +654,7 @@ func (local *Artifact) LinkInto(
 	// ownership before exposing it, including transient same-owner copies.
 	syncStarted := time.Now()
 	syncErr := local.upload.Sync()
-	slog.Info("Local artifact link sync", "digest", local.descriptor.Digest, "duration_ms", float64(time.Since(syncStarted))/float64(time.Millisecond), "failed", syncErr != nil)
+	slog.Info("Local artifact link sync", "started_at", syncStarted.UTC().Format(time.RFC3339Nano), "directory", directory, "name", name, "digest", local.descriptor.Digest, "duration_ms", float64(time.Since(syncStarted))/float64(time.Millisecond), "failed", syncErr != nil)
 	if syncErr != nil {
 		return fmt.Errorf("sync local artifact copy before link: %w", syncErr)
 	}

@@ -77,12 +77,16 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	for i, object := range objects {
 		queuedAt := time.Now()
 		group.Go(func() error {
-			slog.Info("Computer restore staging admitted", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "queue_ms", float64(time.Since(queuedAt))/float64(time.Millisecond))
+			slog.Info("Computer restore staging admitted", "started_at", queuedAt.UTC().Format(time.RFC3339Nano), "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "queue_ms", float64(time.Since(queuedAt))/float64(time.Millisecond))
 			if err := stageCtx.Err(); err != nil {
 				stageErrors[i] = err
 				return err
 			}
 			if object.Role == "memory" {
+				started := time.Now()
+				defer func() {
+					slog.Info("Computer memory source opened", "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "started_at", started.UTC().Format(time.RFC3339Nano), "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
+				}()
 				descriptor := cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 				observed, err := o.machines.ComputerObjects.Stat(stageCtx, object.Digest)
 				if err != nil {
@@ -99,7 +103,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 			limit := map[string]int64{"vm_config": limits.config, "vm_state": limits.state, "memory": limits.memory, "scratch_disk": limits.scratch}[object.Role]
 			started := time.Now()
 			path, err := downloadCheckpointObject(stageCtx, o.machines.ComputerObjects, o.machines.CheckpointCipher, directory, m.CheckpointID.String(), object, limit)
-			slog.Info("Computer checkpoint object staged", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "duration_ms", time.Since(started).Milliseconds(), "error_class", vm.RuntimeErrorClass(err))
+			slog.Info("Computer checkpoint object staged", "started_at", started.UTC().Format(time.RFC3339Nano), "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "duration_ms", time.Since(started).Milliseconds(), "error_class", vm.RuntimeErrorClass(err))
 			stagedPaths[i], stageErrors[i] = path, err
 			return err
 		})

@@ -507,6 +507,10 @@ func (s *guestMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: s.topology.Computer.SizeBytes, MemoryBytes: s.cfg.MemoryMiB * (1 << 20), ScratchBytes: s.cfg.ScratchDiskMiB * (1 << 20), StateBytes: snapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, nil
 }
 
+func (s *guestMachine) MemoryRestoreDiagnostics() *vm.MemoryRestoreStats {
+	return s.memoryPager.stats()
+}
+
 func (s *guestMachine) PrepareCheckpoint(ctx context.Context) error {
 	return s.memoryPager.WaitHydration(ctx)
 }

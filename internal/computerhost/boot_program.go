@@ -57,14 +57,14 @@ func (p *PreparedMachines) restoreBootProgram(ctx context.Context, directory str
 		var err error
 		started := time.Now()
 		images.runtime, err = localcopy.ReadRuntime(ctx, p.ObjectCache.Reader("runtime", p.PlatformStore), directory, p.sessionRuntimeDescriptor(workerapi.CASObject(program.Runtime)))
-		slog.Info("Computer boot artifact staged", "role", "runtime", "digest", program.Runtime.Digest, "bytes", program.Runtime.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
+		slog.Info("Computer boot artifact staged", "started_at", started.UTC().Format(time.RFC3339Nano), "role", "runtime", "digest", program.Runtime.Digest, "bytes", program.Runtime.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
 		return err
 	})
 	group.Go(func() error {
 		var err error
 		started := time.Now()
 		images.artifact, err = localcopy.ReadProgram(ctx, p.ObjectCache.Reader("program", p.CAS), directory, sessionProgramDescriptor(workerapi.CASObject(program.Artifact)))
-		slog.Info("Computer boot artifact staged", "role", "program", "digest", program.Artifact.Digest, "bytes", program.Artifact.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
+		slog.Info("Computer boot artifact staged", "started_at", started.UTC().Format(time.RFC3339Nano), "role", "program", "digest", program.Artifact.Digest, "bytes", program.Artifact.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
 		return err
 	})
 	if err := group.Wait(); err != nil {

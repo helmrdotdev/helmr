@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -37,8 +39,10 @@ func (r cachedReader) Get(ctx context.Context, digest string) (io.ReadCloser, er
 		return nil, err
 	}
 	if body, _, ok := r.cache.open(r.namespace, digest); ok {
+		slog.Info("Object cache whole read", "observed_at", time.Now().UTC().Format(time.RFC3339Nano), "namespace", r.namespace, "digest", digest, "hit", true)
 		return cas.NewVerifyingReadCloser(cachedBody{contextReader{ctx, body}, body}, digest), nil
 	}
+	slog.Info("Object cache whole read", "observed_at", time.Now().UTC().Format(time.RFC3339Nano), "namespace", r.namespace, "digest", digest, "hit", false)
 	return r.fallback.Get(ctx, digest)
 }
 

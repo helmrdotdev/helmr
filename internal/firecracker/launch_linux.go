@@ -253,7 +253,9 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	computerDiskPath := ""
 	if topology.Computer != nil {
+		attachStarted := time.Now()
 		computerDiskPath, err = attachComputerDisk(ctx, topology.Computer, instanceDir, c.cfg.JailerUID, c.cfg.JailerGID)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_attach_computer_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(attachStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}
@@ -264,12 +266,14 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	}
 	readOnlyDrivePaths := map[string]string(nil)
 	if restoring && len(readOnlyDrives) != 0 {
+		drivesStarted := time.Now()
 		readOnlyDrivePaths, err = prepareRestoreReadOnlyDrivePaths(
 			instanceDir,
 			readOnlyDrives,
 			c.cfg.JailerUID,
 			c.cfg.JailerGID,
 		)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_prepare_read_only_drives", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(drivesStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}

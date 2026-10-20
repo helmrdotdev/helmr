@@ -8,7 +8,7 @@ import { createRequire } from "node:module"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-const diagnosticEntry = { monotonicNs: process.hrtime.bigint().toString(), runtimeUptimeMs: process.uptime() * 1000, usage: process.resourceUsage() }
+const diagnosticEntry = { wallMs: Date.now(), monotonicNs: process.hrtime.bigint().toString(), runtimeUptimeMs: process.uptime() * 1000, usage: process.resourceUsage() }
 
 const [kind, sequenceText, assetsArgument = "/opt/native-performance", preparedArgument] = process.argv.slice(2)
 assert(["no-op", "edit-test", "dependencies"].includes(kind))
@@ -83,7 +83,7 @@ if (kind === "no-op") {
 const operationMs = performance.now() - started
 const inventoryStarted = performance.now()
 const inventory = await footprint(preparedArgument === "prepared" ? "/workspace/prepared-repository" : root)
-const diagnosticReceipt = { monotonicNs: process.hrtime.bigint().toString(), runtimeUptimeMs: process.uptime() * 1000, usage: process.resourceUsage() }
+const diagnosticReceipt = { wallMs: Date.now(), monotonicNs: process.hrtime.bigint().toString(), runtimeUptimeMs: process.uptime() * 1000, usage: process.resourceUsage() }
 const result = { kind, sequence, diagnosticEntry, diagnosticReceipt, operationMs, inventoryMs: performance.now() - inventoryStarted, inventory, detail }
 await writeFile(resolve(`performance-result-${sequence}.json`), JSON.stringify(result))
 console.log(JSON.stringify(result))
