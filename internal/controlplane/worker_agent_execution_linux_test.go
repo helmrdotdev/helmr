@@ -727,6 +727,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	expectedTurns := 4
 	if healthyRAM {
 		expectedTurns = 8
+		if performanceCase {
+			expectedTurns = 12
+		}
 		if err := verifyNativeHealthyContinuation(ctx, database.Pool, env, result.Bytes(), input.Evidence, longIdle, keyMismatch); err != nil {
 			t.Fatal(err)
 		}
