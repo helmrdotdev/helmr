@@ -41,6 +41,7 @@ type PreparationSecrets struct {
 }
 
 type PreparationStart struct {
+	SeedOnly             bool                            `json:"seed_only"`
 	Program              RuntimeProgram                  `json:"program"`
 	TemplateDefinitionID string                          `json:"template_definition_id"`
 	SeedObject           CASObject                       `json:"seed_object"`

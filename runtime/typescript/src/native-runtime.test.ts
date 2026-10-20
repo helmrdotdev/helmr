@@ -18,8 +18,8 @@ function launch(agentId: string) {
   child.stderr.on("data", chunk => errors.push(Buffer.from(chunk)))
   child.stdout.resume()
   const control = child.stdio[3] as NodeJS.ReadableStream
-  function send(command: p.GuestCommand["command"], deliveryId = "") {
-    const body = toBinary(p.GuestCommandSchema, create(p.GuestCommandSchema, { identity, command, deliveryId }))
+  function send(command: p.GuestCommand["command"], deliveryId = "", controlSequence = 0n) {
+    const body = toBinary(p.GuestCommandSchema, create(p.GuestCommandSchema, { identity, command, deliveryId, controlSequence }))
     const header = Buffer.alloc(4); header.writeUInt32BE(body.length)
     child.stdin.write(Buffer.concat([header, body]))
   }
@@ -51,17 +51,17 @@ for (const agentId of ["deploy", "worker"]) {
       assert.notEqual(event.case, "failed", JSON.stringify(event))
       if (event.case === "ready") {
         assert.equal(ready, false); ready = true
-        f.send({ case: "dispatch", value: create(p.TurnDispatchSchema, { turnId: "turn", sequence: 1n, createdAt: "2026-10-09T00:00:00Z", inputJson: json(null), sourceJson: json({ kind: "api_key" as const }) }) }, "dispatch")
+        f.send({ case: "dispatch", value: create(p.TurnDispatchSchema, { turnId: "turn", sequence: 1n, createdAt: "2026-10-09T00:00:00Z", inputJson: json([{ type: "text", text: "run native fixture" }]), sourceJson: json({ kind: "api_key" as const }) }) }, "dispatch")
       } else if (event.case === "operation") {
         const operation = event.value
-        assert.ok(new Set<p.Operation_Method>([p.Operation_Method.CLOSE_PROCESSING, p.Operation_Method.CONFIRM_DRAIN, p.Operation_Method.FINALIZE]).has(operation.method), `unexpected operation ${operation.method}`)
+        assert.ok(new Set<p.Operation_Method>([p.Operation_Method.CLOSE_PROCESSING, p.Operation_Method.CONFIRM_DRAIN, p.Operation_Method.FINALIZE]).has(operation.method), `unexpected operation ${operation.method}: ${Buffer.from(operation.payloadJson).toString()}`)
         // The protocol fixture acknowledges finalization; it does not prove a
         // control-plane save or publication of the Computer's disk.
         const payload = JSON.parse(Buffer.from(operation.payloadJson).toString())
         const value = operation.method === p.Operation_Method.FINALIZE ? { status: "completed", result: payload.result } : null
         f.send({ case: "operationResult", value: create(p.OperationResultSchema, { requestId: operation.requestId, outcome: { case: "valueJson", value: json(value) } }) })
       } else if (event.case === "deliveryResult") {
-        assert.equal(event.value.outcome.case, "valueJson")
+        assert.equal(event.value.outcome.case, "valueJson", JSON.stringify(event.value))
         if (event.value.deliveryId === "dispatch") {
           assert.equal(completed++, 0)
           const outcome = JSON.parse(Buffer.from(event.value.outcome.value as Uint8Array).toString())
@@ -69,7 +69,7 @@ for (const agentId of ["deploy", "worker"]) {
           assert.deepEqual(outcome.result, agentId === "deploy"
             ? { asset: "installed", native: 42, same: true, worker: 42, fork: 42 }
             : { asset: "installed", same: true })
-          f.send({ case: "control", value: create(p.SessionControlSchema, { desired: "shutdown" }) }, "shutdown")
+          f.send({ case: "control", value: create(p.SessionControlSchema, { desired: "shutdown" }) }, "shutdown", 1n)
         } else { assert.equal(event.value.deliveryId, "shutdown"); shutdown = true }
       }
     }

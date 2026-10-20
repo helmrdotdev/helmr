@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -269,15 +270,34 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	if manifest.Program.Artifact != start.Spec.Program {
-		server.writeAllocationError(w, session.ErrConflict)
-		return
-	}
+	seedOnly := start.Spec.Program == (artifact.ProgramDescriptor{})
 	var computerID *definition.TemplateManifest
-	for _, d := range manifest.Program.Metadata.Definitions {
-		if d.Kind == definition.KindTemplate && d.DeclaredID == start.Spec.TemplateDefinitionID {
-			computerID = d.Template
-			break
+	var program workerapi.RuntimeProgram
+	if seedOnly {
+		runtime := start.Spec.Runtime
+		if runtime == nil || runtime.Digest != manifest.Runtime.Artifact.Digest || runtime.Architecture != manifest.Program.Metadata.Architecture || runtime.RuntimeContract != manifest.Program.Metadata.RuntimeContract {
+			server.writeAllocationError(w, session.ErrConflict)
+			return
+		}
+		computerID = start.Spec.Template
+		program = workerapi.RuntimeProgram{DeploymentID: start.DeploymentID.String(), Runtime: workerapi.CASObject{Digest: manifest.Runtime.Artifact.Digest, SizeBytes: manifest.Runtime.Artifact.SizeBytes, MediaType: manifest.Runtime.Artifact.MediaType}}
+	} else {
+		preparation, ok := manifest.Preparation(start.Spec.TemplateDefinitionID)
+		if !ok || preparation.Artifact != start.Spec.Program {
+			server.writeAllocationError(w, session.ErrConflict)
+			return
+		}
+		for _, d := range preparation.Metadata.Definitions {
+			if d.Kind == definition.KindTemplate && d.DeclaredID == start.Spec.TemplateDefinitionID {
+				computerID = d.Template
+				break
+			}
+		}
+		manifest.Program = preparation
+		program, err = runtimeProgram(start.DeploymentID.String(), manifest)
+		if err != nil {
+			server.writeAllocationError(w, err)
+			return
 		}
 	}
 	if computerID == nil {
@@ -295,15 +315,18 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
-	program, err := runtimeProgram(start.DeploymentID.String(), manifest)
-	if err != nil {
-		server.writeAllocationError(w, err)
-		return
-	}
 	err = computer.StartImageBuild(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.PreparationStart{Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computerID.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
+	if seedOnly {
+		// Conservatively retain registered binding versions for eligibility, without
+		// decrypting or delivering any Secret to the fixed qualification probe.
+		if _, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
+			server.writeAllocationError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, workerapi.PreparationStart{SeedOnly: seedOnly, Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computerID.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
 }

@@ -28,6 +28,13 @@ async function main(): Promise<void> {
     await bundleProgram({ root: args[0]!, config: inspectCanonicalConfig(JSON.parse(await readFile(args[1]!, "utf8"))), nodeVersion: args[2]!, output: args[3]! })
     return
   }
+  if (mode === "--bundle-template" && args.length === 5) {
+    if (args[2] !== process.versions.node) throw new Error("bundler Node version does not match the Runtime")
+    const template = JSON.parse(await readFile(args[4]!, "utf8"))
+    if (typeof template.sourcePath !== "string" || typeof template.exportName !== "string" || typeof template.throughAgent !== "boolean") throw new Error("invalid preparation entry")
+    await bundleProgram({ root: args[0]!, config: inspectCanonicalConfig(JSON.parse(await readFile(args[1]!, "utf8"))), nodeVersion: args[2]!, output: args[3]!, template })
+    return
+  }
   if (mode === "--install-runtime" && args.length === 0) { await installRuntimePackages(); return }
   if (mode === "--assemble" && args.length === 3) {
     await assembleRuntime({ bundle: args[0]!, installed: args[1]!, output: args[2]! })

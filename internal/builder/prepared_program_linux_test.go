@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -15,9 +16,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bundle"
 )
 
-// The opt-in fixture is the actual preparation graph's exported result, with no
-// Computer Image declarations. All compiler, Runtime and encoder inputs are the
-// release artifacts installed in the canonical builder environment.
+// The opt-in fixture is the actual preparation graph's exported result with
+// seed descriptors from its completed CLI bundle. Compiler, Runtime and encoder
+// inputs are release artifacts installed in the canonical builder environment.
 func TestPreparedProgramFinalization(t *testing.T) {
 	prepared := os.Getenv("HELMR_PREPARED_PROGRAM_FIXTURE")
 	if prepared == "" {
@@ -46,16 +47,23 @@ func TestPreparedProgramFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifest, err := bundle.Parse(read("/fixture-bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var previousDescriptor, previousObject []byte
 	for i := 0; i < 2; i++ {
 		work := t.TempDir()
 		result, err := BuildPreparedProgram(t.Context(), PreparedProgramInput{
 			PreparedDirectory: prepared, WorkDirectory: work, ProgramObjectPath: filepath.Join(work, "program.squashfs"),
 			SquashFSEncoder: "/opt/helmr/bin/mksquashfs", Compiler: compiler, Runtime: runtime, RuntimeMetadata: metadata,
-			ComputerSeeds: []bundle.ComputerSeed{},
+			ComputerSeeds: manifest.ComputerSeeds,
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(result.Program, manifest.Program) {
+			t.Fatal("finalized Program differs from CLI bundle")
 		}
 		file, err := os.Open(result.ObjectPath)
 		if err != nil {

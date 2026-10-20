@@ -142,6 +142,7 @@ func PreparationDockerfile() ([]byte, error) {
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
 		"--node", "/opt/helmr/runtime/bin/node", "--config", resolvedConfigPath,
 		"--bundle-manifest", "/workspace/bundle.json",
+		"--preparation-source", "/workspace/source", "--runtime-installed", "/workspace/installed",
 		"--program-compiler", "/nix/helmr/program-compiler.mjs",
 	})
 	if err != nil {
@@ -181,7 +182,7 @@ func PreparationDockerfile() ([]byte, error) {
 		"COPY --from=bundled --chown=0:0 /workspace/output/bundle/bundle.json /workspace/bundle.json",
 		"COPY --from="+ConfigContextName+" --chown=0:0 --chmod=0444 /config.json "+resolvedConfigPath,
 		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /workspace/project"]`,
-		"USER 65532:65532", "RUN --network=none "+canonicalToolMounts+analyze,
+		"USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/workspace/project,target=/workspace/source --mount=type=bind,from=runtime-installed,source=/workspace/project,target=/workspace/installed "+canonicalToolMounts+analyze,
 		"FROM scratch AS preparation",
 		"COPY --from=analyzed /workspace/output/prepared/ /",
 		"",

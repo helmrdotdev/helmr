@@ -130,6 +130,10 @@ func validateProgramSecretFilePath(value string) error {
 }
 
 func managedProgramNodeFlags(runtimeRoot string) ([]string, error) {
+	return managedNodeFlags(runtimeRoot, false)
+}
+
+func managedNodeFlags(runtimeRoot string, qualification bool) ([]string, error) {
 	file, err := os.Open(filepath.Join(runtimeRoot, "helmr/runtime.json"))
 	if err != nil {
 		return nil, fmt.Errorf("open managed Runtime metadata: %w", err)
@@ -145,6 +149,9 @@ func managedProgramNodeFlags(runtimeRoot string) ([]string, error) {
 	metadata, err := artifact.ParseRuntimeMetadata(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse managed Runtime metadata: %w", err)
+	}
+	if qualification {
+		return artifact.NodeLanguageFlags(metadata.NodeVersion)
 	}
 	return append([]string(nil), metadata.ProgramNodeFlags...), nil
 }

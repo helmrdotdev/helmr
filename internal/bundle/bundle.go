@@ -26,19 +26,20 @@ const (
 
 	MaxBytes         = 16 << 20
 	MaxComputerSeeds = 256
-	maxObjects       = 257
+	maxObjects       = 513
 	maxObjectBytes   = int64(4 << 30)
 	maxTotalBytes    = int64(4 << 30)
 )
 
 type Manifest struct {
-	Contract      string                 `json:"contract"`
-	Platform      Platform               `json:"platform"`
-	Plan          Plan                   `json:"plan"`
-	Runtime       Runtime                `json:"runtime"`
-	Program       artifact.ProgramOutput `json:"program"`
-	ComputerSeeds []ComputerSeed         `json:"computerSeeds"`
-	Objects       []Object               `json:"objects"`
+	Contract      string                   `json:"contract"`
+	Platform      Platform                 `json:"platform"`
+	Plan          Plan                     `json:"plan"`
+	Runtime       Runtime                  `json:"runtime"`
+	Program       artifact.ProgramOutput   `json:"program"`
+	Preparations  []artifact.ProgramOutput `json:"preparations"`
+	ComputerSeeds []ComputerSeed           `json:"computerSeeds"`
+	Objects       []Object                 `json:"objects"`
 }
 
 // Admission is the exact Product release authority accepted by
@@ -223,6 +224,9 @@ func validate(bundle Manifest) error {
 		return errors.New("deployment bundle program Runtime digest does not match runtime")
 	}
 
+	if err := validatePreparations(bundle); err != nil {
+		return err
+	}
 	if err := validateBundleComputerSeeds(bundle); err != nil {
 		return err
 	}
@@ -335,6 +339,9 @@ func validateBundleObjectClosure(bundle Manifest) error {
 		MediaType: bundle.Program.Artifact.MediaType,
 	}
 	expected[program.Digest] = program
+	for _, preparation := range bundle.Preparations {
+		expected[preparation.Artifact.Digest] = Object(preparation.Artifact)
+	}
 	for _, image := range bundle.ComputerSeeds {
 		object := Object{
 			Digest:    image.Artifact.Digest,

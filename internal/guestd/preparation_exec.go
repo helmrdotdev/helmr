@@ -37,7 +37,10 @@ func (entry *computerMountEntry) executePreparation(ctx context.Context, start *
 	}
 	defer cleanupRuntime()
 	program := bootProgramMounts()
-	flags, err := managedProgramNodeFlags(program.Runtime)
+	if start.GetQualificationOnly() {
+		program.Artifact = ""
+	}
+	flags, err := managedNodeFlags(program.Runtime, start.GetQualificationOnly())
 	if err != nil {
 		return err, nil
 	}

@@ -101,8 +101,8 @@ func TestPreparationSeparatesCompilerInstallAndAnalysis(t *testing.T) {
 		t.Fatal("bundling input boundary is not restricted and read-only")
 	}
 	analyzed := strings.Join(stageNamed(t, stages, "analyzed").instructions, "\n")
-	if strings.Contains(analyzed, "from=helmr_installed") || !strings.Contains(analyzed, "/workspace/output/payload/") || !strings.Contains(analyzed, "--network=none "+canonicalToolMounts) {
-		t.Fatal("analysis must receive only payload and canonical tools")
+	if !strings.Contains(analyzed, "source=/workspace/project,target=/workspace/source") || !strings.Contains(analyzed, "/workspace/output/payload/") || !strings.Contains(analyzed, "--network=none") || !strings.Contains(analyzed, "--runtime-installed") {
+		t.Fatal("independent preparation requires read-only source, installed packages and canonical tools")
 	}
 	installed := strings.Join(stageNamed(t, stages, "runtime-installed").instructions, "\n")
 	if !strings.Contains(installed, "--install-runtime") || !strings.Contains(installed, "rm -rf /workspace/project") {

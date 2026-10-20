@@ -9,12 +9,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func TestPreparationIdentityIncludesReadableMetadataOutsidePayload(t *testing.T) {
+func TestSeedOnlyTemplateIgnoresSessionProgramMetadata(t *testing.T) {
 	root := t.TempDir()
 	image, _ := writeSeedFixture(t, root)
 	// Both artifacts have the same executable files, installed tree, config,
 	// Computer seed and locator. Only the Agent's generated policy metadata changes.
-	// Preparation can read that file, even when its own function is unchanged.
+	// A seed-only Template executes no callback and needs no Program artifact.
 	path, body, metadata := writeVerifiedProgramFixtureWithMetadata(t, t.TempDir(), nil, image)
 	path2, body2, metadata2 := writeVerifiedProgramFixtureWithMetadata(t, t.TempDir(), func(m *artifact.ProgramMetadata) {
 		duration := int64(1234)
@@ -48,8 +48,8 @@ func TestPreparationIdentityIncludesReadableMetadataOutsidePayload(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a == b {
-		t.Fatal("readable generated metadata omitted from preparation identity")
+	if a != b {
+		t.Fatal("seed-only identity depends on Session Program metadata")
 	}
 	if output.Metadata.Definitions[1].Kind != definition.KindTemplate {
 		t.Fatal("fixture Computer selection changed")

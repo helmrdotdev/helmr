@@ -8,8 +8,8 @@ import (
 )
 
 func templateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "template", Short: "Inspect deployed Templates."}
-	cmd.AddCommand(templateDefinitionListCommand(), templateDefinitionGetCommand())
+	cmd := &cobra.Command{Use: "template", Short: "Inspect and refresh deployed Templates."}
+	cmd.AddCommand(templateDefinitionListCommand(), templateDefinitionGetCommand(), templateRefreshCommand())
 	return cmd
 }
 

@@ -531,6 +531,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Patch("/projects/{project}/environments/{environment}/computers/{computerID}", s.updateComputerHTTP)
 		r.Get("/projects/{project}/environments/{environment}/templates", s.listTemplateDefinitions)
 		r.Get("/projects/{project}/environments/{environment}/templates/{template}", s.getTemplateDefinition)
+		r.Post("/projects/{project}/environments/{environment}/templates/{template}/refresh", s.refreshTemplate)
+		r.Get("/projects/{project}/environments/{environment}/templates/{template}/builds/{image_build}", s.getTemplateBuild)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -577,6 +579,8 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/triggers/{triggerID}", s.getTrigger)
 		r.Get("/templates", s.listTemplateDefinitions)
 		r.Get("/templates/{template}", s.getTemplateDefinition)
+		r.Post("/templates/{template}/refresh", s.refreshTemplate)
+		r.Get("/templates/{template}/builds/{image_build}", s.getTemplateBuild)
 
 		r.Get("/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)

@@ -86,10 +86,14 @@ func (s *programSnapshots) close() error {
 }
 
 func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
-	return p.prepareProgramArtifactsWithBoot(ctx, tempDir, instanceID, program, nil)
+	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, nil)
 }
 
 func (p *PreparedMachines) prepareProgramArtifactsWithBoot(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, boot *computercheckpoint.Program) (*programSnapshots, error) {
+	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, boot)
+}
+
+func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, runtimeOnly bool, boot *computercheckpoint.Program) (*programSnapshots, error) {
 	if strings.TrimSpace(program.DeploymentID) == "" {
 		return nil, errors.New("program deployment id is required")
 	}
@@ -122,16 +126,15 @@ func (p *PreparedMachines) prepareProgramArtifactsWithBoot(ctx context.Context, 
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})
-	group.Go(func() error {
-		if images.bootArtifact {
-			return nil
-		}
-		started := time.Now()
-		var err error
-		images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
-		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
-		return err
-	})
+	if !runtimeOnly && !images.bootArtifact {
+		group.Go(func() error {
+			started := time.Now()
+			var err error
+			images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
+			p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
+			return err
+		})
+	}
 	if err := group.Wait(); err != nil {
 		return nil, errors.Join(err, images.close())
 	}
@@ -168,7 +171,7 @@ func (p *PreparedMachines) prepareProgramArtifactsWithBoot(ctx context.Context, 
 			closeSnapshots(),
 		)
 	}
-	if images.bootArtifact {
+	if runtimeOnly || images.bootArtifact {
 		return images, nil
 	}
 	started = time.Now()

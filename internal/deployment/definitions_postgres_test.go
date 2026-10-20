@@ -27,7 +27,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return registerTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
+			return registerTemplateDefinitions(t.Context(), tx, f.env, deployment, output, artifacttest.PreparationOutputs(t, output)...)
 		})
 	}
 	if err := register(f.deployment, output); err != nil {
@@ -60,7 +60,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		if err := registerTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
+		if err := registerTemplateDefinitions(t.Context(), tx, f.env, third, output, artifacttest.PreparationOutputs(t, output)...); err != nil {
 			return err
 		}
 		return sentinel
@@ -81,7 +81,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output, artifacttest.PreparationOutputs(t, output)...)
 	})
 	if !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
@@ -106,7 +106,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output, artifacttest.PreparationOutputs(t, output)...)
 	})
 	if err == nil {
 		t.Fatal("registered conflicting seed projection")
@@ -128,7 +128,7 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return registerProgramDefinitions(t.Context(), tx, f.env, deployment, output)
+			return registerProgramDefinitions(t.Context(), tx, f.env, deployment, output, artifacttest.PreparationOutputs(t, output)...)
 		})
 	}
 	if err := register(f.deployment); err != nil {
@@ -177,7 +177,7 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return registerProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
+			return registerProgramDefinitions(t.Context(), tx, f.env, f.deployment, output, artifacttest.PreparationOutputs(t, output)...)
 		})
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
