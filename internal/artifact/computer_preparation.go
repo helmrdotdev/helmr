@@ -13,13 +13,20 @@ import (
 
 const ComputerPreparationSpecVersion = "helmr.computer-preparation.v1"
 
+type PreparationRuntime struct {
+	Architecture    definition.RuntimeArchitecture `json:"architecture"`
+	RuntimeContract string                         `json:"runtimeContract"`
+	Digest          string                         `json:"digest"`
+}
+
 // ComputerPreparationSpec binds an independently verified preparation Program.
-// Templates without a callback commit only their seed and settings, without
+// Templates without a callback commit their seed, settings and Runtime, without
 // an executable artifact. Actual Secret versions remain attempt evidence.
 type ComputerPreparationSpec struct {
 	APIVersion           string                       `json:"apiVersion"`
 	TemplateDefinitionID string                       `json:"templateDefinitionId"`
 	Program              ProgramDescriptor            `json:"program,omitzero"`
+	Runtime              *PreparationRuntime          `json:"runtime,omitempty"`
 	Template             *definition.TemplateManifest `json:"template,omitempty"`
 }
 
@@ -40,6 +47,7 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 			spec.Program = output.Artifact
 		} else {
 			spec.Template = d.Template
+			spec.Runtime = &PreparationRuntime{Architecture: output.Metadata.Architecture, RuntimeContract: output.Metadata.RuntimeContract, Digest: output.Metadata.RuntimeDigest}
 		}
 		specs = append(specs, spec)
 	}
@@ -51,6 +59,9 @@ func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, err
 		return nil, errors.New("invalid Computer preparation identity")
 	}
 	if spec.Program == (ProgramDescriptor{}) {
+		if spec.Runtime == nil || !validArchitecture(spec.Runtime.Architecture) || spec.Runtime.RuntimeContract != definition.RuntimeContract || !sha256sum.ValidDigest(spec.Runtime.Digest) {
+			return nil, errors.New("seed-only preparation requires its qualifying Runtime")
+		}
 		if spec.Template == nil || spec.Template.Prepare {
 			return nil, errors.New("seed-only preparation requires its Template without a callback")
 		}
@@ -58,7 +69,7 @@ func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, err
 			return nil, err
 		}
 	} else {
-		if spec.Template != nil {
+		if spec.Template != nil || spec.Runtime != nil {
 			return nil, errors.New("preparation Program and seed-only Template are mutually exclusive")
 		}
 		if err := validateProgramDescriptor(spec.Program, "preparation Program", ProgramArtifactMediaType, MaxProgramPhysicalBytes); err != nil {

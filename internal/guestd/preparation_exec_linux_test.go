@@ -82,7 +82,10 @@ export const repo={kind:'template',id:'repo',async prepare(build){
 			if mode == "qualification" {
 				request.Start = &computerv0.PreparationStart{QualificationOnly: true, LogLimits: request.Start.LogLimits}
 				entry.imageConfig.Env = []string{"NODE_OPTIONS=--require=/must-not-load", "LD_PRELOAD=/must-not-load"}
-				write(filepath.Join(program, "helmr/app/entry-0.mjs"), "throw new Error('qualification imported authored application')")
+				// A fixed Runtime probe must work with no Program filesystem at all.
+				if err := os.RemoveAll(program); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.Remove(filepath.Join(root, "workspace/prepared")); err != nil && !errors.Is(err, os.ErrNotExist) {
 					t.Fatal(err)
 				}

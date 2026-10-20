@@ -58,7 +58,7 @@ func (c *Client) WaitTemplateBuild(ctx context.Context, build api.TemplateBuildR
 		default:
 			return build, fmt.Errorf("unknown preparation state %q", build.Status)
 		}
-		if !build.Deadline.IsZero() && !time.Now().Before(build.Deadline) {
+		if build.ErrorCode == "deadline_exceeded" {
 			return build, fmt.Errorf("Template %s preparation deadline exceeded", build.TemplateID)
 		}
 		timer := time.NewTimer(time.Second)

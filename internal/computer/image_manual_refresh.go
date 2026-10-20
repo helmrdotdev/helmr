@@ -36,7 +36,7 @@ type ImageBuildState struct {
 // in one snapshot. An older eligible image cannot make a failed refresh ready.
 func ReadImageBuildState(ctx context.Context, q db.DBTX, env, id uuid.UUID, maxAge *int64) (ImageBuildState, error) {
 	result := ImageBuildState{Build: ImageBuild{EnvironmentID: env, ID: id}}
-	err := q.QueryRow(ctx, `SELECT p.image_spec_id,p.status,p.deadline_at,COALESCE(p.error_code,''),
+	err := q.QueryRow(ctx, `SELECT p.image_spec_id,p.status,p.deadline_at,CASE WHEN p.status IN ('queued','running') AND p.deadline_at<=clock_timestamp() THEN 'deadline_exceeded' ELSE COALESCE(p.error_code,'') END,
  EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id AND i.root_id IS NOT NULL
  AND p.status='succeeded' AND ($3::bigint IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=$3)
  AND `+usableImageSecretsSQL+`)

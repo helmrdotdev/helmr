@@ -163,9 +163,9 @@ TS
 }
 write_config "$project"
 cat >"$project/agents/hello.ts" <<TS
-import { agent, computer, image } from "@helmr/sdk"
-const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
-export const hello = agent({ id: "hello", computer: machine, turn: () => "hello" })
+import { agent, template, image } from "@helmr/sdk"
+const machine = template({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+export const hello = agent({ id: "hello", template: machine, turn: () => "hello" })
 TS
 
 write_package_json() {
@@ -262,7 +262,7 @@ TS
 cat >"$mutation_project/agents/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { agent, computer } from "@helmr/sdk"
+import { agent, template } from "@helmr/sdk"
 import { fixtureImage } from "./fixture-image"
 if (existsSync("/workspace/program")) {
   throw new Error("tenant code can observe the private Program assembly tree")
@@ -292,7 +292,7 @@ const child = spawn(process.execPath, ["-e", `
   }, 5)
 `], { detached: true, stdio: "ignore" })
 child.unref()
-export const hello = agent({ id: "hello", computer: computer({ id: "machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" } }), turn: () => "hello" })
+export const hello = agent({ id: "hello", template: template({ id: "machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" } }), turn: () => "hello" })
 TS
 "$tmp/helmr" build "$mutation_project" \
   --output "$tmp/mutation-bundle" \
@@ -316,12 +316,12 @@ cp -R "$project/vendor" "$computer_project/vendor"
 cp "$project/runtime-dependencies.json" "$computer_project/runtime-dependencies.json"
 cp "$project/prepare.sh" "$computer_project/prepare.sh"
 cat >"$computer_project/agents/hello.ts" <<TS
-import { agent, computer, image, triggers } from "@helmr/sdk"
-export const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+import { agent, template, image, triggers } from "@helmr/sdk"
+export const machine = template({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
 export const hello = agent({
   id: "hello",
-  triggers: [triggers.cron("daily", "0 9 * * *", { timezone: "UTC", input: null })],
-  computer: machine,
+  triggers: [triggers.cron("daily", "0 9 * * *", { timezone: "UTC", input: [{ type: "text", text: "hello" }] })],
+  template: machine,
   turn: () => "hello",
 })
 TS

@@ -14,7 +14,7 @@ import (
 func TestTemplateRefreshWaitKeepsOriginalIdentity(t *testing.T) {
 	for _, outcome := range []string{"ready", "failed", "expired", "changed-deployment", "changed-spec", "changed-build", "changed-template"} {
 		t.Run(outcome, func(t *testing.T) {
-			initial := api.TemplateBuildResponse{TemplateID: "repo", DeploymentID: testTriggerID, ImageSpecID: testTriggerID, ImageBuildID: testTriggerID, Status: "queued", Deadline: time.Now().Add(time.Minute)}
+			initial := api.TemplateBuildResponse{TemplateID: "repo", DeploymentID: testTriggerID, ImageSpecID: testTriggerID, ImageBuildID: testTriggerID, Status: "queued", Deadline: time.Now().Add(-time.Minute)}
 			posts, gets := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				result := initial
@@ -78,7 +78,7 @@ func TestTemplateRefreshWaitTerminalStatesNeverRequestWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.WaitTemplateBuild(t.Context(), api.TemplateBuildResponse{TemplateID: "repo", Status: state, Deadline: time.Now().Add(-time.Minute)}, EnvironmentScopeOptions{})
+			_, err = client.WaitTemplateBuild(t.Context(), api.TemplateBuildResponse{TemplateID: "repo", Status: state, ErrorCode: "deadline_exceeded", Deadline: time.Now().Add(time.Minute)}, EnvironmentScopeOptions{})
 			if err == nil {
 				t.Fatal("wait accepted unsuccessful build")
 			}

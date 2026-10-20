@@ -296,19 +296,27 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 }
 
 func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) {
-	for _, mode := range []string{"current", "changed Program", "changed bytes", "expiry during read", "seal during read"} {
+	for _, mode := range []string{"current", "seed-only", "changed Runtime", "changed Program", "changed bytes", "expiry during read", "seal during read"} {
 		t.Run(mode, func(t *testing.T) {
 			f, request := preparationTransportFixture(t)
-			raw, manifest := controlPlaneDeploymentBundle(t, true)
+			seedOnly := mode == "seed-only" || mode == "changed Runtime"
+			raw, manifest := controlPlaneDeploymentBundle(t, !seedOnly)
 			digest, err := bundle.Digest(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			specs, err := artifact.BuildComputerPreparationSpecs(manifest.Preparations[0])
+			input := manifest.Program
+			if !seedOnly {
+				input = manifest.Preparations[0]
+			}
+			specs, err := artifact.BuildComputerPreparationSpecs(input)
 			if err != nil || len(specs) != 1 {
 				t.Fatalf("specs: %v", err)
 			}
 			spec := specs[0]
+			if mode == "changed Runtime" {
+				spec.Runtime.Digest = "sha256:" + strings.Repeat("0", 64)
+			}
 			if mode == "changed Program" {
 				spec.Program.Digest = "sha256:" + strings.Repeat("0", 64)
 			}
@@ -335,7 +343,11 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			defer server.Close()
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
-			if mode == "current" {
+			if mode == "seed-only" {
+				if err != nil || !start.SeedOnly || start.Program.Artifact != (workerapi.CASObject{}) || start.Program.IndexDigest != "" || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest {
+					t.Fatalf("seed-only input: %+v %v", start, err)
+				}
+			} else if mode == "current" {
 				if err != nil || start.Program.Artifact.Digest != manifest.Preparations[0].Artifact.Digest || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest || start.TemplateDefinitionID != spec.TemplateDefinitionID || start.Seed.ArtifactDigest != manifest.ComputerSeeds[0].Artifact.Digest {
 					t.Fatalf("executable preparation input: %+v %v", start, err)
 				}
@@ -346,9 +358,78 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT started_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID).Scan(&started); err != nil {
 				t.Fatal(err)
 			}
-			if started != (mode == "current") {
+			if started != (mode == "current" || mode == "seed-only") {
 				t.Fatalf("start receipt recorded before valid executable delivery: started=%v mode=%s", started, mode)
 			}
 		})
+	}
+}
+
+func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
+	f, request := preparationTransportFixture(t)
+	raw, manifest := controlPlaneDeploymentBundle(t)
+	digest, err := bundle.Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs, err := artifact.BuildComputerPreparationSpecs(manifest.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specRaw, err := artifact.CanonicalComputerPreparationSpec(specs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
+	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID := pgvalue.MustUUIDValue(record.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secretID)
+	opener := &preparationSecretOpener{opener: secrets, after: func() { t.Error("seed-only preparation decrypted a Secret") }}
+	store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store; cfg.SecretDelivery = opener }))
+	defer server.Close()
+	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	start, err := client.PreparationStart(t.Context(), request)
+	if err != nil || !start.SeedOnly || start.Program.Artifact != (workerapi.CASObject{}) {
+		t.Fatalf("seed-only start: %+v %v", start, err)
+	}
+	readVersion := func() string {
+		t.Helper()
+		var version string
+		if err := f.Pool.QueryRow(t.Context(), `SELECT version_id::text FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2 AND secret_id=$3`, f.Environment, request.Identity.OwnerID, secretID).Scan(&version); err != nil {
+			t.Fatal(err)
+		}
+		return version
+	}
+	pinned := readVersion()
+	if _, err := secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PreparationStart(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := readVersion(); got != pinned {
+		t.Fatal("start replay changed pinned binding version")
+	}
+	var current bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT current_version_id::text=$3 FROM secrets WHERE environment_id=$1 AND id=$2`, f.Environment, secretID, pinned).Scan(&current); err != nil || current {
+		t.Fatalf("rotation did not invalidate binding version: %v", err)
+	}
+	if _, err := secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PreparationStart(t.Context(), request); err == nil {
+		t.Fatal("revoked binding allowed seed-only startup")
+	}
+	if got := readVersion(); got != pinned {
+		t.Fatal("revocation changed pinned binding version")
 	}
 }

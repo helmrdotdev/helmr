@@ -23,8 +23,10 @@ func (p *PreparedMachines) seedProgramArtifacts(ctx context.Context, images *pro
 	}
 	// These snapshots have been verified, but have not been linked into a VM.
 	// Each seed owns an independent inode; later LinkInto may change ownership.
-	if file, err := images.artifact.VerifierFile(); err == nil {
-		p.seedObject(ctx, "program", program, file)
+	if images.artifact != nil {
+		if file, err := images.artifact.VerifierFile(); err == nil {
+			p.seedObject(ctx, "program", program, file)
+		}
 	}
 	if file, descriptor, err := images.runtime.VerifierFile(); err == nil {
 		p.seedObject(ctx, "runtime", cas.Descriptor{Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType}, file)

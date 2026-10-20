@@ -81,6 +81,10 @@ func (s *programSnapshots) close() error {
 }
 
 func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
+	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false)
+}
+
+func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, runtimeOnly bool) (*programSnapshots, error) {
 	if strings.TrimSpace(program.DeploymentID) == "" {
 		return nil, errors.New("program deployment id is required")
 	}
@@ -100,13 +104,15 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})
-	group.Go(func() error {
-		started := time.Now()
-		var err error
-		images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
-		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
-		return err
-	})
+	if !runtimeOnly {
+		group.Go(func() error {
+			started := time.Now()
+			var err error
+			images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
+			p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
+			return err
+		})
+	}
 	if err := group.Wait(); err != nil {
 		return nil, errors.Join(err, images.close())
 	}
@@ -142,6 +148,9 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 			errors.New("managed runtime index does not match its descriptor"),
 			closeSnapshots(),
 		)
+	}
+	if runtimeOnly {
+		return images, nil
 	}
 	started = time.Now()
 	programMetadata, err := p.verifyProgram(ctx, programDescriptor, func() (artifact.ProgramMetadata, error) {

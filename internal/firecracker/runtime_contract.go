@@ -18,28 +18,29 @@ const (
 
 	defaultKernelArgs = "console=ttyS0 loglevel=5 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
 
-	apiSocketName             = "api.sock"
-	vsockSocketName           = "vsock.sock"
-	scratchDiskName           = "scratch.ext4"
-	restoreMemoryName         = "memory.mem"
-	snapshotMemorySuffix      = ".mem"
-	snapshotStateSuffix       = ".vmstate"
-	snapshotScratchPackSuffix = ".scratch.filepack"
-	snapshotMemoryPackSuffix  = ".memory.filepack"
-	readOnlyDriveSuffix       = ".squashfs"
-	rootfsDriveID             = "rootfs"
-	scratchDriveID            = "scratch"
-	computerDriveID           = "computer"
-	guestVsockID              = "guest-vsock"
-	guestNetworkInterfaceID   = "1"
-	defaultRuntimeProfileName = "default"
-	runtimeComputerKernelFlag = "helmr.computer=1"
-	runtimeProgramKernelFlag  = "helmr.program=1"
-	runtimeIPKernelParameter  = "helmr.ip"
-	snapshotBackend           = "firecracker"
-	snapshotCreateType        = "Full"
-	snapshotMemoryBackend     = "File"
-	machineHugePages          = "None"
+	apiSocketName                  = "api.sock"
+	vsockSocketName                = "vsock.sock"
+	scratchDiskName                = "scratch.ext4"
+	restoreMemoryName              = "memory.mem"
+	snapshotMemorySuffix           = ".mem"
+	snapshotStateSuffix            = ".vmstate"
+	snapshotScratchPackSuffix      = ".scratch.filepack"
+	snapshotMemoryPackSuffix       = ".memory.filepack"
+	readOnlyDriveSuffix            = ".squashfs"
+	rootfsDriveID                  = "rootfs"
+	scratchDriveID                 = "scratch"
+	computerDriveID                = "computer"
+	guestVsockID                   = "guest-vsock"
+	guestNetworkInterfaceID        = "1"
+	defaultRuntimeProfileName      = "default"
+	runtimeComputerKernelFlag      = "helmr.computer=1"
+	runtimeProgramKernelFlag       = "helmr.program=1"
+	runtimeQualificationKernelFlag = "helmr.runtime=1"
+	runtimeIPKernelParameter       = "helmr.ip"
+	snapshotBackend                = "firecracker"
+	snapshotCreateType             = "Full"
+	snapshotMemoryBackend          = "File"
+	machineHugePages               = "None"
 	// Long Sync block requests can delay VMM control traffic and execution grants.
 	// Revisit an official threaded block-device release after qualifying control
 	// responsiveness, flush durability and RAM snapshot/restore together.
@@ -181,7 +182,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			Profiles: []VMRuntimeBootProfile{
 				{Name: defaultRuntimeProfileName, KernelArgs: defaultKernelArgs},
 			},
-			DynamicFlags: []string{runtimeComputerKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
+			DynamicFlags: []string{runtimeComputerKernelFlag, runtimeProgramKernelFlag, runtimeQualificationKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
 		},
 		Devices: VMRuntimeDeviceDescriptor{
 			BlockIOEngine: blockIOEngine, WritableBlockCache: writableBlockCache,

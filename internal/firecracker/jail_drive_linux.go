@@ -159,6 +159,14 @@ func validateProgramDriveIdentities(drives []vm.ReadOnlyDrive) error {
 	if !isProgramDriveSet(drives) {
 		return errors.New("managed program requires the complete read-only drive set")
 	}
+	return validateExecutableDriveIdentities(drives)
+}
+
+func isRuntimeDriveSet(drives []vm.ReadOnlyDrive) bool {
+	return len(drives) == 1 && drives[0].ID == vm.ProgramRuntimeDrive
+}
+
+func validateExecutableDriveIdentities(drives []vm.ReadOnlyDrive) error {
 	for _, drive := range drives {
 		if _, err := cas.ObjectKey("", drive.Digest); err != nil {
 			return fmt.Errorf("managed program drive %q digest: %w", drive.ID, err)

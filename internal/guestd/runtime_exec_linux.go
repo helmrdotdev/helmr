@@ -367,7 +367,12 @@ func mountManagedProgram(imageRoot string, program programMounts) error {
 		target string
 	}{
 		{source: program.Runtime, target: "opt/helmr/runtime"},
-		{source: program.Artifact, target: "opt/helmr/program"},
+	}
+	if program.Artifact != "" {
+		mounts = append(mounts, struct {
+			source string
+			target string
+		}{program.Artifact, "opt/helmr/program"})
 	}
 	for _, mount := range mounts {
 		info, err := os.Stat(mount.source)

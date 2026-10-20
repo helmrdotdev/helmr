@@ -24,7 +24,7 @@ type preparationQualification struct {
 func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, start workerapi.PreparationStart, shape workerapi.AllocationShape, root disk.VersionRoot, key workerapi.ComputerKeyMaterial) error {
 	o.failureCode = "preparation_qualification_unavailable"
 	// Release captured raw/staging bytes before allocating the clone; preserve
-	// the already verified Runtime and Program snapshots for the fixed probe.
+	// the already verified Runtime snapshot for the fixed probe.
 	if err := o.capture.Close(); err != nil {
 		return err
 	}
@@ -72,12 +72,18 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 	if err != nil {
 		return err
 	}
+	var runtimeDrives []vm.ReadOnlyDrive
+	for _, drive := range o.stage.drives {
+		if drive.ID == vm.ProgramRuntimeDrive {
+			runtimeDrives = append(runtimeDrives, drive)
+		}
+	}
 	o.qualification.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{
 		ID: identity.AllocationID, OwnerKind: vm.OwnerInstance, Purpose: vm.MaterializePreparationQualification,
 		Binding:      vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: shape.VMPlatformID},
 		RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version,
 		Resources:   vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1},
-		VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives,
+		VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: runtimeDrives,
 		Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: identity.OwnerID, Device: device, VersionID: version, SizeBytes: root.LogicalBytes}},
 	})
 	if err != nil {

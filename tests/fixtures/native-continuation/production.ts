@@ -43,6 +43,13 @@ export const workspace = template({
   },
 })
 
+// Seed-only admission must qualify its Runtime without an authored Program.
+export const seedWorkspace = template({
+  id: "native-seed-only",
+  image: baseImage.run(["mkdir", "-p", "/workspace"]),
+  resources: { cpu: 1, memory: "1GiB", disk: "4GiB" },
+})
+
 function native(definition: typeof nativeCodex) {
   return agent({
     id: definition.id,

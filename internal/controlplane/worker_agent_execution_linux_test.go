@@ -451,6 +451,47 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
  AND i.publication_evidence LIKE '%isolated clone%')`, env).Scan(&qualified); err != nil || !qualified {
 		t.Fatalf("promotion did not qualify the prepared environment: %v", err)
 	}
+	// Exercise cold seed-only admission through image publication and pinning.
+	seedComputer, err := deploymentClient.CreateComputer(ctx, api.CreateComputerRequest{Template: "native-seed-only", IdempotencyKey: "seed-only-proof"}, client.ComputerScopeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCtx, stopSeed := context.WithTimeout(ctx, 2*time.Minute)
+	defer stopSeed()
+	seedTick := time.NewTicker(200 * time.Millisecond)
+	defer seedTick.Stop()
+	for {
+		var pinned bool
+		var evidence string
+		err := database.Pool.QueryRow(seedCtx, `SELECT c.initial_root_id IS NOT NULL AND c.image_id=i.id AND c.initial_root_id=i.root_id AND p.status='succeeded',COALESCE(i.publication_evidence,'')
+   FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
+   JOIN images i ON (i.environment_id,i.image_build_id)=(p.environment_id,p.id)
+   WHERE c.environment_id=$1 AND c.id=$2`, env, seedComputer.ID).Scan(&pinned, &evidence)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		if pinned {
+			if !strings.Contains(evidence, "isolated clone") {
+				t.Fatal("seed-only image skipped qualification")
+			}
+			proof, err := json.Marshal(map[string]any{"computer_id": seedComputer.ID, "pinned": true, "evidence": evidence})
+			if err == nil {
+				err = os.WriteFile(filepath.Join(input.Evidence, "seed-only-preparation.json"), proof, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		select {
+		case <-seedCtx.Done():
+			t.Fatal("seed-only preparation did not publish and pin: ", seedCtx.Err())
+		case <-seedTick.C:
+		}
+	}
+	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, client.ComputerScopeOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	driverCtx, stopDriver := context.WithCancelCause(ctx)
 	defer stopDriver(nil)
 	checkpointObservations := filepath.Join(input.Evidence, "checkpoint-observations.json")

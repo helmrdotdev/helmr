@@ -99,3 +99,28 @@ func TestSeedOnlyPreparationSpecHasNoProgram(t *testing.T) {
 		t.Fatal("seed-only identity changed with Session bytes")
 	}
 }
+
+func TestSeedOnlyPreparationRuntimeInvalidatesIdentity(t *testing.T) {
+	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("session"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
+	specs, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := artifact.ComputerPreparationSpecDigest(specs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Metadata.RuntimeDigest = artifacttest.Digest("new-runtime")
+	changed, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := artifact.ComputerPreparationSpecDigest(changed[0])
+	if err != nil || before == after {
+		t.Fatalf("Runtime did not invalidate seed identity: %v", err)
+	}
+	changed[0].Runtime = nil
+	if _, err := artifact.CanonicalComputerPreparationSpec(changed[0]); err == nil {
+		t.Fatal("missing qualifying Runtime accepted")
+	}
+}

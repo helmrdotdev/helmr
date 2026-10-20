@@ -47,11 +47,12 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 		return err
 	}
-	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
+	runtimeOnly := request.Purpose == vm.MaterializePreparationQualification && isRuntimeDriveSet(request.ReadOnlyDrives)
+	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) && !runtimeOnly {
 		return errors.New("runtime read-only drives must be the complete program drive set")
 	}
-	if isProgramDriveSet(request.ReadOnlyDrives) {
-		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
+	if isProgramDriveSet(request.ReadOnlyDrives) || runtimeOnly {
+		if err := validateExecutableDriveIdentities(request.ReadOnlyDrives); err != nil {
 			return err
 		}
 	}
@@ -115,6 +116,8 @@ func runtimeKernelArgs(
 	}
 	if isProgramDriveSet(readOnlyDrives) {
 		args += " " + runtimeProgramKernelFlag
+	} else if isRuntimeDriveSet(readOnlyDrives) {
+		args += " " + runtimeQualificationKernelFlag
 	}
 	return args
 }
