@@ -155,6 +155,13 @@ func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, en
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return err
 		}
+		var manifestRecord map[string]json.RawMessage
+		if err := json.Unmarshal(manifestBytes, &manifestRecord); err != nil {
+			return err
+		}
+		if bootProgram, ok := manifestRecord["boot_program"]; ok {
+			record["bootProgram"] = bootProgram
+		}
 		record["runtimeObjects"], err = json.Marshal(cycle.Checkpoint.RuntimeObjects)
 		if err != nil {
 			return err
