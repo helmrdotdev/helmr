@@ -47,7 +47,7 @@ export const workspace = template({
 export const seedWorkspace = template({
   id: "native-seed-only",
   image: baseImage.run(["mkdir", "-p", "/workspace"]),
-  resources: { cpu: 1, memory: "1GiB", disk: "4GiB" },
+  resources: { cpu: 1, memory: "1GiB", disk: "32GiB" },
 })
 
 function native(definition: typeof nativeCodex) {
