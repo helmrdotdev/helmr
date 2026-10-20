@@ -54,7 +54,7 @@ var tableOwners = map[string]string{
 	"checkpoint_processes": "internal/computer", "checkpoint_objects": "internal/computer", "checkpoints": "internal/computer",
 	"disk_encryption_keys": "internal/computer", "disk_roots": "internal/computer", "images": "internal/computer",
 	"computer_leases": "internal/computer", "disk_object_edges": "internal/computer", "disk_object_keys": "internal/computer",
-	"disk_object_pins": "internal/computer", "disk_objects": "internal/computer", "image_builds": "internal/computer",
+	"disk_object_pins": "internal/computer", "disk_objects": "internal/computer", "image_builds": "internal/computer", "boot_seed_builds": "internal/computer", "boot_seed_objects": "internal/computer",
 	"computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
 	"secret_exposures": "internal/computer",
 	// Sessions and Turns

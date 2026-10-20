@@ -19,6 +19,21 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
  JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
  WHERE preparation.status='queued' AND preparation.worker_host_id IS NULL AND preparation.deadline_at>clock_timestamp()
  ) OR EXISTS(
+ SELECT 1 FROM boot_seed_builds b
+ JOIN images i ON (i.environment_id,i.id)=(b.environment_id,b.image_id)
+ JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
+ JOIN environments e ON e.id=b.environment_id
+ JOIN projects project ON project.id=e.project_id
+ JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
+ WHERE b.status='queued' AND b.worker_host_id IS NULL AND i.root_id IS NOT NULL AND p.status='succeeded'
+ AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
+   SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
+     AND s.status='active' AND s.current_version_id=x.version_id))
+ AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))
+ ) OR EXISTS(
  SELECT 1 FROM sessions s
  JOIN environments e ON e.id=s.environment_id
  JOIN projects project ON project.id=e.project_id

@@ -164,7 +164,7 @@ func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T)
 	if err != nil || got.Status != "active" || got.InitializedAt == nil {
 		t.Fatalf("missing ready receipt: %+v %v", got, err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
@@ -212,7 +212,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 		t.Fatalf("source still owns VM: %v", err)
 	}
 	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET per_vm_guest_ephemeral_disk_bytes=536870912 WHERE id=$1`, f.worker)
@@ -240,7 +240,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 3, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("target duplicate allocated: %v", err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 3, f.worker)
@@ -255,7 +255,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := a.DeliverLease(t.Context(), *f.host(), target); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("revoked restore delivery not terminal: %v", err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), target, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), target, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -372,7 +372,7 @@ func TestAllocationComputerDeliveryDistinguishesPauseFromDrain(t *testing.T) {
 	if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrAllocationClosed) {
 		t.Fatalf("drained delivery not terminal: %v", err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -391,7 +391,7 @@ func TestAllocationRestoreDiscoversCompatibleNonPrimaryPool(t *testing.T) {
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id IN ($1,$5);
  UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env, primary, target)
 	f.enqueue(t, "restore-demand")
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: cp.manifest.InstanceID, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: cp.manifest.InstanceID, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
@@ -471,7 +471,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, dispatch.ErrAllocationClosed) {
 				t.Fatalf("revoked ready not terminal: %v", err)
 			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -577,7 +577,7 @@ func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
 	if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }

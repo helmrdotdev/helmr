@@ -222,6 +222,21 @@ func (c *checkpointCapture) CompleteAbort(ctx context.Context) error {
 	if closed || s.checkpointHold != c || !c.resumed {
 		return errors.New("checkpoint guest control has not resumed")
 	}
+	// The continuation owner joined every artifact reader before this call.
+	// Disk custody was transferred to its serial save owner; release only files.
+	if c.delivered && c.snapshotErr == nil {
+		paths := []string{c.artifact.VMState.Path, c.artifact.ScratchDisk.Path}
+		for _, file := range c.artifact.Memory {
+			paths = append(paths, file.Path)
+		}
+		for _, path := range paths {
+			if path != "" {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
+		}
+	}
 	c.completed = true
 	s.checkpointHold = nil
 	s.computerCaptureBlocked = false

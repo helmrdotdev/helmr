@@ -27,6 +27,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  const nativeStops: Record<string, unknown>[] = []
  const clientTimings = new Map<string, { provider: string; phase: string; sessionId: string; turnId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number; runningObservedMS?: number; firstOutputObservedMS?: number; firstOutputSequence?: number; settlementObservedMS?: number }>()
  const nativeEvents: (SessionEvent & { clientObservedMS: number })[] = []
+ const approvalTimings: { sessionId: string; turnId: string; askId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number }[] = []
  const eventCursors = new Map<string, number>()
  function admitted(provider: string, phase: string, turn: TurnRef, started: number, at: string) {
   if (options.performanceKind) clientTimings.set(turn.id, { provider, phase, sessionId: turn.sessionId, turnId: turn.id, requestStartedAt: at, requestStartedMS: started, ackMS: performance.now() - started })
@@ -161,7 +162,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       assert.equal(value["toolName"], "mcp__helmr__enqueue")
       assert.deepEqual(value["input"], { sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}` })
      }
+     const answerStartedAt = new Date().toISOString()
+     const answerStartedMS = performance.now()
      await turn.asks.answer(ask.id, { answer: { selectedIds: ["allow"] }, answerId: `healthy-${ask.id}` }, { signal })
+     if (options.performanceKind) approvalTimings.push({ sessionId: turn.sessionId, turnId: turn.id, askId: ask.id, requestStartedAt: answerStartedAt, requestStartedMS: answerStartedMS, ackMS: performance.now() - answerStartedMS })
      answered.add(ask.id)
     }
     cursor = page.nextCursor
@@ -177,6 +181,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    await observeEvents(client.sessions.ref(turn.sessionId))
    if (options.performanceKind) {
     assert(timing && timing.runningObservedMS !== undefined && timing.firstOutputObservedMS !== undefined, "native client timing is incomplete")
+    assert.equal(approvalTimings.filter(row => row.turnId === turn.id).length, provider === "claude" ? 1 : 0, "native approval timing is incomplete")
    }
    if (options.performanceKind) {
     const prior = turns.findLast(item => item.sessionId === state.sessionId)
@@ -502,7 +507,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)
   }
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, preparedWork, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
+  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, preparedWork, clientTimings: [...clientTimings.values()], nativeEvents, approvalTimings } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {
   const cleanupSignal = AbortSignal.timeout(10_000)
   const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(sessions.map(session => session.cancel(undefined, { signal: cleanupSignal })))

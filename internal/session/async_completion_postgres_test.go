@@ -137,7 +137,7 @@ func TestComputerRecoveryGapHoldsIdleSessionsAndPreservesIndependentHolds(t *tes
 	turn, save := active.finalize(t, "uncovered")
 	active.enqueue(t, "followup")
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,7 +193,7 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	}
 	// Descriptive JSON cannot change the identity of an acknowledged loss.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET recovery_gap=recovery_gap || jsonb_build_object('computerId',$2::uuid::text,'leaseEpoch',0) WHERE id=$1`, hold, uuid.NewV7())
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT
@@ -244,7 +244,7 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT
@@ -272,7 +272,7 @@ func TestComputerNoGapRecoveryCreatesNewLeaseAndProcessWithoutReplay(t *testing.
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var holds int
@@ -365,7 +365,7 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 			}
 			// Expiry is still physically unfenced, and capacity may be absent.
 			check()
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			check()
@@ -406,7 +406,7 @@ func TestComputerLossInterruptionCauseOnlyDescribesRunningLostTurn(t *testing.T)
 			if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var raw []byte
@@ -447,7 +447,7 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	lost, failed := f.finalize(t, "lost-first-result")
 	f.enqueue(t, "continue-after-acknowledgment")
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -554,7 +554,7 @@ func TestRecoveryDoesNotSubstituteInitialRootForUnavailablePublishedHead(t *test
 		t.Fatal(err)
 	}
 	f.enqueue(t, "pending")
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET root_id=NULL,payload_retired_at=clock_timestamp() WHERE id=$1`, save.ID)

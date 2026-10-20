@@ -142,7 +142,22 @@ func (c *CheckpointEncryptor) encryptMemory(ctx context.Context, input io.Reader
 	return sha256sum.DigestBytes(header), nil
 }
 
+// Each physical restore owns four reusable jobs (three faults and one hydration,
+// or four eager readers). The channel bounds active work without a global pool.
+// DecodeAll with concurrency one has no asynchronous reader lifetime.
+type memoryReadWorkspace struct {
+	sealed  []byte
+	decoder memoryWindowDecoder
+}
+
+func (w *memoryReadWorkspace) clear() {
+	clear(w.sealed)
+	clear(w.decoder.scratch[:cap(w.decoder.scratch)])
+}
+
 type checkpointMemorySource struct {
+	workspaces            chan *memoryReadWorkspace
+	streamBuffer          chan []byte
 	ranges                blockformat.RangeSource
 	descriptor            cas.Descriptor
 	size                  int64
@@ -235,7 +250,29 @@ func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c
 	if offset != tail {
 		return nil, invalidMemory(errors.New("memory payload has unindexed bytes"))
 	}
+	s.streamBuffer = make(chan []byte, 1)
+	s.streamBuffer <- nil
+	s.workspaces = make(chan *memoryReadWorkspace, 4)
+	for range cap(s.workspaces) {
+		s.workspaces <- &memoryReadWorkspace{}
+	}
 	return s, nil
+}
+
+func (s *checkpointMemorySource) workspace(ctx context.Context) (*memoryReadWorkspace, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case w := <-s.workspaces:
+		if w.sealed == nil {
+			w.sealed = make([]byte, vm.MemoryReadBytes+(vm.MemoryReadBytes/memoryChunkSize)*tagSize)
+		}
+		return w, nil
+	}
+}
+func (s *checkpointMemorySource) releaseWorkspace(w *memoryReadWorkspace) {
+	w.clear()
+	s.workspaces <- w
 }
 
 func (s *checkpointMemorySource) Size() int64 { return s.size }
@@ -257,32 +294,24 @@ func (s *checkpointMemorySource) ReadAt(ctx context.Context, dst []byte, offset 
 	lastEntry := s.index[last*memoryIndexEntrySize : (last+1)*memoryIndexEntrySize]
 	start := int64(binary.BigEndian.Uint64(firstEntry))
 	end := int64(binary.BigEndian.Uint64(lastEntry)) + int64(binary.BigEndian.Uint32(lastEntry[8:]))
-	var sealed []byte
-	if end > start {
-		var err error
-		sealed, err = s.readRange(ctx, start, end-start)
-		if err != nil {
+	w, err := s.workspace(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer s.releaseWorkspace(w)
+	sealed := w.sealed[:end-start]
+	if len(sealed) > 0 {
+		if err := s.readRangeInto(ctx, start, sealed); err != nil {
 			return 0, err
 		}
-		defer clear(sealed)
 	}
-
-	var decoder memoryWindowDecoder
-	defer decoder.close()
-	return s.decodeWindow(ctx, dst, offset, sealed, &decoder)
+	return s.decodeWindow(ctx, dst, offset, sealed, &w.decoder)
 }
 
 // The stream and demand jobs each own their decoder and bounded scratch.
 type memoryWindowDecoder struct {
 	decoder *zstd.Decoder
 	scratch []byte
-}
-
-func (d *memoryWindowDecoder) close() {
-	if d.decoder != nil {
-		d.decoder.Close()
-	}
-	clear(d.scratch[:cap(d.scratch)])
 }
 
 func (s *checkpointMemorySource) decodeWindow(ctx context.Context, dst []byte, offset int64, sealed []byte, d *memoryWindowDecoder) (int, error) {
@@ -339,6 +368,21 @@ func (s *checkpointMemorySource) ReadWindows(ctx context.Context, offset int64, 
 	if err := ctx.Err(); err != nil {
 		return next, err
 	}
+	var plain []byte
+	select {
+	case <-ctx.Done():
+		return next, ctx.Err()
+	case plain = <-s.streamBuffer:
+	}
+	if plain == nil {
+		plain = make([]byte, vm.MemoryReadBytes)
+	}
+	defer func() { clear(plain); s.streamBuffer <- plain }()
+	w, err := s.workspace(ctx)
+	if err != nil {
+		return next, err
+	}
+	defer s.releaseWorkspace(w)
 	start, end := s.windowRange(offset, min(int64(vm.MemoryReadBytes), s.size-offset))
 	limit := offset + min(int64(vm.MemoryReadBytes), s.size-offset)
 	for limit < s.size {
@@ -380,12 +424,7 @@ func (s *checkpointMemorySource) ReadWindows(ctx context.Context, offset int64, 
 			}
 		}()
 	}
-	plain := make([]byte, min(int64(vm.MemoryReadBytes), s.size-offset))
-	sealed := make([]byte, vm.MemoryReadBytes+(vm.MemoryReadBytes/memoryChunkSize)*tagSize)
-	defer clear(plain)
-	defer clear(sealed)
-	var decoder memoryWindowDecoder
-	defer decoder.close()
+	sealed := w.sealed
 	for next < limit {
 		if err := requestCtx.Err(); err != nil {
 			return next, err
@@ -425,7 +464,7 @@ func (s *checkpointMemorySource) ReadWindows(ctx context.Context, offset int64, 
 				return next, memoryStreamReadError(err)
 			}
 		}
-		if _, err := s.decodeWindow(requestCtx, plain[:length], next, ciphertext, &decoder); err != nil {
+		if _, err := s.decodeWindow(requestCtx, plain[:length], next, ciphertext, &w.decoder); err != nil {
 			return next, err
 		}
 		if err := consume(next, plain[:length]); err != nil {
@@ -474,23 +513,31 @@ func (s *checkpointMemorySource) decodeChunk(dst, sealed []byte, ordinal, logica
 }
 
 func (s *checkpointMemorySource) readRange(ctx context.Context, offset, length int64) ([]byte, error) {
+	data := make([]byte, length)
+	if err := s.readRangeInto(ctx, offset, data); err != nil {
+		clear(data)
+		return nil, err
+	}
+	return data, nil
+}
+func (s *checkpointMemorySource) readRangeInto(ctx context.Context, offset int64, data []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, memoryReadTimeout)
 	defer cancel()
 	for delay := 50 * time.Millisecond; ; delay = min(delay*2, time.Second) {
-		data, err := s.readRangeOnce(ctx, offset, length)
+		err := s.readRangeIntoOnce(ctx, offset, data)
 		if err == nil {
-			return data, nil
+			return nil
 		}
 		var network net.Error
 		if !errors.Is(err, cas.ErrUnavailable) && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.As(err, &network) {
-			return nil, err
+			return err
 		}
 		if err = sleepWithContext(ctx, delay); err != nil {
-			return nil, err
+			return err
 		}
 	}
 }
-func (s *checkpointMemorySource) readRangeOnce(ctx context.Context, offset, length int64) ([]byte, error) {
+func (s *checkpointMemorySource) readRangeIntoOnce(ctx context.Context, offset int64, data []byte) error {
 	s.rangeRequests.Add(1)
 	active := s.rangeActive.Add(1)
 	defer s.rangeActive.Add(-1)
@@ -499,15 +546,14 @@ func (s *checkpointMemorySource) readRangeOnce(ctx context.Context, offset, leng
 			break
 		}
 	}
-	headerStarted := time.Now()
-	body, err := s.ranges.GetRange(ctx, s.descriptor.Digest, s.descriptor.SizeBytes, offset, length)
-	s.rangeHeaderNanos.Add(int64(time.Since(headerStarted)))
+	started := time.Now()
+	body, err := s.ranges.GetRange(ctx, s.descriptor.Digest, s.descriptor.SizeBytes, offset, int64(len(data)))
+	s.rangeHeaderNanos.Add(int64(time.Since(started)))
 	if err != nil {
-		return nil, memoryStreamReadError(err)
+		return memoryStreamReadError(err)
 	}
-	bodyStarted := time.Now()
-	defer func() { s.rangeBodyNanos.Add(int64(time.Since(bodyStarted))) }()
-	data := make([]byte, length)
+	started = time.Now()
+	defer func() { s.rangeBodyNanos.Add(int64(time.Since(started))) }()
 	n, readErr := io.ReadFull(body, data)
 	s.ciphertextBytes.Add(int64(n))
 	if readErr == io.EOF {
@@ -522,11 +568,7 @@ func (s *checkpointMemorySource) readRangeOnce(ctx context.Context, offset, leng
 			readErr = err
 		}
 	}
-	closeErr := body.Close()
-	if err = errors.Join(readErr, closeErr); err != nil {
-		return nil, memoryStreamReadError(err)
-	}
-	return data, nil
+	return memoryStreamReadError(errors.Join(readErr, body.Close()))
 }
 
 func invalidMemory(err error) error {

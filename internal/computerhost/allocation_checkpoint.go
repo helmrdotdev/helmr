@@ -53,22 +53,18 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 			}
 		}
 	}()
-	hydrationCtx, hydrationCancel := context.WithTimeout(ctx, 5*time.Second)
-	hydrationErr := o.machine.PrepareCheckpoint(hydrationCtx)
-	hydrationCancel()
-	if hydrationErr != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if errors.Is(hydrationErr, context.DeadlineExceeded) {
-			return nil
-		}
-		return hydrationErr
+	ready, err := o.machine.CheckpointReady()
+	if err != nil {
+		return err
+	}
+	if !ready {
+		busy = true
+		return nil
 	}
 	id := uuid.NewV7().String()
 	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, CheckpointID: id, LeaseEpoch: o.identity.Epoch, ChannelCredential: delivery.ChannelCredential}
 	var response workerapi.AgentComputerCaptureResponse
-	err := retryCheckpoint(ctx, func(ctx context.Context) error {
+	err = retryCheckpoint(ctx, func(ctx context.Context) error {
 		var err error
 		response, err = o.client.BeginAgentComputerCapture(ctx, request)
 		return err
@@ -132,6 +128,13 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 		return o.client.SealAgentComputerCapture(ctx, workerapi.AgentComputerReceiptRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: id, Receipt: raw})
 	}); err != nil {
+		var response *httpclient.Error
+		if errors.As(err, &response) && response.Code == workerapi.AgentComputerCaptureDemand {
+			if err := hold.ResumeGuestControl(ctx); err != nil {
+				return err
+			}
+			return o.abortUncutCheckpoint(ctx, delivery, capture, hold)
+		}
 		return err
 	}
 	// Attempt serialization and the physical cut once. Only explicit backend
@@ -152,15 +155,33 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	if artifact.Computer == nil || artifact.Computer.ComputerID != o.identity.OwnerID || artifact.Computer.Capture == nil || len(artifact.Memory) != 1 {
 		return errors.New("incomplete coherent Computer checkpoint")
 	}
-	publication := workerapi.AgentSavePublication{Save: workerapi.AgentSave{EnvironmentID: o.identity.EnvironmentID, SaveID: response.SaveID, LeaseEpoch: o.identity.Epoch}, Root: artifact.Computer.Capture.Root(), Evidence: id}
+	p := &checkpointPublication{owner: o, capture: capture, encoded: response.Capture, artifact: artifact, disk: workerapi.AgentSavePublication{Save: workerapi.AgentSave{EnvironmentID: o.identity.EnvironmentID, SaveID: response.SaveID, LeaseEpoch: o.identity.Epoch}, Root: artifact.Computer.Capture.Root(), Evidence: id}}
+	return o.publishCheckpointOrContinue(ctx, delivery, request, hold, p)
+}
+
+type checkpointPublication struct {
+	owner              *ComputerAllocationOwner
+	capture            *agentv1.ComputerSessionCapture
+	encoded            []byte
+	artifact           vm.SnapshotArtifact
+	disk               workerapi.AgentSavePublication
+	captured, uploaded bool
+}
+
+func (p *checkpointPublication) publish(ctx context.Context) error {
+	o, artifact, capture := p.owner, p.artifact, p.capture
+	var err error
+	publication := p.disk
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error { return o.client.CaptureAgentSave(ctx, publication) }); err != nil {
 		return fmt.Errorf("register checkpoint disk capture: %w", err)
 	}
+	p.captured = true
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 		return artifact.Computer.Capture.Publish(ctx, agentSavePublisher{client: o.client, objects: o.machines.ComputerObjects, save: publication.Save})
 	}); err != nil {
 		return fmt.Errorf("publish checkpoint disk objects: %w", err)
 	}
+	p.uploaded = true
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error { return o.client.PublishAgentSave(ctx, publication) }); err != nil {
 		return fmt.Errorf("publish checkpoint disk save: %w", err)
 	}
@@ -168,7 +189,7 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	var files []string
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 		var err error
-		manifest, files, err = o.encryptCheckpoint(ctx, capture, response.Capture, artifact)
+		manifest, files, err = o.encryptCheckpoint(ctx, capture, p.encoded, artifact)
 		return err
 	}); err != nil {
 		return fmt.Errorf("encrypt checkpoint runtime objects: %w", err)
@@ -201,7 +222,88 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error { return o.client.CompleteAgentCheckpoint(ctx, checkpoint) }); err != nil {
 		return fmt.Errorf("complete Computer checkpoint: %w", err)
 	}
-	return errComputerHibernated
+	return nil
+}
+
+// Publication and demand observation belong to this capture owner. A hint only
+// wakes the durable read. Source reservation must win before upload is cancelled.
+func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, request workerapi.AgentComputerCaptureRequest, hold vm.CheckpointCapture, p *checkpointPublication) error {
+	publicationCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	var publicationErr error
+	go func() { defer close(done); publicationErr = p.publish(publicationCtx) }()
+	defer func() { cancel(); <-done }()
+	finishPublication := func(continuationErr error) error {
+		o.machines.logInfo("Computer source continuation unavailable before reservation", "computer_id", o.identity.OwnerID, "error", continuationErr.Error())
+		<-done
+		if publicationErr != nil {
+			return publicationErr
+		}
+		return errComputerHibernated
+	}
+	for {
+		wake := o.workWake.snapshot()
+		select {
+		case <-done:
+			if publicationErr != nil {
+				return publicationErr
+			}
+			return errComputerHibernated
+		default:
+		}
+		readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		pending, err := o.client.BeginAgentComputerCapture(readCtx, request)
+		stop()
+		if err == nil && (!bytes.Equal(pending.Capture, p.encoded) || pending.SaveID != p.disk.Save.SaveID) {
+			return &saveProtocolError{cause: errors.New("capture demand observation changed identity")}
+		}
+		if err != nil && !checkpointDurabilityRetryable(err) {
+			return err
+		}
+		if err == nil && pending.WorkPending {
+			if err := hold.ResumeGuestControl(ctx); err != nil {
+				return finishPublication(err)
+			}
+			source := &sourceContinuation{retainedCut: true, reserved: func() error {
+				cancel()
+				<-done
+				var reply *httpclient.Error
+				if publicationErr != nil && !errors.Is(publicationErr, context.Canceled) && !checkpointDurabilityRetryable(publicationErr) && !(errors.As(publicationErr, &reply) && reply.Code == workerapi.AgentComputerNotReady) {
+					return publicationErr
+				}
+				if o.saves == nil || o.saves.pending != nil || o.saves.requested != nil || o.saves.capture != nil {
+					return &saveProtocolError{cause: errors.New("checkpoint cut has no exclusive save owner")}
+				}
+				o.saves.pending = &p.disk
+				o.saves.capture = p.artifact.Computer.Capture
+				o.saves.captured, o.saves.uploaded = p.captured, p.uploaded
+				o.checkpointCut = nil
+				return os.RemoveAll(filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "checkpoint", "encryption"))
+			}}
+			if err := o.continueCheckpoint(ctx, delivery, p.capture, source); err != nil {
+				if !source.settled && !source.reservationUncertain {
+					return finishPublication(err)
+				}
+				return err
+			}
+			return hold.CompleteAbort(ctx)
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return context.Cause(ctx)
+		case <-done:
+			timer.Stop()
+			if publicationErr != nil {
+				return publicationErr
+			}
+			return errComputerHibernated
+		case <-wake:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
 }
 
 // After a known successful cut, a local I/O or remote publication failure is
@@ -237,7 +339,7 @@ func checkpointDurabilityRetryable(err error) bool {
 		return false
 	}
 	var response *httpclient.Error
-	return !(errors.As(err, &response) && response.Code == workerapi.AgentComputerEvidenceConflict)
+	return !(errors.As(err, &response) && (response.Code == workerapi.AgentComputerEvidenceConflict || response.Code == workerapi.AgentComputerCaptureDemand))
 }
 
 func checkpointRetryDelay(previous time.Duration) time.Duration {
@@ -296,7 +398,7 @@ func (o *ComputerAllocationOwner) abortUncutCheckpoint(ctx context.Context, deli
 			return err
 		}
 	}
-	if err = o.continueCheckpoint(ctx, delivery, capture, true); err != nil {
+	if err = o.continueCheckpoint(ctx, delivery, capture, &sourceContinuation{}); err != nil {
 		return err
 	}
 	return hold.CompleteAbort(ctx)

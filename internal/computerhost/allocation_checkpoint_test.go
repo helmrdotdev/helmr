@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -30,6 +32,8 @@ import (
 )
 
 type checkpointPipelineClient struct {
+	stepMu      sync.Mutex
+	workPending atomic.Bool
 	AllocatedComputerClient
 	stepErr        error
 	beginNotReady  bool
@@ -49,6 +53,8 @@ type checkpointPipelineClient struct {
 }
 
 func (c *checkpointPipelineClient) step(name string) error {
+	c.stepMu.Lock()
+	defer c.stepMu.Unlock()
 	c.calls = append(c.calls, name)
 	if name == c.failure && !c.failed {
 		c.failed = true
@@ -72,7 +78,7 @@ func (c *checkpointPipelineClient) BeginAgentComputerCapture(_ context.Context, 
 	if r.CheckpointID != capture.CheckpointId {
 		c.t.Fatal("retry changed capture identity")
 	}
-	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save}, c.step("begin")
+	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save, WorkPending: c.workPending.Load()}, c.step("begin")
 }
 func (c *checkpointPipelineClient) SealAgentComputerCapture(context.Context, workerapi.AgentComputerReceiptRequest) error {
 	return c.step("seal")
@@ -110,6 +116,8 @@ func (c *checkpointPipelineClient) CompleteAgentCheckpoint(ctx context.Context, 
 }
 
 type checkpointPipelineMachine struct {
+	hydrating    bool
+	hydrationErr error
 	vm.CheckpointableMachine
 	control                    *agentControlMachine
 	artifact                   vm.SnapshotArtifact
@@ -588,3 +596,24 @@ func (c *uncutCheckpointClient) BeginAgentComputerCapture(ctx context.Context, r
 }
 
 func (*checkpointPipelineMachine) PrepareCheckpoint(context.Context) error { return nil }
+
+func (m *checkpointPipelineMachine) CheckpointReady() (bool, error) {
+	return !m.hydrating, m.hydrationErr
+}
+
+func TestComputerCheckpointPendingHydrationLeavesSaveOwnerAvailable(t *testing.T) {
+	o, c, m, _ := checkpointPipelineFixture(t, "", "")
+	m.hydrating = true
+	o.checkpointRetryDelay = 4 * time.Second
+	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, func() func() { t.Fatal("suspended a hydrating Computer"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 0 || m.snapshots != 0 || o.checkpointRetryDelay != 0 {
+		t.Fatalf("hydration blocked or admitted capture: calls=%v delay=%v", c.calls, o.checkpointRetryDelay)
+	}
+	m.hydrationErr = errors.New("late memory failure")
+	o.checkpointRetryAt = time.Time{}
+	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, nil); !errors.Is(err, m.hydrationErr) {
+		t.Fatalf("pager failure hidden: %v", err)
+	}
+}

@@ -29,10 +29,10 @@ import (
 
 type liveCaptureDevice struct {
 	ownedComputerFixture
-	capture func(context.Context) (disk.CapturedVersion, error)
+	capture func(context.Context) (disk.RetainedVersion, error)
 }
 
-func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.CapturedVersion, error) {
+func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.RetainedVersion, error) {
 	if d.capture != nil {
 		return d.capture(ctx)
 	}
@@ -213,7 +213,7 @@ func TestLiveComputerCaptureWritebackFailureCanRetrySamePrefix(t *testing.T) {
 func TestLiveComputerCaptureCheckpointWaitsForCut(t *testing.T) {
 	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
-	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
+	d.capture = func(ctx context.Context) (disk.RetainedVersion, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -255,7 +255,7 @@ func TestLiveComputerCaptureCheckpointWaitsForCut(t *testing.T) {
 func TestCloseCancelsCaptureBeforeReleasingBarrier(t *testing.T) {
 	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
-	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
+	d.capture = func(ctx context.Context) (disk.RetainedVersion, error) {
 		close(entered)
 		<-ctx.Done()
 		<-release
@@ -292,7 +292,7 @@ func TestLiveComputerCaptureFailureRetriesWithoutPause(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			s, d, states := liveCaptureMachine(t, stage == "guest flush")
 			if stage == "device capture" {
-				d.capture = func(context.Context) (disk.CapturedVersion, error) {
+				d.capture = func(context.Context) (disk.RetainedVersion, error) {
 					return nil, io.ErrUnexpectedEOF
 				}
 			}
@@ -316,7 +316,7 @@ func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
 	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var first sync.Once
-	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
+	d.capture = func(ctx context.Context) (disk.RetainedVersion, error) {
 		first.Do(func() { close(entered); <-release })
 		return &ownedCaptureFixture{owner: &d.ownedComputerFixture}, nil
 	}
@@ -429,7 +429,7 @@ func TestCheckpointCallerCancellationKeepsSnapshotOwnerUntilJoin(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	device.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
+	device.capture = func(ctx context.Context) (disk.RetainedVersion, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -548,7 +548,7 @@ func TestCheckpointFailureCleanup(t *testing.T) {
 func TestLiveComputerCaptureCorruptionRetainsFence(t *testing.T) {
 	machine, device, states := liveCaptureMachine(t, false)
 	attempts := 0
-	device.capture = func(context.Context) (disk.CapturedVersion, error) { attempts++; return nil, blockformat.ErrIntegrity }
+	device.capture = func(context.Context) (disk.RetainedVersion, error) { attempts++; return nil, blockformat.ErrIntegrity }
 	if _, err := machine.CaptureComputer(t.Context()); !errors.Is(err, blockformat.ErrIntegrity) {
 		t.Fatal(err)
 	}

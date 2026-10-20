@@ -67,6 +67,7 @@ type Server struct {
 	allocationKeys             *computer.KeyBroker
 	preparationKeys            *computer.ImageBuildKeyBroker
 	preparationPublisher       *computer.ImageBuildPublisher
+	bootSeedPublisher          *computer.BootSeedPublisher
 	savePublisher              *computer.SavePublisher
 	checkpointPublisher        *session.CheckpointPublisher
 	log                        *slog.Logger
@@ -231,6 +232,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	bootSeedPublisher, err := computer.NewBootSeedPublisher(cfg.TX, cfg.CAS)
+	if err != nil {
+		return nil, err
+	}
 	savePublisher, err := computer.NewSavePublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
@@ -250,6 +255,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		allocationKeys:             allocationKeys,
 		preparationKeys:            preparationKeys,
 		preparationPublisher:       preparationPublisher,
+		bootSeedPublisher:          bootSeedPublisher,
 		savePublisher:              savePublisher,
 		checkpointPublisher:        checkpointPublisher,
 		log:                        log,
@@ -619,6 +625,12 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
 			r.With(limitRequestBody(4096)).Post("/allocations/list", s.workerListAllocations)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/deliver", s.workerDeliverBootSeed)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/start", s.workerBootSeedStart)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/renew", s.workerRenewBootSeed)
+			r.With(limitRequestBody(2<<20)).Post("/allocations/boot-seed/publish", s.workerPublishBootSeed)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/fail", s.workerFailBootSeed)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/stopped", s.workerBootSeedStopped)
 			r.With(limitRequestBody(4096)).Post("/allocations/image-build/deliver", s.workerDeliverPreparationAllocation)
 			r.With(limitRequestBody(4096)).Post("/allocations/image-build/stopped", s.workerPreparationStopped)
 			r.With(limitRequestBody(4096)).Post("/allocations/image-build/renew", s.workerRenewPreparation)

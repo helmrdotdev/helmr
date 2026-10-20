@@ -114,7 +114,7 @@ func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 						case "delete":
 							dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, id.ComputerID)
 						case "stop":
-							if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil()); err != nil {
+							if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), id, uuid.Nil(), uuid.Nil()); err != nil {
 								t.Fatal(err)
 							}
 						}

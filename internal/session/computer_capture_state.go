@@ -115,6 +115,13 @@ func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergr
 		if err = r.requireMembers(ctx, tx, env); err != nil {
 			return err
 		}
+		pending, err := computerExecutionDemand(ctx, tx, env, r.Computer)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return ErrComputerCaptureDemand
+		}
 		return computer.SealCheckpoint(ctx, tx, env, checkpoint)
 	}))
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -19,7 +20,7 @@ func allocationIdentity(in workerapi.AllocationIdentity) (dispatch.HostAllocatio
 	env, e1 := agentComputerID(in.EnvironmentID)
 	owner, e2 := agentComputerID(in.OwnerID)
 	instance, e3 := agentComputerID(in.AllocationID)
-	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation") {
+	if e1 != nil || e2 != nil || e3 != nil || in.Epoch <= 0 || (in.Kind != "computer" && in.Kind != "preparation" && in.Kind != "seed") {
 		return dispatch.HostAllocation{}, session.ErrInvalidInput
 	}
 	return dispatch.HostAllocation{Kind: in.Kind, EnvironmentID: env, OwnerID: owner, InstanceID: instance, Epoch: in.Epoch}, nil
@@ -214,6 +215,12 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 			readErr = programErr
 			if readErr == nil {
 				response.BootProgram = &program
+				response.BootSeed, err = computer.SelectBootSeed(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), selected.DeploymentID,
+					computercheckpoint.Program{Runtime: computercheckpoint.Object(program.Runtime), Artifact: computercheckpoint.Object(program.Artifact)})
+				if err != nil {
+					server.writeAllocationError(w, err)
+					return
+				}
 			}
 		}
 		if readErr != nil {

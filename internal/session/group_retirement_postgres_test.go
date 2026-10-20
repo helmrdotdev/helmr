@@ -65,7 +65,7 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			f := cp.f
 			setGroupPrimary(t, f)
 			source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			if state == "restoring" {
@@ -146,7 +146,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
+	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	group, pool, host, token := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -200,7 +200,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1); err != nil {
@@ -214,7 +214,7 @@ func stopGroupFixtureComputer(t *testing.T, f fixture) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }

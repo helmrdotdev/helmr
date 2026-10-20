@@ -19,6 +19,7 @@ func releaseComputerCASMembership(ctx context.Context, tx pgx.Tx, org uuid.UUID,
 	_, err := tx.Exec(ctx, `DELETE FROM cas_objects c WHERE c.org_id=$1 AND c.digest=$2
  AND NOT EXISTS(SELECT 1 FROM disk_objects o WHERE o.org_id=c.org_id AND o.digest=c.digest)
  AND NOT EXISTS(SELECT 1 FROM deployment_objects d WHERE d.org_id=c.org_id AND d.digest=c.digest)
+ AND NOT EXISTS(SELECT 1 FROM boot_seed_objects o JOIN environments e ON e.id=o.environment_id WHERE e.org_id=c.org_id AND o.digest=c.digest)
  AND NOT EXISTS(SELECT 1 FROM checkpoint_objects o JOIN environments e ON e.id=o.environment_id WHERE e.org_id=c.org_id AND o.digest=c.digest)`, org, digest)
 	return err
 }

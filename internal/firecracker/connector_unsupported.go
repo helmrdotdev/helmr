@@ -38,6 +38,14 @@ func (*QualifiedRuntime) Materialize(context.Context, vm.MaterializeRequest) (vm
 	return nil, ErrUnsupported
 }
 
+func (*QualifiedRuntime) PrepareBootSeed(context.Context, vm.MaterializeRequest) (vm.BootSeedCapture, error) {
+	return nil, ErrUnsupported
+}
+
+func (*QualifiedRuntime) BootSeedMatches(vm.MaterializeRequest, []byte) (bool, error) {
+	return false, ErrUnsupported
+}
+
 func (*QualifiedRuntime) Cleanup(context.Context, vm.Owner) error { return ErrUnsupported }
 
 func (*QualifiedRuntime) RuntimeCapabilities() RuntimeCapabilities { return RuntimeCapabilities{} }

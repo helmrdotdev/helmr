@@ -215,8 +215,9 @@ func memoryTransportChild(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		job(func() error {
+			buffer := make([]byte, vm.MemoryReadBytes)
+			defer clear(buffer)
 			for at := int64(0); at < fixture.Size; at += vm.MemoryReadBytes {
-				buffer := make([]byte, vm.MemoryReadBytes)
 				if _, err := source.ReadAt(t.Context(), buffer, at); err != nil {
 					return err
 				}

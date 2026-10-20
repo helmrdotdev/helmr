@@ -11,10 +11,30 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// A nil source restores a published checkpoint. A source with no retained cut
+// proves absence; a retained cut must keep its independent disk-save custody.
+type sourceContinuation struct {
+	retainedCut          bool
+	reserved             func() error
+	settled              bool
+	reservationUncertain bool
+	settleErr            error
+}
+
+func (s *sourceContinuation) settle() error {
+	if !s.settled {
+		s.settled = true
+		if s.reserved != nil {
+			s.settleErr = s.reserved()
+		}
+	}
+	return s.settleErr
+}
+
 // A fresh physical observation permits refreshing grants only before guest
 // installation. Once installed, the exact owner survives uncertain replies and
 // renews attachments until activation/reconciliation have both completed.
-func (o *ComputerAllocationOwner) continueCheckpoint(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, capture *agentv1.ComputerSessionCapture, sourceAbort bool) (resultErr error) {
+func (o *ComputerAllocationOwner) continueCheckpoint(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, capture *agentv1.ComputerSessionCapture, source *sourceContinuation) (resultErr error) {
 	var owner *AgentComputerOwner
 	defer func() {
 		if owner != nil {
@@ -60,7 +80,7 @@ func (o *ComputerAllocationOwner) continueCheckpoint(ctx context.Context, delive
 				}
 				owner = nil
 			}
-			installation, err := o.prepareContinuation(ctx, delivery, capture, observed, sourceAbort)
+			installation, err := o.prepareContinuation(ctx, delivery, capture, observed, source)
 			if err != nil {
 				if !checkpointContinuationRetryable(err) {
 					return err
@@ -98,7 +118,8 @@ func checkpointContinuationRetryable(err error) bool {
 	return saveAdmissionRetryable(err) || (errors.As(err, &rejected) && rejected.Code == workerapi.AgentComputerNotReady)
 }
 
-func (o *ComputerAllocationOwner) prepareContinuation(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, capture *agentv1.ComputerSessionCapture, observed *agentv1.ComputerSessionReceipt, sourceAbort bool) (*agentv1.ComputerSessionInstallation, error) {
+func (o *ComputerAllocationOwner) prepareContinuation(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, capture *agentv1.ComputerSessionCapture, observed *agentv1.ComputerSessionReceipt, source *sourceContinuation) (*agentv1.ComputerSessionInstallation, error) {
+	sourceAbort := source != nil
 	var response workerapi.AgentComputerInstallationResponse
 	var err error
 	if sourceAbort {
@@ -129,13 +150,26 @@ func (o *ComputerAllocationOwner) prepareContinuation(ctx context.Context, deliv
 		if err != nil {
 			return nil, err
 		}
-		// Validate reserves same-source continuation before settling its unattempted
-		// disk cut. If delay expires these grants, reinspection prepares fresh ones.
+		// Validate reserves same-source continuation before settling the cut
+		// disposition. Only a proven unattempted cut may report absence. If delay expires these grants, reinspection prepares fresh ones.
+		previouslyUncertain := source.reservationUncertain
+		source.reservationUncertain = true
 		if err = o.client.ValidateAgentComputerSourceAbort(ctx, workerapi.AgentComputerInstallationRequest{EnvironmentID: o.identity.EnvironmentID, Installation: response.Installation, Receipt: raw}); err != nil {
+			// A definitive rejection proves this attempt rolled back. It cannot
+			// resolve an earlier uncertain attempt or a transient gateway response.
+			var rejected *httpclient.Error
+			if errors.As(err, &rejected) && rejected.StatusCode >= 400 && rejected.StatusCode < 500 && !saveAdmissionRetryable(err) {
+				source.reservationUncertain = previouslyUncertain
+			}
 			return nil, err
 		}
-		if err = o.client.AgentComputerSaveAbsence(ctx, workerapi.AgentComputerSaveAbsenceRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: capture.GetCheckpointId(), Evidence: "uncut:" + capture.GetCheckpointId()}); err != nil {
+		if err = source.settle(); err != nil {
 			return nil, err
+		}
+		if !source.retainedCut {
+			if err = o.client.AgentComputerSaveAbsence(ctx, workerapi.AgentComputerSaveAbsenceRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: capture.GetCheckpointId(), Evidence: "uncut:" + capture.GetCheckpointId()}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return p, nil

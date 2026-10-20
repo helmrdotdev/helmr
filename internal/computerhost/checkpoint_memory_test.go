@@ -265,7 +265,7 @@ func TestCheckpointMemoryTerminalProbePreservesTransportFailure(t *testing.T) {
 	}
 	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, io.ErrUnexpectedEOF} {
 		ranges.terminalError = failure
-		if _, err := source.readRangeOnce(t.Context(), 0, 1); !errors.Is(err, failure) || errors.Is(err, errInvalidCheckpoint) {
+		if err := source.readRangeIntoOnce(t.Context(), 0, make([]byte, 1)); !errors.Is(err, failure) || errors.Is(err, errInvalidCheckpoint) {
 			t.Fatal("transport failure labelled corruption", err)
 		}
 	}

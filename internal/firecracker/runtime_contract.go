@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/bootgate"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -103,6 +104,7 @@ type VMRuntimeDeviceDescriptor struct {
 }
 
 type VMRuntimeVsockDescriptor struct {
+	BootstrapProtocol   string `json:"bootstrap_protocol"`
 	ID                  string `json:"id"`
 	HostPath            string `json:"host_path"`
 	GuestCIDStart       uint32 `json:"guest_cid_start"`
@@ -192,6 +194,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 				GuestCIDAllocation:  "process_monotonic_uint32",
 				GuestPortProtocol:   "config.guest_port;checkpoint_manifest_fenced",
 				HealthPortProtocol:  "config.health_port;checkpoint_manifest_fenced",
+				BootstrapProtocol:   bootgate.Protocol,
 				SnapshotLoadBinding: "snapshot_state;skip_add_vsock_api",
 			},
 			Absent: []string{"balloon", "entropy", "mmds"},

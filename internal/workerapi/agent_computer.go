@@ -12,8 +12,9 @@ type AgentComputerCaptureRequest struct {
 	ChannelCredential string `json:"channel_credential"`
 }
 type AgentComputerCaptureResponse struct {
-	Capture []byte `json:"capture"`
-	SaveID  string `json:"save_id"`
+	Capture     []byte `json:"capture"`
+	SaveID      string `json:"save_id"`
+	WorkPending bool   `json:"work_pending"`
 }
 type AgentComputerReceiptRequest struct {
 	EnvironmentID string `json:"environment_id"`
@@ -85,8 +86,11 @@ type AgentComputerLeaseRequest struct {
 type AgentComputerStoppedRequest struct {
 	AgentComputerLeaseRequest
 	InvalidCheckpointID string `json:"invalid_checkpoint_id,omitempty"`
+	FailedBootSeedID    string `json:"failed_boot_seed_id,omitempty"`
 }
 
 type AgentComputerLeaseResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+const AgentComputerCaptureDemand = "agent_computer_capture_demand"

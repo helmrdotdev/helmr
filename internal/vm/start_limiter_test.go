@@ -37,25 +37,33 @@ func (c *limitedStartBackend) Restore(ctx context.Context, _ RestoreRequest) (Ch
 func (c *limitedStartBackend) Materialize(ctx context.Context, _ MaterializeRequest) (CheckpointableMachine, error) {
 	return c.start(ctx, "materialize")
 }
+func (c *limitedStartBackend) PrepareBootSeed(ctx context.Context, _ MaterializeRequest) (BootSeedCapture, error) {
+	_, err := c.start(ctx, "boot_seed")
+	return nil, err
+}
+func (*limitedStartBackend) BootSeedMatches(MaterializeRequest, []byte) (bool, error) {
+	return false, nil
+}
 func (*limitedStartBackend) Cleanup(context.Context, Owner) error { return nil }
 
 func TestStartLimiterSharesOneHostWideBudgetAcrossStartKinds(t *testing.T) {
-	backend := &limitedStartBackend{started: make(chan string, 2), release: make(chan struct{}, 2)}
+	backend := &limitedStartBackend{started: make(chan string, 3), release: make(chan struct{}, 3)}
 	limiter, err := NewStartLimiter(backend, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 2)
+	done := make(chan error, 3)
 	go func() { _, err := limiter.Restore(context.Background(), RestoreRequest{}); done <- err }()
 	go func() { _, err := limiter.Materialize(context.Background(), MaterializeRequest{}); done <- err }()
-	for range 2 {
+	go func() { _, err := limiter.PrepareBootSeed(context.Background(), MaterializeRequest{}); done <- err }()
+	for range 3 {
 		<-backend.started
 		if got := backend.active.Load(); got != 1 {
 			t.Fatalf("active starts = %d, want 1", got)
 		}
 		backend.release <- struct{}{}
 	}
-	for range 2 {
+	for range 3 {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}

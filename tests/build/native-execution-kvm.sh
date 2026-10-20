@@ -85,6 +85,10 @@ if [[ -n ${HELMR_NATIVE_PERFORMANCE_KIND:-} ]]; then
   [[ ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 0 || ${HELMR_NATIVE_PERFORMANCE_DEGRADED:-0} == 1 ]]
   test_case=TestWorkerAgentPerformance
 fi
+if [[ ${HELMR_NATIVE_LATE_SEED_FAULT_PROOF:-0} == 1 ]]; then
+  [[ "$test_case" == TestWorkerAgentNativeExecution ]]
+  test_case=TestWorkerAgentLateBootSeedFault
+fi
 if [[ ${HELMR_NATIVE_SDK_PROOF:-0} == 1 || ${HELMR_CODEX_STARTER_PROOF:-0} == 1 || ${HELMR_CLAUDE_STARTER_PROOF:-0} == 1 || ${HELMR_EMBEDDED_STARTER_PROOF:-0} == 1 || ${HELMR_PROTECTED_STARTER_PROOF:-0} == 1 ]]; then [[ "$test_case" == TestWorkerAgentNativeExecution ]]; fi
 [[ $(id -u) == 0 && $(uname -m) == x86_64 && "$candidate" == /* && "$evidence" == /* ]]
 [[ "$remote" == s3://*/_verification/native-execution/* && "$remote" != *'?'* && "$remote" != *'#'* ]]
@@ -231,14 +235,19 @@ worker={'WORKER_WORK_DIR':e+'/w','JAILER_CHROOT_DIR':e+'/w/jailer','WORKER_HOST_
  'WORKER_COMPUTER_STAGING_MIB':'1024',
  'WORKER_LOG_CHUNK_BYTES':'1024','WORKER_LOG_BUFFER_BYTES':'1048576','WORKER_LOG_BUFFER_RECORDS':'1024',
  'WORKER_EXECUTION_SLOTS':'1','VM_VCPUS':'2','VM_MEMORY_MIB':'4096','VM_SCRATCH_DISK_MIB':'4096',
- # One 4096-MiB guest, 16-MiB disk caches, and 17-MiB restore buffers/index.
- 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4129','JAILER_UID':'61001','JAILER_GID':'61001',
+ # One 4096-MiB guest, 16-MiB disk caches, and 49-MiB restore/save buffers/index.
+ 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4161','JAILER_UID':'61001','JAILER_GID':'61001',
  'WORKER_NETWORK_LINK_POOL':'198.18.32.0/24','WORKER_NETWORK_TRANSLATION_POOL':'198.19.32.0/24',
  'WORKER_NETWORK_RESOLVER_IPV4':'127.0.0.1','WORKER_NETWORK_BLOCKED_IPV4_CIDRS':'["0.0.0.0/0"]',
  'FIRECRACKER_PATH':tool('firecracker'),'JAILER_PATH':tool('jailer'),'CPU_TEMPLATE_HELPER_PATH':tool('cpu-template-helper'),
  'IP_PATH':tool('ip'),'NFT_PATH':tool('nft'),'MKFS_EXT4_PATH':os.environ['MKFS_EXT4_PATH'],'MKE2FS_CONFIG_PATH':os.environ['MKE2FS_CONFIG_PATH']}
+if os.environ.get('HELMR_NATIVE_CONCURRENT_RESTORES_PROOF')=='1':
+ worker.update(WORKER_EXECUTION_SLOTS='2',WORKER_CAPACITY_VCPUS='4',WORKER_CAPACITY_MEMORY_MIB='8322',GODEBUG='gctrace=1',TZ='UTC')
 config={'Worker':c+'/agent-worker','Node':tool('node'),'Driver':c+'/driver.mjs','Model':c+'/model.mjs','Bundle':c+'/bundle',
  'Runtime':c+'/runtime.squashfs','RuntimeDescriptor':c+'/runtime.descriptor.json','Evidence':e+'/proof','WorkerCgroup':group+'/supervisor',
+ 'RequirePostCutContinuation':os.environ.get('HELMR_NATIVE_POST_CUT_PROOF')=='1',
+ 'RequireConcurrentRestores':os.environ.get('HELMR_NATIVE_CONCURRENT_RESTORES_PROOF')=='1',
+ 'RequireBootSeed':os.environ.get('HELMR_NATIVE_BOOT_SEED_PROOF')=='1',
  'RestartPublicationOwner':os.environ.get('HELMR_NATIVE_RESTART_PUBLICATION_OWNER')=='1',
  'CASURI':remote.rstrip('/')+'/cas','PlatformURI':remote.rstrip('/')+'/platform','WorkerEnv':worker,
  'SourceHostID':host_id,'TargetHostID':os.environ.get('HELMR_NATIVE_CROSS_HOST_TARGET_ID','')}
@@ -305,10 +314,13 @@ PY
 if [[ "$role" == target ]]; then exit 0; fi
 export HELMR_NATIVE_EXECUTION_PROOF=1 HELMR_NATIVE_EXECUTION_CONFIG="$evidence/config.json"
 test_timeout=19m
+if [[ ${HELMR_NATIVE_CONCURRENT_RESTORES_PROOF:-0} == 1 ]]; then test_timeout=42m; fi
+if [[ "$test_case" == TestWorkerAgentLateBootSeedFault ]]; then test_timeout=22m; fi
 if [[ ${HELMR_NATIVE_SDK_PROOF:-0} == 1 ]]; then test_timeout=44m; fi
 if [[ ${HELMR_CODEX_STARTER_PROOF:-0} == 1 || ${HELMR_CLAUDE_STARTER_PROOF:-0} == 1 || ${HELMR_EMBEDDED_STARTER_PROOF:-0} == 1 ]]; then test_timeout=29m; fi
 if [[ ${HELMR_PROTECTED_STARTER_PROOF:-0} == 1 ]]; then test_timeout=55m; fi
 if [[ "$test_case" == TestWorkerAgentPerformance ]]; then test_timeout=42m; fi
+if [[ "$test_case" == TestWorkerAgentPerformance && ${HELMR_NATIVE_BOOT_SEED_PROOF:-0} == 1 ]]; then test_timeout=52m; fi
 if [[ "$test_case" == TestWorkerAgentCheckpointKeyMismatch || "$test_case" == TestWorkerAgentSessionDiscoveryContinuation ]]; then test_timeout=24m; fi
 if [[ "$test_case" == TestWorkerAgentLongIdleContinuation ]]; then test_timeout=139m; fi
 if [[ "$test_case" == TestWorkerAgentCrossHostContinuation ]]; then test_timeout=57m; fi

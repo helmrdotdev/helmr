@@ -48,3 +48,33 @@ func TestFilepackClassifiesContentsWithoutClassifyingIO(t *testing.T) {
 		})
 	}
 }
+
+func TestFilepackRejectsOversizedCompressedRecordBeforeReadingPayload(t *testing.T) {
+	header, err := json.Marshal(filepackHeader{Version: filepackVersion, Role: ScratchRole,
+		LogicalSize: filepackChunkSize, ChunkSize: filepackChunkSize, Codec: filepackCodecZstd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := append([]byte(filepackMagic), binary.BigEndian.AppendUint32(nil, uint32(len(header)))...)
+	raw = append(raw, header...)
+	raw = append(raw, filepackRecordData)
+	raw = binary.BigEndian.AppendUint64(raw, 0)
+	raw = binary.BigEndian.AppendUint32(raw, uint32(filepackChunkSize))
+	// Previously admitted up to 64 MiB for a single 4-MiB logical chunk.
+	raw = binary.BigEndian.AppendUint64(raw, 32<<20)
+	_, err = VerifyFrom(t.Context(), io.MultiReader(bytes.NewReader(raw), failingInput{}), ScratchRole, filepackChunkSize)
+	if !errors.Is(err, ErrInvalidContent) || errors.Is(err, syscall.EIO) {
+		t.Fatalf("oversized record reached its payload: %v", err)
+	}
+}
+
+func TestFilepackEncoderFitsRecordEnvelope(t *testing.T) {
+	encoder, err := newFilepackEncoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer encoder.Close()
+	if bound := encoder.MaxEncodedSize(int(filepackChunkSize)); int64(bound) > maxFilepackEncodedChunk {
+		t.Fatalf("encoder bound %d exceeds the format's record envelope %d", bound, maxFilepackEncodedChunk)
+	}
+}

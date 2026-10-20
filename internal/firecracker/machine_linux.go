@@ -28,6 +28,7 @@ import (
 const stopTimeout = 10 * time.Second
 
 type guestMachine struct {
+	bootstrap                bootstrapReceipt
 	memoryPager              *memoryPager
 	mu                       sync.Mutex
 	computerBarrier          chan struct{}
@@ -513,4 +514,8 @@ func (s *guestMachine) MemoryRestoreDiagnostics() *vm.MemoryRestoreStats {
 
 func (s *guestMachine) PrepareCheckpoint(ctx context.Context) error {
 	return s.memoryPager.WaitHydration(ctx)
+}
+
+func (s *guestMachine) CheckpointReady() (bool, error) {
+	return s.memoryPager.hydrationReady()
 }

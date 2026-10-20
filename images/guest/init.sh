@@ -258,6 +258,7 @@ enable_user_namespaces
 mount_scratch
 load_vsock
 load_session_program_devices
+/usr/bin/guestd --boot-gate
 mount_computer
 mount_program
 configure_network

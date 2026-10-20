@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -70,22 +71,33 @@ func qualifyOnlineGuestWrites(t *testing.T, machine *guestMachine, phase string,
 		}
 		defer stream.Close()
 		err = frameio.WriteProtoFrame(stream, &computerv0.ComputerBasicExecRequest{
-			Envelope: &computerv0.ComputerCommandAuthority{OperationId: operation, ComputerId: computerID, ComputerInstanceId: instanceID, ChannelCredential: credential, WriterGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(), RequestFingerprint: operation}, RequestJson: string(body),
+			LogLimits: &computerv0.CommandLogLimits{ChunkBytes: 65536, BufferBytes: 1048576, BufferRecords: 64},
+			Envelope:  &computerv0.ComputerCommandAuthority{OperationId: operation, ComputerId: computerID, ComputerInstanceId: instanceID, ChannelCredential: credential, WriterGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(), RequestFingerprint: operation}, RequestJson: string(body),
 		})
 		if err != nil {
 			return err
 		}
+		var diagnostic []byte
 		for {
 			var event computerv0.ComputerBasicExecEvent
 			if err := frameio.ReadProtoFrameBounded(stream, 1<<20, &event); err != nil {
 				return err
 			}
-			if chunk := event.GetOutput(); chunk != nil && output != nil {
-				output(chunk.Content)
+			if chunk := event.GetOutput(); chunk != nil {
+				if err := frameio.WriteProtoFrame(stream, &computerv0.CommandOutputAck{Stream: chunk.Stream, ThroughSequence: chunk.ThroughSequence, Disposition: "accepted"}); err != nil {
+					return err
+				}
+				if output != nil {
+					output(chunk.Content)
+				}
+				diagnostic = append(diagnostic, chunk.Content...)
+				if len(diagnostic) > 4096 {
+					diagnostic = diagnostic[len(diagnostic)-4096:]
+				}
 			}
 			if result := event.GetResult(); result != nil {
 				if result.Outcome != "exited" || result.ExitCode != 0 {
-					return fmt.Errorf("command failed: %v", result)
+					return fmt.Errorf("command failed: %v: %s", result, diagnostic)
 				}
 				return nil
 			}
@@ -94,6 +106,11 @@ func qualifyOnlineGuestWrites(t *testing.T, machine *guestMachine, phase string,
 	if phase == "cold" {
 		if err := run("test \"$(cat /workspace/completed)\" = initial", nil); err != nil {
 			t.Fatalf("cold guest buffered write: %v", err)
+		}
+	}
+	if strings.HasPrefix(phase, "seed-clone-") {
+		if err := run("test ! -e /workspace/completed && test ! -e /workspace/peer", nil); err != nil {
+			t.Fatalf("seed clone inherited another Computer's writes: %v", err)
 		}
 	}
 	if err := run("rm -f /workspace/stop-peer; printf '%s' "+phase+" > /workspace/completed", nil); err != nil {

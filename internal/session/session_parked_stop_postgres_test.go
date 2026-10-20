@@ -23,7 +23,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				ctx := t.Context()
 				park := func() {
 					t.Helper()
-					if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+					if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -131,7 +131,7 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	checkpoint := readyCheckpointFixture(t)
 	f := checkpoint.f
 	ctx := t.Context()
-	if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.ControlSession(ctx, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {

@@ -1,6 +1,7 @@
 package workerapi
 
 import (
+	"github.com/helmrdotdev/helmr/internal/bootseed"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"time"
 )
@@ -9,7 +10,7 @@ const AllocationClosed = "allocation_closed"
 const SaveAuthorityLost = "computer_save_authority_lost"
 
 // AllocationIdentity is custody evidence, never execution authority. Kind is
-// computer or preparation; authentication determines the Host incarnation.
+// computer, preparation or seed; authentication determines the Host incarnation.
 type AllocationIdentity struct {
 	Kind          string `json:"kind"`
 	EnvironmentID string `json:"environment_id"`
@@ -65,6 +66,7 @@ type ComputerProcessesResponse struct {
 }
 
 type ComputerAllocationSource struct {
+	BootSeed     *bootseed.Manifest     `json:"boot_seed,omitempty"`
 	BootProgram  *RuntimeProgram        `json:"boot_program,omitempty"`
 	Disk         ComputerSourceMaterial `json:"disk"`
 	ImageConfig  oci.RuntimeConfig      `json:"image_config"`

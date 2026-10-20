@@ -31,8 +31,9 @@ type ComputerCaptureRequest struct {
 type ComputerCapture struct {
 	// Request is the exact secret protobuf retained by the guest. Transports carry
 	// these bytes unchanged; rebuilding an envelope would break uncertain retries.
-	Request []byte
-	SaveID  uuid.UUID
+	Request     []byte
+	SaveID      uuid.UUID
+	WorkPending bool
 }
 
 type ComputerMember struct {
@@ -80,7 +81,8 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 			if priorState != "capturing" && priorState != "sealed" && priorState != "ready" {
 				return ErrNotReady
 			}
-			return nil
+			result.WorkPending, err = computerExecutionDemand(ctx, tx, req.EnvironmentID, req.ComputerID)
+			return err
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -223,3 +225,18 @@ func LockCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, chec
 	}
 	return after, nil
 }
+
+// Demand is read under the same Computer/member locks as capture. Notifications
+// only prompt this read; they cannot grant execution or cancel a sealed cut.
+func computerExecutionDemand(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) (bool, error) {
+	var pending bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status='running')
+ OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
+ WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+NoSessionHoldsSQL+`)
+ OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
+ OR EXISTS(SELECT 1 FROM sessions s JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
+ WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id)))`, env, computerID).Scan(&pending)
+	return pending, err
+}
+
+var ErrComputerCaptureDemand = errors.New("Computer has pending execution during capture")

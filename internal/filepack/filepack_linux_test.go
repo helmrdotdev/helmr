@@ -133,7 +133,7 @@ func TestRuntimeFilepackRejectsOverflowingDataRecord(t *testing.T) {
 	record.Write(compressed)
 
 	var nextOffset int64
-	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64, &nextOffset)
+	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64, &nextOffset, make([]byte, maxFilepackEncodedChunk), make([]byte, filepackChunkSize))
 	if err == nil || !strings.Contains(err.Error(), "invalid Firecracker filepack data record") {
 		t.Fatalf("err = %v, want invalid Firecracker filepack data record", err)
 	}
@@ -162,7 +162,7 @@ func TestScanAndWriteFilepackRangeRejectsShortRead(t *testing.T) {
 	}
 	defer encoder.Close()
 
-	err = scanAndWriteFilepackRange(context.Background(), source, target, encoder, nil, 0, 16)
+	err = scanAndWriteFilepackRange(context.Background(), source, target, encoder, nil, 0, 16, make([]byte, filepackChunkSize), make([]byte, 0, maxFilepackEncodedChunk))
 	if err == nil {
 		t.Fatal("scan succeeded with short read")
 	}

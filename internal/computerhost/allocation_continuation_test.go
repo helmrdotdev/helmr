@@ -132,7 +132,7 @@ func (f *allocationContinuationFixture) handle(stream net.Conn) {
 	receipt := &agentv1.ComputerSessionReceipt{CheckpointId: f.capture.CheckpointId, DesiredVersion: 1, Frozen: !f.activated, Installed: f.installed, ActivationStarted: f.activated, Activated: f.activated}
 	switch {
 	case request.GetCapture() != nil:
-		if f.scenario != "joined-uncut" {
+		if f.scenario != "joined-uncut" && f.scenario != "stale-before-install" {
 			return // capture reply deliberately lost
 		}
 	case request.GetInspect() != nil:
@@ -212,7 +212,7 @@ func TestComputerContinuationRefreshesOnlyUninstalledAuthority(t *testing.T) {
 						initial = nil
 					}
 					if source {
-						err = o.continueCheckpoint(t.Context(), delivery, initial, true)
+						err = o.continueCheckpoint(t.Context(), delivery, initial, &sourceContinuation{})
 					} else {
 						err = o.activateRestore(t.Context(), delivery)
 					}

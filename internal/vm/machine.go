@@ -38,6 +38,8 @@ type Cleaner interface {
 type Backend interface {
 	RestoringBackend
 	MaterializingBackend
+	PrepareBootSeed(context.Context, MaterializeRequest) (BootSeedCapture, error)
+	BootSeedMatches(MaterializeRequest, []byte) (bool, error)
 	Cleaner
 }
 
@@ -94,7 +96,9 @@ type CheckpointCapture interface {
 
 type CheckpointableMachine interface {
 	GuestControlMachine
-	// PrepareCheckpoint finishes deferred memory reads before capture admission.
+	// CheckpointReady observes hydration without blocking the serial save owner.
+	CheckpointReady() (bool, error)
+	// PrepareCheckpoint enforces completed memory reads at actual serialization.
 	PrepareCheckpoint(context.Context) error
 	SnapshotLimits() (SnapshotLimits, error)
 	BeginCheckpoint(context.Context, SnapshotRequest) (CheckpointCapture, error)
@@ -163,7 +167,7 @@ type ComputerDisk struct {
 type ComputerDevice interface {
 	Changes() disk.VersionChanges
 	PinCommitted(context.Context) (disk.RetainedVersion, error)
-	Capture(context.Context) (disk.CapturedVersion, error)
+	Capture(context.Context) (disk.RetainedVersion, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -178,7 +182,7 @@ type SnapshotRequest struct {
 // The receiver releases Capture after all publishers have joined.
 type ComputerSnapshot struct {
 	ComputerID string
-	Capture    disk.CapturedVersion
+	Capture    disk.RetainedVersion
 }
 
 type SnapshotArtifact struct {
@@ -251,6 +255,7 @@ const (
 )
 
 type MaterializeRequest struct {
+	BootSeed                  *BootSeedRestore
 	Purpose                   MaterializePurpose
 	ID                        string
 	OwnerKind                 OwnerKind
@@ -264,6 +269,44 @@ type MaterializeRequest struct {
 	Topology                  Topology
 	ReadOnlyDrives            []ReadOnlyDrive
 	RecordPhase               func(Phase)
+}
+
+// BootSeedCapture is a private builder stopped before Computer/Program mounts
+// and guest control. It has no customer continuation identity. Close joins and
+// stops the builder and releases its files. The caller must finish reading or
+// retain immutable artifact files before Close.
+type BootSeedCapture interface {
+	Capture(context.Context) (BootSeedArtifact, error)
+	Close(context.Context) error
+}
+
+type BootSeedArtifact struct {
+	Manifest    []byte
+	VMState     SnapshotFile
+	ScratchDisk SnapshotFile
+	Memory      SnapshotFile
+	MemoryBytes int64
+}
+
+// BootSeedRestore contains already authenticated, retained launch artifacts.
+// The backend matches the exact immutable content and resource shape before
+// launching. Once selected, a restore failure cannot fall back to another boot.
+type BootSeedRestore struct {
+	Manifest     []byte
+	VMState      string
+	ScratchDisk  string
+	MemorySource MemorySource
+}
+
+type BootSeedIdentity struct {
+	BootID       string `json:"boot_id"`
+	RandomDigest string `json:"random_digest"`
+}
+
+// BootSeedClone supplies freshness evidence from the host's authenticated
+// bootstrap exchange, before any user process receives authority.
+type BootSeedClone interface {
+	BootSeedIdentity() BootSeedIdentity
 }
 
 // WorkloadBinding is the closed logical authority that a backend binds to
@@ -366,6 +409,7 @@ type CheckpointIdentity struct {
 }
 
 type Phase struct {
+	StartedAt  time.Time
 	Name       string
 	DurationMs int64
 	Role       string
@@ -481,13 +525,17 @@ type SnapshotLimits struct {
 	ConfigBytes   int64
 }
 
-// MemoryRestoreOverhead funds four bounded decoder/copy jobs and the source
-// index plus pager chunk state. It is charged even on a fresh VM because that
-// VM may later produce a checkpoint under the same physical reservation.
+// MemoryRestoreOverhead funds the complete restore-to-save lifecycle: 12 MiB
+// for retained source/pager workspaces, 28 MiB for overlapping scratch packing,
+// and 8 MiB for codec, transport and allocation-growth margin. Scratch packing
+// uses one encoder; RAM and object encryption run sequentially and fit below
+// that peak. Per-chunk storage covers the retained source index, pager state,
+// and the next memory object's plaintext and sealed indexes.
+// Fresh VMs pay the same charge because they can save under this reservation.
 func MemoryRestoreOverhead(memoryBytes int64) (int64, error) {
 	if memoryBytes <= 0 {
 		return 0, errors.New("memory capacity must be positive")
 	}
 	chunks := (memoryBytes-1)/MemoryChunkBytes + 1
-	return 16*(1<<20) + chunks*64, nil
+	return 48*(1<<20) + chunks*64, nil
 }

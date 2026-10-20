@@ -15,7 +15,7 @@ import (
 // ObserveLeaseStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint uuid.UUID) error {
+func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -23,7 +23,7 @@ func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergro
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint)
+		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint, failedBootSeed)
 	}))
 }
 
@@ -84,13 +84,16 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
-func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
+func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	members, err := session.LockCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err
 	}
 	var fenced bool
 	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
+		return err
+	}
+	if err := computer.RecordBootSeedFailure(ctx, tx, identity, failedBootSeed); err != nil {
 		return err
 	}
 	if fenced {

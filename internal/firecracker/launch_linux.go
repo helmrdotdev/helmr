@@ -168,6 +168,9 @@ func (c *Connector) start(ctx context.Context, mode launchMode, instanceID strin
 	if err != nil {
 		return nil, err
 	}
+	if mode == bootSeedBuildLaunch {
+		return machine, nil
+	}
 	if _, err := machine.Open(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 		defer cancel()
@@ -432,16 +435,29 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 		}
 		pager.StartHydration()
 	}
-	sdkMachine.Logger().Printf("waiting for guest health")
-	phaseStarted = time.Now()
-	err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
-	reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err), Memory: pager.stats()})
-	if err != nil {
-		started = false
-		return nil, err
+	var bootstrap bootstrapReceipt
+	if !restoring || c.seedRestore {
+		phaseStarted = time.Now()
+		bootstrap, err = c.bootstrapGuest(ctx, vsockHostPath, machineExit, mode == bootSeedBuildLaunch)
+		reportPhase(recordPhase, vm.Phase{Name: "materialize_guest_bootstrap", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		if err != nil {
+			started = false
+			return nil, err
+		}
 	}
-	sdkMachine.Logger().Printf("guest health ready")
+	if mode != bootSeedBuildLaunch {
+		sdkMachine.Logger().Printf("waiting for guest health")
+		phaseStarted = time.Now()
+		err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err), Memory: pager.stats()})
+		if err != nil {
+			started = false
+			return nil, err
+		}
+		sdkMachine.Logger().Printf("guest health ready")
+	}
 	machine := &guestMachine{
+		bootstrap:       bootstrap,
 		memoryPager:     pager,
 		machine:         sdkMachine,
 		machineCancel:   machineCancel,

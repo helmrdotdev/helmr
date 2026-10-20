@@ -156,7 +156,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 }
 
 func (o *ComputerAllocationOwner) activateRestore(ctx context.Context, delivery workerapi.ComputerAllocationDelivery) error {
-	err := o.continueCheckpoint(ctx, delivery, nil, false)
+	err := o.continueCheckpoint(ctx, delivery, nil, nil)
 	if errors.Is(err, errInvalidCheckpoint) {
 		o.invalidCheckpointID = o.checkpoint.CheckpointID.String()
 	}

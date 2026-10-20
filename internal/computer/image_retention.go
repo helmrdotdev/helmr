@@ -14,6 +14,7 @@ import (
 // revocation checks. Their initial roots independently retain usable storage.
 // An older but still eligible image is not an eviction candidate here.
 const retirableImage = `i.root_id IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM boot_seed_builds b WHERE b.environment_id=i.environment_id AND b.image_id=i.id AND b.worker_host_id IS NOT NULL AND b.fenced_at IS NULL)
  AND EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=i.environment_id AND p.id=i.image_build_id AND p.fenced_at IS NOT NULL AND p.disk_released_at IS NOT NULL)
  AND EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON s.environment_id=x.environment_id AND s.id=x.secret_id WHERE x.environment_id=i.environment_id AND x.image_build_id=i.image_build_id AND s.status='revoked')`
 

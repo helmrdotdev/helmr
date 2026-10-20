@@ -67,6 +67,9 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id FROM image_builds p
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  UNION ALL
+ SELECT b.environment_id,b.id,'seed',1::bigint,NULL::uuid FROM boot_seed_builds b
+ WHERE b.status='queued' AND b.worker_host_id IS NULL
+ UNION ALL
  SELECT c.environment_id,c.id,'computer',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id),0)+1,NULL::uuid FROM computers c
  WHERE c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.recovery_save_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
@@ -135,6 +138,8 @@ func (a *Allocator) Reconcile(ctx context.Context, after AllocationPosition) (Al
 		attemptCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 		if c.kind == "preparation" {
 			_, err = a.AllocateImageBuild(attemptCtx, c.environment, c.owner, c.host)
+		} else if c.kind == "seed" {
+			_, err = a.AllocateBootSeed(attemptCtx, c.environment, c.owner, c.host)
 		} else if c.kind == "restore" {
 			_, err = a.AllocateRestoredLease(attemptCtx, c.environment, c.owner, c.epoch, c.host)
 		} else if c.kind == "recovery" {

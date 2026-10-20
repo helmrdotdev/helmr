@@ -40,7 +40,12 @@ UPDATE worker_pools AS target
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id))
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id))
        ))
    )
    AND NOT EXISTS (
@@ -114,7 +119,12 @@ WITH transitioned AS (
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=worker_groups.id
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=worker_groups.id
                )
            )
        )

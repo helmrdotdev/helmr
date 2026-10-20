@@ -52,7 +52,12 @@ UPDATE worker_hosts
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch<worker_hosts.current_epoch
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch<worker_hosts.current_epoch
    )
    AND (
        worker_hosts.status = 'registering'
@@ -110,7 +115,12 @@ UPDATE worker_hosts SET updated_at=now() FROM target
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=target.id AND worker_epoch<target.current_epoch AND allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=target.id AND worker_epoch<target.current_epoch AND allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
  RETURNING worker_hosts.*;
 
 -- name: GetWorkerHostStatus :one
@@ -131,7 +141,12 @@ SELECT worker_hosts.*,
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch=worker_hosts.current_epoch) AS active_instances
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id AND worker_epoch=worker_hosts.current_epoch) AS active_instances
   FROM worker_hosts
   JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
   LEFT JOIN vm_platforms ON vm_platforms.id = worker_hosts.vm_platform_id

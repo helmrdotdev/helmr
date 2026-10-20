@@ -473,7 +473,12 @@ WITH live_workers AS (
  SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage ON allocation_usage.worker_host_id=h.worker_host_id
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage ON allocation_usage.worker_host_id=h.worker_host_id
  GROUP BY h.worker_host_id
 )
 SELECT live_workers.worker_group_id,

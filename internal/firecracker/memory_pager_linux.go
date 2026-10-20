@@ -65,6 +65,8 @@ type memoryPager struct {
 	done                       chan struct{}
 	faults                     chan memoryFault
 	mu                         sync.Mutex
+	demandActive               int
+	demandDone                 chan struct{}
 	chunks                     []memoryChunkState
 	err                        error
 	closeOnce                  sync.Once
@@ -266,7 +268,7 @@ func (p *memoryPager) StartHydration() {
 			started := time.Now()
 			defer close(p.done)
 			defer func() {
-				reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: vm.RuntimeErrorClass(p.failure())})
+				reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration", StartedAt: started, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: vm.RuntimeErrorClass(p.failure())})
 			}()
 			for offset := int64(0); offset < p.source.Size(); {
 				if p.ctx.Err() != nil {
@@ -279,10 +281,16 @@ func (p *memoryPager) StartHydration() {
 					offset += min(int64(vm.MemoryReadBytes), p.source.Size()-offset)
 					continue
 				}
+				if err := p.yieldToDemand(); err != nil {
+					return
+				}
 				began := time.Now()
 				var consumeNanos int64
 				next, err := p.source.ReadWindows(p.ctx, offset, func(at int64, data []byte) error {
 					started := time.Now()
+					if err := p.yieldToDemand(); err != nil {
+						return err
+					}
 					err := p.populateBackgroundWindow(at, data)
 					consumeNanos += int64(time.Since(started))
 					return err
@@ -308,6 +316,24 @@ func (p *memoryPager) StartHydration() {
 		})
 	})
 }
+func (p *memoryPager) hydrationReady() (bool, error) {
+	if p == nil {
+		return true, nil
+	}
+	if err := p.failure(); err != nil {
+		return false, err
+	}
+	if err := p.ctx.Err(); err != nil {
+		return false, err
+	}
+	select {
+	case <-p.done:
+		return true, p.failure()
+	default:
+		return false, nil
+	}
+}
+
 func (p *memoryPager) WaitHydration(ctx context.Context) (result error) {
 	if p == nil {
 		return nil
@@ -429,6 +455,8 @@ func (p *memoryPager) offsetForAddress(address uint64) (int64, bool) {
 	return 0, false
 }
 func (p *memoryPager) serveFaults() {
+	buffer := make([]byte, vm.MemoryReadBytes)
+	defer clear(buffer)
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -438,7 +466,19 @@ func (p *memoryPager) serveFaults() {
 			started := time.Now()
 			ctx, cancel := context.WithDeadline(p.ctx, fault.deadline)
 			observation := vm.MemoryFaultObservation{Window: fault.chunk, ReceivedNs: int64(fault.received.Sub(p.started)), StartedNs: int64(started.Sub(p.started))}
-			err := p.loadDemandWindow(ctx, fault.chunk, &observation)
+			p.mu.Lock()
+			if p.demandActive == 0 {
+				p.demandDone = make(chan struct{})
+			}
+			p.demandActive++
+			p.mu.Unlock()
+			err := p.loadDemandWindow(ctx, fault.chunk, &observation, buffer)
+			p.mu.Lock()
+			p.demandActive--
+			if p.demandActive == 0 {
+				close(p.demandDone)
+			}
+			p.mu.Unlock()
 			observation.FinishedNs = int64(time.Since(p.started))
 			p.demandDurationBuckets[min(31, bits.Len64(uint64(max(0, observation.FinishedNs-observation.StartedNs)/1000)))].Add(1)
 			observation.ErrorClass = vm.RuntimeErrorClass(err)
@@ -468,6 +508,24 @@ func (p *memoryPager) serveFaults() {
 				p.fail(err)
 				return
 			}
+		}
+	}
+}
+
+// Yield between bounded background windows. Faults never wait on this gate;
+// their own read and population must complete before background work resumes.
+func (p *memoryPager) yieldToDemand() error {
+	for {
+		p.mu.Lock()
+		active, done := p.demandActive, p.demandDone
+		p.mu.Unlock()
+		if active == 0 {
+			return p.ctx.Err()
+		}
+		select {
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		case <-done:
 		}
 	}
 }
@@ -520,7 +578,7 @@ func (p *memoryPager) populateBackgroundWindow(offset int64, data []byte) error 
 	}
 }
 
-func (p *memoryPager) loadDemandWindow(ctx context.Context, ordinal int64, observation *vm.MemoryFaultObservation) error {
+func (p *memoryPager) loadDemandWindow(ctx context.Context, ordinal int64, observation *vm.MemoryFaultObservation, buffer []byte) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -567,7 +625,7 @@ func (p *memoryPager) loadDemandWindow(ctx context.Context, ordinal int64, obser
 		p.demandLoads.Add(1)
 		p.mu.Unlock()
 		offset := ordinal * vm.MemoryReadBytes
-		buffer := make([]byte, min(int64(vm.MemoryReadBytes), p.source.Size()-offset))
+		buffer = buffer[:min(int64(vm.MemoryReadBytes), p.source.Size()-offset)]
 		readStarted := time.Now()
 		n, err := p.source.ReadAt(ctx, buffer, offset)
 		readElapsed := int64(time.Since(readStarted))

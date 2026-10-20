@@ -86,6 +86,9 @@ func ReconcileDiskRetention(ctx context.Context, database db.TxDB) error {
 	if err := releaseImageBuildDiskAttachments(ctx, database); err != nil {
 		failures = append(failures, err)
 	}
+	if err := retireBootSeeds(ctx, database); err != nil {
+		failures = append(failures, err)
+	}
 	if err := retireRevokedComputerImages(ctx, database); err != nil {
 		failures = append(failures, err)
 	}

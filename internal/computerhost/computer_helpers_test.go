@@ -17,6 +17,14 @@ import (
 // test backends satisfy vm.Backend; a fake may override either method.
 type unsupportedMachineStarts struct{}
 
+func (unsupportedMachineStarts) BootSeedMatches(vm.MaterializeRequest, []byte) (bool, error) {
+	return false, errors.New("test backend does not match boot seeds")
+}
+
+func (unsupportedMachineStarts) PrepareBootSeed(context.Context, vm.MaterializeRequest) (vm.BootSeedCapture, error) {
+	return nil, errors.New("test backend does not prepare boot seeds")
+}
+
 func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	return nil, errors.New("test backend does not restore machines")
 }
@@ -154,3 +162,5 @@ func (unusedCheckpoint) BeginCheckpoint(context.Context, vm.SnapshotRequest) (vm
 }
 
 func (unusedCheckpoint) PrepareCheckpoint(context.Context) error { return nil }
+
+func (unusedCheckpoint) CheckpointReady() (bool, error) { return true, nil }

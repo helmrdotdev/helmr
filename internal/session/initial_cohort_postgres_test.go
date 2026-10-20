@@ -105,7 +105,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 					t.Fatal("replacement before physical absence")
 				}
 			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var clean bool
@@ -135,7 +135,7 @@ func TestInitialCohortLossWithoutCompletedWorkNeedsNoResume(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.allocation_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -267,7 +267,7 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 		t.Fatal(err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var cancelled bool
@@ -288,7 +288,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: sessionID, Kind: "resume", IdempotencyKey: "after-stop", HoldID: hold.HoldID}); err != nil {

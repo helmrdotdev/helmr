@@ -57,7 +57,7 @@ func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergrou
 				return err
 			}
 			hostLocked = true
-			return recordComputerStopped(ctx, tx, host.HostID, a.hostEpoch, a.identity, "successor worker completed local VM inventory and physical cleanup", uuid.Nil())
+			return recordComputerStopped(ctx, tx, host.HostID, a.hostEpoch, a.identity, "successor worker completed local VM inventory and physical cleanup", uuid.Nil(), uuid.Nil())
 		}); err != nil {
 			var lock *pgconn.PgError
 			if (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) || (errors.As(err, &lock) && lock.Code == "55P03") {

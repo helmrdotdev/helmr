@@ -20,11 +20,13 @@ const (
 	filepackDataHeaderSize = 21
 	filepackRecordEnd      = byte(255)
 	maxFilepackHeader      = 1 << 20
-	maxFilepackChunk       = 64 << 20
-	filepackCodecZstd      = "zstd"
-	ScratchRole            = "scratch-disk"
-	MemoryRole             = "memory"
-	maxInt64               = int64(1<<63 - 1)
+	// A full logical chunk plus a fixed envelope for zstd frame/block headers.
+	// The encoder bound is checked in tests before changing codec settings.
+	maxFilepackEncodedChunk = filepackChunkSize + 256
+	filepackCodecZstd       = "zstd"
+	ScratchRole             = "scratch-disk"
+	MemoryRole              = "memory"
+	maxInt64                = int64(1<<63 - 1)
 )
 
 // ErrInvalidContent identifies positively malformed filepack contents. It does
@@ -115,6 +117,7 @@ func decodeFilepack(ctx context.Context, source io.Reader, target io.WriterAt, e
 		return stats, err
 	}
 	defer decoder.Close()
+	var compressed, decoded []byte
 	var nextOffset int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -139,7 +142,11 @@ func decodeFilepack(ctx context.Context, source io.Reader, target io.WriterAt, e
 			}
 			return stats, nil
 		case filepackRecordData:
-			if err := readFilepackDataRecord(source, target, decoder, &stats, header.LogicalSize, &nextOffset); err != nil {
+			if compressed == nil {
+				compressed = make([]byte, maxFilepackEncodedChunk)
+				decoded = make([]byte, filepackChunkSize)
+			}
+			if err := readFilepackDataRecord(source, target, decoder, &stats, header.LogicalSize, &nextOffset, compressed, decoded); err != nil {
 				return stats, err
 			}
 		default:
@@ -194,7 +201,7 @@ func validateFilepackHeader(header filepackHeader, expectedRole string) error {
 	return nil
 }
 
-func readFilepackDataRecord(r io.Reader, target io.WriterAt, decoder *zstd.Decoder, stats *Stats, logicalSize int64, nextOffset *int64) error {
+func readFilepackDataRecord(r io.Reader, target io.WriterAt, decoder *zstd.Decoder, stats *Stats, logicalSize int64, nextOffset *int64, compressed, decoded []byte) error {
 	var header [20]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return contentReadError(err)
@@ -206,7 +213,7 @@ func readFilepackDataRecord(r io.Reader, target io.WriterAt, decoder *zstd.Decod
 	offset := int64(rawOffset)
 	rawSize := int64(binary.BigEndian.Uint32(header[8:12]))
 	compressedSize := int64(binary.BigEndian.Uint64(header[12:20]))
-	if logicalSize < 0 || offset < 0 || offset > logicalSize || rawSize <= 0 || rawSize > maxFilepackChunk || rawSize > logicalSize-offset || compressedSize <= 0 || compressedSize > maxFilepackChunk {
+	if logicalSize < 0 || offset < 0 || offset > logicalSize || rawSize <= 0 || rawSize > filepackChunkSize || rawSize > logicalSize-offset || compressedSize <= 0 || compressedSize > maxFilepackEncodedChunk {
 		return invalidContent(errors.New("invalid Firecracker filepack data record"))
 	}
 	// Canonical ordered chunks bound both record count and total decoded writes.
@@ -214,11 +221,11 @@ func readFilepackDataRecord(r io.Reader, target io.WriterAt, decoder *zstd.Decod
 	if offset < *nextOffset || offset%filepackChunkSize != 0 || rawSize != min(filepackChunkSize, logicalSize-offset) {
 		return invalidContent(errors.New("filepack records must be ordered nonoverlapping logical chunks"))
 	}
-	compressed := make([]byte, compressedSize)
+	compressed = compressed[:compressedSize]
 	if _, err := io.ReadFull(r, compressed); err != nil {
 		return contentReadError(err)
 	}
-	decoded, err := decoder.DecodeAll(compressed, make([]byte, 0, rawSize))
+	decoded, err := decoder.DecodeAll(compressed, decoded[:0:rawSize])
 	if err != nil {
 		return invalidContent(err)
 	}

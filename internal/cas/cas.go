@@ -14,6 +14,9 @@ const CheckpointVMStateMediaType = "application/vnd.helmr.firecracker.vm-state.v
 const CheckpointMemoryMediaType = "application/vnd.helmr.firecracker.memory.v1+aead-chunks"
 const CheckpointScratchDiskMediaType = "application/vnd.helmr.firecracker.scratch-disk.v0+filepack"
 const CheckpointVMConfigMediaType = "application/vnd.helmr.checkpoint.runtime-config.v0+json"
+const BootSeedVMStateMediaType = "application/vnd.helmr.boot-seed.vm-state.v1"
+const BootSeedMemoryMediaType = "application/vnd.helmr.boot-seed.memory.v1+aead-chunks"
+const BootSeedScratchMediaType = "application/vnd.helmr.boot-seed.scratch.v1+filepack"
 const ExpirableTagKey = "helmr-expirable"
 const ExpirableTagValue = "true"
 

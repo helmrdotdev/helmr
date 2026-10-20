@@ -191,7 +191,7 @@ func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
 	}
 }
 
-func (d *ownedComputerFixture) Capture(context.Context) (disk.CapturedVersion, error) {
+func (d *ownedComputerFixture) Capture(context.Context) (disk.RetainedVersion, error) {
 	d.captures++
 	return &ownedCaptureFixture{owner: d}, nil
 }
@@ -218,3 +218,8 @@ func (*ownedComputerFixture) Changes() disk.VersionChanges { return disk.Version
 func (d *ownedComputerFixture) PinCommitted(context.Context) (disk.RetainedVersion, error) {
 	return nil, errors.New("unexpected pressure pin")
 }
+
+func (*ownedCaptureFixture) Adopt(context.Context) error                 { return nil }
+func (*ownedCaptureFixture) BackRemotely(context.Context, int) error     { return nil }
+func (*ownedCaptureFixture) ReadyForRetirement() bool                    { return true }
+func (*ownedCaptureFixture) Collect(context.Context, int) (int64, error) { return 0, nil }

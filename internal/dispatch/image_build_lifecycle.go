@@ -102,18 +102,25 @@ func ReconcileImageBuildRevocation(ctx context.Context, pool db.TxBeginner, env,
 type stoppedImageBuild struct {
 	env, spec, id, instance uuid.UUID
 	hostEpoch               int64
+	seed                    bool
 }
 
+// Private build qualification VMs have fresh physical identities. If recovery
+// retains any unknown VM, it cannot prove all children of a private build absent.
+// Provider-confirmed host absence supplies an empty quarantine set.
 func hostImageBuilds(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedImageBuild, error) {
-	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch FROM image_builds
-  WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND NOT(allocation_id=ANY($3::uuid[]))
+	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch,false AS seed FROM image_builds
+  WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND cardinality($3::uuid[])=0
+  UNION ALL
+  SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch,true FROM boot_seed_builds
+  WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND cardinality($3::uuid[])=0
   ORDER BY environment_id,image_spec_id,id`, host, beforeEpoch, quarantined)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (stoppedImageBuild, error) {
 		var p stoppedImageBuild
-		err := row.Scan(&p.env, &p.spec, &p.id, &p.instance, &p.hostEpoch)
+		err := row.Scan(&p.env, &p.spec, &p.id, &p.instance, &p.hostEpoch, &p.seed)
 		return p, err
 	})
 }
@@ -157,7 +164,7 @@ func observeRecoveredHostImageBuilds(ctx context.Context, database db.TxDB, host
 			if err := computer.LockImageSpec(ctx, tx, p.env, p.spec); err != nil {
 				return err
 			}
-			return computer.RecordImageBuildStopped(ctx, tx, p.env, p.id, "successor worker completed local VM inventory and physical cleanup")
+			return recordBuildStopped(ctx, tx, p, "successor worker completed local VM inventory and physical cleanup")
 		})
 		if err != nil {
 			var lock *pgconn.PgError
@@ -172,6 +179,13 @@ func observeRecoveredHostImageBuilds(ctx context.Context, database db.TxDB, host
 		return ErrNotReady
 	}
 	return nil
+}
+
+func recordBuildStopped(ctx context.Context, tx pgx.Tx, build stoppedImageBuild, evidence string) error {
+	if build.seed {
+		return computer.RecordBootSeedStopped(ctx, tx, build.env, build.id, evidence)
+	}
+	return computer.RecordImageBuildStopped(ctx, tx, build.env, build.id, evidence)
 }
 
 type ImageBuildLifecyclePosition struct {
@@ -231,6 +245,10 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
   UNION
   SELECT environment_id,id,'attempt' FROM image_builds WHERE status IN ('queued','running') AND deadline_at<=statement_timestamp()
   UNION
+  SELECT b.environment_id,b.id,'seed' FROM boot_seed_builds b LEFT JOIN worker_hosts h ON h.id=b.worker_host_id
+   WHERE b.status='running' AND (b.deadline_at<=statement_timestamp() OR b.executor_expires_at<=statement_timestamp()
+     OR h.current_epoch IS DISTINCT FROM b.worker_epoch OR h.status NOT IN ('active','draining'))
+  UNION
   SELECT environment_id,id,'attempt' FROM image_builds WHERE status='running' AND executor_expires_at<=statement_timestamp()
   UNION
   SELECT p.environment_id,p.id,'attempt' FROM worker_hosts h JOIN image_builds p ON p.worker_host_id=h.id
@@ -267,6 +285,8 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 			err = session.ExpireImageWaiter(ctx, database, candidate.environment, candidate.id)
 		case "attempt":
 			err = ExpireImageBuild(ctx, database, candidate.environment, candidate.id)
+		case "seed":
+			err = expireBootSeed(ctx, database, candidate.environment, candidate.id)
 		case "unattached":
 			err = reconcileUnattachedComputer(ctx, database, candidate.environment, candidate.id)
 		case "image":

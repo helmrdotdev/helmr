@@ -415,7 +415,7 @@ func TestMemoryDemandJoinObservationIncludesDeadline(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 			defer cancel()
 			observation := vm.MemoryFaultObservation{}
-			if err := pager.loadDemandWindow(ctx, 0, &observation); !errors.Is(err, context.DeadlineExceeded) {
+			if err := pager.loadDemandWindow(ctx, 0, &observation, make([]byte, vm.MemoryReadBytes)); !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("join error: %v", err)
 			}
 			if background {

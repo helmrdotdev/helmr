@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -430,6 +431,9 @@ func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, e
 		}
 	}
 	if err := registerProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program, f.bundle.bundle.Preparations...); err != nil {
+		return Record{}, err
+	}
+	if err := computer.QueueDeploymentBootSeeds(ctx, tx, env, id); err != nil {
 		return Record{}, err
 	}
 	if err := appendEvent(ctx, tx, env, id, "deployment.registered", "Deployment registered"); err != nil {
