@@ -187,7 +187,9 @@ func TestMemoryPagerDemandAndHydrationPreserveGuestWrites(t *testing.T) {
 	if err = pager.populate(ctx, source.data[:4096], 0); err != nil {
 		t.Fatal(err)
 	}
-	if memory[0] != 99 || memory[len(memory)-1] != 37 || stopped.Load() || source.reads.Load() != 2 {
+	// A fault wakes the guest before its demand owner marks the window loaded.
+	// Background may read that window meanwhile, but must discard its copy.
+	if memory[0] != 99 || memory[len(memory)-1] != 37 || stopped.Load() || source.reads.Load() != 2+pager.backgroundDiscardedWindows.Load() {
 		t.Fatalf("write=%d tail=%d stopped=%v reads=%d", memory[0], memory[len(memory)-1], stopped.Load(), source.reads.Load())
 	}
 }
@@ -398,7 +400,9 @@ func TestMemoryPagerDenseWorkingSet(t *testing.T) {
 			t.Fatalf("memory differs at %d: %d != %d", i, value, want)
 		}
 	}
-	if stopped.Load() || source.reads.Load() != size/vm.MemoryReadBytes {
+	// Every extra read must be an authenticated background window discarded
+	// after joining a demand owner; guest writes above must remain intact.
+	if stopped.Load() || source.reads.Load() != size/vm.MemoryReadBytes+pager.backgroundDiscardedWindows.Load() {
 		t.Fatalf("stopped=%v source reads=%d", stopped.Load(), source.reads.Load())
 	}
 	t.Logf("dense bytes=%d elapsed=%s source_reads=%d pager=%+v", size, time.Since(started), source.reads.Load(), pager.stats())
