@@ -516,6 +516,110 @@ func (x *RuntimeImageConfig) GetCmd() []string {
 	return nil
 }
 
+type BootProgramArtifact struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Digest        string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BootProgramArtifact) Reset() {
+	*x = BootProgramArtifact{}
+	mi := &file_computer_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BootProgramArtifact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BootProgramArtifact) ProtoMessage() {}
+
+func (x *BootProgramArtifact) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BootProgramArtifact.ProtoReflect.Descriptor instead.
+func (*BootProgramArtifact) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *BootProgramArtifact) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *BootProgramArtifact) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+type BootProgram struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Runtime       *BootProgramArtifact   `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	Artifact      *BootProgramArtifact   `protobuf:"bytes,2,opt,name=artifact,proto3" json:"artifact,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BootProgram) Reset() {
+	*x = BootProgram{}
+	mi := &file_computer_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BootProgram) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BootProgram) ProtoMessage() {}
+
+func (x *BootProgram) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BootProgram.ProtoReflect.Descriptor instead.
+func (*BootProgram) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *BootProgram) GetRuntime() *BootProgramArtifact {
+	if x != nil {
+		return x.Runtime
+	}
+	return nil
+}
+
+func (x *BootProgram) GetArtifact() *BootProgramArtifact {
+	if x != nil {
+		return x.Artifact
+	}
+	return nil
+}
+
 type PrepareComputerRuntimeRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	ComputerId         string                 `protobuf:"bytes,5,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
@@ -524,13 +628,14 @@ type PrepareComputerRuntimeRequest struct {
 	MountPath          string                 `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
 	// The substrate is already mounted; the request supplies its admitted settings.
 	MountedImageConfig *RuntimeImageConfig `protobuf:"bytes,4,opt,name=mounted_image_config,json=mountedImageConfig,proto3" json:"mounted_image_config,omitempty"`
+	BootProgram        *BootProgram        `protobuf:"bytes,7,opt,name=boot_program,json=bootProgram,proto3" json:"boot_program,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *PrepareComputerRuntimeRequest) Reset() {
 	*x = PrepareComputerRuntimeRequest{}
-	mi := &file_computer_proto_msgTypes[7]
+	mi := &file_computer_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +647,7 @@ func (x *PrepareComputerRuntimeRequest) String() string {
 func (*PrepareComputerRuntimeRequest) ProtoMessage() {}
 
 func (x *PrepareComputerRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[7]
+	mi := &file_computer_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +660,7 @@ func (x *PrepareComputerRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareComputerRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*PrepareComputerRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{7}
+	return file_computer_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PrepareComputerRuntimeRequest) GetComputerId() string {
@@ -593,6 +698,13 @@ func (x *PrepareComputerRuntimeRequest) GetMountedImageConfig() *RuntimeImageCon
 	return nil
 }
 
+func (x *PrepareComputerRuntimeRequest) GetBootProgram() *BootProgram {
+	if x != nil {
+		return x.BootProgram
+	}
+	return nil
+}
+
 type PrepareComputerRuntimeResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Status             string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -604,7 +716,7 @@ type PrepareComputerRuntimeResponse struct {
 
 func (x *PrepareComputerRuntimeResponse) Reset() {
 	*x = PrepareComputerRuntimeResponse{}
-	mi := &file_computer_proto_msgTypes[8]
+	mi := &file_computer_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +728,7 @@ func (x *PrepareComputerRuntimeResponse) String() string {
 func (*PrepareComputerRuntimeResponse) ProtoMessage() {}
 
 func (x *PrepareComputerRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[8]
+	mi := &file_computer_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +741,7 @@ func (x *PrepareComputerRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareComputerRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*PrepareComputerRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{8}
+	return file_computer_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PrepareComputerRuntimeResponse) GetStatus() string {
@@ -663,7 +775,7 @@ type ComputerMountTarget struct {
 
 func (x *ComputerMountTarget) Reset() {
 	*x = ComputerMountTarget{}
-	mi := &file_computer_proto_msgTypes[9]
+	mi := &file_computer_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -675,7 +787,7 @@ func (x *ComputerMountTarget) String() string {
 func (*ComputerMountTarget) ProtoMessage() {}
 
 func (x *ComputerMountTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[9]
+	mi := &file_computer_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -688,7 +800,7 @@ func (x *ComputerMountTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerMountTarget.ProtoReflect.Descriptor instead.
 func (*ComputerMountTarget) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{9}
+	return file_computer_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ComputerMountTarget) GetBaseComputerDiskVersionId() string {
@@ -713,7 +825,7 @@ type ComputerCommandAuthority struct {
 
 func (x *ComputerCommandAuthority) Reset() {
 	*x = ComputerCommandAuthority{}
-	mi := &file_computer_proto_msgTypes[10]
+	mi := &file_computer_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +837,7 @@ func (x *ComputerCommandAuthority) String() string {
 func (*ComputerCommandAuthority) ProtoMessage() {}
 
 func (x *ComputerCommandAuthority) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[10]
+	mi := &file_computer_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +850,7 @@ func (x *ComputerCommandAuthority) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandAuthority.ProtoReflect.Descriptor instead.
 func (*ComputerCommandAuthority) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{10}
+	return file_computer_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ComputerCommandAuthority) GetOperationId() string {
@@ -806,7 +918,7 @@ type ComputerBasicExecRequest struct {
 
 func (x *ComputerBasicExecRequest) Reset() {
 	*x = ComputerBasicExecRequest{}
-	mi := &file_computer_proto_msgTypes[11]
+	mi := &file_computer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -818,7 +930,7 @@ func (x *ComputerBasicExecRequest) String() string {
 func (*ComputerBasicExecRequest) ProtoMessage() {}
 
 func (x *ComputerBasicExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[11]
+	mi := &file_computer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -831,7 +943,7 @@ func (x *ComputerBasicExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecRequest.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{11}
+	return file_computer_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ComputerBasicExecRequest) GetEnvelope() *ComputerCommandAuthority {
@@ -904,7 +1016,7 @@ type ComputerBasicExecResult struct {
 
 func (x *ComputerBasicExecResult) Reset() {
 	*x = ComputerBasicExecResult{}
-	mi := &file_computer_proto_msgTypes[12]
+	mi := &file_computer_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +1028,7 @@ func (x *ComputerBasicExecResult) String() string {
 func (*ComputerBasicExecResult) ProtoMessage() {}
 
 func (x *ComputerBasicExecResult) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[12]
+	mi := &file_computer_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,7 +1041,7 @@ func (x *ComputerBasicExecResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecResult.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecResult) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{12}
+	return file_computer_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ComputerBasicExecResult) GetErrorJson() string {
@@ -990,7 +1102,7 @@ type CommandOutputChunk struct {
 
 func (x *CommandOutputChunk) Reset() {
 	*x = CommandOutputChunk{}
-	mi := &file_computer_proto_msgTypes[13]
+	mi := &file_computer_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1002,7 +1114,7 @@ func (x *CommandOutputChunk) String() string {
 func (*CommandOutputChunk) ProtoMessage() {}
 
 func (x *CommandOutputChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[13]
+	mi := &file_computer_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1015,7 +1127,7 @@ func (x *CommandOutputChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandOutputChunk.ProtoReflect.Descriptor instead.
 func (*CommandOutputChunk) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{13}
+	return file_computer_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CommandOutputChunk) GetStream() string {
@@ -1085,7 +1197,7 @@ type CommandLogLimits struct {
 
 func (x *CommandLogLimits) Reset() {
 	*x = CommandLogLimits{}
-	mi := &file_computer_proto_msgTypes[14]
+	mi := &file_computer_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1097,7 +1209,7 @@ func (x *CommandLogLimits) String() string {
 func (*CommandLogLimits) ProtoMessage() {}
 
 func (x *CommandLogLimits) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[14]
+	mi := &file_computer_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1110,7 +1222,7 @@ func (x *CommandLogLimits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandLogLimits.ProtoReflect.Descriptor instead.
 func (*CommandLogLimits) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{14}
+	return file_computer_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CommandLogLimits) GetChunkBytes() int32 {
@@ -1145,7 +1257,7 @@ type CommandOutputBoundary struct {
 
 func (x *CommandOutputBoundary) Reset() {
 	*x = CommandOutputBoundary{}
-	mi := &file_computer_proto_msgTypes[15]
+	mi := &file_computer_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1157,7 +1269,7 @@ func (x *CommandOutputBoundary) String() string {
 func (*CommandOutputBoundary) ProtoMessage() {}
 
 func (x *CommandOutputBoundary) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[15]
+	mi := &file_computer_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1170,7 +1282,7 @@ func (x *CommandOutputBoundary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandOutputBoundary.ProtoReflect.Descriptor instead.
 func (*CommandOutputBoundary) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{15}
+	return file_computer_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CommandOutputBoundary) GetThroughSequence() uint64 {
@@ -1206,7 +1318,7 @@ type CommandOutputAck struct {
 
 func (x *CommandOutputAck) Reset() {
 	*x = CommandOutputAck{}
-	mi := &file_computer_proto_msgTypes[16]
+	mi := &file_computer_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1218,7 +1330,7 @@ func (x *CommandOutputAck) String() string {
 func (*CommandOutputAck) ProtoMessage() {}
 
 func (x *CommandOutputAck) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[16]
+	mi := &file_computer_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1231,7 +1343,7 @@ func (x *CommandOutputAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandOutputAck.ProtoReflect.Descriptor instead.
 func (*CommandOutputAck) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{16}
+	return file_computer_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CommandOutputAck) GetStream() string {
@@ -1268,7 +1380,7 @@ type ComputerBasicExecEvent struct {
 
 func (x *ComputerBasicExecEvent) Reset() {
 	*x = ComputerBasicExecEvent{}
-	mi := &file_computer_proto_msgTypes[17]
+	mi := &file_computer_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1280,7 +1392,7 @@ func (x *ComputerBasicExecEvent) String() string {
 func (*ComputerBasicExecEvent) ProtoMessage() {}
 
 func (x *ComputerBasicExecEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[17]
+	mi := &file_computer_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1293,7 +1405,7 @@ func (x *ComputerBasicExecEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecEvent.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecEvent) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{17}
+	return file_computer_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ComputerBasicExecEvent) GetEvent() isComputerBasicExecEvent_Event {
@@ -1348,7 +1460,7 @@ type ComputerSecretDelivery struct {
 
 func (x *ComputerSecretDelivery) Reset() {
 	*x = ComputerSecretDelivery{}
-	mi := &file_computer_proto_msgTypes[18]
+	mi := &file_computer_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1360,7 +1472,7 @@ func (x *ComputerSecretDelivery) String() string {
 func (*ComputerSecretDelivery) ProtoMessage() {}
 
 func (x *ComputerSecretDelivery) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[18]
+	mi := &file_computer_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1373,7 +1485,7 @@ func (x *ComputerSecretDelivery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSecretDelivery.ProtoReflect.Descriptor instead.
 func (*ComputerSecretDelivery) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{18}
+	return file_computer_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ComputerSecretDelivery) GetPlacementKind() string {
@@ -1407,7 +1519,7 @@ type ComputerCommandReleaseRequest struct {
 
 func (x *ComputerCommandReleaseRequest) Reset() {
 	*x = ComputerCommandReleaseRequest{}
-	mi := &file_computer_proto_msgTypes[19]
+	mi := &file_computer_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1419,7 +1531,7 @@ func (x *ComputerCommandReleaseRequest) String() string {
 func (*ComputerCommandReleaseRequest) ProtoMessage() {}
 
 func (x *ComputerCommandReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[19]
+	mi := &file_computer_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1432,7 +1544,7 @@ func (x *ComputerCommandReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandReleaseRequest.ProtoReflect.Descriptor instead.
 func (*ComputerCommandReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{19}
+	return file_computer_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ComputerCommandReleaseRequest) GetAuthority() *ComputerCommandAuthority {
@@ -1459,7 +1571,7 @@ type ComputerCommandReleaseResponse struct {
 
 func (x *ComputerCommandReleaseResponse) Reset() {
 	*x = ComputerCommandReleaseResponse{}
-	mi := &file_computer_proto_msgTypes[20]
+	mi := &file_computer_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1471,7 +1583,7 @@ func (x *ComputerCommandReleaseResponse) String() string {
 func (*ComputerCommandReleaseResponse) ProtoMessage() {}
 
 func (x *ComputerCommandReleaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[20]
+	mi := &file_computer_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1484,7 +1596,7 @@ func (x *ComputerCommandReleaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandReleaseResponse.ProtoReflect.Descriptor instead.
 func (*ComputerCommandReleaseResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{20}
+	return file_computer_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ComputerCommandReleaseResponse) GetReleased() bool {
@@ -1510,7 +1622,7 @@ type ComputerCommandCancelRequest struct {
 
 func (x *ComputerCommandCancelRequest) Reset() {
 	*x = ComputerCommandCancelRequest{}
-	mi := &file_computer_proto_msgTypes[21]
+	mi := &file_computer_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1522,7 +1634,7 @@ func (x *ComputerCommandCancelRequest) String() string {
 func (*ComputerCommandCancelRequest) ProtoMessage() {}
 
 func (x *ComputerCommandCancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[21]
+	mi := &file_computer_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1535,7 +1647,7 @@ func (x *ComputerCommandCancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandCancelRequest.ProtoReflect.Descriptor instead.
 func (*ComputerCommandCancelRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{21}
+	return file_computer_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ComputerCommandCancelRequest) GetAuthority() *ComputerCommandAuthority {
@@ -1555,7 +1667,7 @@ type ComputerCommandCancelResponse struct {
 
 func (x *ComputerCommandCancelResponse) Reset() {
 	*x = ComputerCommandCancelResponse{}
-	mi := &file_computer_proto_msgTypes[22]
+	mi := &file_computer_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1567,7 +1679,7 @@ func (x *ComputerCommandCancelResponse) String() string {
 func (*ComputerCommandCancelResponse) ProtoMessage() {}
 
 func (x *ComputerCommandCancelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[22]
+	mi := &file_computer_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1580,7 +1692,7 @@ func (x *ComputerCommandCancelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandCancelResponse.ProtoReflect.Descriptor instead.
 func (*ComputerCommandCancelResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{22}
+	return file_computer_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ComputerCommandCancelResponse) GetAccepted() bool {
@@ -1611,7 +1723,7 @@ type PreparationIdentity struct {
 
 func (x *PreparationIdentity) Reset() {
 	*x = PreparationIdentity{}
-	mi := &file_computer_proto_msgTypes[23]
+	mi := &file_computer_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1623,7 +1735,7 @@ func (x *PreparationIdentity) String() string {
 func (*PreparationIdentity) ProtoMessage() {}
 
 func (x *PreparationIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[23]
+	mi := &file_computer_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1636,7 +1748,7 @@ func (x *PreparationIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationIdentity.ProtoReflect.Descriptor instead.
 func (*PreparationIdentity) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{23}
+	return file_computer_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *PreparationIdentity) GetPreparationId() string {
@@ -1682,7 +1794,7 @@ type PreparationStart struct {
 
 func (x *PreparationStart) Reset() {
 	*x = PreparationStart{}
-	mi := &file_computer_proto_msgTypes[24]
+	mi := &file_computer_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1694,7 +1806,7 @@ func (x *PreparationStart) String() string {
 func (*PreparationStart) ProtoMessage() {}
 
 func (x *PreparationStart) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[24]
+	mi := &file_computer_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1707,7 +1819,7 @@ func (x *PreparationStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationStart.ProtoReflect.Descriptor instead.
 func (*PreparationStart) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{24}
+	return file_computer_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *PreparationStart) GetQualificationOnly() bool {
@@ -1763,7 +1875,7 @@ type PreparationLogLimits struct {
 
 func (x *PreparationLogLimits) Reset() {
 	*x = PreparationLogLimits{}
-	mi := &file_computer_proto_msgTypes[25]
+	mi := &file_computer_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1775,7 +1887,7 @@ func (x *PreparationLogLimits) String() string {
 func (*PreparationLogLimits) ProtoMessage() {}
 
 func (x *PreparationLogLimits) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[25]
+	mi := &file_computer_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1788,7 +1900,7 @@ func (x *PreparationLogLimits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationLogLimits.ProtoReflect.Descriptor instead.
 func (*PreparationLogLimits) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{25}
+	return file_computer_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PreparationLogLimits) GetChunkBytes() int32 {
@@ -1827,7 +1939,7 @@ type PreparationLog struct {
 
 func (x *PreparationLog) Reset() {
 	*x = PreparationLog{}
-	mi := &file_computer_proto_msgTypes[26]
+	mi := &file_computer_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1839,7 +1951,7 @@ func (x *PreparationLog) String() string {
 func (*PreparationLog) ProtoMessage() {}
 
 func (x *PreparationLog) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[26]
+	mi := &file_computer_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1852,7 +1964,7 @@ func (x *PreparationLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationLog.ProtoReflect.Descriptor instead.
 func (*PreparationLog) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{26}
+	return file_computer_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PreparationLog) GetKind() string {
@@ -1919,7 +2031,7 @@ type PreparationControlRequest struct {
 
 func (x *PreparationControlRequest) Reset() {
 	*x = PreparationControlRequest{}
-	mi := &file_computer_proto_msgTypes[27]
+	mi := &file_computer_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1931,7 +2043,7 @@ func (x *PreparationControlRequest) String() string {
 func (*PreparationControlRequest) ProtoMessage() {}
 
 func (x *PreparationControlRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[27]
+	mi := &file_computer_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1944,7 +2056,7 @@ func (x *PreparationControlRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationControlRequest.ProtoReflect.Descriptor instead.
 func (*PreparationControlRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{27}
+	return file_computer_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PreparationControlRequest) GetIdentity() *PreparationIdentity {
@@ -2007,7 +2119,7 @@ type PreparationControlResponse struct {
 
 func (x *PreparationControlResponse) Reset() {
 	*x = PreparationControlResponse{}
-	mi := &file_computer_proto_msgTypes[28]
+	mi := &file_computer_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2019,7 +2131,7 @@ func (x *PreparationControlResponse) String() string {
 func (*PreparationControlResponse) ProtoMessage() {}
 
 func (x *PreparationControlResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[28]
+	mi := &file_computer_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2032,7 +2144,7 @@ func (x *PreparationControlResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreparationControlResponse.ProtoReflect.Descriptor instead.
 func (*PreparationControlResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{28}
+	return file_computer_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *PreparationControlResponse) GetState() string {
@@ -2106,7 +2218,14 @@ const file_computer_proto_rawDesc = "" +
 	"\n" +
 	"entrypoint\x18\x04 \x03(\tR\n" +
 	"entrypoint\x12\x10\n" +
-	"\x03cmd\x18\x05 \x03(\tR\x03cmd\"\x9d\x02\n" +
+	"\x03cmd\x18\x05 \x03(\tR\x03cmd\"L\n" +
+	"\x13BootProgramArtifact\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\x93\x01\n" +
+	"\vBootProgram\x12@\n" +
+	"\aruntime\x18\x01 \x01(\v2&.helmr.computer.v0.BootProgramArtifactR\aruntime\x12B\n" +
+	"\bartifact\x18\x02 \x01(\v2&.helmr.computer.v0.BootProgramArtifactR\bartifact\"\xe0\x02\n" +
 	"\x1dPrepareComputerRuntimeRequest\x12\x1f\n" +
 	"\vcomputer_id\x18\x05 \x01(\tR\n" +
 	"computerId\x12+\n" +
@@ -2114,7 +2233,8 @@ const file_computer_proto_rawDesc = "" +
 	"\x14computer_instance_id\x18\x01 \x01(\tR\x12computerInstanceId\x12\x1d\n" +
 	"\n" +
 	"mount_path\x18\x02 \x01(\tR\tmountPath\x12W\n" +
-	"\x14mounted_image_config\x18\x04 \x01(\v2%.helmr.computer.v0.RuntimeImageConfigR\x12mountedImageConfigJ\x04\b\x03\x10\x04\"\xa9\x01\n" +
+	"\x14mounted_image_config\x18\x04 \x01(\v2%.helmr.computer.v0.RuntimeImageConfigR\x12mountedImageConfig\x12A\n" +
+	"\fboot_program\x18\a \x01(\v2\x1e.helmr.computer.v0.BootProgramR\vbootProgramJ\x04\b\x03\x10\x04\"\xa9\x01\n" +
 	"\x1ePrepareComputerRuntimeResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12=\n" +
@@ -2250,7 +2370,7 @@ func file_computer_proto_rawDescGZIP() []byte {
 	return file_computer_proto_rawDescData
 }
 
-var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_computer_proto_goTypes = []any{
 	(*FlushComputerRequest)(nil),           // 0: helmr.computer.v0.FlushComputerRequest
 	(*FlushComputerResponse)(nil),          // 1: helmr.computer.v0.FlushComputerResponse
@@ -2259,59 +2379,64 @@ var file_computer_proto_goTypes = []any{
 	(*ComputerMountPhase)(nil),             // 4: helmr.computer.v0.ComputerMountPhase
 	(*MaterializeComputerResponse)(nil),    // 5: helmr.computer.v0.MaterializeComputerResponse
 	(*RuntimeImageConfig)(nil),             // 6: helmr.computer.v0.RuntimeImageConfig
-	(*PrepareComputerRuntimeRequest)(nil),  // 7: helmr.computer.v0.PrepareComputerRuntimeRequest
-	(*PrepareComputerRuntimeResponse)(nil), // 8: helmr.computer.v0.PrepareComputerRuntimeResponse
-	(*ComputerMountTarget)(nil),            // 9: helmr.computer.v0.ComputerMountTarget
-	(*ComputerCommandAuthority)(nil),       // 10: helmr.computer.v0.ComputerCommandAuthority
-	(*ComputerBasicExecRequest)(nil),       // 11: helmr.computer.v0.ComputerBasicExecRequest
-	(*ComputerBasicExecResult)(nil),        // 12: helmr.computer.v0.ComputerBasicExecResult
-	(*CommandOutputChunk)(nil),             // 13: helmr.computer.v0.CommandOutputChunk
-	(*CommandLogLimits)(nil),               // 14: helmr.computer.v0.CommandLogLimits
-	(*CommandOutputBoundary)(nil),          // 15: helmr.computer.v0.CommandOutputBoundary
-	(*CommandOutputAck)(nil),               // 16: helmr.computer.v0.CommandOutputAck
-	(*ComputerBasicExecEvent)(nil),         // 17: helmr.computer.v0.ComputerBasicExecEvent
-	(*ComputerSecretDelivery)(nil),         // 18: helmr.computer.v0.ComputerSecretDelivery
-	(*ComputerCommandReleaseRequest)(nil),  // 19: helmr.computer.v0.ComputerCommandReleaseRequest
-	(*ComputerCommandReleaseResponse)(nil), // 20: helmr.computer.v0.ComputerCommandReleaseResponse
-	(*ComputerCommandCancelRequest)(nil),   // 21: helmr.computer.v0.ComputerCommandCancelRequest
-	(*ComputerCommandCancelResponse)(nil),  // 22: helmr.computer.v0.ComputerCommandCancelResponse
-	(*PreparationIdentity)(nil),            // 23: helmr.computer.v0.PreparationIdentity
-	(*PreparationStart)(nil),               // 24: helmr.computer.v0.PreparationStart
-	(*PreparationLogLimits)(nil),           // 25: helmr.computer.v0.PreparationLogLimits
-	(*PreparationLog)(nil),                 // 26: helmr.computer.v0.PreparationLog
-	(*PreparationControlRequest)(nil),      // 27: helmr.computer.v0.PreparationControlRequest
-	(*PreparationControlResponse)(nil),     // 28: helmr.computer.v0.PreparationControlResponse
-	nil,                                    // 29: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
-	nil,                                    // 30: helmr.computer.v0.PreparationStart.ProtectedEnvEntry
+	(*BootProgramArtifact)(nil),            // 7: helmr.computer.v0.BootProgramArtifact
+	(*BootProgram)(nil),                    // 8: helmr.computer.v0.BootProgram
+	(*PrepareComputerRuntimeRequest)(nil),  // 9: helmr.computer.v0.PrepareComputerRuntimeRequest
+	(*PrepareComputerRuntimeResponse)(nil), // 10: helmr.computer.v0.PrepareComputerRuntimeResponse
+	(*ComputerMountTarget)(nil),            // 11: helmr.computer.v0.ComputerMountTarget
+	(*ComputerCommandAuthority)(nil),       // 12: helmr.computer.v0.ComputerCommandAuthority
+	(*ComputerBasicExecRequest)(nil),       // 13: helmr.computer.v0.ComputerBasicExecRequest
+	(*ComputerBasicExecResult)(nil),        // 14: helmr.computer.v0.ComputerBasicExecResult
+	(*CommandOutputChunk)(nil),             // 15: helmr.computer.v0.CommandOutputChunk
+	(*CommandLogLimits)(nil),               // 16: helmr.computer.v0.CommandLogLimits
+	(*CommandOutputBoundary)(nil),          // 17: helmr.computer.v0.CommandOutputBoundary
+	(*CommandOutputAck)(nil),               // 18: helmr.computer.v0.CommandOutputAck
+	(*ComputerBasicExecEvent)(nil),         // 19: helmr.computer.v0.ComputerBasicExecEvent
+	(*ComputerSecretDelivery)(nil),         // 20: helmr.computer.v0.ComputerSecretDelivery
+	(*ComputerCommandReleaseRequest)(nil),  // 21: helmr.computer.v0.ComputerCommandReleaseRequest
+	(*ComputerCommandReleaseResponse)(nil), // 22: helmr.computer.v0.ComputerCommandReleaseResponse
+	(*ComputerCommandCancelRequest)(nil),   // 23: helmr.computer.v0.ComputerCommandCancelRequest
+	(*ComputerCommandCancelResponse)(nil),  // 24: helmr.computer.v0.ComputerCommandCancelResponse
+	(*PreparationIdentity)(nil),            // 25: helmr.computer.v0.PreparationIdentity
+	(*PreparationStart)(nil),               // 26: helmr.computer.v0.PreparationStart
+	(*PreparationLogLimits)(nil),           // 27: helmr.computer.v0.PreparationLogLimits
+	(*PreparationLog)(nil),                 // 28: helmr.computer.v0.PreparationLog
+	(*PreparationControlRequest)(nil),      // 29: helmr.computer.v0.PreparationControlRequest
+	(*PreparationControlResponse)(nil),     // 30: helmr.computer.v0.PreparationControlResponse
+	nil,                                    // 31: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	nil,                                    // 32: helmr.computer.v0.PreparationStart.ProtectedEnvEntry
 }
 var file_computer_proto_depIdxs = []int32{
 	2,  // 0: helmr.computer.v0.MaterializeComputerRequest.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	9,  // 1: helmr.computer.v0.MaterializeComputerRequest.target:type_name -> helmr.computer.v0.ComputerMountTarget
+	11, // 1: helmr.computer.v0.MaterializeComputerRequest.target:type_name -> helmr.computer.v0.ComputerMountTarget
 	4,  // 2: helmr.computer.v0.MaterializeComputerResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
-	9,  // 3: helmr.computer.v0.MaterializeComputerResponse.target:type_name -> helmr.computer.v0.ComputerMountTarget
-	6,  // 4: helmr.computer.v0.PrepareComputerRuntimeRequest.mounted_image_config:type_name -> helmr.computer.v0.RuntimeImageConfig
-	4,  // 5: helmr.computer.v0.PrepareComputerRuntimeResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
-	10, // 6: helmr.computer.v0.ComputerBasicExecRequest.envelope:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	18, // 7: helmr.computer.v0.ComputerBasicExecRequest.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
-	29, // 8: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
-	14, // 9: helmr.computer.v0.ComputerBasicExecRequest.log_limits:type_name -> helmr.computer.v0.CommandLogLimits
-	15, // 10: helmr.computer.v0.ComputerBasicExecResult.stdout:type_name -> helmr.computer.v0.CommandOutputBoundary
-	15, // 11: helmr.computer.v0.ComputerBasicExecResult.stderr:type_name -> helmr.computer.v0.CommandOutputBoundary
-	13, // 12: helmr.computer.v0.ComputerBasicExecEvent.output:type_name -> helmr.computer.v0.CommandOutputChunk
-	12, // 13: helmr.computer.v0.ComputerBasicExecEvent.result:type_name -> helmr.computer.v0.ComputerBasicExecResult
-	10, // 14: helmr.computer.v0.ComputerCommandReleaseRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	10, // 15: helmr.computer.v0.ComputerCommandCancelRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	18, // 16: helmr.computer.v0.PreparationStart.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
-	25, // 17: helmr.computer.v0.PreparationStart.log_limits:type_name -> helmr.computer.v0.PreparationLogLimits
-	30, // 18: helmr.computer.v0.PreparationStart.protected_env:type_name -> helmr.computer.v0.PreparationStart.ProtectedEnvEntry
-	23, // 19: helmr.computer.v0.PreparationControlRequest.identity:type_name -> helmr.computer.v0.PreparationIdentity
-	24, // 20: helmr.computer.v0.PreparationControlRequest.start:type_name -> helmr.computer.v0.PreparationStart
-	26, // 21: helmr.computer.v0.PreparationControlResponse.log:type_name -> helmr.computer.v0.PreparationLog
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	11, // 3: helmr.computer.v0.MaterializeComputerResponse.target:type_name -> helmr.computer.v0.ComputerMountTarget
+	7,  // 4: helmr.computer.v0.BootProgram.runtime:type_name -> helmr.computer.v0.BootProgramArtifact
+	7,  // 5: helmr.computer.v0.BootProgram.artifact:type_name -> helmr.computer.v0.BootProgramArtifact
+	6,  // 6: helmr.computer.v0.PrepareComputerRuntimeRequest.mounted_image_config:type_name -> helmr.computer.v0.RuntimeImageConfig
+	8,  // 7: helmr.computer.v0.PrepareComputerRuntimeRequest.boot_program:type_name -> helmr.computer.v0.BootProgram
+	4,  // 8: helmr.computer.v0.PrepareComputerRuntimeResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
+	12, // 9: helmr.computer.v0.ComputerBasicExecRequest.envelope:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	20, // 10: helmr.computer.v0.ComputerBasicExecRequest.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
+	31, // 11: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	16, // 12: helmr.computer.v0.ComputerBasicExecRequest.log_limits:type_name -> helmr.computer.v0.CommandLogLimits
+	17, // 13: helmr.computer.v0.ComputerBasicExecResult.stdout:type_name -> helmr.computer.v0.CommandOutputBoundary
+	17, // 14: helmr.computer.v0.ComputerBasicExecResult.stderr:type_name -> helmr.computer.v0.CommandOutputBoundary
+	15, // 15: helmr.computer.v0.ComputerBasicExecEvent.output:type_name -> helmr.computer.v0.CommandOutputChunk
+	14, // 16: helmr.computer.v0.ComputerBasicExecEvent.result:type_name -> helmr.computer.v0.ComputerBasicExecResult
+	12, // 17: helmr.computer.v0.ComputerCommandReleaseRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	12, // 18: helmr.computer.v0.ComputerCommandCancelRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	20, // 19: helmr.computer.v0.PreparationStart.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
+	27, // 20: helmr.computer.v0.PreparationStart.log_limits:type_name -> helmr.computer.v0.PreparationLogLimits
+	32, // 21: helmr.computer.v0.PreparationStart.protected_env:type_name -> helmr.computer.v0.PreparationStart.ProtectedEnvEntry
+	25, // 22: helmr.computer.v0.PreparationControlRequest.identity:type_name -> helmr.computer.v0.PreparationIdentity
+	26, // 23: helmr.computer.v0.PreparationControlRequest.start:type_name -> helmr.computer.v0.PreparationStart
+	28, // 24: helmr.computer.v0.PreparationControlResponse.log:type_name -> helmr.computer.v0.PreparationLog
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_computer_proto_init() }
@@ -2319,7 +2444,7 @@ func file_computer_proto_init() {
 	if File_computer_proto != nil {
 		return
 	}
-	file_computer_proto_msgTypes[17].OneofWrappers = []any{
+	file_computer_proto_msgTypes[19].OneofWrappers = []any{
 		(*ComputerBasicExecEvent_Output)(nil),
 		(*ComputerBasicExecEvent_Result)(nil),
 	}
@@ -2329,7 +2454,7 @@ func file_computer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_computer_proto_rawDesc), len(file_computer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

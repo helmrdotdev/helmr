@@ -4,17 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -96,6 +101,7 @@ type allocationOwnerTestMachine struct {
 	*agentControlMachine
 	unusedCheckpoint
 	captureError error
+	waitError    error
 	failClose    atomic.Bool
 	closes       atomic.Int64
 }
@@ -103,7 +109,10 @@ type allocationOwnerTestMachine struct {
 func (m *allocationOwnerTestMachine) WithRunningGuestControl(ctx context.Context, _ vm.GuestControlStage, run func(context.Context) error) error {
 	return run(ctx)
 }
-func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return errors.Join(ctx.Err(), m.waitError)
+}
 func (m *allocationOwnerTestMachine) Close(context.Context) error {
 	m.closes.Add(1)
 	if m.failClose.Load() {
@@ -616,4 +625,86 @@ func TestComputerAllocationRetainsRequestDuringCaptureAmbiguity(t *testing.T) {
 			t.Fatalf("optional failure did not close exact source: requests=%d starts=%d closes=%d stops=%d finished=%v", requests, backend.starts.Load(), backend.machine.closes.Load(), client.stops.Load(), owner.Finished())
 		}
 	})
+}
+
+type unavailableBootReader struct {
+	cas.Store
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (r *unavailableBootReader) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("unexpected Get")
+}
+func (r *unavailableBootReader) Stat(ctx context.Context, _ string) (cas.Object, error) {
+	r.once.Do(func() { close(r.opened) })
+	<-ctx.Done()
+	return cas.Object{}, ctx.Err()
+}
+func TestComputerBootPrefetchDoesNotClaimDeviceArena(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o, client, backend := allocationOwnerFixture(t)
+		reader := &unavailableBootReader{opened: make(chan struct{})}
+		o.machines.RuntimeArchitecture = definition.ArchitectureX8664
+		o.machines.PlatformStore = reader
+		o.machines.CAS = reader
+		client.source.BootProgram = &workerapi.RuntimeProgram{DeploymentID: uuid.NewV7().String(), Runtime: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("runtime")), SizeBytes: 4096, MediaType: artifact.RuntimeArtifactMediaType}, Artifact: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("program")), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+		attach := o.attachDevice
+		o.attachDevice = func(ctx context.Context, id workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+			select {
+			case <-reader.opened:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			if err := os.Mkdir(o.machines.computerPreparationDirectory(id.AllocationID, id.Epoch), 0700); err != nil {
+				return nil, err
+			}
+			return attach(ctx, id, source)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- o.Run(ctx) }()
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		if backend.starts.Load() != 1 || o.bootProgram != nil {
+			t.Fatal("optional prefetch prevented cold boot")
+		}
+		cancel()
+		<-done
+		if err := o.Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("boot staging remained", err)
+		}
+	})
+}
+
+type invalidManifestClient struct {
+	*allocationOwnerTestClient
+	manifest computercheckpoint.Manifest
+}
+
+func (c *invalidManifestClient) ReadAgentCheckpoint(context.Context, workerapi.AllocationIdentity) (computercheckpoint.Manifest, error) {
+	return c.manifest, nil
+}
+func TestComputerAllocationRejectsMalformedManifestOnce(t *testing.T) {
+	o, client, backend := allocationOwnerFixture(t)
+	checkpoint := uuid.NewV7()
+	client.delivery.RestoredFrom = checkpoint.String()
+	client.loseStop.Store(false)
+	o.client = &invalidManifestClient{allocationOwnerTestClient: client, manifest: computercheckpoint.Manifest{CheckpointID: checkpoint}}
+	if err := o.Run(t.Context()); !errors.Is(err, errInvalidCheckpoint) {
+		t.Fatal(err)
+	}
+	if !o.closing || o.invalidCheckpointID != checkpoint.String() || backend.starts.Load() != 0 {
+		t.Fatal("malformed checkpoint remained retryable")
+	}
+	if err := o.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !o.Finished() || client.stops.Load() != 1 || client.deliveries.Load() != 1 {
+		t.Fatal("invalid checkpoint was not closed")
+	}
 }

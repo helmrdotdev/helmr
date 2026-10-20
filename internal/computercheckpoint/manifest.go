@@ -21,6 +21,7 @@ var ErrInvalidManifest = errors.New("invalid Computer checkpoint manifest")
 // the VM identity hashes them. Runtime objects are encrypted by the host's
 // checkpoint pipeline before their descriptors are registered.
 type Manifest struct {
+	BootProgram    *Program              `json:"boot_program,omitempty"`
 	CheckpointID   uuid.UUID             `json:"checkpoint_id"`
 	ComputerID     uuid.UUID             `json:"computer_id"`
 	InstanceID     uuid.UUID             `json:"instance_id"`
@@ -60,6 +61,9 @@ func (m Manifest) Objects() []RuntimeObject {
 	}
 }
 func (m Manifest) Encode() ([]byte, error) {
+	if err := m.BootProgram.Validate(); err != nil {
+		return nil, ErrInvalidManifest
+	}
 	if m.CheckpointID == uuid.Nil() || m.ComputerID == uuid.Nil() || m.InstanceID == uuid.Nil() || m.LeaseEpoch <= 0 || m.ControlVersion <= 0 || len(m.CaptureDigest) != 32 || len(m.Members) == 0 || int64(len(m.Config)) > vm.SnapshotConfigLimit || !json.Valid(m.Config) || m.Runtime.VMConfigDigest != sha256sum.DigestBytes(m.Config) {
 		return nil, ErrInvalidManifest
 	}

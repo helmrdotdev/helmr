@@ -291,7 +291,7 @@ func (o *ComputerAllocationOwner) abortUncutCheckpoint(ctx context.Context, deli
 }
 
 func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture *agentv1.ComputerSessionCapture, encoded []byte, a vm.SnapshotArtifact) (computercheckpoint.Manifest, []string, error) {
-	m := computercheckpoint.Manifest{LeaseEpoch: o.identity.Epoch, ControlVersion: capture.GetDesiredVersion(), Config: a.Manifest, Disk: a.Computer.Capture.Root(), Runtime: vm.CheckpointIdentity{RuntimeBackend: a.RuntimeBackend, RuntimeArch: a.RuntimeArch, VMRuntimeContract: a.VMRuntimeContract, RuntimeID: a.RuntimeID, KernelDigest: a.KernelDigest, InitramfsDigest: a.InitramfsDigest, RootfsDigest: a.RootfsDigest, VMConfigDigest: a.VMConfigDigest, VMVCPUCount: a.VMVCPUCount, CPUConfigDigest: a.CPUConfigDigest}}
+	m := computercheckpoint.Manifest{BootProgram: o.bootProgram, LeaseEpoch: o.identity.Epoch, ControlVersion: capture.GetDesiredVersion(), Config: a.Manifest, Disk: a.Computer.Capture.Root(), Runtime: vm.CheckpointIdentity{RuntimeBackend: a.RuntimeBackend, RuntimeArch: a.RuntimeArch, VMRuntimeContract: a.VMRuntimeContract, RuntimeID: a.RuntimeID, KernelDigest: a.KernelDigest, InitramfsDigest: a.InitramfsDigest, RootfsDigest: a.RootfsDigest, VMConfigDigest: a.VMConfigDigest, VMVCPUCount: a.VMVCPUCount, CPUConfigDigest: a.CPUConfigDigest}}
 	var err error
 	m.CheckpointID, err = uuid.Parse(capture.GetCheckpointId())
 	if err != nil {

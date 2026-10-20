@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/definition"
 
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -71,16 +72,24 @@ func NewPreparedMachines(backend vm.Backend, store cas.Store, log *slog.Logger) 
 }
 
 type programSnapshots struct {
-	runtime                  *localcopy.Runtime
-	artifact                 *localcopy.Program
-	runtimeRead, programRead *objectcache.ReadLease
+	bootRuntime, bootArtifact bool
+	runtime                   *localcopy.Runtime
+	artifact                  *localcopy.Program
+	runtimeRead, programRead  *objectcache.ReadLease
 }
 
 func (s *programSnapshots) close() error {
+	if s == nil {
+		return nil
+	}
 	return errors.Join(s.runtime.Close(), s.artifact.Close(), s.runtimeRead.Close(), s.programRead.Close())
 }
 
 func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
+	return p.prepareProgramArtifactsWithBoot(ctx, tempDir, instanceID, program, nil)
+}
+
+func (p *PreparedMachines) prepareProgramArtifactsWithBoot(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, boot *computercheckpoint.Program) (*programSnapshots, error) {
 	if strings.TrimSpace(program.DeploymentID) == "" {
 		return nil, errors.New("program deployment id is required")
 	}
@@ -90,10 +99,23 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	runtimeDescriptor := p.sessionRuntimeDescriptor(program.Runtime)
 	programDescriptor := sessionProgramDescriptor(program.Artifact)
 	images := &programSnapshots{}
+	if boot != nil {
+		if err := boot.Validate(); err != nil {
+			return nil, err
+		}
+		images.bootRuntime = bootRoleMatches(program.Runtime, boot.Runtime)
+		images.bootArtifact = bootRoleMatches(program.Artifact, boot.Artifact)
+		if images.bootArtifact && !images.bootRuntime {
+			return nil, errors.New("boot Program paired with a different Runtime")
+		}
+	}
 	group, stageCtx := errgroup.WithContext(ctx)
 	// Both files already fit in the caller's staging reservation. Their reads
 	// are independent; join them before verification or releasing either file.
 	group.Go(func() error {
+		if images.bootRuntime {
+			return nil
+		}
 		started := time.Now()
 		var err error
 		images.runtime, err = localcopy.ReadRuntime(stageCtx, p.ObjectCache.Reader("runtime", p.PlatformStore), tempDir, runtimeDescriptor)
@@ -101,6 +123,9 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		return err
 	})
 	group.Go(func() error {
+		if images.bootArtifact {
+			return nil
+		}
 		started := time.Now()
 		var err error
 		images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
@@ -113,14 +138,14 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	runtimeSnapshot, programSnapshot := images.runtime, images.artifact
 	closeSnapshots := images.close
 	started := time.Now()
-	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (artifact.RuntimeIndex, error) {
-		return verify.Runtime(
-			ctx,
-			p.VerifierCgroupRoot,
-			instanceID,
-			runtimeSnapshot,
-		)
-	})
+	runtimeIndex := artifact.RuntimeIndex{Architecture: runtimeDescriptor.Architecture, RuntimeContract: runtimeDescriptor.RuntimeContract}
+	var memoHit bool
+	var err error
+	if !images.bootRuntime {
+		runtimeIndex, memoHit, err = p.verifyRuntime(runtimeDescriptor, func() (artifact.RuntimeIndex, error) {
+			return verify.Runtime(ctx, p.VerifierCgroupRoot, instanceID, runtimeSnapshot)
+		})
+	}
 	p.logInfo("artifact verified",
 		"verification_id", instanceID,
 		"duration_ms", time.Since(started).Milliseconds(),
@@ -142,6 +167,9 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 			errors.New("managed runtime index does not match its descriptor"),
 			closeSnapshots(),
 		)
+	}
+	if images.bootArtifact {
+		return images, nil
 	}
 	started = time.Now()
 	programMetadata, err := p.verifyProgram(ctx, programDescriptor, func() (artifact.ProgramMetadata, error) {
@@ -252,8 +280,10 @@ func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, wo
 		return nil
 	}
 	if ids.Validate(computerInstanceID) == nil && workerEpoch > 0 {
-		if err := os.RemoveAll(p.computerPreparationDirectory(computerInstanceID, workerEpoch)); err != nil {
-			return err
+		for _, directory := range []string{p.computerPreparationDirectory(computerInstanceID, workerEpoch), p.computerBootProgramDirectory(computerInstanceID, workerEpoch)} {
+			if err := os.RemoveAll(directory); err != nil {
+				return err
+			}
 		}
 	}
 	if err := p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch)); err != nil {

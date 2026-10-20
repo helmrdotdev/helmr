@@ -15,3 +15,5 @@ func materializeAgentProgram(context.Context, string, agentv1.SessionProgramRequ
 	return nil, errors.New("Session Program mounting requires Linux")
 }
 func (*mountedProgramImage) close() error { return nil }
+
+func validateBootProgramMounts() error { return errors.New("boot Program mounts require Linux") }

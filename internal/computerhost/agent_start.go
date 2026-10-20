@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"io"
 	"os"
@@ -36,6 +37,10 @@ var errSessionArtifactsRequired = errors.New("session requires staged Program ar
 // Computer. The surrounding physical owner must maintain the Computer lease
 // during artifact I/O and retain the returned connection for event/control work.
 func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, machine vm.GuestControlMachine, environment string, grant *agentv1.SessionGrant, client AgentStartClient, stageArtifacts bool) (connection *AgentSessionConnection, attached *agentv1.SessionAttached, resultErr error) {
+	return p.startAllocatedAgentSession(lifetime, machine, environment, grant, client, stageArtifacts, nil)
+}
+
+func (p *PreparedMachines) startAllocatedAgentSession(lifetime context.Context, machine vm.GuestControlMachine, environment string, grant *agentv1.SessionGrant, client AgentStartClient, stageArtifacts bool, boot *computercheckpoint.Program) (connection *AgentSessionConnection, attached *agentv1.SessionAttached, resultErr error) {
 	if client == nil || machine == nil || environment == "" || grant.GetIdentity().GetSessionId() == "" {
 		return nil, nil, errors.New("session start requires its physical owner and authenticated client")
 	}
@@ -104,18 +109,32 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 	if startup.Program.Runtime.SizeBytes < 1 || startup.Program.Runtime.SizeBytes > artifact.MaxRuntimePhysicalBytes || startup.Program.Artifact.SizeBytes < 1 || startup.Program.Artifact.SizeBytes > artifact.MaxProgramPhysicalBytes {
 		return nil, nil, errors.New("invalid Session Program staging size")
 	}
+	stagingBytes := startup.Program.Runtime.SizeBytes + startup.Program.Artifact.SizeBytes
+	if boot != nil {
+		if err := boot.Validate(); err != nil {
+			return nil, nil, err
+		}
+		if bootRoleMatches(startup.Program.Runtime, boot.Runtime) {
+			stagingBytes -= startup.Program.Runtime.SizeBytes
+		}
+		if bootRoleMatches(startup.Program.Artifact, boot.Artifact) {
+			stagingBytes -= startup.Program.Artifact.SizeBytes
+		}
+	}
 	invocation := uuid.NewV7().String()
 	key := reservation.Key{Kind: "session-program", ID: invocation, Epoch: grant.Identity.ProcessEpoch}
-	created, err := p.Reservations.Reserve(key, reservation.Vector{HostDiskBytes: startup.Program.Runtime.SizeBytes + startup.Program.Artifact.SizeBytes})
-	if err != nil {
-		return nil, nil, err
-	}
-	if !created {
-		return nil, nil, errors.New("session Program staging is already owned")
+	if stagingBytes > 0 {
+		created, reserveErr := p.Reservations.Reserve(key, reservation.Vector{HostDiskBytes: stagingBytes})
+		if reserveErr != nil {
+			return nil, nil, reserveErr
+		}
+		if !created {
+			return nil, nil, errors.New("session Program staging is already owned")
+		}
 	}
 	var cleanupErr error
 	defer func() {
-		if cleanupErr == nil {
+		if cleanupErr == nil && stagingBytes > 0 {
 			resultErr = errors.Join(resultErr, p.Reservations.Release(key))
 		}
 	}()
@@ -138,11 +157,13 @@ func (p *PreparedMachines) StartAllocatedAgentSession(lifetime context.Context, 
 		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
 		resultErr = errors.Join(resultErr, cleanupErr)
 	}()
-	prepare := p.prepareSessionProgramArtifacts
+
+	var images *programSnapshots
 	if stageArtifacts {
-		prepare = p.prepareProgramArtifacts
+		images, err = p.prepareProgramArtifactsWithBoot(ctx, directory, invocation, &startup.Program, boot)
+	} else {
+		images, err = p.prepareSessionProgramArtifactsWithBoot(ctx, directory, invocation, &startup.Program, boot)
 	}
-	images, err := prepare(ctx, directory, invocation, &startup.Program)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -212,6 +233,9 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 	switch {
 	case d.Digest == s.startup.Program.Runtime.Digest && d.SizeBytes == s.startup.Program.Runtime.SizeBytes:
 		role = "runtime"
+		if s.images.bootRuntime {
+			return errors.New("guest requested its platform-mounted Runtime bytes")
+		}
 		if s.images.runtimeRead != nil {
 			file = s.images.runtimeRead
 			break
@@ -222,6 +246,9 @@ func (s *agentProgramSource) WriteArtifact(ctx context.Context, d *agentv1.Sessi
 		file, _, err = s.images.runtime.VerifierFile()
 	case d.Digest == s.startup.Program.Artifact.Digest && d.SizeBytes == s.startup.Program.Artifact.SizeBytes:
 		role = "program"
+		if s.images.bootArtifact {
+			return errors.New("guest requested its platform-mounted Program bytes")
+		}
 		if s.images.programRead != nil {
 			file = s.images.programRead
 			break

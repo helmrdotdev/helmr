@@ -53,3 +53,9 @@ func (p *PreparedMachines) releaseComputerDevice(id string, epoch int64) error {
 	}
 	return nil
 }
+
+// Prefetch runs concurrently with device creation, which exclusively creates
+// its arena. Keep immutable boot staging outside that arena until launch.
+func (p *PreparedMachines) computerBootProgramDirectory(id string, epoch int64) string {
+	return p.computerPreparationDirectory(id, epoch) + "-boot-program"
+}
