@@ -283,12 +283,6 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	cacheBytes := max(int64(0), min(int64(4<<30), diskCapacity.HostDiskBytes-perSlotDisk*int64(cfg.WorkerExecutionSlots), availableDisk-perSlotDisk*int64(cfg.WorkerExecutionSlots)))
-	// Fixed cache reservation for the controlled comparison.
-	const comparisonCacheBytes = int64(576 << 20)
-	if cacheBytes < comparisonCacheBytes {
-		return errors.New("comparison cache reservation is not funded")
-	}
-	cacheBytes = comparisonCacheBytes
 	// Retain filesystem overhead headroom outside the rounded payload budget.
 	// Directory and extent metadata are not represented by logical object sizes.
 	const cacheFilesystemHeadroom = int64(64 << 20)
