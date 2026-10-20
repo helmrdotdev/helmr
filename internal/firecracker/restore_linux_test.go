@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"uuid"
@@ -594,6 +595,9 @@ func (s *eagerConcurrentSource) ReadAt(ctx context.Context, data []byte, offset 
 	}
 	for i := range data {
 		data[i] = byte((offset + int64(i)) % 251)
+		if offset == vm.MemoryReadBytes {
+			data[i] = 0
+		}
 	}
 	return len(data), nil
 }
@@ -628,8 +632,19 @@ func TestEagerMemoryJoinsParallelReadsAndRemovesFailedFile(t *testing.T) {
 			if int64(len(data)) != source.Size() {
 				t.Fatal("size mismatch")
 			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Sys().(*syscall.Stat_t).Blocks*512 >= source.Size() {
+				t.Fatal("zero window was not sparse")
+			}
 			for i, v := range data {
-				if v != byte(i%251) {
+				want := byte(i % 251)
+				if i >= vm.MemoryReadBytes && i < 2*vm.MemoryReadBytes {
+					want = 0
+				}
+				if v != want {
 					t.Fatalf("byte %d=%d", i, v)
 				}
 			}

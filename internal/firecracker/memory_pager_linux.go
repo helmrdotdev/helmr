@@ -268,6 +268,7 @@ func (p *memoryPager) WaitHydration(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
+	started := time.Now()
 	select {
 	case <-p.done:
 		if err := p.failure(); err != nil {
@@ -283,6 +284,9 @@ func (p *memoryPager) WaitHydration(ctx context.Context) error {
 		}
 		return p.ctx.Err()
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration_wait", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: "timeout"})
+		}
 		return ctx.Err()
 	}
 }

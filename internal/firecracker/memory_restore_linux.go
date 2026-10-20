@@ -140,8 +140,18 @@ func materializeEagerMemory(ctx context.Context, path string, source vm.MemorySo
 				if n != len(data) {
 					return errors.New("incomplete eager memory read")
 				}
-				if _, err := file.WriteAt(data, offset); err != nil {
-					return err
+				zero := true
+				for _, value := range data {
+					if value != 0 {
+						zero = false
+						break
+					}
+				}
+				// Keep authenticated zero ranges sparse, as in filepack restoration.
+				if !zero {
+					if _, err := file.WriteAt(data, offset); err != nil {
+						return err
+					}
 				}
 			}
 			return nil
