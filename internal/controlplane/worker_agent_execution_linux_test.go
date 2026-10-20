@@ -452,6 +452,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatalf("promotion did not qualify the prepared environment: %v", err)
 	}
 	// Exercise cold seed-only admission through image publication and pinning.
+	// Wait for the build fence so preparation cleanup cannot overlap the driver.
 	seedComputer, err := deploymentClient.CreateComputer(ctx, api.CreateComputerRequest{Template: "native-seed-only", IdempotencyKey: "seed-only-proof"}, client.ComputerScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +464,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	for {
 		var pinned bool
 		var evidence string
-		err := database.Pool.QueryRow(seedCtx, `SELECT c.initial_root_id IS NOT NULL AND c.image_id=i.id AND c.initial_root_id=i.root_id AND p.status='succeeded',COALESCE(i.publication_evidence,'')
+		err := database.Pool.QueryRow(seedCtx, `SELECT c.initial_root_id IS NOT NULL AND c.image_id=i.id AND c.initial_root_id=i.root_id AND p.status='succeeded' AND p.fenced_at IS NOT NULL,COALESCE(i.publication_evidence,'')
    FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
    JOIN images i ON (i.environment_id,i.image_build_id)=(p.environment_id,p.id)
    WHERE c.environment_id=$1 AND c.id=$2`, env, seedComputer.ID).Scan(&pinned, &evidence)
