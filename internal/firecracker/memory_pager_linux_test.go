@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -247,7 +248,7 @@ func TestMemoryPagerDemandDeadlineStopsOwnedProcess(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stopped := make(chan struct{})
-	p := &memoryPager{ctx: ctx, cancel: cancel, stopVMM: func() { close(stopped) }, source: stalledPagerSource{}, chunks: make([]memoryChunkState, 1), faults: make(chan memoryFault, 1)}
+	p := &memoryPager{started: time.Now(), ctx: ctx, cancel: cancel, stopVMM: func() { close(stopped) }, source: stalledPagerSource{}, chunks: make([]memoryChunkState, 1), faults: make(chan memoryFault, 1)}
 	exited := make(chan struct{})
 	go func() { defer close(exited); p.serveFaults() }()
 	p.faults <- memoryFault{chunk: 0, deadline: time.Now().Add(20 * time.Millisecond)}
@@ -303,7 +304,7 @@ func TestMemoryPagerQueueBackpressurePreservesFault(t *testing.T) {
 	defer unix.Close(pair[1])
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	p := &memoryPager{ctx: ctx, cancel: cancel, fd: pair[0], stopVMM: func() {}, faults: make(chan memoryFault, 64), regions: []memoryRegion{{Base: 4096, Size: vm.MemoryChunkBytes}}}
+	p := &memoryPager{started: time.Now(), chunks: make([]memoryChunkState, 1), ctx: ctx, cancel: cancel, fd: pair[0], stopVMM: func() {}, faults: make(chan memoryFault, 64), regions: []memoryRegion{{Base: 4096, Size: vm.MemoryChunkBytes}}}
 	for range cap(p.faults) {
 		p.faults <- memoryFault{chunk: -1}
 	}
@@ -400,4 +401,27 @@ func TestMemoryPagerDenseWorkingSet(t *testing.T) {
 		t.Fatalf("stopped=%v source reads=%d", stopped.Load(), source.reads.Load())
 	}
 	t.Logf("dense bytes=%d elapsed=%s source_reads=%d pager=%+v", size, time.Since(started), source.reads.Load(), pager.stats())
+}
+
+func TestMemoryDemandJoinObservationIncludesDeadline(t *testing.T) {
+	for _, background := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			pager := &memoryPager{chunks: []memoryChunkState{{loading: make(chan struct{}), background: background}}}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+			defer cancel()
+			observation := vm.MemoryFaultObservation{}
+			if err := pager.loadChunkFor(ctx, 0, true, &observation); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("join error: %v", err)
+			}
+			if background {
+				if pager.joinBackground.Load() != 1 || pager.joinDemand.Load() != 0 || observation.JoinBackgroundNs != int64(10*time.Millisecond) || observation.JoinDemandNs != 0 {
+					t.Fatalf("background join: %+v", observation)
+				}
+			} else {
+				if pager.joinDemand.Load() != 1 || pager.joinBackground.Load() != 0 || observation.JoinDemandNs != int64(10*time.Millisecond) || observation.JoinBackgroundNs != 0 {
+					t.Fatalf("demand join: %+v", observation)
+				}
+			}
+		})
+	}
 }

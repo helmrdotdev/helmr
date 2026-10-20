@@ -373,13 +373,49 @@ type MemoryReadStats struct {
 	RangeRequests    int64
 	CiphertextBytes  int64
 	DecodeDurationMs int64
+	RangeHeaderMs    int64
+	RangeBodyMs      int64
+	RangeActive      int64
+	RangePeak        int64
 }
 
+// MemoryFaultObservation records reader/worker timings, not kernel fault latency.
+// Only the slowest 256 worker operations lasting at least 1ms are retained.
+type MemoryFaultObservation struct {
+	Window           int64  `json:"window"`
+	ReceivedNs       int64  `json:"received_ns"`
+	StartedNs        int64  `json:"started_ns"`
+	FinishedNs       int64  `json:"finished_ns"`
+	JoinBackgroundNs int64  `json:"join_background_ns"`
+	JoinDemandNs     int64  `json:"join_demand_ns"`
+	SourceReadNs     int64  `json:"source_read_ns"`
+	PopulateNs       int64  `json:"populate_ns"`
+	ErrorClass       string `json:"error_class"`
+}
 type MemoryRestoreStats struct {
+	ObservedDemandPages   int64
+	ObservedDemandWindows int64
+	ObservationStartedAt  time.Time
 	MemoryReadStats
-	DemandFaults int64
-	LoadedChunks int64
-	TotalChunks  int64
+	DemandFaults             int64
+	DemandLoads              int64
+	BackgroundLoads          int64
+	DemandLoadErrors         int64
+	BackgroundLoadErrors     int64
+	JoinBackground           int64
+	JoinDemand               int64
+	JoinBackgroundMs         int64
+	JoinDemandMs             int64
+	FaultQueueMs             int64
+	FaultServiceMs           int64
+	DemandSourceReadMs       int64
+	BackgroundSourceReadMs   int64
+	DemandPopulateMs         int64
+	BackgroundPopulateMs     int64
+	LoadedChunks             int64
+	TotalChunks              int64
+	FaultObservations        []MemoryFaultObservation
+	DroppedFaultObservations int64
 }
 
 type FilepackStats struct {

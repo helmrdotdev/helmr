@@ -75,7 +75,9 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 		})
 	}
 	for i, object := range objects {
+		queuedAt := time.Now()
 		group.Go(func() error {
+			slog.Info("Computer restore staging admitted", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "queue_ms", float64(time.Since(queuedAt))/float64(time.Millisecond))
 			if err := stageCtx.Err(); err != nil {
 				stageErrors[i] = err
 				return err

@@ -142,14 +142,18 @@ func (c *CheckpointEncryptor) encryptMemory(ctx context.Context, input io.Reader
 }
 
 type checkpointMemorySource struct {
-	ranges          blockformat.RangeSource
-	descriptor      cas.Descriptor
-	size            int64
-	header, index   []byte
-	aead            cipher.AEAD
-	rangeRequests   atomic.Int64
-	ciphertextBytes atomic.Int64
-	decodeNanos     atomic.Int64
+	ranges           blockformat.RangeSource
+	descriptor       cas.Descriptor
+	size             int64
+	header, index    []byte
+	aead             cipher.AEAD
+	rangeRequests    atomic.Int64
+	ciphertextBytes  atomic.Int64
+	decodeNanos      atomic.Int64
+	rangeHeaderNanos atomic.Int64
+	rangeBodyNanos   atomic.Int64
+	rangeActive      atomic.Int64
+	rangePeak        atomic.Int64
 }
 
 func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c *CheckpointEncryptor, descriptor cas.Descriptor, headerDigest, purpose string, size int64) (*checkpointMemorySource, error) {
@@ -231,7 +235,7 @@ func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c
 
 func (s *checkpointMemorySource) Size() int64 { return s.size }
 func (s *checkpointMemorySource) MemoryReadStats() vm.MemoryReadStats {
-	return vm.MemoryReadStats{RangeRequests: s.rangeRequests.Load(), CiphertextBytes: s.ciphertextBytes.Load(), DecodeDurationMs: vm.RuntimeDurationMilliseconds(time.Duration(s.decodeNanos.Load()))}
+	return vm.MemoryReadStats{RangeHeaderMs: s.rangeHeaderNanos.Load() / int64(time.Millisecond), RangeBodyMs: s.rangeBodyNanos.Load() / int64(time.Millisecond), RangeActive: s.rangeActive.Load(), RangePeak: s.rangePeak.Load(), RangeRequests: s.rangeRequests.Load(), CiphertextBytes: s.ciphertextBytes.Load(), DecodeDurationMs: vm.RuntimeDurationMilliseconds(time.Duration(s.decodeNanos.Load()))}
 }
 
 // One bounded logical window maps to one contiguous ciphertext range. Every
@@ -339,7 +343,16 @@ func (s *checkpointMemorySource) readRange(ctx context.Context, offset, length i
 }
 func (s *checkpointMemorySource) readRangeOnce(ctx context.Context, offset, length int64) ([]byte, error) {
 	s.rangeRequests.Add(1)
+	active := s.rangeActive.Add(1)
+	defer s.rangeActive.Add(-1)
+	for peak := s.rangePeak.Load(); active > peak; peak = s.rangePeak.Load() {
+		if s.rangePeak.CompareAndSwap(peak, active) {
+			break
+		}
+	}
+	headerStarted := time.Now()
 	body, err := s.ranges.GetRange(ctx, s.descriptor.Digest, s.descriptor.SizeBytes, offset, length)
+	s.rangeHeaderNanos.Add(int64(time.Since(headerStarted)))
 	if err != nil {
 		classified := checkpointObjectReadError(err)
 		if errors.Is(classified, errInvalidCheckpoint) {
@@ -347,6 +360,8 @@ func (s *checkpointMemorySource) readRangeOnce(ctx context.Context, offset, leng
 		}
 		return nil, classified
 	}
+	bodyStarted := time.Now()
+	defer func() { s.rangeBodyNanos.Add(int64(time.Since(bodyStarted))) }()
 	data := make([]byte, length)
 	n, readErr := io.ReadFull(body, data)
 	s.ciphertextBytes.Add(int64(n))

@@ -37,11 +37,15 @@ type memoryRegion struct {
 	DeprecatedPageSize uint64 `json:"page_size_kib"`
 }
 type memoryChunkState struct {
-	loaded  bool
-	loading chan struct{}
+	loaded              bool
+	background          bool
+	loading             chan struct{}
+	observedDemandPages [vm.MemoryReadBytes / memoryPageBytes / 64]uint64
+	observedDemand      bool
 }
 type memoryFault struct {
 	chunk    int64
+	received time.Time
 	deadline time.Time
 }
 
@@ -49,24 +53,43 @@ type memoryFault struct {
 // Three demand workers and one background reader bound memory I/O independently
 // of disk. Background work never queues ahead of faults or owns their deadline.
 type memoryPager struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	stopVMM     context.CancelFunc
-	fd          int
-	source      vm.MemorySource
-	regions     []memoryRegion
-	workers     sync.WaitGroup
-	background  sync.Once
-	done        chan struct{}
-	faults      chan memoryFault
-	mu          sync.Mutex
-	chunks      []memoryChunkState
-	err         error
-	closeOnce   sync.Once
-	closeErr    error
-	recordPhase func(vm.Phase)
-	faultCount  atomic.Int64
-	chunkCount  atomic.Int64
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	stopVMM                  context.CancelFunc
+	fd                       int
+	source                   vm.MemorySource
+	regions                  []memoryRegion
+	workers                  sync.WaitGroup
+	background               sync.Once
+	done                     chan struct{}
+	faults                   chan memoryFault
+	mu                       sync.Mutex
+	chunks                   []memoryChunkState
+	err                      error
+	closeOnce                sync.Once
+	closeErr                 error
+	recordPhase              func(vm.Phase)
+	faultCount               atomic.Int64
+	chunkCount               atomic.Int64
+	demandLoads              atomic.Int64
+	backgroundLoads          atomic.Int64
+	demandLoadErrors         atomic.Int64
+	backgroundLoadErrors     atomic.Int64
+	joinBackground           atomic.Int64
+	joinDemand               atomic.Int64
+	joinBackgroundNanos      atomic.Int64
+	joinDemandNanos          atomic.Int64
+	faultQueueNanos          atomic.Int64
+	faultServiceNanos        atomic.Int64
+	demandReadNanos          atomic.Int64
+	backgroundReadNanos      atomic.Int64
+	demandPopulateNanos      atomic.Int64
+	backgroundPopulateNanos  atomic.Int64
+	observedDemandPages      atomic.Int64
+	observedDemandWindows    atomic.Int64
+	started                  time.Time
+	faultObservations        []vm.MemoryFaultObservation
+	droppedFaultObservations int64
 }
 
 func validateMemoryRegions(regions []memoryRegion, size int64) error {
@@ -193,7 +216,7 @@ func receiveMemoryHandshake(ctx context.Context, listener *net.UnixListener, pid
 
 func newMemoryPager(ctx context.Context, fd int, regions []memoryRegion, source vm.MemorySource, stopVMM context.CancelFunc) *memoryPager {
 	lifetime, cancel := context.WithCancel(ctx)
-	p := &memoryPager{ctx: lifetime, cancel: cancel, stopVMM: stopVMM, fd: fd, regions: regions, source: source, done: make(chan struct{}), faults: make(chan memoryFault, 64), chunks: make([]memoryChunkState, (source.Size()-1)/vm.MemoryReadBytes+1)}
+	p := &memoryPager{started: time.Now(), ctx: lifetime, cancel: cancel, stopVMM: stopVMM, fd: fd, regions: regions, source: source, done: make(chan struct{}), faults: make(chan memoryFault, 64), chunks: make([]memoryChunkState, (source.Size()-1)/vm.MemoryReadBytes+1)}
 	p.workers.Go(p.readFaults)
 	for range 3 {
 		p.workers.Go(p.serveFaults)
@@ -264,11 +287,19 @@ func (p *memoryPager) StartHydration() {
 		})
 	})
 }
-func (p *memoryPager) WaitHydration(ctx context.Context) error {
+func (p *memoryPager) WaitHydration(ctx context.Context) (result error) {
 	if p == nil {
 		return nil
 	}
 	started := time.Now()
+	defer func() {
+		reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration_wait", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: func() string {
+			if errors.Is(result, context.DeadlineExceeded) {
+				return "timeout"
+			}
+			return vm.RuntimeErrorClass(result)
+		}()})
+	}()
 	select {
 	case <-p.done:
 		if err := p.failure(); err != nil {
@@ -284,9 +315,6 @@ func (p *memoryPager) WaitHydration(ctx context.Context) error {
 		}
 		return p.ctx.Err()
 	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			reportPhase(p.recordPhase, vm.Phase{Name: "restore_memory_hydration_wait", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), Memory: p.stats(), ErrorClass: "timeout"})
-		}
 		return ctx.Err()
 	}
 }
@@ -317,7 +345,8 @@ func (p *memoryPager) readFaults() {
 			p.fail(fmt.Errorf("%w: invalid event read: %v", errMemoryPager, err))
 			return
 		}
-		deadline := time.Now().Add(memoryFaultDeadline)
+		received := time.Now()
+		deadline := received.Add(memoryFaultDeadline)
 		for at := 0; at < n; at += 32 {
 			event := data[at : at+32]
 			flags := binary.LittleEndian.Uint64(event[8:16])
@@ -334,9 +363,23 @@ func (p *memoryPager) readFaults() {
 				return
 			}
 			p.faultCount.Add(1)
+			window := offset / vm.MemoryReadBytes
+			page := (offset % vm.MemoryReadBytes) / memoryPageBytes
+			p.mu.Lock()
+			state := &p.chunks[window]
+			mask := uint64(1) << uint(page%64)
+			if state.observedDemandPages[page/64]&mask == 0 {
+				state.observedDemandPages[page/64] |= mask
+				p.observedDemandPages.Add(1)
+			}
+			if !state.observedDemand {
+				state.observedDemand = true
+				p.observedDemandWindows.Add(1)
+			}
+			p.mu.Unlock()
 			timer := time.NewTimer(time.Until(deadline))
 			select {
-			case p.faults <- memoryFault{chunk: offset / vm.MemoryReadBytes, deadline: deadline}:
+			case p.faults <- memoryFault{chunk: offset / vm.MemoryReadBytes, deadline: deadline, received: received}:
 				timer.Stop()
 			case <-p.ctx.Done():
 				timer.Stop()
@@ -362,8 +405,34 @@ func (p *memoryPager) serveFaults() {
 		case <-p.ctx.Done():
 			return
 		case fault := <-p.faults:
+			p.faultQueueNanos.Add(int64(time.Since(fault.received)))
+			started := time.Now()
 			ctx, cancel := context.WithDeadline(p.ctx, fault.deadline)
-			err := p.loadChunk(ctx, fault.chunk)
+			observation := vm.MemoryFaultObservation{Window: fault.chunk, ReceivedNs: int64(fault.received.Sub(p.started)), StartedNs: int64(started.Sub(p.started))}
+			err := p.loadChunkFor(ctx, fault.chunk, true, &observation)
+			observation.FinishedNs = int64(time.Since(p.started))
+			observation.ErrorClass = vm.RuntimeErrorClass(err)
+			if observation.FinishedNs-observation.StartedNs >= int64(time.Millisecond) {
+				p.mu.Lock()
+				if len(p.faultObservations) < 256 {
+					p.faultObservations = append(p.faultObservations, observation)
+				} else {
+					// Keep the slowest bounded operations across readiness and
+					// later work; an early fault burst must not consume the trace.
+					shortest := 0
+					for i := range p.faultObservations {
+						if p.faultObservations[i].FinishedNs-p.faultObservations[i].StartedNs < p.faultObservations[shortest].FinishedNs-p.faultObservations[shortest].StartedNs {
+							shortest = i
+						}
+					}
+					if observation.FinishedNs-observation.StartedNs > p.faultObservations[shortest].FinishedNs-p.faultObservations[shortest].StartedNs {
+						p.faultObservations[shortest] = observation
+					}
+					p.droppedFaultObservations++
+				}
+				p.mu.Unlock()
+			}
+			p.faultServiceNanos.Add(int64(time.Since(started)))
 			cancel()
 			if err != nil {
 				p.fail(err)
@@ -373,6 +442,9 @@ func (p *memoryPager) serveFaults() {
 	}
 }
 func (p *memoryPager) loadChunk(ctx context.Context, ordinal int64) error {
+	return p.loadChunkFor(ctx, ordinal, false, nil)
+}
+func (p *memoryPager) loadChunkFor(ctx context.Context, ordinal int64, demand bool, observation *vm.MemoryFaultObservation) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -385,27 +457,79 @@ func (p *memoryPager) loadChunk(ctx context.Context, ordinal int64) error {
 		}
 		if state.loading != nil {
 			done := state.loading
+			background := state.background
+			if demand {
+				if background {
+					p.joinBackground.Add(1)
+				} else {
+					p.joinDemand.Add(1)
+				}
+			}
 			p.mu.Unlock()
+			waitStarted := time.Now()
+			var waitErr error
 			select {
 			case <-done:
-				continue
 			case <-ctx.Done():
-				return ctx.Err()
+				waitErr = ctx.Err()
 			}
+			if demand {
+				elapsed := int64(time.Since(waitStarted))
+				if background {
+					p.joinBackgroundNanos.Add(elapsed)
+					observation.JoinBackgroundNs += elapsed
+				} else {
+					p.joinDemandNanos.Add(elapsed)
+					observation.JoinDemandNs += elapsed
+				}
+			}
+			if waitErr != nil {
+				return waitErr
+			}
+			continue
 		}
 		done := make(chan struct{})
 		state.loading = done
+		state.background = !demand
+		if demand {
+			p.demandLoads.Add(1)
+		} else {
+			p.backgroundLoads.Add(1)
+		}
 		p.mu.Unlock()
 		offset := ordinal * vm.MemoryReadBytes
 		buffer := make([]byte, min(int64(vm.MemoryReadBytes), p.source.Size()-offset))
+		readStarted := time.Now()
 		n, err := p.source.ReadAt(ctx, buffer, offset)
+		readElapsed := int64(time.Since(readStarted))
+		if demand {
+			p.demandReadNanos.Add(readElapsed)
+			observation.SourceReadNs += readElapsed
+		} else {
+			p.backgroundReadNanos.Add(readElapsed)
+		}
 		if err == nil && n != len(buffer) {
 			err = fmt.Errorf("%w: incomplete authenticated memory read", vm.ErrInvalidCheckpointContent)
 		}
 		if err == nil {
+			copyStarted := time.Now()
 			err = p.populate(ctx, buffer, offset)
+			copyElapsed := int64(time.Since(copyStarted))
+			if demand {
+				p.demandPopulateNanos.Add(copyElapsed)
+				observation.PopulateNs += copyElapsed
+			} else {
+				p.backgroundPopulateNanos.Add(copyElapsed)
+			}
 		}
 		clear(buffer)
+		if err != nil {
+			if demand {
+				p.demandLoadErrors.Add(1)
+			} else {
+				p.backgroundLoadErrors.Add(1)
+			}
+		}
 		p.mu.Lock()
 		state.loading = nil
 		state.loaded = err == nil
@@ -479,7 +603,19 @@ func (p *memoryPager) stats() *vm.MemoryRestoreStats {
 	if p == nil {
 		return nil
 	}
-	stats := &vm.MemoryRestoreStats{DemandFaults: p.faultCount.Load(), LoadedChunks: p.chunkCount.Load(), TotalChunks: (p.source.Size()-1)/vm.MemoryChunkBytes + 1}
+	p.mu.Lock()
+	observations := append([]vm.MemoryFaultObservation(nil), p.faultObservations...)
+	dropped := p.droppedFaultObservations
+	p.mu.Unlock()
+	stats := &vm.MemoryRestoreStats{
+		ObservationStartedAt: p.started, ObservedDemandPages: p.observedDemandPages.Load(), ObservedDemandWindows: p.observedDemandWindows.Load(),
+		DemandFaults: p.faultCount.Load(), LoadedChunks: p.chunkCount.Load(), TotalChunks: (p.source.Size()-1)/vm.MemoryChunkBytes + 1,
+		DemandLoads: p.demandLoads.Load(), BackgroundLoads: p.backgroundLoads.Load(), DemandLoadErrors: p.demandLoadErrors.Load(), BackgroundLoadErrors: p.backgroundLoadErrors.Load(),
+		JoinBackground: p.joinBackground.Load(), JoinDemand: p.joinDemand.Load(), JoinBackgroundMs: p.joinBackgroundNanos.Load() / int64(time.Millisecond), JoinDemandMs: p.joinDemandNanos.Load() / int64(time.Millisecond),
+		FaultQueueMs: p.faultQueueNanos.Load() / int64(time.Millisecond), FaultServiceMs: p.faultServiceNanos.Load() / int64(time.Millisecond),
+		DemandSourceReadMs: p.demandReadNanos.Load() / int64(time.Millisecond), BackgroundSourceReadMs: p.backgroundReadNanos.Load() / int64(time.Millisecond), DemandPopulateMs: p.demandPopulateNanos.Load() / int64(time.Millisecond), BackgroundPopulateMs: p.backgroundPopulateNanos.Load() / int64(time.Millisecond),
+		FaultObservations: observations, DroppedFaultObservations: dropped,
+	}
 	stats.MemoryReadStats = p.source.MemoryReadStats()
 	return stats
 }

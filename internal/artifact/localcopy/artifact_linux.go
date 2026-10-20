@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -650,8 +652,11 @@ func (local *Artifact) LinkInto(
 	}
 	// A linked drive can outlive the transfer operation. Flush its data and
 	// ownership before exposing it, including transient same-owner copies.
-	if err := local.upload.Sync(); err != nil {
-		return fmt.Errorf("sync local artifact copy before link: %w", err)
+	syncStarted := time.Now()
+	syncErr := local.upload.Sync()
+	slog.Info("Local artifact link sync", "digest", local.descriptor.Digest, "duration_ms", float64(time.Since(syncStarted))/float64(time.Millisecond), "failed", syncErr != nil)
+	if syncErr != nil {
+		return fmt.Errorf("sync local artifact copy before link: %w", syncErr)
 	}
 	source, err := inspectArtifactCopyAt(
 		int(local.platform.directory.Fd()),
