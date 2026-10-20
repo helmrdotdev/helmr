@@ -1096,7 +1096,7 @@ CREATE INDEX commands_unreconciled ON commands(environment_id, computer_id, comp
 CREATE TABLE idempotency_receipts (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
-    operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
+    operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'template.refresh', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
     slot_hash bytea NOT NULL CHECK (octet_length(slot_hash)=32),
     request_fingerprint bytea NOT NULL CHECK (octet_length(request_fingerprint)=32),
     scope_secret_name text,
@@ -1126,7 +1126,7 @@ CREATE TABLE idempotency_receipts (
     FOREIGN KEY (environment_id, scope_computer_id, command_id) REFERENCES commands(environment_id, computer_id, id),
     CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=accepted_at+interval '720 hours')),
     CHECK ((
-        (operation='deployment.finalize' AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
+        (operation IN ('deployment.finalize','template.refresh') AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation='secret.create' AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name)>0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation IN ('secret.rotate', 'secret.revoke') AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation='computer.create' AND scope_caller_kind='external' AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key)>0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id)=0)
@@ -1137,7 +1137,7 @@ CREATE TABLE idempotency_receipts (
         num_nonnulls(deployment_id, secret_id, computer_id, command_id)=1
         AND (receipt IS NOT NULL OR receipt_pruned_at IS NOT NULL)
         AND (
-        (operation='deployment.finalize' AND deployment_id IS NOT NULL AND secret_version_id IS NULL)
+        (operation IN ('deployment.finalize','template.refresh') AND deployment_id IS NOT NULL AND secret_version_id IS NULL)
         OR (operation='secret.create' AND secret_id IS NOT NULL AND secret_version_id IS NOT NULL)
         OR (operation='secret.rotate' AND secret_id=scope_secret_id AND secret_version_id IS NOT NULL)
         OR (operation='secret.revoke' AND secret_id=scope_secret_id AND secret_version_id IS NULL)

@@ -82,6 +82,7 @@ GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turn
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/updates
 GET /api/projects/{project}/environments/{environment}/templates
 GET /api/projects/{project}/environments/{environment}/templates/{template}
+GET /api/projects/{project}/environments/{environment}/templates/{template}/builds/{image_build}
 GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
 GET /api/projects/{project}/settings
@@ -121,6 +122,7 @@ GET /v1/sessions/{sessionID}/turns/{turnID}/asks
 GET /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}
 GET /v1/templates
 GET /v1/templates/{template}
+GET /v1/templates/{template}/builds/{image_build}
 GET /v1/triggers
 GET /v1/triggers/{triggerID}
 GET /worker/v1/instance
@@ -181,6 +183,7 @@ POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/sla
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages
+POST /api/projects/{project}/environments/{environment}/templates/{template}/refresh
 POST /api/slack/installations/finish
 POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
@@ -211,6 +214,7 @@ POST /v1/sessions/{sessionID}/resume
 POST /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer
 POST /v1/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /v1/sessions/{sessionID}/turns/{turnID}/messages
+POST /v1/templates/{template}/refresh
 POST /worker/v1/agent-computers/capture/begin
 POST /worker/v1/agent-computers/capture/cancel
 POST /worker/v1/agent-computers/capture/save-absence

@@ -13,18 +13,14 @@ import (
 
 const ComputerPreparationSpecVersion = "helmr.computer-preparation.v1"
 
-// ComputerPreparationSpec binds the complete read-only Program used by one
-// Computer's preparation. The Program commits its executable index, Runtime, seed
-// configuration and stable build-Secret bindings. Actual Secret versions belong
-// to an attempt's exposure evidence, not this immutable content identity.
-//
-// Preparation can read generated metadata as well as application files, so a
-// payload-only digest is insufficient. Changes to any shipped Program bytes may
-// require preparation again, even if the authored prepare function is unchanged.
+// ComputerPreparationSpec binds an independently verified preparation Program.
+// Templates without a callback commit only their seed and settings, without
+// an executable artifact. Actual Secret versions remain attempt evidence.
 type ComputerPreparationSpec struct {
-	APIVersion           string            `json:"apiVersion"`
-	TemplateDefinitionID string            `json:"templateDefinitionId"`
-	Program              ProgramDescriptor `json:"program"`
+	APIVersion           string                       `json:"apiVersion"`
+	TemplateDefinitionID string                       `json:"templateDefinitionId"`
+	Program              ProgramDescriptor            `json:"program,omitzero"`
+	Template             *definition.TemplateManifest `json:"template,omitempty"`
 }
 
 // BuildComputerPreparationSpecs derives candidate inputs from a bundle's Program.
@@ -39,10 +35,13 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 		if d.Kind != definition.KindTemplate {
 			continue
 		}
-		specs = append(specs, ComputerPreparationSpec{
-			APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID,
-			Program: output.Artifact,
-		})
+		spec := ComputerPreparationSpec{APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID}
+		if d.Template.Prepare {
+			spec.Program = output.Artifact
+		} else {
+			spec.Template = d.Template
+		}
+		specs = append(specs, spec)
 	}
 	return specs, nil
 }
@@ -51,8 +50,20 @@ func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, err
 	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.TemplateDefinitionID) {
 		return nil, errors.New("invalid Computer preparation identity")
 	}
-	if err := validateProgramDescriptor(spec.Program, "preparation Program", ProgramArtifactMediaType, MaxProgramPhysicalBytes); err != nil {
-		return nil, err
+	if spec.Program == (ProgramDescriptor{}) {
+		if spec.Template == nil || spec.Template.Prepare {
+			return nil, errors.New("seed-only preparation requires its Template without a callback")
+		}
+		if err := definition.ValidateTemplateManifest(*spec.Template); err != nil {
+			return nil, err
+		}
+	} else {
+		if spec.Template != nil {
+			return nil, errors.New("preparation Program and seed-only Template are mutually exclusive")
+		}
+		if err := validateProgramDescriptor(spec.Program, "preparation Program", ProgramArtifactMediaType, MaxProgramPhysicalBytes); err != nil {
+			return nil, err
+		}
 	}
 	raw, err := json.Marshal(spec)
 	if err != nil {

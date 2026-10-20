@@ -295,6 +295,7 @@ func testBundleInput(t *testing.T, programPath string, programBytes []byte) Bund
 			},
 			Metadata: index,
 		},
+		Preparations: []artifact.ProgramOutput{},
 		ComputerSeeds: []bundle.ComputerSeed{image},
 		Objects:       []ObjectSource{{Digest: programDigest, Path: programPath}, source},
 	}

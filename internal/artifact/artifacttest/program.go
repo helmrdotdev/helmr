@@ -46,3 +46,27 @@ func ProgramMetadata(t *testing.T) artifact.ProgramMetadata {
 	}
 	return index
 }
+
+// PreparationOutputs supplies independent metadata fixtures, not verified bytes.
+func PreparationOutputs(t *testing.T, session artifact.ProgramOutput) []artifact.ProgramOutput {
+	t.Helper()
+	outputs := make([]artifact.ProgramOutput, 0)
+	for _, d := range session.Metadata.Definitions {
+		if d.Kind != definition.KindTemplate || !d.Template.Prepare {
+			continue
+		}
+		metadata := session.Metadata.Clone()
+		for _, selected := range metadata.Definitions {
+			if selected.Kind == definition.KindTemplate && selected.DeclaredID == d.DeclaredID {
+				metadata.Definitions = []artifact.ProgramDefinition{selected}
+				break
+			}
+		}
+		raw, err := artifact.CanonicalProgramMetadata(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs = append(outputs, artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: Digest("preparation:" + string(raw)), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: metadata})
+	}
+	return outputs
+}

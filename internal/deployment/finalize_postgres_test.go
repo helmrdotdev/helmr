@@ -42,7 +42,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
+	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output, Preparations: artifacttest.PreparationOutputs(t, output)}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
 }
 
 func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {

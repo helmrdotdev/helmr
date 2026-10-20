@@ -115,6 +115,7 @@ go -C "$repo_root" build \
 # packages its config imports here. The fixtures use the current packed SDK;
 # host node_modules stay out of the captured source and out of the Program.
 (cd "$repo_root" && scripts/build-npm-packages.sh >/dev/null)
+bash "$repo_root/tests/build/preparation-programs.test.sh"
 prepare_host_sdk() {
   local target="$1"
   mkdir -p "$target/node_modules/@helmr" "$target/node_modules/@bufbuild"

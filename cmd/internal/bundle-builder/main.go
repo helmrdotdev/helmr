@@ -24,6 +24,8 @@ func main() {
 func run(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("helmr-bundle-builder", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	preparationSource := flags.String("preparation-source", "", "captured installed author source")
+	runtimeInstalled := flags.String("runtime-installed", "", "installed runtime package tree")
 	project := flags.String("project", "", "installed project tree")
 	prepareOutput := flags.String("prepare-output", "", "new closed prepared Program directory")
 	prepared := flags.String("prepared", "", "closed prepared Program directory")
@@ -92,7 +94,7 @@ func run(ctx context.Context, arguments []string) error {
 		return errors.New("exactly one of --prepare-output or --bundle-output is required")
 	}
 	if *prepareOutput != "" {
-		return builder.PrepareProgram(ctx, compilerInput, cleanAbsolute(*prepareOutput))
+		return builder.PrepareDeploymentPrograms(ctx, compilerInput, cleanAbsolute(*preparationSource), cleanAbsolute(*runtimeInstalled), cleanAbsolute(*prepareOutput))
 	}
 	imageWork, err := os.MkdirTemp(cleanAbsolute(*work), "images-*")
 	if err != nil {
@@ -103,7 +105,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := builder.BuildPreparedProgram(ctx, builder.PreparedProgramInput{
+	programInput := builder.PreparedProgramInput{
 		PreparedDirectory: cleanAbsolute(*prepared),
 		WorkDirectory:     cleanAbsolute(*work),
 		ProgramObjectPath: filepath.Join(cleanAbsolute(*work), "program.squashfs"),
@@ -112,7 +114,8 @@ func run(ctx context.Context, arguments []string) error {
 		Runtime:           runtime,
 		RuntimeMetadata:   metadata,
 		ComputerSeeds:     images,
-	})
+	}
+	result, err := builder.BuildPreparedProgram(ctx, programInput)
 	if err != nil {
 		return err
 	}
@@ -144,9 +147,20 @@ func run(ctx context.Context, arguments []string) error {
 		Digest: result.Program.Artifact.Digest,
 		Path:   result.ObjectPath,
 	})
+	preparations, err := builder.BuildPreparationPrograms(ctx, programInput)
+	if err != nil {
+		return err
+	}
+	outputs := make([]artifact.ProgramOutput, 0, len(preparations))
+	for _, preparation := range preparations {
+		defer os.Remove(preparation.ObjectPath)
+		outputs = append(outputs, preparation.Program)
+		objects = append(objects, builder.ObjectSource{Digest: preparation.Program.Artifact.Digest, Path: preparation.ObjectPath})
+	}
 	_, err = builder.FinalizeBundle(ctx, cleanAbsolute(*bundleOutput), builder.BundleInput{
 		Runtime:       runtime,
 		Program:       result.Program,
+		Preparations:  outputs,
 		ComputerSeeds: images,
 		Objects:       objects,
 	})

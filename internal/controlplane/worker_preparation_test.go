@@ -299,12 +299,12 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 	for _, mode := range []string{"current", "changed Program", "changed bytes", "expiry during read", "seal during read"} {
 		t.Run(mode, func(t *testing.T) {
 			f, request := preparationTransportFixture(t)
-			raw, manifest := controlPlaneDeploymentBundle(t)
+			raw, manifest := controlPlaneDeploymentBundle(t, true)
 			digest, err := bundle.Digest(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			specs, err := artifact.BuildComputerPreparationSpecs(manifest.Program)
+			specs, err := artifact.BuildComputerPreparationSpecs(manifest.Preparations[0])
 			if err != nil || len(specs) != 1 {
 				t.Fatalf("specs: %v", err)
 			}
@@ -336,7 +336,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
 			if mode == "current" {
-				if err != nil || start.Program.Artifact.Digest != manifest.Program.Artifact.Digest || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest || start.TemplateDefinitionID != spec.TemplateDefinitionID || start.Seed.ArtifactDigest != manifest.ComputerSeeds[0].Artifact.Digest {
+				if err != nil || start.Program.Artifact.Digest != manifest.Preparations[0].Artifact.Digest || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest || start.TemplateDefinitionID != spec.TemplateDefinitionID || start.Seed.ArtifactDigest != manifest.ComputerSeeds[0].Artifact.Digest {
 					t.Fatalf("executable preparation input: %+v %v", start, err)
 				}
 			} else if err == nil || start.Program.Artifact.Digest != "" {

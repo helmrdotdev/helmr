@@ -23,6 +23,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	f.request.bundle.root.Digest = artifacttest.Digest("prepared bundle")
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("prepared program")
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Prepare = true
+	f.request.bundle.bundle.Preparations = artifacttest.PreparationOutputs(t, f.request.bundle.bundle.Program)
 	candidate, err := register(t.Context(), f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,11 @@ import (
 
 func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
+	for i := range output.Metadata.Definitions {
+		if output.Metadata.Definitions[i].Template != nil {
+			output.Metadata.Definitions[i].Template.Prepare = true
+		}
+	}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil || len(specs) != 1 || specs[0].TemplateDefinitionID != "repo" {
 		t.Fatalf("specs %v: %v", specs, err)
@@ -60,5 +65,37 @@ func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 		if _, err := artifact.ParseComputerPreparationSpec(invalid); err == nil {
 			t.Fatalf("accepted %s", invalid)
 		}
+	}
+}
+
+func TestSeedOnlyPreparationSpecHasNoProgram(t *testing.T) {
+	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("session"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
+	specs, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil || len(specs) != 1 || specs[0].Program != (artifact.ProgramDescriptor{}) || specs[0].Template == nil {
+		t.Fatalf("seed-only spec %+v: %v", specs, err)
+	}
+	raw, err := artifact.CanonicalComputerPreparationSpec(specs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"program"`)) {
+		t.Fatal("seed-only spec retained Program")
+	}
+	parsed, err := artifact.ParseComputerPreparationSpec(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := artifact.CanonicalComputerPreparationSpec(parsed)
+	if err != nil || !bytes.Equal(raw, again) {
+		t.Fatalf("roundtrip %s: %v", again, err)
+	}
+	output.Artifact.Digest = artifacttest.Digest("Agent-only edit")
+	changed, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := artifact.CanonicalComputerPreparationSpec(changed[0])
+	if err != nil || !bytes.Equal(raw, after) {
+		t.Fatal("seed-only identity changed with Session bytes")
 	}
 }

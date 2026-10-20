@@ -269,12 +269,13 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	if manifest.Program.Artifact != start.Spec.Program {
+	preparation, ok := manifest.Preparation(start.Spec.TemplateDefinitionID)
+	if !ok || preparation.Artifact != start.Spec.Program {
 		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
 	var computerID *definition.TemplateManifest
-	for _, d := range manifest.Program.Metadata.Definitions {
+	for _, d := range preparation.Metadata.Definitions {
 		if d.Kind == definition.KindTemplate && d.DeclaredID == start.Spec.TemplateDefinitionID {
 			computerID = d.Template
 			break
@@ -295,6 +296,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, session.ErrConflict)
 		return
 	}
+	manifest.Program = preparation
 	program, err := runtimeProgram(start.DeploymentID.String(), manifest)
 	if err != nil {
 		server.writeAllocationError(w, err)

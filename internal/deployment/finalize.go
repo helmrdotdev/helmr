@@ -338,7 +338,11 @@ func (f *Finalizer) verifyObject(ctx context.Context, manifest bundle.Manifest, 
 	recorded := &objectReader{source: reader}
 	switch object.MediaType {
 	case artifact.ProgramArtifactMediaType:
-		err = verifyStoredProgram(ctx, recorded, manifest.Program)
+		program, ok := manifest.ProgramObject(object.Digest)
+		if !ok {
+			return InvalidObjectError{Err: errors.New("deployment Program is not referenced")}
+		}
+		err = verifyStoredProgram(ctx, recorded, program)
 	case definition.ComputerSeedMediaType:
 		err = disk.VerifySeed(ctx, recorded, disk.SeedArtifact{Object: object, LogicalBytes: disk.SeedCapacity}, disk.SeedCapacity)
 	default:
@@ -425,7 +429,7 @@ func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, e
 			return Record{}, fmt.Errorf("retain deployment dependency: %w", err)
 		}
 	}
-	if err := registerProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program); err != nil {
+	if err := registerProgramDefinitions(ctx, tx, env, id, f.bundle.bundle.Program, f.bundle.bundle.Preparations...); err != nil {
 		return Record{}, err
 	}
 	if err := appendEvent(ctx, tx, env, id, "deployment.registered", "Deployment registered"); err != nil {

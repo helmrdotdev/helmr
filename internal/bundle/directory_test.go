@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -116,6 +117,11 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, Manifest) {
 		{Digest: bundle.Program.Artifact.Digest, SizeBytes: int64(len(program)), MediaType: artifact.ProgramArtifactMediaType},
 		{Digest: bundle.ComputerSeeds[0].Artifact.Digest, SizeBytes: int64(len(computer)), MediaType: definition.ComputerSeedMediaType},
 	}
+	bundle.Preparations = artifacttest.PreparationOutputs(t, bundle.Program)
+	preparation := []byte("preparation fixture")
+	bundle.Preparations[0].Artifact.Digest = sha256sum.DigestBytes(preparation)
+	bundle.Preparations[0].Artifact.SizeBytes = int64(len(preparation))
+	bundle.Objects = append(bundle.Objects, Object(bundle.Preparations[0].Artifact))
 	SortObjects(bundle.Objects)
 	raw, err := Canonical(bundle)
 	if err != nil {
@@ -130,6 +136,7 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, Manifest) {
 		t.Fatal(err)
 	}
 	contents := map[string][]byte{
+		bundle.Preparations[0].Artifact.Digest:  preparation,
 		bundle.Program.Artifact.Digest:          program,
 		bundle.ComputerSeeds[0].Artifact.Digest: computer,
 	}
