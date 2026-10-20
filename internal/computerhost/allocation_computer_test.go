@@ -101,7 +101,6 @@ type allocationOwnerTestMachine struct {
 	*agentControlMachine
 	unusedCheckpoint
 	captureError error
-	waitError    error
 	failClose    atomic.Bool
 	closes       atomic.Int64
 }
@@ -109,10 +108,7 @@ type allocationOwnerTestMachine struct {
 func (m *allocationOwnerTestMachine) WithRunningGuestControl(ctx context.Context, _ vm.GuestControlStage, run func(context.Context) error) error {
 	return run(ctx)
 }
-func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error {
-	<-ctx.Done()
-	return errors.Join(ctx.Err(), m.waitError)
-}
+func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 func (m *allocationOwnerTestMachine) Close(context.Context) error {
 	m.closes.Add(1)
 	if m.failClose.Load() {

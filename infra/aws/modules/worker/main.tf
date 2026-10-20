@@ -20,7 +20,7 @@ locals {
   # Each live disk Version retains 8 MiB ciphertext and 8 MiB verification cache.
   worker_slot_memory_mib = var.vm_memory_mib + 16
   worker_slot_disk_bytes = (
-    (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 16384 + 2 * var.vm_memory_mib) * 1048576 +
+    (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 32768 + 2 * var.vm_memory_mib) * 1048576 +
     10000000 + local.checkpoint_cipher_bytes.state +
     sum(values(local.checkpoint_packed_bytes)) + sum(values(local.checkpoint_cipher_bytes))
   )

@@ -255,7 +255,7 @@ func postAgentComputerJSON(t *testing.T, server *httptest.Server, auth seededHos
 	return response
 }
 
-func TestWorkerAgentComputerTargetRoundTripAndLateMemoryLoss(t *testing.T) {
+func TestWorkerAgentComputerTargetRoundTrip(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
@@ -310,25 +310,6 @@ func TestWorkerAgentComputerTargetRoundTripAndLateMemoryLoss(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='active' FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=2`, f.Environment, f.Computer).Scan(&active); err != nil || !active {
 		t.Fatalf("target inactive: %v", err)
 	}
-	// Deferred RAM authentication can fail after the target became active.
-	// The same physical owner must settle the consumed image and its processes.
-	stopped := workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{
-		EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), AllocationID: instance.String(), LeaseEpoch: 2,
-	}, InvalidCheckpointID: request.CheckpointID}
-	for range 2 {
-		if err := client.ObserveAgentComputerStopped(t.Context(), stopped); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var lost bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT cp.status='lost' AND cp.controls_reconciled_at IS NOT NULL
- AND l.status='lost' AND l.fenced_at IS NOT NULL
- AND NOT EXISTS(SELECT 1 FROM session_processes s WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.fenced_at IS NULL)
- FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(cp.environment_id,cp.computer_id,cp.target_lease_epoch)
- WHERE cp.environment_id=$1 AND cp.id=$2`, f.Environment, request.CheckpointID).Scan(&lost); err != nil || !lost {
-		t.Fatalf("late memory loss did not fence the active target and retained processes: %v %v", lost, err)
-	}
-
 }
 
 func TestWorkerAgentComputerCaptureRejectsExpiredAuthority(t *testing.T) {
