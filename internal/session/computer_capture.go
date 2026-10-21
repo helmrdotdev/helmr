@@ -239,4 +239,4 @@ func computerExecutionDemand(ctx context.Context, tx pgx.Tx, env, computerID uui
 	return pending, err
 }
 
-var ErrComputerCaptureDemand = errors.New("Computer has pending execution during capture")
+var ErrComputerCaptureDemand = errors.New("computer has pending execution during capture")

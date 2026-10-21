@@ -73,7 +73,7 @@ func extractBuildOutput(ctx context.Context, source io.Reader, destination strin
 				return fmt.Errorf("build output directory %q is not a directory", name)
 			}
 			directories = append(directories, header)
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 			if err != nil {
 				return err
