@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 )
 
 var ErrChannelVerification = errors.New("the Slack channel could not be verified; invite the app to an unshared workspace channel and try again")
@@ -28,6 +30,17 @@ func channelReadUnavailable() error {
 // Verification is a read with the exact installation credential. Missing or
 // ambiguous membership evidence fails closed; no implicit channel join occurs.
 func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, revision int64, team, channel string) (string, error) {
+	return c.verifyConversation(ctx, installation, revision, team, channel, "")
+}
+
+// A DM requires the exact peer established by the signed gesture or retained
+// thread. Channel fields such as name and membership are not present on DMs.
+func (c *WebClient) verifyConversation(ctx context.Context, installation uuid.UUID, revision int64, team, channel, peer string) (string, error) {
+	direct := slackroute.IsDirectMessage(channel)
+	if (!direct && !definition.ValidSlackChannelID(channel)) || (direct && peer == "") || team == "" {
+		return "", ErrChannelVerification
+	}
+
 	token, err := c.credentials.BotToken(ctx, installation, revision)
 	if err != nil || token == "" {
 		return "", &channelVerificationFailure{DeliveryResult{Disposition: NotIssued, Code: "credential_unavailable"}}
@@ -61,6 +74,7 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 		Error   string `json:"error"`
 		Channel struct {
 			ID             string   `json:"id"`
+			User           string   `json:"user"`
 			Name           string   `json:"name"`
 			Team           string   `json:"context_team_id"`
 			Channel        bool     `json:"is_channel"`
@@ -99,7 +113,7 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 		}
 	}
 	v := result.Channel
-	if v.ID != channel || v.Team != team || v.Name == "" || (!v.Channel && !v.Group) || v.IM || v.MPIM || !v.Member || v.Shared || v.OrgShared || v.ExtShared || v.PendingShared || v.Archived || v.Frozen || v.ReadOnly || v.NonThreadable || len(v.PendingTeams) > 0 || len(v.Pending) > 0 {
+	if v.ID != channel || v.MPIM || v.Shared || v.OrgShared || v.ExtShared || v.PendingShared || v.Archived || v.Frozen || v.ReadOnly || v.NonThreadable || len(v.PendingTeams) > 0 || len(v.Pending) > 0 {
 		return "", ErrChannelVerification
 	}
 	for _, other := range append(v.SharedTeams, v.ConnectedTeams...) {
@@ -107,11 +121,22 @@ func (c *WebClient) verifyChannel(ctx context.Context, installation uuid.UUID, r
 			return "", ErrChannelVerification
 		}
 	}
+	if direct {
+		// The exact installation token identifies the workspace. Slack may omit
+		// context_team_id on an IM; a conflicting supplied team is never accepted.
+		if !v.IM || v.Channel || v.Group || v.User != peer || (v.Team != "" && v.Team != team) {
+			return "", ErrChannelVerification
+		}
+		return "", nil
+	}
+	if v.Team != team || v.Name == "" || (!v.Channel && !v.Group) || v.IM || !v.Member {
+		return "", ErrChannelVerification
+	}
 	return v.Name, nil
 }
 
-func (c *WebClient) VerifyChannel(ctx context.Context, installation uuid.UUID, revision int64, team, channel string) error {
-	_, err := c.verifyChannel(ctx, installation, revision, team, channel)
+func (c *WebClient) VerifyConversation(ctx context.Context, installation uuid.UUID, revision int64, team, channel, peer string) error {
+	_, err := c.verifyConversation(ctx, installation, revision, team, channel, peer)
 	return err
 }
 

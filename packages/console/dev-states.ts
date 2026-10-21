@@ -244,7 +244,7 @@ function connection(state: string, agent: string) {
   const status = { setup: "setup_incomplete", install: "setup_incomplete", connected: "connected", reauth: "reauthorization_required", disconnected: "disconnected" }[state] ?? "connected";
   return {
     id: "connection-demo", registration_id: "registration-demo", installation_id: installed ? "installation-demo" : null,
-    status, credentials_configured: credentials, client_id: credentials ? "1234567890.0987654321" : null,
+    status, direct_messages_authorized: installed, credentials_configured: credentials, client_id: credentials ? "1234567890.0987654321" : null,
     app_id: credentials ? "A0DEMOAPP" : null, team_id: installed ? "T0DEMO" : null, workspace_name: installed ? "Demo Workspace" : null,
     app_name: agent, app_icon_url: null,
   };

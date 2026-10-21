@@ -17,7 +17,7 @@ import (
 )
 
 type StatusClaim struct {
-	TeamID, ChannelID                   string
+	TeamID, ChannelID, PeerID           string
 	ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                  int64
 	Epoch, Revision                     int64
@@ -33,8 +33,8 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 	var claim *StatusClaim
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var channel, env, installation uuid.UUID
-		var team, slackChannel string
-		err := tx.QueryRow(ctx, `SELECT c.id,c.environment_id,c.installation_id,c.team_id,c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE t.id=$1`, thread).Scan(&channel, &env, &installation, &team, &slackChannel)
+		var team, slackChannel, peer string
+		err := tx.QueryRow(ctx, `SELECT c.id,c.environment_id,c.installation_id,c.team_id,c.slack_channel_id,CASE WHEN t.recipient_team_id=c.team_id THEN COALESCE(t.recipient_user_id,'') ELSE '' END FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE t.id=$1`, thread).Scan(&channel, &env, &installation, &team, &slackChannel, &peer)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -90,7 +90,7 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 			return err
 		}
 		digest := sha256.Sum256(payload)
-		c := &StatusClaim{TeamID: team, ChannelID: slackChannel, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Payload: payload}
+		c := &StatusClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Payload: payload}
 		if err = tx.QueryRow(ctx, `UPDATE slack_threads SET status_confirmation='unknown',inflight_method='agents.sessions.setStatus',inflight_payload=$2,inflight_digest=$3,inflight_revision=$4,inflight_attempt_id=$5,
  claim_epoch=claim_epoch+1,claimed_until=clock_timestamp()+interval '30 seconds'
  WHERE id=$1 RETURNING claim_epoch,claimed_until`, thread, payload, digest[:], revision, c.AttemptID).Scan(&c.Epoch, &c.ExpiresAt); err != nil {
@@ -169,7 +169,7 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 }
 
 type Caller interface {
-	VerifyChannel(context.Context, uuid.UUID, int64, string, string) error
+	VerifyConversation(context.Context, uuid.UUID, int64, string, string, string) error
 	Call(context.Context, uuid.UUID, int64, string, []byte) DeliveryResult
 }
 
@@ -178,7 +178,7 @@ func ReconcileStatus(ctx context.Context, pool db.TxBeginner, client Caller, thr
 	if err != nil || claim == nil {
 		return false, err
 	}
-	if err = client.VerifyChannel(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID); err != nil {
+	if err = client.VerifyConversation(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID, claim.PeerID); err != nil {
 		result := DeliveryResult{Disposition: Rejected, Code: "channel_unavailable"}
 		var failure *channelVerificationFailure
 		if errors.As(err, &failure) {

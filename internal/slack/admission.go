@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
@@ -24,7 +23,7 @@ type messageAdmission struct {
 	installation            uuid.UUID
 	route                   slackroute.StartRoute
 	message                 messageGesture
-	root                    string
+	root, actor             string
 	user                    uuid.UUID
 	thread, session, source uuid.UUID
 }
@@ -44,9 +43,10 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	if err != nil || status != "received" {
 		return nil, err
 	}
-	if json.Unmarshal(raw, &p.message) != nil || !definition.ValidSlackChannelID(p.message.Channel) {
+	if json.Unmarshal(raw, &p.message) != nil || !validConversationID(p.message.Channel) {
 		return nil, errGestureInvalid
 	}
+	p.actor = actor
 	p.root = p.message.Thread
 	if p.root == "" {
 		p.root = p.message.Timestamp
@@ -93,17 +93,26 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	}
 	var owner uuid.UUID
 	var deleted bool
-	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL
+	var peer, peerTeam *string
+	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL,t.recipient_user_id,t.recipient_team_id
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
- WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
+ WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted, &peer, &peerTeam)
 	if err == nil {
 		if owner != p.route.Target.ConnectionID || deleted {
 			return reject("thread_generation_unavailable")
+		}
+		if slackroute.IsDirectMessage(p.message.Channel) && (peer == nil || peerTeam == nil || *peer != actor || *peerTeam != p.route.Target.TeamID) {
+			return reject("permission_denied")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if p.thread == uuid.Nil() {
+		if slackroute.IsDirectMessage(p.message.Channel) && p.message.Thread != "" {
+			// Out-of-order replies wait for the accepted root, bounded by receipt expiry.
+			// They never turn an unlinked/rejected historical root into new work.
+			return nil, nil
+		}
 		err = tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND current_deployment_id IS NOT NULL`, env).Scan(&p.route.DeploymentID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("agent_unavailable")
@@ -126,7 +135,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 	if client == nil {
 		return ErrChannelVerification
 	}
-	if _, err = client.verifyChannel(ctx, p.installation, p.route.Target.CredentialRevision, p.route.Target.TeamID, p.message.Channel); err != nil {
+	if _, err = client.verifyConversation(ctx, p.installation, p.route.Target.CredentialRevision, p.route.Target.TeamID, p.message.Channel, p.actor); err != nil {
 		var failure *channelVerificationFailure
 		typed := errors.As(err, &failure)
 		if typed && failure.result.Disposition == Rejected || !typed && errors.Is(err, ErrChannelVerification) {
@@ -186,7 +195,13 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			var err error
 			if p.thread == uuid.Nil() {
 				var plan session.StartPlan
-				plan, err = session.PlanStart(session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
+				// Public Slack destinations remain channel-only. The authenticated receipt
+				// and internal route own a DM destination, not the public StartRequest.
+				destination := &p.message.Channel
+				if slackroute.IsDirectMessage(p.message.Channel) {
+					destination = nil
+				}
+				plan, err = session.PlanStart(session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: destination, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
 				if err == nil {
 					err = session.LockStartCaller(ctx, core, plan)
 				}

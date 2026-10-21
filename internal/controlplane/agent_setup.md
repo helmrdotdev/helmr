@@ -103,7 +103,11 @@ Agent name and URL-encoding all values:
 Ask them to connect Slack there and say "done". If their role cannot connect it,
 ask them to involve the owner/admin; do not change their permissions.
 
-**HAND-OFF:** In a Slack channel (not a direct message), ask the human to `/invite`
+**HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
+visible to authorized Environment members in Helmr. The human can open the app’s
+Messages tab and send a new message without a mention, then reply in its thread
+to continue. If linking is requested, link the account and send a new top-level
+message. For channel use, ask the human to `/invite`
 the connected Agent, then mention it with a greeting. If the Agent sends an account
 link prompt, the human follows it to link their Slack identity, then mentions the
 Agent again. Wait for "done" and confirmation of an actual Agent reply.

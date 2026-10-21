@@ -7,6 +7,7 @@ package slackroute
 import (
 	"context"
 	"errors"
+	"regexp"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
@@ -18,10 +19,27 @@ var (
 	ErrChannelUnavailable  = errors.New("the Slack channel is unavailable; check that both apps can access this channel")
 )
 
-// RequiredScopes returns the bot scopes needed by connected Slack connections.
-// OAuth, app manifests and transactional admission use the same scope set.
-func RequiredScopes() []string {
+// channelScopes preserves channel delivery for installations that have not yet
+// granted direct-message access. New OAuth installations request both sets.
+func channelScopes() []string {
 	return []string{"app_mentions:read", "channels:read", "channels:history", "groups:read", "groups:history", "chat:write", "assistant:write"}
+}
+
+// DirectMessageScopes are additionally required to receive and verify a DM.
+func DirectMessageScopes() []string { return []string{"im:history", "im:read"} }
+
+func RequiredScopes() []string { return append(channelScopes(), DirectMessageScopes()...) }
+
+var directMessagePattern = regexp.MustCompile(`^D[A-Z0-9]{1,99}$`)
+
+// IsDirectMessage classifies an ID, not access to the conversation.
+func IsDirectMessage(channel string) bool { return directMessagePattern.MatchString(channel) }
+
+func conversationScopes(channel string) []string {
+	if IsDirectMessage(channel) {
+		return RequiredScopes()
+	}
+	return channelScopes()
 }
 
 // LockConnections takes registration, installation, then connection gates
@@ -98,7 +116,7 @@ func lockConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.U
  AND r.org_id=e.org_id AND i.org_id=e.org_id AND r.app_id=i.app_id AND i.granted_scopes @> $3::text[]
  FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id
  LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
- WHERE p.environment_id=$1 AND p.id=ANY($2::uuid[]) ORDER BY p.id FOR SHARE OF p`, env, ids, RequiredScopes())
+ WHERE p.environment_id=$1 AND p.id=ANY($2::uuid[]) ORDER BY p.id FOR SHARE OF p`, env, ids, channelScopes())
 	if err != nil {
 		return false, err
 	}
@@ -168,5 +186,10 @@ func lockChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID
 	for _, id := range ids {
 		active = active && seen[id]
 	}
-	return active, nil
+	var missingDMGrant bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_channel_bindings c JOIN slack_installations i ON i.id=c.installation_id
+ WHERE c.environment_id=$1 AND c.id=ANY($2::uuid[]) AND left(c.slack_channel_id,1)='D' AND NOT i.granted_scopes @> $3::text[])`, env, ids, DirectMessageScopes()).Scan(&missingDMGrant); err != nil {
+		return false, err
+	}
+	return active && !missingDMGrant, nil
 }

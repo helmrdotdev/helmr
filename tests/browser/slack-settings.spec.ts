@@ -19,7 +19,7 @@ async function openAgent(page: Page) {
 }
 const connection = (status: string, configured = true) => ({
   id: "connection-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
-  status, credentials_configured: configured, client_id: configured ? "client-A" : null,
+  status, direct_messages_authorized: true, credentials_configured: configured, client_id: configured ? "client-A" : null,
   app_id: "app-A", team_id: "team-A", workspace_name: "Workspace A", app_name: "Dedicated Agent", app_icon_url: null,
 });
 const currentStep = (panel: ReturnType<Page["getByRole"]>) => panel.getByRole("list", { name: "Slack setup" }).locator("[aria-current=step]");
@@ -274,3 +274,28 @@ test("Slack form callback crosses sites without cookies and resumes the authenti
   expect(verificationCookie).toContain(`${session!.name}=${session!.value}`);
   expect(verificationCookie).toContain("helmr_auth_flow_dev=browser-flow-fixture");
 });
+
+for (const authorized of [false, true]) {
+  test(`Slack direct-message readiness with grants=${authorized}`, async ({ page }, testInfo) => {
+    await page.route(`**${endpoint}**`, route => route.fulfill({ json: {
+      connection: { ...connection("connected"), direct_messages_authorized: authorized },
+      manifest: { features: { bot_user: { always_online: true } }, oauth_config: { scopes: { bot: ["im:history", "im:read"] } } },
+    } }));
+    const panel = await openAgent(page);
+    await expect(panel).toContainText("sessions visible to authorized members of this environment");
+    if (authorized) {
+      await expect(panel).toContainText("message it directly without a mention");
+      await expect(panel.getByText("Direct messages need additional Slack permissions.", { exact: false })).toHaveCount(0);
+    } else {
+      await expect(panel).toContainText("Direct messages need additional Slack permissions.");
+      await expect(panel).toContainText("Channel conversations remain available.");
+      await expect(panel.getByRole("button", { name: "Reauthorize in Slack" })).toBeVisible();
+      await panel.getByText("Update app manifest", { exact: true }).click();
+      const manifest = panel.getByLabel("App manifest");
+      await manifest.getByRole("button", { name: "Raw", exact: true }).click();
+      await expect(manifest).toContainText("im:history");
+      await expect(manifest).toContainText("im:read");
+    }
+    await page.screenshot({ path: testInfo.outputPath("slack-dm-readiness.png"), fullPage: true });
+  });
+}

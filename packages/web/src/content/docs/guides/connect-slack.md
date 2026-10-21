@@ -1,6 +1,6 @@
 ---
 title: Connect an Agent to Slack
-description: Give a deployed Agent its own Slack app, link people's Slack accounts, and route Sessions to a channel.
+description: Give a deployed Agent its own Slack app, link people's Slack accounts, and use channel threads or direct messages.
 ---
 
 # Connect an Agent to Slack
@@ -42,6 +42,10 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
    verification in Slack now.
 6. Choose **Install app in Slack** and approve the installation.
 
+Slack may show a token-rotation setup notice while creating the app. Keep token
+rotation enabled; Helmr refreshes expiring installation tokens. The app is
+configured to appear online in Slack. This indicator is not a server-health check.
+
 The Slack tab shows the app and workspace once it is connected. From the same
 tab you can update the app credentials, reauthorize the app, or disconnect it.
 Before installation, **Discard setup** releases the Agent's connection without
@@ -62,6 +66,29 @@ appear in the thread. To send more input, reply in the thread and mention the
 app again; messages that do not mention the app are treated as discussion and
 ignored.
 
+## Use direct messages
+
+Open the app's Messages tab and send a request without a mention. Each new
+message outside a thread starts a new Session. Reply in that message's thread
+to continue; mentions are not needed in DM replies either. Replies to a closed
+Session, an account-linking hint or a thread without an accepted Session do not
+start new work. Send a new message outside the thread instead. An unbound reply
+may wait up to five minutes for its root to be accepted before a hint is sent.
+
+**DM records are shared under Helmr's existing Environment permissions.**
+Authorized members can inspect the Session's input and output in Console even
+though the Slack conversation is one-to-one. The app's description and Messages
+tab guidance also explain this visibility. Group DMs and shared conversations
+are not supported.
+
+For an existing app, open **Update app manifest** in the Console's Slack tab.
+Copy the current manifest into that same app's **App Manifest** settings in
+Slack and save it. Then choose **Reauthorize in Slack** for the same workspace
+to grant the DM permissions. Updating Helmr alone does not update the Slack app.
+Existing channel conversations remain available before reauthorization. As with
+any reauthorization, previously unsent output is not backfilled; finish active
+conversations before updating the authorization.
+
 ## Link people's Slack accounts
 
 Work requested in Slack runs as the Helmr user who asked. Each person links
@@ -69,7 +96,8 @@ their Slack account once per workspace:
 
 - From Slack: the first time they request work or answer a question, the app
   sends them a link that asks them to sign in to Helmr and confirm both accounts.
-  Their first action is not applied; they repeat it after linking.
+  Their first action is not applied; they repeat it after linking. In a DM, send
+  a new message outside the linking hint's thread.
 - From the Console: open **Account settings** from the profile menu; **My
   account** lists linked identities under **Your Slack identity**. Choose a
   workspace and **Verify Slack identity**.

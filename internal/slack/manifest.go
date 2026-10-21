@@ -28,9 +28,9 @@ func AppManifest(publicURL *url.URL, registration uuid.UUID, name string) json.R
 	interactions := publicURL.JoinPath("integrations/slack/apps", registration.String(), "interactions").String()
 	raw, _ := json.Marshal(map[string]any{
 		"display_information": map[string]any{"name": name, "description": "Work with your Helmr Agent in Slack"},
-		"features":            map[string]any{"bot_user": map[string]any{"display_name": botName, "always_online": false}, "agent_view": map[string]any{"agent_description": "Work with your Helmr Agent in Slack"}},
+		"features":            map[string]any{"bot_user": map[string]any{"display_name": botName, "always_online": true}, "app_home": map[string]any{"home_tab_enabled": false, "messages_tab_enabled": true, "messages_tab_read_only_enabled": false}, "agent_view": map[string]any{"agent_description": directMessageDescription}},
 		"oauth_config":        map[string]any{"redirect_urls": []string{publicURL.JoinPath("auth/slack/callback").String(), publicURL.JoinPath("api/slack/user-links/callback").String()}, "scopes": map[string]any{"bot": slackroute.RequiredScopes()}},
-		"settings":            map[string]any{"event_subscriptions": map[string]any{"request_url": events, "bot_events": []string{"agent_session_stopped", "app_mention", "message.channels", "message.groups", "app_uninstalled", "tokens_revoked"}}, "interactivity": map[string]any{"is_enabled": true, "request_url": interactions}, "org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": true},
+		"settings":            map[string]any{"event_subscriptions": map[string]any{"request_url": events, "bot_events": []string{"agent_session_stopped", "message.im", "app_home_opened", "app_mention", "message.channels", "message.groups", "app_uninstalled", "tokens_revoked"}}, "interactivity": map[string]any{"is_enabled": true, "request_url": interactions}, "org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": true},
 	})
 	return raw
 }

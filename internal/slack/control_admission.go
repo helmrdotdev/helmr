@@ -45,8 +45,9 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		var channel uuid.UUID
 		var channelEnabled time.Time
-		err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id
- WHERE p.id=$1 AND p.thread_id=$2 AND p.environment_id=$3 AND p.session_id=$4 AND c.installation_id=$5 AND t.deleted_at IS NULL`, target.Participant, target.Thread, target.Environment, target.Session, installation).Scan(&channel, &channelEnabled)
+		var conversation, peer, peerTeam string
+		err := tx.QueryRow(ctx, `SELECT c.id,pub.created_at,c.slack_channel_id,COALESCE(t.recipient_user_id,''),COALESCE(t.recipient_team_id,'') FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id AND t.front_session_id=p.session_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id
+ WHERE p.id=$1 AND p.thread_id=$2 AND p.environment_id=$3 AND p.session_id=$4 AND c.installation_id=$5 AND t.deleted_at IS NULL`, target.Participant, target.Thread, target.Environment, target.Session, installation).Scan(&channel, &channelEnabled, &conversation, &peer, &peerTeam)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("target_unavailable")
 		}
@@ -81,6 +82,9 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		if !unexpired {
 			return reject("gesture_expired")
+		}
+		if slackroute.IsDirectMessage(conversation) && (peer == "" || peer != actor || peerTeam != team) {
+			return reject("permission_denied")
 		}
 		answering := gesture.Control.Action == "answer" || gesture.Control.Action == "choose" || gesture.Control.Action == "submit_choices"
 		if gesture.Control.Action == "answer" {

@@ -142,6 +142,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
             {(connection) => (
               <Show when={connection.status === "setup_incomplete"} fallback={
                 <InstalledConnection
+                  manifest={data().manifest}
                   connection={connection}
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
@@ -255,6 +256,7 @@ function Setup(props: {
 }
 
 function InstalledConnection(props: {
+  manifest: JsonValue | undefined;
   connection: Connection;
   agentName: string;
   iconSeed: string;
@@ -266,10 +268,14 @@ function InstalledConnection(props: {
   return (
     <SetupPanel status={statusLabel(props.connection.status)}>
       <Show when={props.connection.status === "connected"}>
-        <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a session.</Notice>
+        <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a session.<Show when={props.connection.direct_messages_authorized}> With the current app manifest applied, you can also message it directly without a mention. Start a new message for a new session; reply in its thread to continue.</Show></Notice>
       </Show>
+      <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>
+        <Notice tone="warning">Direct messages need additional Slack permissions. Update this app’s manifest below, then choose Reauthorize in Slack for the same workspace. Channel conversations remain available.</Notice>
+      </Show>
+      <p class={ui.muted}>Slack conversations, including direct messages, create sessions visible to authorized members of this environment in Helmr. The app’s online indicator shows availability in Slack, not server health.</p>
       <Show when={props.connection.status === "reauthorization_required"}>
-        <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>
+        <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Update this app’s manifest below first. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>
       </Show>
       <Show when={props.connection.status === "disconnected"}>
         <Notice tone="danger" role="status">Slack no longer accepts this app’s installation. Disconnect it here, then connect Slack again to create a new connection.</Notice>
@@ -280,6 +286,10 @@ function InstalledConnection(props: {
       <Show when={props.connection.status !== "disconnected"}>
         <Disclosure summary="Update app credentials"><CredentialForm connection={props.connection} busy={props.busy} save={props.save} /></Disclosure>
       </Show>
+      <Disclosure summary="Update app manifest">
+        <p class={ui.muted}>In this app’s Slack settings, replace its App Manifest with the current manifest below. Save it, then reauthorize if permissions changed. Keep token rotation enabled; Slack may show a setup notice for it.</p>
+        <JsonView value={props.manifest ?? {}} label="App manifest" kind="manifest" open={MANIFEST_OPEN} />
+      </Disclosure>
       <Disclosure summary="Download app icon"><AppIconPicker seed={props.iconSeed} agentName={props.agentName} /></Disclosure>
     </SetupPanel>
   );

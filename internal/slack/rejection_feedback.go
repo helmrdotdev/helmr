@@ -6,21 +6,22 @@ import (
 	"errors"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
 type rejectionFeedback struct {
-	installation       uuid.UUID
-	credentialRevision int64
-	payload            []byte
+	installation         uuid.UUID
+	credentialRevision   int64
+	payload              []byte
+	channel, actor, team string
 }
 
 // takeRejectedFeedback disposes terminal rejected input and its private hint
 // before external I/O. Identity and digest remain for retry comparison.
-// Ephemeral hints are best effort: a crash may lose one, but neither an unknown
+// Feedback is best effort: a crash may lose one, but neither an unknown
 // HTTP outcome nor a duplicate receipt may repeat it. No core owner is invented.
 func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config ProjectionConfig) (*rejectionFeedback, bool, error) {
 	var intent *rejectionFeedback
@@ -28,13 +29,13 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var id, installation uuid.UUID
 		var raw []byte
-		var actor, code string
+		var actor, code, team string
 		var active bool
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,''),i.credential_revision,
+		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,''),i.credential_revision,i.team_id,
  i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- WHERE r.status='rejected' AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &active)
+ WHERE r.status='rejected' AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -62,7 +63,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 				return nil
 			}
 			err = tx.QueryRow(ctx, `SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_requests r ON r.id=$1
- WHERE t.id=$2 AND c.installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at`, id, c.Target.Thread).Scan(&channel)
+ WHERE t.id=$2 AND c.installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))`, id, c.Target.Thread).Scan(&channel)
 		} else {
 			err = tx.QueryRow(ctx, `SELECT $2::text FROM slack_connections pub JOIN slack_requests r ON r.id=$1
  WHERE pub.slack_installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at`, id, payload.Channel).Scan(&channel)
@@ -73,8 +74,18 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		if err != nil {
 			return err
 		}
-		if !definition.ValidSlackChannelID(channel) {
+		if !validConversationID(channel) {
 			return nil
+		}
+		direct := slackroute.IsDirectMessage(channel)
+		if direct {
+			var granted bool
+			if err = tx.QueryRow(ctx, `SELECT granted_scopes @> $2::text[] FROM slack_installations WHERE id=$1`, installation, slackroute.DirectMessageScopes()).Scan(&granted); err != nil {
+				return err
+			}
+			if !granted {
+				return nil
+			}
 		}
 		text := "Helmr could not accept that action. Check your access in Console, then try again."
 		var blocks []any
@@ -85,6 +96,9 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 				return err
 			}
 			text = "Link your Slack account to Helmr to use this Agent. Your action has not been applied."
+			if direct {
+				text += " After linking, send a new message outside this thread. " + directMessageDescription
+			}
 			blocks = []any{
 				map[string]any{"type": "section", "text": map[string]string{"type": "plain_text", "text": text}},
 				map[string]any{"type": "actions", "elements": []any{map[string]any{"type": "button", "action_id": "link_account", "text": map[string]string{"type": "plain_text", "text": "Link your account"}, "url": link}}},
@@ -97,27 +111,44 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "That answer does not match the question. Use the current question controls or inspect it in Console."
 		case "gesture_expired", "stale_gesture":
 			text = "This action is out of date. Send a new message or use the latest question controls to try again."
+			if direct {
+				text = "This action is out of date. Send a new message outside this thread or use the latest question controls to try again."
+			}
 		case "session_unavailable":
 			text = "This Session is closed or unavailable. Mention the Agent in a new thread to start a new Session."
+			if direct {
+				text = "This Session is closed or unavailable. Send a new message outside this thread to start a new Session."
+			}
 		case "agent_unavailable":
 			text = "That Agent is unavailable. Check its connection in Console, then try again."
 		case "thread_generation_unavailable":
 			text = "This thread belongs to an earlier connection. Start a new thread in a connected channel or use the Helmr CLI."
+			if direct {
+				text = "This thread is no longer available. Send a new message outside this thread."
+			}
 		case "binding_unavailable":
 			text = "That Slack destination is no longer available. Start a new thread in a connected channel or use the Helmr CLI."
 		case "content_invalid", "content_unsupported":
 			text = "Helmr could not accept that input. Check the task's supported input in Console, then try again."
 		}
-		frozen, err := json.Marshal(struct {
-			Channel string `json:"channel"`
-			User    string `json:"user"`
-			Text    string `json:"text"`
-			Blocks  []any  `json:"blocks,omitempty"`
-		}{channel, actor, text, blocks})
+		body := map[string]any{"channel": channel, "text": text}
+		if direct {
+			body["mrkdwn"] = false
+			body["parse"] = "none"
+			body["unfurl_links"] = false
+			body["unfurl_media"] = false
+		}
+		if len(blocks) > 0 {
+			body["blocks"] = blocks
+		}
+		if !direct {
+			body["user"] = actor
+		}
+		frozen, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		intent = &rejectionFeedback{installation: installation, credentialRevision: revision, payload: frozen}
+		intent = &rejectionFeedback{installation: installation, credentialRevision: revision, payload: frozen, channel: channel, actor: actor, team: team}
 		return nil
 	})
 	if err != nil {
@@ -128,7 +159,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 
 // ReconcileRejectedFeedback consumes terminal receipts including those rejected
 // at ingress. The only remote operation is private to the authenticated actor;
-// Slack does not guarantee ephemeral delivery or retain these notifications.
+// Channel feedback is ephemeral; DM feedback is an ordinary private message.
+// Both use the same at-most-once attempt policy, not a new delivery queue.
 func ReconcileRejectedFeedback(ctx context.Context, pool db.TxBeginner, client *WebClient, config ProjectionConfig, limit int) (int, error) {
 	if client == nil || !config.valid() || limit < 1 || limit > 64 {
 		return 0, errGestureInvalid
@@ -139,7 +171,14 @@ func ReconcileRejectedFeedback(ctx context.Context, pool db.TxBeginner, client *
 			return n, err
 		}
 		if intent != nil {
-			client.Call(ctx, intent.installation, intent.credentialRevision, "chat.postEphemeral", intent.payload)
+			method := "chat.postEphemeral"
+			if slackroute.IsDirectMessage(intent.channel) {
+				if _, err := client.verifyConversation(ctx, intent.installation, intent.credentialRevision, intent.team, intent.channel, intent.actor); err != nil {
+					continue
+				}
+				method = "chat.postMessage"
+			}
+			client.Call(ctx, intent.installation, intent.credentialRevision, method, intent.payload)
 		}
 	}
 	return limit, nil
