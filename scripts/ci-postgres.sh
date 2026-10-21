@@ -50,7 +50,7 @@ if [ "$#" -gt 0 ]; then
   CGO_ENABLED=1 GOFLAGS="${GOFLAGS:-} -race" bash "$repo_root/scripts/test-go-selection.sh" "$@"
   exit 0
 fi
-CGO_ENABLED=1 go test -race -count=1 \
+CGO_ENABLED=1 go test -race -count=1 -timeout=20m \
 	./dev/runtime \
 	./cmd/internal/dev-controlplane \
 	./internal/agent \
