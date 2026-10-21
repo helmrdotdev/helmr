@@ -17,8 +17,8 @@ locals {
     for role, size in local.checkpoint_plain_bytes : role => size + 73 + 36 * (ceil(size / 4194304) + 1)
   }
   # Each live disk Version retains 8 MiB ciphertext and 8 MiB verification cache.
-  # Restore retains bounded worker buffers and 64 bytes per 256-KiB chunk.
-  worker_slot_memory_mib  = var.vm_memory_mib + 32 + ceil(var.vm_memory_mib * 4 * 64 / 1048576)
+  # Restore/save retains 56 MiB of bounded buffers plus 64 bytes per 256-KiB chunk.
+  worker_slot_memory_mib  = var.vm_memory_mib + 16 + 56 + ceil(var.vm_memory_mib * 4 * 64 / 1048576)
   checkpoint_memory_bytes = var.vm_memory_mib * 1048576 + 96 + var.vm_memory_mib * 4 * 32
   worker_slot_disk_bytes = (
     (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 32768 + 2 * var.vm_memory_mib) * 1048576 +

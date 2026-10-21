@@ -416,10 +416,16 @@ func TestCheckpointMemoryStreamZeroWindowsNeedNoRequest(t *testing.T) {
 		return nil
 	}
 	next, err := s.ReadWindows(t.Context(), 0, consume)
-	if err != nil || next != memoryStreamBytes || count != 8 || len(r.lengths) != 0 {
+	if err != nil || next != memoryStreamBytes || count != memoryStreamBytes/vm.MemoryReadBytes || len(r.lengths) != 0 {
 		t.Fatalf("next=%d count=%d requests=%d err=%v", next, count, len(r.lengths), err)
 	}
-	next, err = s.ReadWindows(t.Context(), next, consume)
+	for next < s.Size() && err == nil {
+		previous := next
+		next, err = s.ReadWindows(t.Context(), next, consume)
+		if err == nil && next <= previous {
+			t.Fatal("stream made no progress")
+		}
+	}
 	if err != nil || next != s.Size() || count != 11 || len(r.lengths) != 0 {
 		t.Fatalf("remaining zero stream: next=%d count=%d err=%v", next, count, err)
 	}
@@ -540,7 +546,7 @@ func TestCheckpointMemoryStreamDeadlineIsSharedAcrossWindows(t *testing.T) {
 }
 
 func TestCheckpointMemoryStreamingJobsFitReservation(t *testing.T) {
-	// Mix a partially compressed chunk with three raw chunks per window to
+	// Mix a partially compressed chunk with raw chunks in each window to
 	// require both the decoder/scratch and large ciphertext buffers.
 	raw := make([]byte, 12*vm.MemoryReadBytes)
 	if _, err := rand.Read(raw); err != nil {
@@ -571,8 +577,9 @@ func TestCheckpointMemoryStreamingJobsFitReservation(t *testing.T) {
 	}
 	runtime.ReadMemStats(&after)
 	allocated := after.TotalAlloc - before.TotalAlloc
-	if allocated > 16<<20 {
-		t.Fatalf("four memory jobs allocated %d bytes, exceeds 16MiB buffer allowance", allocated)
+	allowance := uint64(8*vm.MemoryReadBytes + 8*(1<<20))
+	if allocated > allowance {
+		t.Fatalf("four memory jobs allocated %d bytes, exceeds %d-byte buffer allowance", allocated, allowance)
 	}
 	t.Logf("three demand jobs plus streamed segment allocated %d bytes in total", allocated)
 	runtime.KeepAlive(s)

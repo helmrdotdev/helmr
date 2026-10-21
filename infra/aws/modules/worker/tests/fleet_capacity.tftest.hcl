@@ -376,10 +376,10 @@ run "slot_memory_funds_guest_and_caches" {
   variables {
     worker_execution_slots     = 2
     vm_memory_mib              = 2048
-    worker_capacity_memory_mib = 4162
+    worker_capacity_memory_mib = 4242
   }
   assert {
-    condition     = local.worker_slot_memory_mib == 2081
+    condition     = local.worker_slot_memory_mib == 2121
     error_message = "slot memory must include disk caches and bounded lazy-memory restore overhead"
   }
 }
@@ -389,7 +389,7 @@ run "slot_memory_rejects_one_mib_short" {
   variables {
     worker_execution_slots     = 2
     vm_memory_mib              = 2048
-    worker_capacity_memory_mib = 4161
+    worker_capacity_memory_mib = 4241
   }
   expect_failures = [terraform_data.network_preconditions]
 }

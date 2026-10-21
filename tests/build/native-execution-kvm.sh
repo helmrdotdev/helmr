@@ -235,14 +235,14 @@ worker={'WORKER_WORK_DIR':e+'/w','JAILER_CHROOT_DIR':e+'/w/jailer','WORKER_HOST_
  'WORKER_COMPUTER_STAGING_MIB':'1024',
  'WORKER_LOG_CHUNK_BYTES':'1024','WORKER_LOG_BUFFER_BYTES':'1048576','WORKER_LOG_BUFFER_RECORDS':'1024',
  'WORKER_EXECUTION_SLOTS':'1','VM_VCPUS':'2','VM_MEMORY_MIB':'4096','VM_SCRATCH_DISK_MIB':'4096',
- # One 4096-MiB guest, 16-MiB disk caches, and 49-MiB restore/save buffers/index.
- 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4161','JAILER_UID':'61001','JAILER_GID':'61001',
+ # One 4096-MiB guest, 16-MiB disk caches, and 57-MiB restore/save buffers/index.
+ 'WORKER_CAPACITY_VCPUS':'2','WORKER_CAPACITY_MEMORY_MIB':'4169','JAILER_UID':'61001','JAILER_GID':'61001',
  'WORKER_NETWORK_LINK_POOL':'198.18.32.0/24','WORKER_NETWORK_TRANSLATION_POOL':'198.19.32.0/24',
  'WORKER_NETWORK_RESOLVER_IPV4':'127.0.0.1','WORKER_NETWORK_BLOCKED_IPV4_CIDRS':'["0.0.0.0/0"]',
  'FIRECRACKER_PATH':tool('firecracker'),'JAILER_PATH':tool('jailer'),'CPU_TEMPLATE_HELPER_PATH':tool('cpu-template-helper'),
  'IP_PATH':tool('ip'),'NFT_PATH':tool('nft'),'MKFS_EXT4_PATH':os.environ['MKFS_EXT4_PATH'],'MKE2FS_CONFIG_PATH':os.environ['MKE2FS_CONFIG_PATH']}
 if os.environ.get('HELMR_NATIVE_CONCURRENT_RESTORES_PROOF')=='1':
- worker.update(WORKER_EXECUTION_SLOTS='2',WORKER_CAPACITY_VCPUS='4',WORKER_CAPACITY_MEMORY_MIB='8322',GODEBUG='gctrace=1',TZ='UTC')
+ worker.update(WORKER_EXECUTION_SLOTS='2',WORKER_CAPACITY_VCPUS='4',WORKER_CAPACITY_MEMORY_MIB='8338',GODEBUG='gctrace=1',TZ='UTC')
 config={'Worker':c+'/agent-worker','Node':tool('node'),'Driver':c+'/driver.mjs','Model':c+'/model.mjs','Bundle':c+'/bundle',
  'Runtime':c+'/runtime.squashfs','RuntimeDescriptor':c+'/runtime.descriptor.json','Evidence':e+'/proof','WorkerCgroup':group+'/supervisor',
  'RequirePostCutContinuation':os.environ.get('HELMR_NATIVE_POST_CUT_PROOF')=='1',

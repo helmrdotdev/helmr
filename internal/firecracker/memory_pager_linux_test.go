@@ -177,6 +177,10 @@ func TestMemoryPagerDemandAndHydrationPreserveGuestWrites(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("demand fault did not resolve")
 	}
+	// The adjacent MiB is populated by the same demand read.
+	if got := memory[1<<20]; got != 37 || source.reads.Load() != 1 {
+		t.Fatalf("adjacent byte=%d reads=%d", got, source.reads.Load())
+	}
 	memory[0] = 99
 	pager.StartHydration()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -601,11 +605,11 @@ func TestMemoryStreamingHydrationRetainsPartialProgress(t *testing.T) {
 			defer cancel()
 			err = p.WaitHydration(ctx)
 			if integrity {
-				if !errors.Is(err, vm.ErrInvalidCheckpointContent) || !stopped.Load() || len(s.calls) != 1 || p.chunkCount.Load() != 8 {
+				if !errors.Is(err, vm.ErrInvalidCheckpointContent) || !stopped.Load() || len(s.calls) != 1 || p.chunkCount.Load() != 2*vm.MemoryReadBytes/vm.MemoryChunkBytes {
 					t.Fatalf("integrity failure not terminal: %v %+v", err, p.stats())
 				}
 			} else {
-				if err != nil || stopped.Load() || len(s.calls) != 2 || s.calls[1] != 2*vm.MemoryReadBytes || p.chunkCount.Load() != 16 || p.backgroundLoads.Load() != 4 || p.backgroundLoadErrors.Load() != 1 {
+				if err != nil || stopped.Load() || len(s.calls) != 2 || s.calls[1] != 2*vm.MemoryReadBytes || p.chunkCount.Load() != 4*vm.MemoryReadBytes/vm.MemoryChunkBytes || p.backgroundLoads.Load() != 4 || p.backgroundLoadErrors.Load() != 1 {
 					t.Fatalf("lost/repeated progress: %v calls=%v %+v", err, s.calls, p.stats())
 				}
 				if !bytes.Equal(memory, s.data) {

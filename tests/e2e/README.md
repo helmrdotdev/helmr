@@ -92,7 +92,7 @@ Other cases use only the native API and can target an explicitly authorized endp
 Different-Computer helper calls require at least two available VM slots: a hot
 parent can retain its slot while its helper runs. Before selecting `helpers`,
 check the dedicated Worker's advertised capacity. On a sufficiently sized host,
-`WORKER_CAPACITY_VCPUS=4`, `WORKER_CAPACITY_MEMORY_MIB=4096` and
+`WORKER_CAPACITY_VCPUS=4`, `WORKER_CAPACITY_MEMORY_MIB=4242` and
 `WORKER_EXECUTION_SLOTS=2` allow two default
 2-vCPU / 2-GiB VMs; the backing disk and assigned NBD devices must cover both.
 Configure this before enrollment, following the host profile's replacement rules.

@@ -15,9 +15,10 @@ import (
 
 // Snapshot format bounds shared by producers and host capacity admission.
 const (
-	SnapshotStateLimit  int64 = 10_000_000
-	MemoryChunkBytes          = 256 << 10
-	MemoryReadBytes           = 1 << 20
+	SnapshotStateLimit int64 = 10_000_000
+	MemoryChunkBytes         = 256 << 10
+	// MemoryReadBytes groups adjacent authenticated chunks into one read window.
+	MemoryReadBytes           = 2 << 20
 	SnapshotConfigLimit int64 = 65_536
 )
 
@@ -525,7 +526,7 @@ type SnapshotLimits struct {
 	ConfigBytes   int64
 }
 
-// MemoryRestoreOverhead funds the complete restore-to-save lifecycle: 12 MiB
+// MemoryRestoreOverhead funds the complete restore-to-save lifecycle: 20 MiB
 // for retained source/pager workspaces, 28 MiB for overlapping scratch packing,
 // and 8 MiB for codec, transport and allocation-growth margin. Scratch packing
 // uses one encoder; RAM and object encryption run sequentially and fit below
@@ -537,5 +538,5 @@ func MemoryRestoreOverhead(memoryBytes int64) (int64, error) {
 		return 0, errors.New("memory capacity must be positive")
 	}
 	chunks := (memoryBytes-1)/MemoryChunkBytes + 1
-	return 48*(1<<20) + chunks*64, nil
+	return 56*(1<<20) + chunks*64, nil
 }
