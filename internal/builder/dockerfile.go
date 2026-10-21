@@ -127,7 +127,11 @@ func PreparationDockerfile() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Remove write bits while the payload is still in this layer. Doing it after
+	// COPY in the analysis stage makes overlayfs copy up the entire dependency tree.
 	assemble, err := dockerRunJSON([]string{
+		"/bin/bash", "-euo", "pipefail", "-c",
+		`"$@" && chmod -R a-w /workspace/output/payload`, "assemble-payload",
 		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths",
 		"/nix/helmr/program-compiler.mjs", "--assemble", "/workspace/bundle", "/workspace/installed", "/workspace/output/payload",
 	})
@@ -181,7 +185,9 @@ func PreparationDockerfile() ([]byte, error) {
 		"COPY --from=assembled --chown=0:0 /workspace/output/payload/ /workspace/project/",
 		"COPY --from=bundled --chown=0:0 /workspace/output/bundle/bundle.json /workspace/bundle.json",
 		"COPY --from="+ConfigContextName+" --chown=0:0 --chmod=0444 /config.json "+resolvedConfigPath,
-		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /workspace/project"]`,
+		// COPY preserves the pre-existing project directory's metadata. Harden
+		// that directory too, without copying up the payload files again.
+		`RUN ["chmod","a-w","/workspace/project"]`,
 		"USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/workspace/project,target=/workspace/source --mount=type=bind,from=runtime-installed,source=/workspace/project,target=/workspace/installed "+canonicalToolMounts+analyze,
 		"FROM scratch AS preparation",
 		"COPY --from=analyzed /workspace/output/prepared/ /",
