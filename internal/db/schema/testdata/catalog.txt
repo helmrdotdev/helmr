@@ -58,6 +58,43 @@ column auth_identities.provider text not null
 column auth_identities.subject text not null
 column auth_identities.updated_at timestamp with time zone not null default now()
 column auth_identities.user_id uuid not null
+column boot_seed_builds.allocation_id uuid
+column boot_seed_builds.channel_credential_digest bytea
+column boot_seed_builds.cpu_config_digest text
+column boot_seed_builds.cpu_millis bigint not null
+column boot_seed_builds.created_at timestamp with time zone not null default clock_timestamp()
+column boot_seed_builds.deadline_at timestamp with time zone
+column boot_seed_builds.delivered_at timestamp with time zone
+column boot_seed_builds.deployment_id uuid not null
+column boot_seed_builds.environment_id uuid not null
+column boot_seed_builds.error_code text
+column boot_seed_builds.executor_epoch bigint not null default 0
+column boot_seed_builds.executor_expires_at timestamp with time zone
+column boot_seed_builds.fence_evidence text
+column boot_seed_builds.fenced_at timestamp with time zone
+column boot_seed_builds.id uuid not null
+column boot_seed_builds.image_id uuid
+column boot_seed_builds.image_spec_id uuid not null
+column boot_seed_builds.manifest bytea
+column boot_seed_builds.memory_bytes bigint not null
+column boot_seed_builds.payload_retired_at timestamp with time zone
+column boot_seed_builds.qualification_evidence text
+column boot_seed_builds.reserved_cpu_millis bigint
+column boot_seed_builds.reserved_memory_bytes bigint
+column boot_seed_builds.reserved_scratch_bytes bigint
+column boot_seed_builds.started_at timestamp with time zone
+column boot_seed_builds.status text not null
+column boot_seed_builds.vm_platform_id text
+column boot_seed_builds.vm_vcpu_count integer
+column boot_seed_builds.worker_epoch bigint
+column boot_seed_builds.worker_host_id uuid
+column boot_seed_objects.availability_required boolean generated stored true
+column boot_seed_objects.build_id uuid not null
+column boot_seed_objects.digest text not null
+column boot_seed_objects.environment_id uuid not null
+column boot_seed_objects.media_type text not null
+column boot_seed_objects.role text not null
+column boot_seed_objects.size_bytes bigint not null
 column cas_blobs.digest text not null
 column cas_blobs.last_reclaim_error text
 column cas_blobs.next_reclaim_at timestamp with time zone
@@ -158,6 +195,8 @@ column commands.timeout_ms bigint not null
 column commands.updated_at timestamp with time zone not null default clock_timestamp()
 column computer_leases.allocation_id uuid not null
 column computer_leases.base_root_id uuid
+column computer_leases.boot_seed_build_id uuid
+column computer_leases.boot_seed_failed_at timestamp with time zone
 column computer_leases.channel_credential_digest bytea not null
 column computer_leases.computer_id uuid not null
 column computer_leases.cpu_config_digest text not null
@@ -1093,6 +1132,44 @@ constraint auth_identities c CHECK (btrim(subject) <> ''::text)
 constraint auth_identities f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 constraint auth_identities p PRIMARY KEY (id)
 constraint auth_identities u UNIQUE (provider, subject)
+constraint boot_seed_builds c CHECK ((delivered_at IS NULL) = (executor_expires_at IS NULL))
+constraint boot_seed_builds c CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL))
+constraint boot_seed_builds c CHECK ((status <> ALL (ARRAY['queued'::text, 'running'::text, 'succeeded'::text])) OR image_id IS NOT NULL)
+constraint boot_seed_builds c CHECK ((status <> ALL (ARRAY['waiting'::text, 'queued'::text])) OR worker_host_id IS NULL)
+constraint boot_seed_builds c CHECK ((status = 'failed'::text) = (error_code IS NOT NULL))
+constraint boot_seed_builds c CHECK ((status = 'succeeded'::text) = (manifest IS NOT NULL AND qualification_evidence IS NOT NULL))
+constraint boot_seed_builds c CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint boot_seed_builds c CHECK (cpu_millis > 0)
+constraint boot_seed_builds c CHECK (executor_epoch >= 0)
+constraint boot_seed_builds c CHECK (fenced_at IS NULL OR (status = ANY (ARRAY['succeeded'::text, 'failed'::text])))
+constraint boot_seed_builds c CHECK (manifest IS NULL OR octet_length(manifest) <= 1048576)
+constraint boot_seed_builds c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
+constraint boot_seed_builds c CHECK (octet_length(channel_credential_digest) = 32)
+constraint boot_seed_builds c CHECK (octet_length(qualification_evidence) >= 1 AND octet_length(qualification_evidence) <= 4096)
+constraint boot_seed_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
+constraint boot_seed_builds c CHECK (reserved_memory_bytes > 0)
+constraint boot_seed_builds c CHECK (reserved_scratch_bytes > 0)
+constraint boot_seed_builds c CHECK (started_at IS NULL OR delivered_at IS NOT NULL)
+constraint boot_seed_builds c CHECK (status <> 'running'::text OR worker_host_id IS NOT NULL)
+constraint boot_seed_builds c CHECK (status <> 'waiting'::text OR image_id IS NULL)
+constraint boot_seed_builds c CHECK (status = ANY (ARRAY['waiting'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))
+constraint boot_seed_builds c CHECK (vm_vcpu_count > 0)
+constraint boot_seed_builds c CHECK (worker_epoch > 0)
+constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis = (vm_vcpu_count::bigint * 1000) AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes = memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL)
+constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND executor_epoch = 0 AND channel_credential_digest IS NULL AND deadline_at IS NULL OR worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch = 1 AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)
+constraint boot_seed_builds f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
+constraint boot_seed_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
+constraint boot_seed_builds f FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id)
+constraint boot_seed_builds f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id)
+constraint boot_seed_builds f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id)
+constraint boot_seed_builds p PRIMARY KEY (environment_id, id)
+constraint boot_seed_builds u UNIQUE (allocation_id)
+constraint boot_seed_builds u UNIQUE NULLS NOT DISTINCT (environment_id, deployment_id, image_spec_id, image_id, cpu_millis, memory_bytes)
+constraint boot_seed_objects c CHECK (role = ANY (ARRAY['vm_state'::text, 'memory'::text, 'scratch_disk'::text]))
+constraint boot_seed_objects c CHECK (size_bytes > 0)
+constraint boot_seed_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
+constraint boot_seed_objects f FOREIGN KEY (environment_id, build_id) REFERENCES boot_seed_builds(environment_id, id)
+constraint boot_seed_objects p PRIMARY KEY (environment_id, build_id, role)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
@@ -1180,6 +1257,7 @@ constraint computer_leases c CHECK ((base_root_id IS NULL) = (write_key_id IS NU
 constraint computer_leases c CHECK ((delivered_at IS NULL) = (expires_at IS NULL))
 constraint computer_leases c CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL))
 constraint computer_leases c CHECK ((status <> ALL (ARRAY['active'::text, 'acquiring'::text])) OR fenced_at IS NULL)
+constraint computer_leases c CHECK (boot_seed_failed_at IS NULL OR boot_seed_build_id IS NOT NULL)
 constraint computer_leases c CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint computer_leases c CHECK (disk_released_at IS NULL OR fenced_at IS NOT NULL AND base_root_id IS NOT NULL)
 constraint computer_leases c CHECK (epoch > 0)
@@ -1194,6 +1272,7 @@ constraint computer_leases c CHECK (status <> 'active'::text OR initialized_at I
 constraint computer_leases c CHECK (status = ANY (ARRAY['acquiring'::text, 'active'::text, 'releasing'::text, 'lost'::text]))
 constraint computer_leases c CHECK (vm_vcpu_count > 0)
 constraint computer_leases c CHECK (worker_epoch > 0)
+constraint computer_leases f FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id)
 constraint computer_leases f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint computer_leases f FOREIGN KEY (environment_id, computer_id, restored_from_save_id, restored_published) REFERENCES computer_saves(environment_id, computer_id, id, published)
 constraint computer_leases f FOREIGN KEY (environment_id, computer_id, write_key_id) REFERENCES disk_encryption_keys(environment_id, writer_computer_id, id)
@@ -1948,6 +2027,8 @@ index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USIN
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
 index CREATE INDEX audit_events_scope_time ON public.audit_events USING btree (org_id, occurred_at, id)
+index CREATE INDEX boot_seed_builds_host ON public.boot_seed_builds USING btree (worker_host_id, worker_epoch) WHERE ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL))
+index CREATE INDEX boot_seed_builds_image ON public.boot_seed_builds USING btree (environment_id, image_id)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)
 index CREATE INDEX commands_unreconciled ON public.commands USING btree (environment_id, computer_id, computer_lease_epoch) WHERE ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))
 index CREATE INDEX computer_leases_expiring ON public.computer_leases USING btree (expires_at, environment_id, computer_id, epoch) WHERE ((fenced_at IS NULL) AND (status = ANY (ARRAY['active'::text, 'acquiring'::text, 'releasing'::text])))

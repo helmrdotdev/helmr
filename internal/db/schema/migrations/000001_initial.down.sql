@@ -2,6 +2,8 @@ DROP TABLE IF EXISTS slack_work_items;
 DROP TABLE IF EXISTS audit_events;
 -- Drop the owned table set together to resolve internal foreign-key cycles.
 DROP TABLE IF EXISTS
+    boot_seed_objects,
+    boot_seed_builds,
     slack_delivery_limits,
     slack_method_limits,
     slack_posts,
