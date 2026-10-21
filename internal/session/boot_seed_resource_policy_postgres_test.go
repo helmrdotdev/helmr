@@ -13,6 +13,51 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func TestBootSeedWorkerReclaimRequiresFreshPressureAndRetainsCustody(t *testing.T) {
+	p, a, id := bootSeedFixture(t)
+	f := p.f
+	r, err := a.AllocateBootSeed(t.Context(), f.env, id, f.worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := a.DeliverBootSeed(t.Context(), *f.host(), bootSeedReceipt(r))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaim := func() error { return computer.ReclaimBootSeedBuild(t.Context(), f.pool, *f.host(), delivery.Executor) }
+	if err := reclaim(); !errors.Is(err, computer.ErrDenied) {
+		t.Fatalf("unobserved pressure authorized reclaim: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts h SET
+ resource_observation_sequence=1,resource_policy_revision=p.resource_policy_revision,resource_observed_at=clock_timestamp()-interval '1 minute',
+ local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,
+ optional_reclaim_pending=true,disk_slots_for_real_work=0,ready_leaf_keys='[]'::jsonb
+ FROM worker_pools p WHERE h.id=$1 AND p.id=h.worker_pool_id`, f.worker)
+	if err := reclaim(); !errors.Is(err, computer.ErrDenied) {
+		t.Fatalf("stale pressure authorized reclaim: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET resource_observed_at=clock_timestamp() WHERE id=$1`, f.worker)
+	if err := reclaim(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reclaim(); err != nil {
+		t.Fatalf("lost-response replay: %v", err)
+	}
+	var retained bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='failed' AND error_code='resource_reclaimed' AND fenced_at IS NULL AND allocation_id=$3 FROM boot_seed_builds WHERE environment_id=$1 AND id=$2`, f.env, id, r.InstanceID).Scan(&retained); err != nil || !retained {
+		t.Fatalf("reclaim prematurely released custody: %v %v", retained, err)
+	}
+	if _, err := computer.RenewBootSeedBuild(t.Context(), f.pool, *f.host(), delivery.Executor); !errors.Is(err, computer.ErrDenied) {
+		t.Fatalf("reclaimed attempt renewed: %v", err)
+	}
+	if err := dispatch.ObserveBootSeedStopped(t.Context(), f.pool, *f.host(), bootSeedReceipt(r)); err != nil {
+		t.Fatal(err)
+	}
+	if err := reclaim(); !errors.Is(err, computer.ErrDenied) {
+		t.Fatalf("old reclaim reached reset attempt: %v", err)
+	}
+}
+
 func TestBootSeedPolicyChangeStopsAuthorityAndFencesRetry(t *testing.T) {
 	p, a, id := bootSeedFixture(t)
 	f := p.f

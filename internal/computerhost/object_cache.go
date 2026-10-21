@@ -12,6 +12,17 @@ import (
 )
 
 func (p *PreparedMachines) seedObject(ctx context.Context, namespace string, d cas.Descriptor, file *os.File) {
+	ctx, finish, allowed := p.beginCacheTask(ctx)
+	if !allowed {
+		return
+	}
+	defer finish()
+	// These callers own required startup/publication work. Opportunistic local
+	// copies may consume only immediately available transfer budget; they never
+	// wait behind optional pacing or another fill.
+	if !p.tryOptionalTransfer(ctx, d.SizeBytes) {
+		return
+	}
 	started := time.Now()
 	seeded, err := p.ObjectCache.Seed(ctx, namespace, d, io.NewSectionReader(file, 0, d.SizeBytes))
 	if seeded || err != nil {

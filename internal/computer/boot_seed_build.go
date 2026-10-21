@@ -255,6 +255,38 @@ func FailBootSeedBuild(ctx context.Context, database db.TxBeginner, host workerg
 	}))
 }
 
+// ReclaimBootSeedBuild authorizes a retryable stop from current Worker pressure
+// evidence or a policy fence. The physical owner still has to join and report
+// stop before the attempt can be retried or its charge released.
+func ReclaimBootSeedBuild(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref BootSeedExecutor) error {
+	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {
+			return err
+		}
+		if err := CheckBootSeedExecutor(ctx, tx, host, ref, false); err != nil {
+			return err
+		}
+		var allowed, replay bool
+		if err := tx.QueryRow(ctx, `SELECT status='failed' AND error_code='resource_reclaimed',
+ status='running' AND (`+reclaimedBootSeedPolicySQL+` OR EXISTS(SELECT 1 FROM worker_hosts h
+ WHERE h.id=b.worker_host_id AND h.current_epoch=b.worker_epoch AND h.optional_reclaim_pending
+ AND h.resource_observed_at>clock_timestamp()-interval '30 seconds'))
+ FROM boot_seed_builds b WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.BuildID).Scan(&replay, &allowed); err != nil {
+			return err
+		}
+		if replay {
+			return nil
+		}
+		if !allowed {
+			return ErrDenied
+		}
+		return TerminateBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID, "resource_reclaimed")
+	}))
+}
+
 func TerminateBootSeedBuild(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, code string) error {
 	_, err := tx.Exec(ctx, `UPDATE boot_seed_builds SET status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2 AND status IN ('waiting','queued','running')`, env, id, code)
 	if err != nil {

@@ -788,7 +788,7 @@ func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) 
 					VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("state")),
 					ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("scratch")),
 					Memory:      file("memory", cas.BootSeedMemoryMediaType, make([]byte, 1<<20))}
-				manifest, err := o.machines.publishBootSeed(t.Context(), t.TempDir(), uuid.MustParse(o.identity.EnvironmentID), uuid.NewV7(), artifact, 1<<20)
+				manifest, err := o.machines.publishBootSeed(t.Context(), t.TempDir(), uuid.MustParse(o.identity.EnvironmentID), uuid.NewV7(), artifact, 1<<20, o.machines.ComputerObjects)
 				if err != nil {
 					t.Fatal(err)
 				}

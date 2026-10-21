@@ -35,6 +35,7 @@ type Snapshot struct {
 	Capacity     Vector
 	Used         Vector
 	Reservations map[Key]Vector
+	Optional     map[Key]Vector
 }
 
 type Ledger struct {
@@ -43,6 +44,7 @@ type Ledger struct {
 	capacity     Vector
 	used         Vector
 	reservations map[Key]Vector
+	optional     map[Key]Vector
 }
 
 func New(capacity Vector) (*Ledger, error) {
@@ -56,6 +58,7 @@ func New(capacity Vector) (*Ledger, error) {
 		capacity:     capacity,
 		changed:      make(chan struct{}),
 		reservations: make(map[Key]Vector),
+		optional:     make(map[Key]Vector),
 	}, nil
 }
 
@@ -105,6 +108,7 @@ func (l *Ledger) Release(key Key) error {
 
 	l.used = subtract(l.used, reserved)
 	delete(l.reservations, key)
+	delete(l.optional, key)
 	close(l.changed)
 	l.changed = make(chan struct{})
 	return nil
@@ -120,6 +124,7 @@ func (l *Ledger) Snapshot() Snapshot {
 		Capacity:     l.capacity,
 		Used:         l.used,
 		Reservations: reservations,
+		Optional:     maps.Clone(l.optional),
 	}
 }
 
@@ -217,6 +222,9 @@ func (l *Ledger) ReleaseHostDisk(key Key, bytes int64) error {
 		return err
 	}
 	l.reservations[key] = reserved
+	if _, optional := l.optional[key]; optional {
+		l.optional[key] = reserved
+	}
 	l.used.HostDiskBytes -= bytes
 	close(l.changed)
 	l.changed = make(chan struct{})

@@ -39,7 +39,7 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 		VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("frozen device state")),
 		ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("packed private scratch")),
 		Memory:      file("memory", cas.BootSeedMemoryMediaType, raw)}
-	m, err := p.publishBootSeed(t.Context(), staging, uuid.NewV7(), uuid.NewV7(), artifact, 1<<20)
+	m, err := p.publishBootSeed(t.Context(), staging, uuid.NewV7(), uuid.NewV7(), artifact, 1<<20, p.ComputerObjects)
 	if err != nil {
 		t.Fatal(err)
 	}

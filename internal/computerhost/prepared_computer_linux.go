@@ -18,6 +18,10 @@ import (
 )
 
 func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+	return p.prepareAllocationDeviceFrom(ctx, identity, source, p.ComputerRanges)
+}
+
+func (p *PreparedMachines) prepareAllocationDeviceFrom(ctx context.Context, identity workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource, ranges blockformat.RangeSource) (vm.ComputerDevice, error) {
 	material := source.Disk
 	if err := material.Root.Validate(material.Root.LogicalBytes); err != nil {
 		return nil, err
@@ -33,7 +37,7 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 		}
 		keys[key.ID] = key.Key
 	}
-	if _, err := disk.OpenVersion(ctx, p.ComputerRanges, scope, keys, material.Root, material.Root.LogicalBytes); err != nil {
+	if _, err := disk.OpenVersion(ctx, ranges, scope, keys, material.Root, material.Root.LogicalBytes); err != nil {
 		return nil, disk.PublishedSourceFailure(err)
 	}
 	dir := p.computerPreparationDirectory(identity.AllocationID, identity.Epoch)
@@ -43,7 +47,7 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, err
 	}
-	local, err := disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, ReadSource: p.ObjectCache.Ranges("computer:"+scope, p.ComputerRanges), Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 1024, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+	local, err := disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: ranges, ReadSource: p.ObjectCache.Ranges("computer:"+scope, ranges), Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 1024, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 	if err != nil {
 		return nil, err
 	}
