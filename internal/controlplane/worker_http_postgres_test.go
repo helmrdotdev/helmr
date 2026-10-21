@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -156,7 +157,7 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	if activated.Status != workerapi.StatusActive || activated.WorkerHostID != enrolled.WorkerHostID || activated.WorkerGroupID != f.group.ID {
 		t.Fatalf("activated = %+v", activated)
 	}
-	observed, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{AdmissionPausedReason: "maintenance"})
+	observed, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources(), AdmissionPausedReason: "maintenance"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestProviderTerminationFenceUsesWorkerProtocolReason(t *testing.T) {
 	if err := host.client.FenceWorker(t.Context(), workerapi.FenceReasonProviderTermination); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{}); !httpclient.IsStatus(err, http.StatusUnauthorized) {
+	if _, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources()}); !httpclient.IsStatus(err, http.StatusUnauthorized) {
 		t.Fatalf("fenced host observation=%v", err)
 	}
 }
@@ -270,4 +271,10 @@ func TestWorkerHostQuarantineCannotActivateReducedPoolTemplate(t *testing.T) {
 	if status.Status != workerapi.StatusActive {
 		t.Fatalf("clean restart: %+v", status)
 	}
+}
+
+var testWorkerResourceSequence atomic.Int64
+
+func testWorkerResources() workerapi.ResourceObservation {
+	return workerapi.ResourceObservation{Sequence: testWorkerResourceSequence.Add(1), PolicyRevision: 1, ReadyLeafKeys: []workerapi.ReadyLeafKey{}}
 }

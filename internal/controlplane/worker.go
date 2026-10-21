@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
 	"math"
 	"net/http"
 	"strings"
@@ -183,6 +184,7 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if err := workergroup.RecordObservation(r.Context(), s.db, worker, workergroup.HostObservation{
 		AdmissionPausedReason: request.Observation.AdmissionPausedReason,
+		Resources:             request.Observation.Resources,
 	}); err != nil {
 		s.writeWorkerHostError(w, "record worker observation", err)
 		return
@@ -242,6 +244,16 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		s.writeWorkerHostError(w, "get worker status", err)
 		return
 	}
+	poolID, err := s.db.GetWorkerHostPoolID(r.Context(), db.GetWorkerHostPoolIDParams{WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true}})
+	if err != nil {
+		s.writeWorkerHostError(w, "read worker policy pool", err)
+		return
+	}
+	policy, err := workergroup.GetResourcePolicy(r.Context(), s.db, worker.GroupID, pgvalue.MustUUIDValue(poolID))
+	if err != nil {
+		s.writeWorkerHostError(w, "read worker policy", err)
+		return
+	}
 	readiness := workerAdmissionReadiness(state)
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {
@@ -250,6 +262,8 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
+		ResourcePolicy: workerapi.ResourcePolicy{Revision: policy.Revision, LocalHeadroomSlots: policy.LocalHeadroomSlots,
+			Optional: workerapi.OptionalResources(policy.Optional)},
 		WorkerHostID:    pgvalue.MustUUIDValue(state.ID).String(),
 		WorkerGroupID:   pgvalue.UUIDString(state.WorkerGroupID),
 		Status:          status,

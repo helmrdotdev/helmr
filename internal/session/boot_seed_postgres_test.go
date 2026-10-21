@@ -44,6 +44,7 @@ func bootSeedFixture(t *testing.T) (*preparationPublicationTest, *dispatch.Alloc
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM boot_seed_builds WHERE environment_id=$1 AND deployment_id=$2 AND status='queued'`, f.env, f.deployment).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET optional_cpu_millis=capacity_cpu_millis,optional_memory_bytes=capacity_memory_bytes,optional_vm_slots=max_vm_slots,optional_max_tasks=max_vm_slots,optional_disk_bytes=1073741824,optional_io_bytes_per_second=1048576 WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, f.worker)
 	return p, a, id
 }
 func bootSeedReceipt(r computer.Allocation) dispatch.HostAllocation {
@@ -269,35 +270,26 @@ func TestBootSeedHostRecoveryRetainsUnknownQualificationVM(t *testing.T) {
 	assertFenced(true)
 }
 
-func TestBootSeedPlanningDemandDoesNotRequireResidentHeadroom(t *testing.T) {
-	p, _, id := bootSeedFixture(t)
+func TestBootSeedBacklogDoesNotCreatePlanningDemand(t *testing.T) {
+	p, _, _ := bootSeedFixture(t)
 	f := p.f
-	// The fixture already fills the environment's one resident Computer slot.
-	// Seed work consumes CPU/memory, but must still be visible to provisioning.
 	rows, err := db.New(f.pool).ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.group), RowLimit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
 	for _, row := range rows {
-		if row.Kind == "seed" && pgvalue.MustUUIDValue(row.OwnerID) == id {
-			found = true
-			if row.RemainingResidents != 0 || row.CpuMillis != 500 || row.MemoryBytes != 512<<20 {
-				t.Fatalf("seed planning shape/budget: %+v", row)
-			}
+		if row.Kind == "seed" {
+			t.Fatalf("optional seed created demand: %+v", row)
 		}
-	}
-	if !found {
-		t.Fatalf("queued seed absent from planning demand: %+v", rows)
 	}
 }
 
-func TestBootSeedQueuedDemandPreventsIdleDrain(t *testing.T) {
+func TestBootSeedQueuedDemandDoesNotPreventIdleDrain(t *testing.T) {
 	p, _, id := bootSeedFixture(t)
 	f := p.f
 	present, err := workergroup.HasQueuedDemand(t.Context(), f.pool, f.group)
-	if err != nil || !present {
-		t.Fatalf("seed-only demand absent: %v %v", present, err)
+	if err != nil || present {
+		t.Fatalf("optional seed blocked idle drain: %v %v", present, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET status='failed',error_code='fixture-failed' WHERE id=$1`, id)
 	present, err = workergroup.HasQueuedDemand(t.Context(), f.pool, f.group)

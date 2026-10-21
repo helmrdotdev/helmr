@@ -129,11 +129,13 @@ func (r *Registry) notify() {
 }
 
 type Supervisor struct {
-	cfg       Config
-	registry  *Registry
-	admission map[string]chan struct{}
-	state     atomic.Value
-	recovery  RecoveryEvidence
+	cfg              Config
+	registry         *Registry
+	admission        map[string]chan struct{}
+	state            atomic.Value
+	recovery         RecoveryEvidence
+	resourcePolicy   atomic.Pointer[workerapi.ResourcePolicy]
+	resourceSequence atomic.Int64
 }
 
 func New(cfg Config) (*Supervisor, error) {
@@ -212,6 +214,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if status.Status != workerapi.StatusActive && status.Status != workerapi.StatusDraining {
 		return fmt.Errorf("activated worker returned status %s", status.Status)
 	}
+	s.resourcePolicy.Store(&status.ResourcePolicy)
 	s.recovery = evidence
 	if status.Status == workerapi.StatusActive {
 		s.state.Store(StatusActive)
@@ -612,7 +615,17 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
 	observationCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
 	defer cancel()
-	return s.cfg.ControlPlane.ObserveWorker(observationCtx, observation)
+	observation.Resources.Sequence = s.resourceSequence.Add(1)
+	if policy := s.resourcePolicy.Load(); policy != nil {
+		observation.Resources.PolicyRevision = policy.Revision
+	}
+	observation.Resources.ReadyLeafKeys = []workerapi.ReadyLeafKey{}
+	observation.Resources.DiskSlotsForRealWork = s.cfg.Capabilities.ExecutionSlotsAvailable
+	status, err := s.cfg.ControlPlane.ObserveWorker(observationCtx, observation)
+	if err == nil {
+		s.resourcePolicy.Store(&status.ResourcePolicy)
+	}
+	return status, err
 }
 
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse), fatalWork chan<- error) {

@@ -96,6 +96,7 @@ type Querier interface {
 	GetWorkerHostPoolID(ctx context.Context, arg GetWorkerHostPoolIDParams) (pgtype.UUID, error)
 	GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStatusParams) (GetWorkerHostStatusRow, error)
 	GetWorkerHostStatusByResource(ctx context.Context, arg GetWorkerHostStatusByResourceParams) (GetWorkerHostStatusByResourceRow, error)
+	GetWorkerPool(ctx context.Context, arg GetWorkerPoolParams) (WorkerPool, error)
 	GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoolByGroupNameParams) (WorkerPool, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
@@ -156,7 +157,7 @@ type Querier interface {
 	// Allocation owners reconcile logical state; only confirmed stop releases custody.
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)
 	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
-	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerHost, error)
+	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error)
 	RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) error
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	RequestCommandCancellation(ctx context.Context, arg RequestCommandCancellationParams) (Command, error)

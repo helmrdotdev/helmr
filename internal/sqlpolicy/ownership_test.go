@@ -76,8 +76,9 @@ var tableOwners = map[string]string{
 	// worker supply
 	"vm_platforms": "internal/workergroup", "worker_group_tokens": "internal/workergroup", "worker_groups": "internal/workergroup",
 	"worker_host_secrets": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
-	"worker_pools":      "internal/workergroup",
-	"schema_migrations": "cmd/internal/dev-controlplane",
+	"worker_scale_in_operations": "internal/workergroup",
+	"worker_pools":               "internal/workergroup",
+	"schema_migrations":          "cmd/internal/dev-controlplane",
 }
 
 // queryFileOwners maps each sqlc query file to the owner whose writes it

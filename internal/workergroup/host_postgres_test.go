@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"testing"
 	"time"
 	"uuid"
@@ -160,7 +161,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	if state.Status != db.WorkerHostStatusActive || state.ActiveInstances != 0 {
 		t.Fatalf("activated host state = %+v", state)
 	}
-	if err := RecordObservation(t.Context(), f.q, principal, HostObservation{AdmissionPausedReason: "maintenance"}); err != nil {
+	if err := RecordObservation(t.Context(), f.q, principal, HostObservation{Resources: workerapi.ResourceObservation{Sequence: 1, PolicyRevision: 1}, AdmissionPausedReason: "maintenance"}); err != nil {
 		t.Fatal(err)
 	}
 	if state, err = ReadHost(t.Context(), f.q, principal); err != nil || !state.AdmissionPausedReason.Valid || state.AdmissionPausedReason.String != "maintenance" {
@@ -307,7 +308,7 @@ func TestHostOperationsRejectAnotherEpoch(t *testing.T) {
 	host := f.start(t, cfg, "default", "i-epoch", validHostTemplate(t))
 	other := host.principal
 	other.Epoch++
-	if err := RecordObservation(t.Context(), f.q, other, HostObservation{}); !errors.Is(err, ErrObservationConflict) {
+	if err := RecordObservation(t.Context(), f.q, other, HostObservation{Resources: workerapi.ResourceObservation{Sequence: 1, PolicyRevision: 1}}); !errors.Is(err, ErrObservationConflict) {
 		t.Fatalf("observation error = %v, want ErrObservationConflict", err)
 	}
 	if err := BeginHostDrain(t.Context(), f.pool, other); !errors.Is(err, ErrHostNotFound) {

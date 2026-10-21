@@ -2,8 +2,10 @@ package workergroup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"strings"
 	"uuid"
 
@@ -299,11 +301,15 @@ func RecordStartupRecovery(ctx context.Context, q db.Querier, principal HostPrin
 // HostObservation is a worker host's report of why it pauses run or VM
 // work; an empty reason reports that the role is not paused.
 type HostObservation struct {
+	Resources             workerapi.ResourceObservation
 	AdmissionPausedReason string
 }
 
 // RecordObservation records an observation of the authenticated epoch.
 func RecordObservation(ctx context.Context, q db.Querier, principal HostPrincipal, observation HostObservation) error {
+	if err := validateResourceObservation(observation.Resources); err != nil {
+		return err
+	}
 	_, err := q.RecordWorkerObservation(ctx, observationParams(principal, observation))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrObservationConflict
@@ -315,7 +321,16 @@ func RecordObservation(ctx context.Context, q db.Querier, principal HostPrincipa
 }
 
 func observationParams(principal HostPrincipal, observation HostObservation) db.RecordWorkerObservationParams {
+	keys, _ := json.Marshal(observation.Resources.ReadyLeafKeys)
+	if observation.Resources.ReadyLeafKeys == nil {
+		keys = []byte("[]")
+	}
 	return db.RecordWorkerObservationParams{
+		Sequence: observation.Resources.Sequence, PolicyRevision: observation.Resources.PolicyRevision,
+		LocalCpuMillis: observation.Resources.LocalOptional.CPUMillis, LocalMemoryBytes: observation.Resources.LocalOptional.MemoryBytes,
+		LocalVmSlots: observation.Resources.LocalOptional.VMSlots, LocalTasks: observation.Resources.LocalOptional.Tasks,
+		OptionalDiskBytes: observation.Resources.OptionalDiskBytes, DiskSlotsForRealWork: observation.Resources.DiskSlotsForRealWork,
+		ReclaimPending: observation.Resources.ReclaimPending, ReadyLeafKeys: keys,
 		AdmissionPausedReason: pgtype.Text{String: observation.AdmissionPausedReason, Valid: observation.AdmissionPausedReason != ""},
 		WorkerHostID:          pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
 		WorkerEpoch: pgtype.Int8{Int64: principal.Epoch, Valid: true},

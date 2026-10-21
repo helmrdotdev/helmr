@@ -27,7 +27,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
-		policy, err := org.LockAdmission(ctx, tx, env)
+		_, err = org.LockAdmission(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -60,14 +60,14 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
  AND (SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id)=$3::bigint-1
  AND NOT EXISTS(SELECT 1 FROM computer_saves pending WHERE pending.environment_id=c.environment_id AND pending.computer_id=c.id AND pending.status IN ('requested','captured'))
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
- AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+session.NoSessionHoldsSQL+` AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computerID, epoch).Scan(&save, &base, &cpu, &memory); err != nil {
+ AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computerID, epoch).Scan(&save, &base, &cpu, &memory); err != nil {
 			return err
 		}
 		shape, err := qualifyAllocationShape(ctx, tx, supply, cpu, memory)
 		if err != nil {
 			return err
 		}
-		if err = requireAllocationCapacity(ctx, tx, env, supply, policy, shape, true); err != nil {
+		if err = requireAllocationCapacity(ctx, tx, env, supply, shape, true); err != nil {
 			return err
 		}
 		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base, RestoredFrom: save, DiskOnlyRecovery: true}

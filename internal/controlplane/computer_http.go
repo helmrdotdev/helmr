@@ -141,7 +141,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 
 // apiComputerSnapshot is the public Computer resource of an owner snapshot.
 func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
-	return api.ComputerSnapshot{DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
+	return api.ComputerSnapshot{ExecutionWait: (*api.ComputerExecutionWait)(snapshot.ExecutionWait), DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
 		Residency:      api.ComputerResidency(snapshot.Residency),
 		Error:          snapshot.Error,
 		ID:             snapshot.ID,
@@ -157,7 +157,7 @@ func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
 }
 
 func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
-	return api.ComputerListItem{DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince,
+	return api.ComputerListItem{ExecutionWait: (*api.ComputerExecutionWait)(item.ExecutionWait), DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince,
 		Residency:      api.ComputerResidency(item.Residency),
 		Error:          item.Error,
 		ID:             item.ID,

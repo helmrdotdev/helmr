@@ -118,7 +118,7 @@ func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
 	if err != nil || status.Status != workerapi.StatusActive || status.ActiveInstances != 0 {
 		t.Fatalf("startup status %+v %v", status, err)
 	}
-	observed, err := client.ObserveWorker(t.Context(), workerapi.Observation{})
+	observed, err := client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources()})
 	if err != nil || observed.Status != workerapi.StatusActive {
 		t.Fatalf("startup observation %+v %v", observed, err)
 	}

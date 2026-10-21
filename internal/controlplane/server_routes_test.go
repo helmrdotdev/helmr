@@ -95,6 +95,9 @@ GET /capacity/v1/deployment
 GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
+GET /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
+GET /capacity/v1/worker-groups/{workerGroupID}/scale-in-operations/pending
+GET /capacity/v1/worker-groups/{workerGroupID}/scale-in-operations/{operationKey}
 GET /capacity/v1/worker-hosts
 GET /capacity/v1/worker-hosts/{workerHostID}
 GET /healthz
@@ -192,6 +195,7 @@ POST /api/slack/user-links/verify
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-groups/{workerGroupID}/pools
 POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable
+POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/scale-in
 POST /capacity/v1/worker-hosts/{workerHostID}/drain
 POST /capacity/v1/worker-hosts/{workerHostID}/lost
 POST /integrations/slack/apps/{registrationID}/events
@@ -293,6 +297,7 @@ POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
+PUT /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {

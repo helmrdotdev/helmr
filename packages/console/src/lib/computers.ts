@@ -12,6 +12,7 @@ export type Computer = {
   template: string;
   deployment_id: string;
   status: ComputerStatus;
+  execution_wait: { reason: "scheduling" | "environment_limit" | "saving" } | null;
   residency: "cold" | "starting" | "running" | "parking" | "restoring" | "unavailable";
   error?: { code: string; message: string };
   secrets: ComputerSecret[];

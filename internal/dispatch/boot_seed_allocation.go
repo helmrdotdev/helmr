@@ -42,7 +42,7 @@ func (a *Allocator) AllocateBootSeed(ctx context.Context, env, id, host uuid.UUI
 		if err != nil {
 			return err
 		}
-		policy, err := org.LockAdmission(ctx, tx, env)
+		_, err = org.LockAdmission(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -56,17 +56,21 @@ func (a *Allocator) AllocateBootSeed(ctx context.Context, env, id, host uuid.UUI
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		if build.ExecutorEpoch == int64(^uint64(0)>>1) {
+			return ErrNotReady
+		}
 		shape, err := qualifyAllocationShape(ctx, tx, supply, build.CPUMillis, build.MemoryBytes)
 		if err != nil {
 			return err
 		}
-		if err := requireAllocationCapacity(ctx, tx, env, supply, policy, shape, false); err != nil {
+		revision, err := requireBootSeedCapacity(ctx, tx, supply, shape)
+		if err != nil {
 			return err
 		}
-		result = computer.Allocation{EnvironmentID: env, OwnerID: id, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
+		result = computer.Allocation{EnvironmentID: env, OwnerID: id, InstanceID: uuid.NewV7(), Epoch: build.ExecutorEpoch + 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
 		digest := sha256.Sum256(a.credential("helmr.boot-seed-build.v1\x00", result))
 		result.CredentialDigest = digest[:]
-		assigned, err := computer.AssignBootSeedBuild(ctx, tx, result)
+		assigned, err := computer.AssignBootSeedBuild(ctx, tx, result, revision)
 		if err != nil {
 			return err
 		}
@@ -145,13 +149,19 @@ func ObserveBootSeedStopped(ctx context.Context, database db.TxBeginner, host wo
 			return err
 		}
 		r, err := readBootSeedAllocation(ctx, tx, identity.EnvironmentID, identity.OwnerID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAllocationClosed
+		}
 		if err != nil {
 			return err
+		}
+		if r.Epoch > identity.Epoch {
+			return ErrAllocationClosed
 		}
 		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch {
 			return ErrDenied
 		}
-		return computer.RecordBootSeedStopped(ctx, tx, r.EnvironmentID, r.OwnerID, "owning worker joined builder and qualification VM closure")
+		return computer.RecordBootSeedStopped(ctx, tx, r, "owning worker joined builder and qualification VM closure")
 	}))
 }
 
@@ -173,6 +183,13 @@ func expireBootSeed(ctx context.Context, database db.TxBeginner, env, id uuid.UU
 		}
 		if _, err := computer.LockBootSeedBuild(ctx, tx, env, id); err != nil {
 			return err
+		}
+		reclaimed, err := computer.BootSeedPolicyReclaimed(ctx, tx, env, id)
+		if err != nil {
+			return err
+		}
+		if reclaimed {
+			return computer.TerminateBootSeedBuild(ctx, tx, env, id, "resource_reclaimed")
 		}
 		var expired bool
 		if err := tx.QueryRow(ctx, `SELECT b.status='running' AND (b.deadline_at<=clock_timestamp()
