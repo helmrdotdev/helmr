@@ -29,6 +29,8 @@ func (server *Server) writeAgentComputerError(w http.ResponseWriter, err error) 
 		writeError(w, badRequest(errors.New("invalid Computer continuation request")))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerAuthorityUnavailable, message: "Computer continuation authority is unavailable"}))
+	case errors.Is(err, session.ErrComputerCaptureDemand):
+		writeError(w, conflict(codedError{code: workerapi.AgentComputerCaptureDemand, message: "Computer has pending execution during capture"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerNotReady, message: "Computer continuation requires reconciliation"}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):
@@ -57,7 +59,7 @@ func (server *Server) workerBeginAgentComputerCapture(w http.ResponseWriter, r *
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AgentComputerCaptureResponse{Capture: result.Request, SaveID: result.SaveID.String()})
+	writeJSON(w, http.StatusOK, workerapi.AgentComputerCaptureResponse{Capture: result.Request, SaveID: result.SaveID.String(), WorkPending: result.WorkPending})
 }
 func (server *Server) workerSealAgentComputerCapture(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentComputerReceiptRequest

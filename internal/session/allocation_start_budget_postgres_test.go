@@ -133,7 +133,7 @@ func TestAllocationFailedStartsKeepBudgetUntilPhysicalStop(t *testing.T) {
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.env, target)
 				stop = func() error {
-					return dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: target, InstanceID: r.InstanceID, Epoch: r.Epoch}, uuid.Nil())
+					return dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: target, InstanceID: r.InstanceID, Epoch: r.Epoch}, uuid.Nil(), uuid.Nil())
 				}
 				retry = func() error { _, err := a.AllocateImageBuild(t.Context(), f.env, build, f.worker); return err }
 			} else {

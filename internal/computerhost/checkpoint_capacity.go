@@ -21,7 +21,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 	if shape.ComputerBytes <= 0 || shape.MemoryBytes <= 0 || shape.ScratchBytes <= 0 || shape.StateBytes <= 0 || shape.ConfigBytes <= 0 {
 		return checkpointStagingLimits{}, errors.New("incomplete checkpoint capture limits")
 	}
-	memory, err := filepack.PackedSizeLimit(shape.MemoryBytes, filepack.MemoryRole)
+	_, memoryEncoded, err := memoryGeometry(shape.MemoryBytes)
 	if err != nil {
 		return checkpointStagingLimits{}, err
 	}
@@ -29,11 +29,11 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 	if err != nil {
 		return checkpointStagingLimits{}, err
 	}
-	limits := checkpointStagingLimits{memory: memory, scratch: scratch, state: shape.StateBytes, config: shape.ConfigBytes}
+	limits := checkpointStagingLimits{memory: shape.MemoryBytes, scratch: scratch, state: shape.StateBytes, config: shape.ConfigBytes}
 	// Working Computer and scratch are already charged to the instance. Raw RAM,
-	// raw state, packed intermediates and all ciphertexts may coexist here.
-	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memory, scratch}
-	for _, n := range []int64{memory, scratch, shape.StateBytes, shape.ConfigBytes} {
+	// raw state, packed scratch and all ciphertexts may coexist here.
+	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memoryEncoded, scratch}
+	for _, n := range []int64{scratch, shape.StateBytes, shape.ConfigBytes} {
 		encoded, err := cipher.EncryptedSize(n)
 		if err != nil {
 			return checkpointStagingLimits{}, err

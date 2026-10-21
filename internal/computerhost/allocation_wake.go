@@ -48,3 +48,5 @@ func waitAllocationWake(ctx context.Context, wake <-chan struct{}, delay time.Du
 
 func (o *ComputerAllocationOwner) Wake()    { o.workWake.notify(); o.WakeSaves() }
 func (o *PreparationAllocationOwner) Wake() { o.workWake.notify() }
+
+func (o *BootSeedAllocationOwner) Wake() { o.workWake.notify() }

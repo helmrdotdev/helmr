@@ -37,6 +37,8 @@ func newAllocationConsumer(machines *computerhost.PreparedMachines, client *work
 		switch identity.Kind {
 		case "computer":
 			return computerhost.NewComputerAllocationOwner(machines, client, identity, host, epoch, admitStart, admission.PauseForCheckpointKeyMismatch, unexpectedAllocationEvent)
+		case "seed":
+			return computerhost.NewBootSeedAllocationOwner(machines, client, identity, epoch, admitStart)
 		case "preparation":
 			return computerhost.NewPreparationAllocationOwner(machines, client, identity, epoch, admitStart)
 		default:

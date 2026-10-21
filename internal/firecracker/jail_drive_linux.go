@@ -159,6 +159,14 @@ func validateProgramDriveIdentities(drives []vm.ReadOnlyDrive) error {
 	if !isProgramDriveSet(drives) {
 		return errors.New("managed program requires the complete read-only drive set")
 	}
+	return validateExecutableDriveIdentities(drives)
+}
+
+func isRuntimeDriveSet(drives []vm.ReadOnlyDrive) bool {
+	return len(drives) == 1 && drives[0].ID == vm.ProgramRuntimeDrive
+}
+
+func validateExecutableDriveIdentities(drives []vm.ReadOnlyDrive) error {
 	for _, drive := range drives {
 		if _, err := cas.ObjectKey("", drive.Digest); err != nil {
 			return fmt.Errorf("managed program drive %q digest: %w", drive.ID, err)
@@ -315,13 +323,17 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerD
 						}
 					}
 				}
-				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
-					return fmt.Errorf("link snapshot memory into jail: %w", err)
+				if memoryPath != "" {
+					if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
+						return fmt.Errorf("link snapshot memory into jail: %w", err)
+					}
 				}
 				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot state into jail: %w", err)
 				}
-				sdkMachine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
+				if memoryPath != "" {
+					sdkMachine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
+				}
 				sdkMachine.Cfg.Snapshot.SnapshotPath = path.Join("/", filepath.Base(statePath))
 				return nil
 			},

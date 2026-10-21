@@ -60,7 +60,15 @@ func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if err = dispatch.ObserveLeaseStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint); err != nil {
+	failedBootSeed := uuid.Nil()
+	if request.FailedBootSeedID != "" {
+		failedBootSeed, err = agentComputerID(request.FailedBootSeedID)
+		if err != nil {
+			server.writeAgentComputerError(w, err)
+			return
+		}
+	}
+	if err = dispatch.ObserveLeaseStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint, failedBootSeed); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}

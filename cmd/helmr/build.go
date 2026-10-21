@@ -366,6 +366,29 @@ func executeDockerBuildx(
 	command *cobra.Command,
 	request dockerBuildxRequest,
 ) error {
+	// Stream filesystem exports as one archive. File-by-file BuildKit transfers
+	// can deadlock while exporting large dependency trees.
+	if request.OutputType == "local" {
+		archive, err := os.CreateTemp(filepath.Dir(request.Output), ".helmr-build-output-*.tar")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(archive.Name())
+		if err := archive.Close(); err != nil {
+			return err
+		}
+		destination := request.Output
+		request.OutputType, request.Output = "tar", archive.Name()
+		if err := executeDockerBuildx(ctx, command, request); err != nil {
+			return err
+		}
+		file, err := os.Open(archive.Name())
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return extractBuildOutput(ctx, file, destination)
+	}
 	var output strings.Builder
 	output.WriteString("type=" + request.OutputType + ",dest=" + request.Output)
 	attributeNames := make([]string, 0, len(request.OutputAttributes))

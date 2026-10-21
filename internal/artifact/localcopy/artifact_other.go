@@ -37,3 +37,7 @@ func validateArtifactCopyPlatform(*Artifact) error {
 func (*Artifact) LinkInto(string, string, int, int) error {
 	return errors.New("artifact snapshots require Linux")
 }
+
+func borrowArtifact(ctx context.Context, source BorrowedDrive, role artifact.Role, descriptor cas.Descriptor) (*Artifact, error) {
+	return nil, errors.Join(errors.New("artifact snapshots require Linux"), source.Close())
+}

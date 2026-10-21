@@ -91,7 +91,7 @@ mount_computer() {
 }
 
 mount_program() {
-	if [ "$(kernel_arg helmr.program || true)" != 1 ]; then
+	if [ "$(kernel_arg helmr.program || true)" != 1 ] && [ "$(kernel_arg helmr.runtime || true)" != 1 ]; then
 		return 0
 	fi
 	if [ "$(kernel_arg helmr.computer || true)" = 1 ]; then
@@ -101,7 +101,11 @@ mount_program() {
 		runtime_device=/dev/vdc
 		program_device=/dev/vdd
 	fi
-	for device in "$runtime_device" "$program_device"; do
+	set -- "$runtime_device"
+	if [ "$(kernel_arg helmr.program || true)" = 1 ]; then
+		set -- "$@" "$program_device"
+	fi
+	for device in "$@"; do
 		if [ ! -b "$device" ]; then
 			echo "missing required Helmr Program drive $device" >&2
 			exit 1
@@ -111,7 +115,9 @@ mount_program() {
 		/var/lib/helmr/program/runtime \
 		/var/lib/helmr/program/artifact
 	mount -t squashfs -o ro,nodev,nosuid "$runtime_device" /var/lib/helmr/program/runtime
-	mount -t squashfs -o ro,nodev,nosuid "$program_device" /var/lib/helmr/program/artifact
+	if [ "$(kernel_arg helmr.program || true)" = 1 ]; then
+		mount -t squashfs -o ro,nodev,nosuid "$program_device" /var/lib/helmr/program/artifact
+	fi
 }
 
 load_vsock() {
@@ -252,6 +258,7 @@ enable_user_namespaces
 mount_scratch
 load_vsock
 load_session_program_devices
+/usr/bin/guestd --boot-gate
 mount_computer
 mount_program
 configure_network

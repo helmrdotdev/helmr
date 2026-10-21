@@ -24,14 +24,16 @@ func (p *PreparedMachines) stagePreparation(ctx context.Context, stage *preparat
 		return err
 	}
 	stage.disk = file
-	stage.images, err = p.prepareProgramArtifacts(ctx, stage.directory, identity.AllocationID, &start.Program)
+	stage.images, err = p.prepareExecutableArtifacts(ctx, stage.directory, identity.AllocationID, &start.Program, start.SeedOnly, nil)
 	if err != nil {
 		return err
 	}
 	p.seedProgramArtifacts(ctx, stage.images, cas.Descriptor{Digest: start.Program.Artifact.Digest, SizeBytes: start.Program.Artifact.SizeBytes, MediaType: start.Program.Artifact.MediaType})
 	stage.drives = []vm.ReadOnlyDrive{
 		{ID: vm.ProgramRuntimeDrive, Digest: start.Program.Runtime.Digest, SizeBytes: start.Program.Runtime.SizeBytes, MediaType: start.Program.Runtime.MediaType, Source: stage.images.runtime},
-		{ID: vm.ProgramDrive, Digest: start.Program.Artifact.Digest, SizeBytes: start.Program.Artifact.SizeBytes, MediaType: start.Program.Artifact.MediaType, Source: stage.images.artifact},
+	}
+	if !start.SeedOnly {
+		stage.drives = append(stage.drives, vm.ReadOnlyDrive{ID: vm.ProgramDrive, Digest: start.Program.Artifact.Digest, SizeBytes: start.Program.Artifact.SizeBytes, MediaType: start.Program.Artifact.MediaType, Source: stage.images.artifact})
 	}
 	return nil
 }

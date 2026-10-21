@@ -9,13 +9,13 @@ export function performanceTool(provider: "codex" | "claude", command: () => Per
   observation: { now?: () => number; record?: (value: Record<string, unknown>) => void } = {}) {
   const now = observation.now ?? (() => performance.now())
   const record = observation.record ?? (value => console.error(JSON.stringify(value)))
-  let active: { command: string; kind: PerformanceCommand["kind"]; callId: string; started: number; complete: boolean; processId?: number } | undefined
+  let active: { command: string; kind: PerformanceCommand["kind"]; callId: string; started: number; issuedMonotonicNs: string; issuedWallMs: number; complete: boolean; processId?: number } | undefined
   return (body: any, index: number): any => {
     const current = command()
     const callId = `performance_${provider}_${index}`
     if (!active || active.command !== current.command) {
       assert(!active || active.complete, "native command changed before its tool completed")
-      active = { ...current, callId, started: now(), complete: false }
+      active = { ...current, callId, started: now(), issuedWallMs: Date.now(), issuedMonotonicNs: process.hrtime.bigint().toString(), complete: false }
       return provider === "codex"
         ? { type: "function_call", id: callId, call_id: callId, name: "exec_command", arguments: JSON.stringify({ cmd: current.command, yield_time_ms: 30000, max_output_tokens: 2000 }) }
         : { id: callId, name: "Bash", input: { command: current.command, timeout: performanceCommandTimeout(current.kind), description: "Run the isolated performance workload" } }
@@ -25,7 +25,7 @@ export function performanceTool(provider: "codex" | "claude", command: () => Per
     const observationBudgetMS = performanceCommandTimeout(active.kind)
     const observe = (resultState: string, fields: Record<string, unknown> = {}) => record({
       event: "native.performance.command_observation", provider, kind: active!.kind, command: active!.command,
-      callId: active!.callId, processId: active!.processId, elapsedMS, targetMS: 120000, targetMiss: elapsedMS >= 120000,
+      issuedWallMs:active!.issuedWallMs, observedWallMs:Date.now(), issuedMonotonicNs:active!.issuedMonotonicNs, observedMonotonicNs:process.hrtime.bigint().toString(), callId: active!.callId, processId: active!.processId, elapsedMS, targetMS: 120000, targetMiss: elapsedMS >= 120000,
       observationBudgetMS, observationBudgetExceeded: elapsedMS >= observationBudgetMS, resultState, ...fields,
     })
     const invalid = (message: string): never => { observe("invalid", { reason: message }); assert.fail(message) }
@@ -45,7 +45,8 @@ export function performanceTool(provider: "codex" | "claude", command: () => Per
         const exit = /Process exited with code (-?\d+)/.exec(result.output)
         if (!exit) invalid("native command result lacks exit status")
         const exitCode = Number(exit![1])
-        observe("exited", { exitCode })
+        const nativeWallSeconds = /Wall time: ([0-9.]+) seconds/.exec(result.output)?.[1]
+ observe("exited", { exitCode, ...(nativeWallSeconds ? { nativeReportedWallMs: Number(nativeWallSeconds) * 1000 } : {}), ...workloadDiagnostic(result.output) })
         assert.equal(exitCode, 0, result.output)
       }
     } else {
@@ -62,7 +63,7 @@ export function performanceTool(provider: "codex" | "claude", command: () => Per
         catch { return false }
       })
       if (!receipt) invalid("Bash did not return the completed workload receipt")
-      observe("receipt")
+      observe("receipt", workloadDiagnostic(text))
     }
     // This bounds receipt admissibility when the model is called, not a watchdog
     // for a missing response. The driver retains its independent outer deadline.
@@ -74,4 +75,14 @@ export function performanceTool(provider: "codex" | "claude", command: () => Per
     active.complete = true
     return undefined
   }
+}
+
+function workloadDiagnostic(text: string): Record<string, unknown> {
+ for (const line of text.split("\n")) {
+  try {
+   const receipt = JSON.parse(line)
+   if (Number.isSafeInteger(receipt.sequence) && receipt.diagnosticEntry && receipt.diagnosticReceipt) return {workloadDiagnostic:{sequence:receipt.sequence, entry:receipt.diagnosticEntry, receipt:receipt.diagnosticReceipt}}
+  } catch {}
+ }
+ return {}
 }

@@ -32,6 +32,7 @@ type operation string
 
 const (
 	operationDeploymentFinalize operation = "deployment.finalize"
+	operationTemplateRefresh    operation = "template.refresh"
 	operationSecretCreate       operation = "secret.create"
 	operationSecretRotate       operation = "secret.rotate"
 	operationSecretRevoke       operation = "secret.revoke"
@@ -198,7 +199,7 @@ func newClaim(r *Request, slot [sha256.Size]byte) (db.IdempotencyReceipt, error)
 }
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationComputerCreate, operationComputerDelete, operationComputerCommand, operationCommandCancel:
+	case operationDeploymentFinalize, operationTemplateRefresh, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationComputerCreate, operationComputerDelete, operationComputerCommand, operationCommandCancel:
 		return true
 	}
 	return false
@@ -469,4 +470,13 @@ func optionalUUID(value uuid.UUID) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return pgvalue.UUID(value)
+}
+
+// NewTemplateRefreshRequest keeps retries attached to the originally resolved
+// deployment and spec through the saved receipt, even after current changes.
+func NewTemplateRefreshRequest(environmentID uuid.UUID, template, key string) (*Request, error) {
+	if environmentID == uuid.Nil() || template == "" || strings.TrimSpace(key) == "" || len(key) > 512 || !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
+		return nil, errors.New("template refresh requires a valid idempotency key")
+	}
+	return &Request{environmentID: environmentID, operation: operationTemplateRefresh, scope: []byte(template), key: key, fingerprint: operationFingerprint(operationTemplateRefresh, []byte(template))}, nil
 }

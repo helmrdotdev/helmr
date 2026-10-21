@@ -30,11 +30,13 @@ export async function bundleProgram(options: {
   output: string
   config: DiscoveryConfig
   nodeVersion: string
+  template?: { readonly sourcePath: string; readonly exportName: string; readonly throughAgent: boolean }
 }): Promise<BundleManifest> {
   const root = await realpath(options.root)
   const output = resolve(options.output)
   if (contained(root, output)) throw new Error("bundle output must be outside captured inputs")
-  const modules = await discoverModules(root, options.config)
+  if (options.template) await projectFile(root, options.template.sourcePath)
+  const modules = options.template ? [options.template.sourcePath] : await discoverModules(root, options.config)
   if (modules.length === 0) throw new Error("configured dirs contain no declaration source modules")
   const sourcePackage = await readObject(resolve(root, "package.json"))
   const dependencies = await runtimeDependencies(root, sourcePackage, options.config.external)
@@ -43,7 +45,14 @@ export async function bundleProgram(options: {
   await mkdir(outdir, { recursive: true })
   const result = await build({
     absWorkingDir: root,
-    entryPoints: modules.map((sourcePath, index) => ({ in: sourcePath, out: `entry-${index}` })),
+    ...(options.template ? {
+      stdin: {
+        contents: `import { ${JSON.stringify(options.template.exportName)} as selected } from ${JSON.stringify("./" + options.template.sourcePath)}; export const preparation = selected${options.template.throughAgent ? ".template" : ""};`,
+        resolveDir: root,
+        sourcefile: "__helmr_preparation_entry__.ts",
+        loader: "ts" as const,
+      },
+    } : { entryPoints: modules.map((sourcePath, index) => ({ in: sourcePath, out: `entry-${index}` })) }),
     bundle: true,
     packages: "bundle",
     external: [...options.config.external],
@@ -55,7 +64,7 @@ export async function bundleProgram(options: {
     sourcesContent: true,
     outdir,
     outExtension: { ".js": ".mjs" },
-    entryNames: "[name]",
+    entryNames: options.template ? "entry-0" : "[name]",
     chunkNames: "chunks/[name]-[hash]",
     metafile: true,
     write: false,
@@ -67,6 +76,7 @@ export async function bundleProgram(options: {
     throw error
   })
   for (const input of Object.keys(result.metafile.inputs)) {
+    if (options.template && input === "__helmr_preparation_entry__.ts") continue
     const path = await realpath(resolve(root, input)).catch(error => {
       if (error.code !== "ENOENT" || !/[?#]/.test(input)) throw error
       return realpath(resolve(root, input.split(/[?#]/, 1)[0]!))

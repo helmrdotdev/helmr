@@ -16,6 +16,8 @@ import (
 )
 
 type Connector struct {
+	seedRestore     bool
+	restoreMemory   vm.MemorySource
 	cfg             Config
 	artifacts       runtimeArtifacts
 	kernelArgs      string
@@ -32,6 +34,7 @@ const (
 	workloadLaunch launchMode = iota
 	startupProbeLaunch
 	preparationQualificationLaunch
+	bootSeedBuildLaunch
 )
 
 // QualifiedRuntime is the only Firecracker value that implements workload VM
@@ -224,6 +227,9 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 	child := *c
 	child.cfg = cfg
 	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
+	if request.BootSeed != nil {
+		return child.restoreBootSeed(ctx, request)
+	}
 	mode := workloadLaunch
 	if request.Purpose == vm.MaterializePreparationQualification {
 		mode = preparationQualificationLaunch

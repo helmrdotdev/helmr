@@ -25,7 +25,7 @@ const secretRoutePriority = 100
 // Fixed host and prepared-image probes receive no Control Plane Secret transport.
 // Every workload must complete preparation, including Computers with no bindings.
 func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
-	if mode == startupProbeLaunch || mode == preparationQualificationLaunch {
+	if mode == startupProbeLaunch || mode == preparationQualificationLaunch || mode == bootSeedBuildLaunch {
 		return nil, nil
 	}
 	if c.cfg.PrepareSecretTransport == nil {

@@ -16,7 +16,7 @@ import { runHealthyContinuation } from "./healthy-driver"
 import type { CommandRef } from "../../../sdk/typescript/src/command"
 
 const options = JSON.parse(await readFile(process.argv[2]!, "utf8")) as {
-  protectedModel?: { origin: string; state: string }; url: string; apiKey: string; modelScript: string; timeoutMs: number; nativeProcessLoss?: boolean; cancelSave?: boolean; deadlineSave?: boolean; evidence: string; healthyRAM?: boolean; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; checkpointFault?: "corrupt-config" | "missing-memory"; checkpointObservations: string; performanceKind?: "no-op" | "edit-test" | "dependencies"; backgroundSaves?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string
+  protectedModel?: { origin: string; state: string }; url: string; apiKey: string; modelScript: string; timeoutMs: number; nativeProcessLoss?: boolean; cancelSave?: boolean; deadlineSave?: boolean; evidence: string; healthyRAM?: boolean; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; checkpointObservations: string; performanceKind?: "no-op" | "edit-test" | "dependencies"; backgroundSaves?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string
 }
 assert(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0)
 if (options.protectedModel) {

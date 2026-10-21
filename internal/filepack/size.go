@@ -47,5 +47,7 @@ func PackedSizeLimit(logicalBytes int64, role string) (int64, error) {
 }
 
 func newFilepackEncoder() (*zstd.Encoder, error) {
-	return zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	// Pack encodes chunks serially. Keep one encoder workspace per capture,
+	// independent of the worker's available CPUs.
+	return zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
 }

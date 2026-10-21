@@ -6,12 +6,22 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/helmrdotdev/helmr/internal/bootgate"
 	"github.com/helmrdotdev/helmr/internal/guestd"
 )
+
+var bootGate = flag.Bool("boot-gate", false, "wait for fresh host bootstrap before guest services")
 
 func main() {
 	cfg := parseFlags()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if *bootGate {
+		if err := bootgate.Run(); err != nil {
+			logger.Error("guest bootstrap failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := guestd.Run(context.Background(), cfg, logger); err != nil {
 		logger.Error("guestd failed", "error", err)
 		os.Exit(1)

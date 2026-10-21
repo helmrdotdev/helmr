@@ -132,3 +132,57 @@ test("generated source maps report the original TypeScript location", async () =
     await f.close()
   }
 })
+
+test("independent Template payload excludes Agent-only edits but includes readable dependencies", async () => {
+  const f = await fixture({
+    "templates/base.ts": "import {value} from '../shared.ts'; export const base={kind:'template',id:'base',value,load:()=>import('../dynamic.ts')}",
+    "shared.ts": "export const value=1",
+    "dynamic.ts": "export const dynamicValue=2",
+    "assets/input.txt": "first",
+    "agents/main.ts": "export const unrelated='agent body one'",
+  })
+  const template = {sourcePath:"templates/base.ts", exportName:"base", throughAgent:false}
+  const snapshot = async (output:string) => {
+    const files = await readdir(resolve(output,"payload"), {recursive:true})
+    const result: Record<string,string> = {}
+    for (const file of files.sort()) {
+      const contents = await readFile(resolve(output,"payload",file)).catch(error=>{
+        if(error.code==='EISDIR')return undefined
+        throw error
+      })
+      if(contents)result[file]=contents.toString('base64')
+    }
+    return result
+  }
+  let sequence=0
+  const build = async()=>{
+    const output=resolve(f.output,`build-${sequence++}`)
+    await bundleProgram({root:f.root,output,nodeVersion:"24.21.0",config:{...config,assets:["assets/**"]},template})
+    return snapshot(output)
+  }
+  try {
+    const original=await build()
+    await writeFile(resolve(f.root,"agents/main.ts"),"export const unrelated='different Agent body'")
+    await writeFile(resolve(f.root,"agents/earlier.ts"),"export const another=42")
+    expect(await build()).toEqual(original)
+    expect(Object.keys(original)).toContain("helmr/app/entry-0.mjs")
+    expect(Object.values(original).map(x=>Buffer.from(x,'base64').toString()).join('\n')).not.toContain("different Agent body")
+    for (const [path,contents] of [["shared.ts","export const value=3"],["dynamic.ts","export const dynamicValue=4"],["assets/input.txt","second"]]) {
+      const before=await build()
+      await writeFile(resolve(f.root,path!),contents!)
+      expect(await build()).not.toEqual(before)
+    }
+  } finally { await f.close() }
+})
+
+test("nested Template wrapper exports only the selected Template and keeps its enclosing source readable", async () => {
+  const f=await fixture({"agents/main.ts":"export const agent={kind:'agent',body:'included',template:{kind:'template',id:'base'}}"})
+  try {
+    await bundleProgram({...f,nodeVersion:"24.21.0",config,template:{sourcePath:"agents/main.ts",exportName:"agent",throughAgent:true}})
+    const child=spawnSync("node",["--input-type=module","-e",`const m=await import(${JSON.stringify(resolve(f.output,"payload/helmr/app/entry-0.mjs"))}); console.log(JSON.stringify(m))`],{encoding:"utf8"})
+    expect(child.status,child.stderr).toBe(0)
+    expect(JSON.parse(child.stdout)).toEqual({preparation:{kind:"template",id:"base"}})
+    const sourceMap=await readFile(resolve(f.output,"payload/helmr/app/entry-0.mjs.map"),"utf8")
+    expect(sourceMap).toContain("included")
+  } finally { await f.close() }
+})

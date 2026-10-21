@@ -16,7 +16,7 @@ func (p programMounts) validate() error {
 	if p == (programMounts{}) {
 		return nil
 	}
-	if !filepath.IsAbs(p.Runtime) || !filepath.IsAbs(p.Artifact) || filepath.Clean(p.Runtime) != p.Runtime || filepath.Clean(p.Artifact) != p.Artifact {
+	if !filepath.IsAbs(p.Runtime) || filepath.Clean(p.Runtime) != p.Runtime || (p.Artifact != "" && (!filepath.IsAbs(p.Artifact) || filepath.Clean(p.Artifact) != p.Artifact)) {
 		return errors.New("program sources must be canonical absolute directories")
 	}
 	return nil

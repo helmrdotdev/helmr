@@ -15,6 +15,7 @@ import (
 // remove protection, so they cannot create an unobserved payload user here.
 // Keep the newest usable image even if a newer sequence has stale Secrets.
 const retirableSupersededImage = `i.root_id IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM boot_seed_builds b WHERE b.environment_id=i.environment_id AND b.image_id=i.id AND b.worker_host_id IS NOT NULL AND b.fenced_at IS NULL)
  AND p.fenced_at IS NOT NULL AND p.disk_released_at IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=i.environment_id AND c.image_id=i.id
    AND (c.deleted_at IS NULL OR c.initial_root_id IS NOT NULL))

@@ -78,6 +78,11 @@ func PackTo(ctx context.Context, source *os.File, target io.Writer, role string)
 }
 
 func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *Stats, logicalSize int64) error {
+	if logicalSize == 0 {
+		return nil
+	}
+	buffer := make([]byte, filepackChunkSize)
+	compressed := make([]byte, 0, maxFilepackEncodedChunk)
 	offset := int64(0)
 	for offset < logicalSize {
 		if err := ctx.Err(); err != nil {
@@ -88,7 +93,7 @@ func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, e
 			return err
 		}
 		if !sparse {
-			return scanAndWriteFilepackRange(ctx, source, target, encoder, stats, offset, logicalSize)
+			return scanAndWriteFilepackRange(ctx, source, target, encoder, stats, offset, logicalSize, buffer, compressed)
 		}
 		if dataStart >= dataEnd {
 			offset = nextOffset
@@ -101,7 +106,7 @@ func writeFilepackData(ctx context.Context, source *os.File, target io.Writer, e
 		if remainder := end % filepackChunkSize; remainder != 0 {
 			end += min(filepackChunkSize-remainder, logicalSize-end)
 		}
-		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, start, end); err != nil {
+		if err := scanAndWriteFilepackRange(ctx, source, target, encoder, stats, start, end, buffer, compressed); err != nil {
 			return err
 		}
 		// The final chunk may include another extent. Do not emit it twice.
@@ -137,8 +142,7 @@ func nextDataRange(file *os.File, offset int64, logicalSize int64) (int64, int64
 	return dataStart, holeStart, holeStart, true, nil
 }
 
-func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *Stats, start int64, end int64) error {
-	buffer := make([]byte, int(filepackChunkSize))
+func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.Writer, encoder *zstd.Encoder, stats *Stats, start int64, end int64, buffer, compressed []byte) error {
 	for offset := start; offset < end; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -153,7 +157,7 @@ func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.W
 			return err
 		}
 		if !allZero(read) {
-			compressed := encoder.EncodeAll(read, nil)
+			compressed = encoder.EncodeAll(read, compressed[:0])
 			if stats != nil {
 				stats.EncodedChunks++
 			}
@@ -176,10 +180,10 @@ func allZero(data []byte) bool {
 }
 
 func writeFilepackDataRecord(w io.Writer, offset int64, rawSize int, compressed []byte) error {
-	if rawSize <= 0 || rawSize > maxFilepackChunk {
+	if rawSize <= 0 || int64(rawSize) > filepackChunkSize {
 		return errors.New("invalid Firecracker filepack raw chunk size")
 	}
-	if len(compressed) == 0 || len(compressed) > maxFilepackChunk {
+	if len(compressed) == 0 || int64(len(compressed)) > maxFilepackEncodedChunk {
 		return errors.New("invalid Firecracker filepack compressed chunk size")
 	}
 	var header [filepackDataHeaderSize]byte

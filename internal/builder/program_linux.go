@@ -386,6 +386,9 @@ func readPreparedProgram(directory string) (artifact.BuildConfig, VerificationRe
 	}
 	want := map[string]bool{"compiler-output": false, "config.json": false, "verification.json": false, "payload": false, "build-plan.json": false}
 	for _, entry := range entries {
+		if entry.Name() == "preparations" && entry.IsDir() {
+			continue
+		}
 		if _, ok := want[entry.Name()]; !ok {
 			return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("prepared Program contains unexpected path %q", entry.Name())
 		}

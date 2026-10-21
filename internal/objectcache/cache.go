@@ -25,6 +25,7 @@ type entry struct {
 	charge     int64
 	pins       int
 	used       uint64
+	invalid    bool
 }
 
 // Stats counts successful opens, including leases whose consumers may not read.
@@ -54,6 +55,8 @@ type Cache struct {
 	pending     map[key]bool
 	closed      bool
 	stats       Stats
+	driveGID    int
+	drives      bool
 }
 
 // Open clears disposable objects. The caller must exclusively own directory
@@ -115,6 +118,15 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 	charge := (d.SizeBytes + 4095) / 4096 * 4096
 	k := key{namespace, d.Digest}
 	c.mu.Lock()
+	if old := c.entries[k]; old != nil && old.invalid && old.pins == 0 {
+		if err := os.Remove(old.path); err != nil {
+			c.mu.Unlock()
+			return false, err
+		}
+		delete(c.entries, k)
+		c.used -= old.charge
+		c.stats.Evictions++
+	}
 	// One large artifact must not replace most of the reusable working set.
 	if c.closed || c.pending[k] || c.entries[k] != nil || charge > c.limit/4 {
 		c.mu.Unlock()
@@ -140,6 +152,8 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 		c.stats.Evictions++
 		c.used -= oldest.charge
 	}
+	drive := c.drives && (namespace == "program" || namespace == "runtime")
+	gid := c.driveGID
 	c.used += charge
 	c.pending[k] = true
 	c.mu.Unlock()
@@ -176,7 +190,17 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 		copyErr = cas.ErrDigestMismatch
 	}
 	if copyErr == nil {
-		copyErr = f.Chmod(0400)
+		if drive {
+			copyErr = f.Chown(os.Geteuid(), gid)
+			if copyErr == nil {
+				copyErr = f.Chmod(0440)
+			}
+			if copyErr == nil {
+				copyErr = f.Sync()
+			}
+		} else {
+			copyErr = f.Chmod(0400)
+		}
 	}
 	if err := errors.Join(copyErr, f.Close(), ctx.Err()); err != nil {
 		return false, err
@@ -209,7 +233,7 @@ func (c *Cache) descriptor(namespace, digest string) (cas.Descriptor, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[key{namespace, digest}]
-	if c.closed || e == nil {
+	if c.closed || e == nil || e.invalid {
 		return cas.Descriptor{}, false
 	}
 	return e.descriptor, true
@@ -222,7 +246,7 @@ func (c *Cache) open(namespace, digest string) (*reader, cas.Descriptor, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[key{namespace, digest}]
-	if c.closed || e == nil {
+	if c.closed || e == nil || e.invalid {
 		c.stats.Misses++
 		return nil, cas.Descriptor{}, false
 	}

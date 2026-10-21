@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,11 +43,8 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 			targetRuntime.ID,
 		)
 	}
-	if len(request.Memory) != 1 {
-		return nil, fmt.Errorf("the Firecracker restore requires exactly one memory file, got %d", len(request.Memory))
-	}
-	if len(request.MemoryMediaTypes) != 1 {
-		return nil, fmt.Errorf("the Firecracker restore requires exactly one memory media type, got %d", len(request.MemoryMediaTypes))
+	if request.MemorySource == nil {
+		return nil, errors.New("the Firecracker restore requires an authenticated memory source")
 	}
 	if strings.TrimSpace(request.VMState) == "" {
 		return nil, errors.New("the Firecracker restore vm state path is required")
@@ -89,9 +87,6 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if request.ScratchDiskMediaType != cas.CheckpointScratchDiskMediaType {
 		return nil, fmt.Errorf("the Firecracker restore scratch disk media type %q is not supported", request.ScratchDiskMediaType)
 	}
-	if request.MemoryMediaTypes[0] != cas.CheckpointMemoryMediaType {
-		return nil, fmt.Errorf("the Firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
-	}
 	if restoreCfg.MemoryMiB != request.Resources.MemoryMiB || restoreCfg.ScratchDiskMiB != request.Resources.DiskMiB {
 		return nil, errors.New("checkpoint memory or scratch size does not match runtime reservation")
 	}
@@ -112,6 +107,9 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	}
 	expectedScratchSize := manifest.RecoveryPoint.Runtime.ScratchDiskMiB * 1024 * 1024
 	expectedMemorySize := manifest.RecoveryPoint.Runtime.MemoryMiB * 1024 * 1024
+	if request.MemorySource.Size() != expectedMemorySize {
+		return nil, fmt.Errorf("%w: memory source size differs from runtime", vm.ErrInvalidCheckpointContent)
+	}
 	var rawScratch string
 	var rawMemory string
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -124,15 +122,16 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		rawScratch = path
 		return nil
 	})
-	group.Go(func() error {
-		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.Memory[0], filepack.MemoryRole, restoreMemoryName, expectedMemorySize, cas.CheckpointMemoryMediaType)
-		reportPhase(recordPhase, phase)
-		if err != nil {
-			return fmt.Errorf("unpack checkpoint memory: %w", err)
-		}
-		rawMemory = path
-		return nil
-	})
+	if request.EagerMemory {
+		group.Go(func() error {
+			rawMemory = filepath.Join(ownerDir, restoreMemoryName)
+			started := time.Now()
+			err := materializeEagerMemory(groupCtx, rawMemory, request.MemorySource)
+			reportPhase(recordPhase, vm.Phase{Name: "restore_materialize_memory", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
+			return err
+		})
+	}
+
 	if err := group.Wait(); err != nil {
 		removeFiles([]string{rawScratch, rawMemory})
 		return nil, errors.Join(err, removeStateRootLast(ownerDir, owner))
@@ -140,6 +139,9 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
+	if !request.EagerMemory {
+		child.restoreMemory = request.MemorySource
+	}
 	transferred = true // prepareMachine consumes the held restore guard.
 	machine, err := child.start(ctx, workloadLaunch, request.ComputerInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
 	if err != nil {

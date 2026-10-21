@@ -22,7 +22,7 @@ type HostAllocation struct {
 }
 
 func (r HostAllocation) valid() bool {
-	return (r.Kind == "computer" || r.Kind == "preparation") && r.EnvironmentID != uuid.Nil() && r.OwnerID != uuid.Nil() && r.InstanceID != uuid.Nil() && r.Epoch > 0
+	return (r.Kind == "computer" || r.Kind == "preparation" || r.Kind == "seed") && r.EnvironmentID != uuid.Nil() && r.OwnerID != uuid.Nil() && r.InstanceID != uuid.Nil() && r.Epoch > 0
 }
 
 // ListHostAllocations enumerates this authenticated incarnation's unfenced

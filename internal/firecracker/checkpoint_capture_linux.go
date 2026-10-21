@@ -32,6 +32,9 @@ func (s *guestMachine) BeginCheckpoint(ctx context.Context, request vm.SnapshotR
 	if strings.TrimSpace(request.ID) == "" {
 		return nil, errors.New("checkpoint identity is required")
 	}
+	if err := s.PrepareCheckpoint(ctx); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
@@ -157,7 +160,6 @@ func (c *checkpointCapture) discardUntransferredSnapshot() error {
 			filepath.Join(c.machine.jailRoot, id+snapshotMemorySuffix),
 			filepath.Join(c.machine.jailRoot, id+snapshotStateSuffix),
 			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotScratchPackSuffix),
-			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotMemoryPackSuffix),
 		)
 	}
 	var result error
@@ -219,6 +221,21 @@ func (c *checkpointCapture) CompleteAbort(ctx context.Context) error {
 	s.mu.Unlock()
 	if closed || s.checkpointHold != c || !c.resumed {
 		return errors.New("checkpoint guest control has not resumed")
+	}
+	// The continuation owner joined every artifact reader before this call.
+	// Disk custody was transferred to its serial save owner; release only files.
+	if c.delivered && c.snapshotErr == nil {
+		paths := []string{c.artifact.VMState.Path, c.artifact.ScratchDisk.Path}
+		for _, file := range c.artifact.Memory {
+			paths = append(paths, file.Path)
+		}
+		for _, path := range paths {
+			if path != "" {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
+		}
 	}
 	c.completed = true
 	s.checkpointHold = nil

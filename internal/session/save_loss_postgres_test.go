@@ -45,7 +45,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 				for range 2 {
 					var err error
 					if stop {
-						err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil())
+						err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
 					} else {
 						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
 						err = dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1)
@@ -102,7 +102,7 @@ func TestComputerSaveLossPreservesCancellation(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
@@ -153,7 +153,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				}
 				endAuthority := func(pool db.TxBeginner) error {
 					if loss == "stop" {
-						return dispatch.ObserveLeaseStopped(t.Context(), pool, *f.host(), leaseIdentity(f), uuid.Nil())
+						return dispatch.ObserveLeaseStopped(t.Context(), pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
 					}
 					return dispatch.ExpireLease(t.Context(), pool, f.env, f.computer, 1)
 				}

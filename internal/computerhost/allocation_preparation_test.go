@@ -27,18 +27,18 @@ import (
 )
 
 type preparationOwnerClient struct {
-	deliveries, renewals          atomic.Int64
-	appendLog                     func(context.Context, workerapi.PreparationLogRequest) (workerapi.DiagnosticLogReceipt, error)
-	loseWriteKey                  atomic.Bool
-	keyCalls                      atomic.Int64
-	delivery                      workerapi.PreparationAllocationDelivery
-	start                         workerapi.PreparationStart
-	backend                       *preparationOwnerBackend
-	writeKey                      atomic.Bool
-	sealed                        atomic.Bool
-	publications, stops, failures atomic.Int64
-	losePublish, loseStop         atomic.Bool
-	root                          disk.VersionRoot
+	deliveries, renewals, secretCalls atomic.Int64
+	appendLog                         func(context.Context, workerapi.PreparationLogRequest) (workerapi.DiagnosticLogReceipt, error)
+	loseWriteKey                      atomic.Bool
+	keyCalls                          atomic.Int64
+	delivery                          workerapi.PreparationAllocationDelivery
+	start                             workerapi.PreparationStart
+	backend                           *preparationOwnerBackend
+	writeKey                          atomic.Bool
+	sealed                            atomic.Bool
+	publications, stops, failures     atomic.Int64
+	losePublish, loseStop             atomic.Bool
+	root                              disk.VersionRoot
 }
 
 func (c *preparationOwnerClient) AppendPreparationLog(ctx context.Context, request workerapi.PreparationLogRequest) (workerapi.DiagnosticLogReceipt, error) {
@@ -58,6 +58,7 @@ func (c *preparationOwnerClient) PreparationStart(context.Context, workerapi.Pre
 	return c.start, nil
 }
 func (c *preparationOwnerClient) PreparationSecrets(context.Context, workerapi.PreparationExecutor) (workerapi.PreparationSecrets, error) {
+	c.secretCalls.Add(1)
 	return workerapi.PreparationSecrets{Secrets: []workerapi.SecretDelivery{
 		{Env: &workerapi.SecretEnv{Name: "BUILD"}, Value: []byte("secret")},
 		{File: &workerapi.SecretFile{Path: "/etc/build/token"}, Value: []byte("file-secret")},
@@ -141,7 +142,7 @@ type preparationOwnerBackend struct {
 }
 
 func (b *preparationOwnerBackend) Materialize(_ context.Context, r vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
-	if r.Topology.Computer == nil || (r.Topology.Computer.File == nil) == (r.Topology.Computer.Device == nil) || len(r.ReadOnlyDrives) != 2 {
+	if r.Topology.Computer == nil || (r.Topology.Computer.File == nil) == (r.Topology.Computer.Device == nil) || (len(r.ReadOnlyDrives) != 2 && !(r.Purpose == vm.MaterializePreparationQualification && len(r.ReadOnlyDrives) == 1 && r.ReadOnlyDrives[0].ID == vm.ProgramRuntimeDrive)) {
 		return nil, errors.New("invalid preparation VM topology")
 	}
 	if r.Topology.Computer.Device != nil {
@@ -301,7 +302,7 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 		machines.mu.Unlock()
 		return device, nil
 	}
-	owner.stageImage = func(_ context.Context, stage *preparationStage, _ workerapi.AllocationIdentity, _ workerapi.PreparationStart) error {
+	owner.stageImage = func(_ context.Context, stage *preparationStage, _ workerapi.AllocationIdentity, start workerapi.PreparationStart) error {
 		var err error
 		stage.disk, err = os.Create(filepath.Join(stage.directory, "image.raw"))
 		if err != nil {
@@ -310,7 +311,10 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 		if err := stage.disk.Truncate(disk.SeedCapacity); err != nil {
 			return err
 		}
-		stage.drives = []vm.ReadOnlyDrive{{ID: vm.ProgramRuntimeDrive}, {ID: vm.ProgramDrive}}
+		stage.drives = []vm.ReadOnlyDrive{{ID: vm.ProgramRuntimeDrive}}
+		if !start.SeedOnly {
+			stage.drives = append(stage.drives, vm.ReadOnlyDrive{ID: vm.ProgramDrive})
+		}
 		_, err = stage.disk.WriteAt(bytes.Repeat([]byte{31}, 4096), 4096)
 		return err
 	}
@@ -646,5 +650,17 @@ func TestPreparationQualificationCancellationIsUnavailable(t *testing.T) {
 	}
 	if owner.failureCode != "preparation_qualification_unavailable" || !owner.Finished() || client.publications.Load() != 0 || owner.qualification != nil || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("cancelled qualification was published, retained, or reported as defective execution")
+	}
+}
+
+func TestSeedOnlyPreparationPublishesWithoutAuthoredVMOrSecrets(t *testing.T) {
+	owner, client, backend := preparationOwnerFixture(t)
+	client.start.SeedOnly = true
+	client.start.Program.Artifact = workerapi.CASObject{}
+	if err := owner.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !owner.Finished() || backend.starts.Load() != 1 || backend.authored.Load() != 0 || backend.probes.Load() != 1 || client.secretCalls.Load() != 0 || client.publications.Load() != 1 {
+		t.Fatalf("seed-only flow: finished=%v starts=%d authored=%d probes=%d secrets=%d publications=%d", owner.Finished(), backend.starts.Load(), backend.authored.Load(), backend.probes.Load(), client.secretCalls.Load(), client.publications.Load())
 	}
 }

@@ -47,3 +47,10 @@ func PrepareProgram(context.Context, ProgramInput, string) error {
 func BuildPreparedProgram(context.Context, PreparedProgramInput) (ProgramResult, error) {
 	return ProgramResult{}, errors.New("canonical prepared Program builds require linux/amd64 BuildKit")
 }
+
+func PrepareDeploymentPrograms(context.Context, ProgramInput, string, string, string) error {
+	return errors.New("canonical preparation Programs require linux/amd64 BuildKit")
+}
+func BuildPreparationPrograms(context.Context, PreparedProgramInput) ([]ProgramResult, error) {
+	return nil, errors.New("canonical preparation Programs require linux/amd64 BuildKit")
+}

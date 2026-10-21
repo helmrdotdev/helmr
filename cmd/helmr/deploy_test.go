@@ -592,6 +592,7 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		Objects: []bundle.Object{{Digest: programDigest, SizeBytes: int64(len(program)),
 			MediaType: artifact.ProgramArtifactMediaType}, {Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}},
 	}
+	manifest.Preparations = artifacttest.PreparationOutputs(t, manifest.Program)
 	bundle.SortObjects(manifest.Objects)
 	raw, err := bundle.Canonical(manifest)
 	if err != nil {

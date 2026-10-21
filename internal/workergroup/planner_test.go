@@ -819,3 +819,19 @@ func TestPlanRespectsAggregateEnvironmentCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanBootSeedScalesFromZeroWithoutResidentBudget(t *testing.T) {
+	id := plannerTestUUID(81)
+	seed := plannerFreshComputer(82)
+	seed.Kind = "seed"
+	seed.RemainingResidents = 0
+	store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(id, "primary")}, demand: []db.ListAllocationPlanningDemandRow{seed}}
+	plan, err := Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 1)}}, plannerTestNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := requirePoolPlan(t, plan, id)
+	if !plan.Complete || pool.CompatibleQueuedItems != 1 || pool.RecommendedAdditionalWorkers != 1 {
+		t.Fatalf("seed-only plan: %+v", plan)
+	}
+}

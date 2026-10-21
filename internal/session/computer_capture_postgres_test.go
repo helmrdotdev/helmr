@@ -342,3 +342,25 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 		})
 	}
 }
+
+func TestComputerCaptureObservesDemandAndRefusesNewSeal(t *testing.T) {
+	f := newFixture(t)
+	request := f.captureRequest()
+	original, capture := beginCapture(t, f, request)
+	if original.WorkPending {
+		t.Fatal("idle capture reported work")
+	}
+	f.enqueue(t, "arrived-during-capture")
+	observed, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), request)
+	if err != nil || !observed.WorkPending || observed.SaveID != original.SaveID || !bytes.Equal(observed.Request, original.Request) {
+		t.Fatalf("demand changed capture or disappeared: %v %+v", err, observed)
+	}
+	receipt := &agentv1.ComputerSessionReceipt{CheckpointId: request.CheckpointID.String(), DesiredVersion: capture.DesiredVersion, Frozen: true}
+	if err := session.RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, request.CheckpointID, receipt); !errors.Is(err, session.ErrComputerCaptureDemand) {
+		t.Fatalf("new input did not prevent seal: %v", err)
+	}
+	var state string
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE environment_id=$1 AND id=$2`, f.env, request.CheckpointID).Scan(&state); err != nil || state != "capturing" {
+		t.Fatalf("rejected seal changed state: %q %v", state, err)
+	}
+}

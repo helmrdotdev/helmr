@@ -31,6 +31,7 @@ type ObjectSource struct {
 type BundleInput struct {
 	Runtime       artifact.RuntimeDescriptor
 	Program       artifact.ProgramOutput
+	Preparations  []artifact.ProgramOutput
 	ComputerSeeds []bundle.ComputerSeed
 	Objects       []ObjectSource
 }
@@ -68,7 +69,7 @@ func FinalizeBundle(
 	sort.Slice(computerSeeds, func(left, right int) bool {
 		return computerSeeds[left].DeclaredID < computerSeeds[right].DeclaredID
 	})
-	objects, err := referencedBundleObjects(input.Program.Artifact, computerSeeds)
+	objects, err := referencedBundleObjects(input.Program.Artifact, computerSeeds, input.Preparations...)
 	if err != nil {
 		return bundle.Directory{}, err
 	}
@@ -87,6 +88,7 @@ func FinalizeBundle(
 			},
 		},
 		Program:       input.Program,
+		Preparations:  input.Preparations,
 		ComputerSeeds: computerSeeds,
 		Objects:       objects,
 	}
@@ -138,7 +140,8 @@ func FinalizeBundle(
 		); err != nil {
 			return bundle.Directory{}, err
 		}
-		if err := verifyFinalObject(ctx, destination, object, input.Program); err != nil {
+		program, _ := manifest.ProgramObject(object.Digest)
+		if err := verifyFinalObject(ctx, destination, object, program); err != nil {
 			return bundle.Directory{}, err
 		}
 	}
@@ -170,10 +173,18 @@ func FinalizeBundle(
 func referencedBundleObjects(
 	program artifact.ProgramDescriptor,
 	computerSeeds []bundle.ComputerSeed,
+	preparations ...artifact.ProgramOutput,
 ) ([]bundle.Object, error) {
 	objectsByDigest := make(map[string]bundle.Object, 1+len(computerSeeds))
 	programObject := bundle.Object(program)
 	objectsByDigest[programObject.Digest] = programObject
+	for _, output := range preparations {
+		object := bundle.Object(output.Artifact)
+		if previous, ok := objectsByDigest[object.Digest]; ok && previous != object {
+			return nil, errors.New("program artifact has conflicting descriptor")
+		}
+		objectsByDigest[object.Digest] = object
+	}
 	for _, image := range computerSeeds {
 		object := bundle.Object{
 			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,

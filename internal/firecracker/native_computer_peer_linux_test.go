@@ -155,7 +155,7 @@ func (p *nativeKVMPeer) AgentOperation(_ context.Context, request workerapi.Agen
 		}
 		value, _ = json.Marshal(map[string]any{"status": "completed", "result": payload.Result})
 	default:
-		return workerapi.AgentOperationResponse{}, fmt.Errorf("unexpected native operation: %d", request.Method)
+		return workerapi.AgentOperationResponse{}, fmt.Errorf("unexpected native operation: %s", request.Method)
 	}
 	return workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: value}, nil
 }

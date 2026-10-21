@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/objectcache"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -146,7 +145,11 @@ func run(log *slog.Logger) error {
 	if err := validateWorkerDiskFunding(diskCapacity.HostDiskBytes, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
 		return err
 	}
-	if vmResources.MemoryMiB+disk.VersionCacheBytes/(1<<20) > cfg.WorkerCapacityMemoryMiB/int64(cfg.WorkerExecutionSlots) {
+	perSlotMemory, err := computerhost.HostMemoryPerSlot(vmResources.MemoryMiB)
+	if err != nil {
+		return err
+	}
+	if perSlotMemory > cfg.WorkerCapacityMemoryMiB*(1<<20)/int64(cfg.WorkerExecutionSlots) {
 		return errors.New("worker memory capacity does not fund guest and Computer caches for every execution slot")
 	}
 	hostReservations, err := reservation.New(reservation.Vector{
@@ -162,6 +165,9 @@ func run(log *slog.Logger) error {
 	objectCache, err := objectcache.Open(filepath.Join(workDir, "object-cache"), 0)
 	if err != nil {
 		return fmt.Errorf("open worker object cache: %w", err)
+	}
+	if err := objectCache.EnableDrives(cfg.JailerUID, cfg.JailerGID, networkConfig.StateDir, cfg.JailerChrootDir); err != nil {
+		log.Info("shared artifact drives unavailable", "error", err)
 	}
 	cacheKey := reservation.Key{Kind: "object-cache", Epoch: 1, ID: "worker"}
 	defer func() {
@@ -216,7 +222,7 @@ func run(log *slog.Logger) error {
 			}
 			return qualifyRecoveredRuntime(qualificationCtx, evidence, hostReservations, reservation.Vector{
 				CPUMillis:     vmResources.MilliCPU,
-				MemoryBytes:   vmResources.MemoryMiB*1024*1024 + disk.VersionCacheBytes,
+				MemoryBytes:   perSlotMemory,
 				HostDiskBytes: perSlotDisk,
 				VMSlots:       1,
 			}, runtimeCandidate.Qualify)

@@ -90,6 +90,7 @@ const listAbandonedCasBlobs = `-- name: ListAbandonedCasBlobs :many
 SELECT lifetime.digest
   FROM cas_blobs lifetime
  WHERE lifetime.retired_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM boot_seed_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM checkpoint_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM disk_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)

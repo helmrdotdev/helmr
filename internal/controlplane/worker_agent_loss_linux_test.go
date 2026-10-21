@@ -36,10 +36,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -134,7 +134,11 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery, pressure bool) {
 				// Preserve a full probe envelope alongside one retained owner.
 				config.WorkerEnv["WORKER_EXECUTION_SLOTS"] = "2"
 				config.WorkerEnv["WORKER_CAPACITY_VCPUS"] = "4"
-				config.WorkerEnv["WORKER_CAPACITY_MEMORY_MIB"] = strconv.FormatInt(2*(4096+disk.VersionCacheBytes/(1<<20)), 10)
+				slotBytes, err := computerhost.HostMemoryPerSlot(4096)
+				if err != nil {
+					t.Fatal(err)
+				}
+				config.WorkerEnv["WORKER_CAPACITY_MEMORY_MIB"] = strconv.FormatInt((2*slotBytes+(1<<20)-1)/(1<<20), 10)
 			}
 			if len(filepath.Join(work, "jailer/firecracker", strings.Repeat("0", 36), "root/vsock.sock")) > 107 {
 				t.Fatal("fixture Unix socket path is too long")

@@ -92,10 +92,10 @@ variables {
   worker_host_type                    = "c8i.xlarge"
   worker_enable_nested_virtualization = true
   worker_capacity_vcpus               = 8
-  worker_capacity_memory_mib          = 16448
+  worker_capacity_memory_mib          = 16676
   worker_execution_slots              = 4
-  worker_root_volume_size_gb          = 1024
-  worker_disk_mib                     = 1048576
+  worker_root_volume_size_gb          = 2048
+  worker_disk_mib                     = 2097152
   worker_disk_reserve_mib             = 1024
   worker_vm_vcpus                     = 2
   worker_vm_memory_mib                = 4096

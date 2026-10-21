@@ -92,12 +92,12 @@ func ObserveProviderAbsentHost(ctx context.Context, absence workergroup.Confirme
 		start = end
 	}
 	for _, a := range allocations {
-		if err := recordComputerStopped(ctx, tx, host, a.hostEpoch, a.identity, "provider confirmed physical host absence", uuid.Nil()); err != nil {
+		if err := recordComputerStopped(ctx, tx, host, a.hostEpoch, a.identity, "provider confirmed physical host absence", uuid.Nil(), uuid.Nil()); err != nil {
 			return err
 		}
 	}
 	for _, p := range preparations {
-		if err := computer.RecordImageBuildStopped(ctx, tx, p.env, p.id, "provider confirmed physical host absence"); err != nil {
+		if err := recordBuildStopped(ctx, tx, p, "provider confirmed physical host absence"); err != nil {
 			return err
 		}
 	}

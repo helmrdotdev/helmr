@@ -199,6 +199,10 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	changed := bundle
 	changed.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
 	changed.Program.Metadata.RuntimeDigest = changed.Runtime.Artifact.Digest
+	changed.Preparations = append([]artifact.ProgramOutput(nil), changed.Preparations...)
+	for i := range changed.Preparations {
+		changed.Preparations[i].Metadata.RuntimeDigest = changed.Runtime.Artifact.Digest
+	}
 	if err := validate(changed); err != nil {
 		t.Fatalf("ValidateDeploymentBundle: %v", err)
 	}
@@ -240,6 +244,11 @@ func testDeploymentBundle(t *testing.T) Manifest {
 		Metadata: artifacttest.ProgramMetadata(t),
 	}
 	program.Metadata.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
+	for i := range program.Metadata.Definitions {
+		if program.Metadata.Definitions[i].Template != nil {
+			program.Metadata.Definitions[i].Template.Prepare = true
+		}
+	}
 	plan := Plan{
 		FormatVersion: definition.DeploymentPlanFormatVersion,
 		Definitions:   append([]artifact.ProgramDefinition(nil), program.Metadata.Definitions...),
@@ -275,6 +284,10 @@ func testDeploymentBundle(t *testing.T) Manifest {
 			{Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType},
 			{Digest: computerImage.Artifact.Digest, SizeBytes: computerImage.Artifact.SizeBytes, MediaType: computerImage.Artifact.MediaType},
 		},
+	}
+	bundle.Preparations = artifacttest.PreparationOutputs(t, program)
+	for _, output := range bundle.Preparations {
+		bundle.Objects = append(bundle.Objects, Object(output.Artifact))
 	}
 	SortObjects(bundle.Objects)
 	return bundle

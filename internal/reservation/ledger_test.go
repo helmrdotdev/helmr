@@ -298,3 +298,30 @@ func runConcurrently(t *testing.T, count int, run func(int) error) {
 		t.Errorf("concurrent operation: %v", err)
 	}
 }
+
+func TestReleaseOptionalHostDiskPreservesPhysicalReservation(t *testing.T) {
+	ledger, err := New(Vector{CPUMillis: 1, MemoryBytes: 10, HostDiskBytes: 20, VMSlots: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := Key{Kind: "instance", ID: "computer", Epoch: 1}
+	if _, err = ledger.Reserve(key, Vector{MemoryBytes: 10, HostDiskBytes: 20, VMSlots: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err = ledger.ReleaseHostDisk(key, 12); err != nil {
+		t.Fatal(err)
+	}
+	got := ledger.Snapshot().Used
+	if got.MemoryBytes != 10 || got.HostDiskBytes != 8 || got.VMSlots != 1 {
+		t.Fatalf("lost physical capacity: %+v", got)
+	}
+	if err = ledger.ReleaseHostDisk(key, 9); err == nil {
+		t.Fatal("released unowned disk")
+	}
+	if err = ledger.Release(key); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.Snapshot().Used != (Vector{}) {
+		t.Fatal("leaked capacity")
+	}
+}

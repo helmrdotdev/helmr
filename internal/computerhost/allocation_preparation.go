@@ -142,7 +142,14 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if shape.CPUMillis <= 0 || shape.VCPUCount <= 0 || shape.VCPUCount > math.MaxInt32 || shape.CPUMillis != shape.VCPUCount*1000 || shape.MemoryBytes <= 0 || shape.MemoryBytes%mebibyte != 0 || shape.ScratchBytes <= 0 || shape.ScratchBytes%mebibyte != 0 {
 		return errors.New("invalid preparation resource shape")
 	}
-	if start.Program.Runtime.SizeBytes < 1 || start.Program.Runtime.SizeBytes > artifact.MaxRuntimePhysicalBytes || start.Program.Artifact.SizeBytes < 1 || start.Program.Artifact.SizeBytes > artifact.MaxProgramPhysicalBytes {
+	if start.Program.Runtime.SizeBytes < 1 || start.Program.Runtime.SizeBytes > artifact.MaxRuntimePhysicalBytes {
+		return errors.New("invalid preparation Program staging size")
+	}
+	if start.SeedOnly {
+		if start.Program.Artifact != (workerapi.CASObject{}) || start.Program.IndexDigest != "" {
+			return errors.New("seed-only preparation cannot carry a Program")
+		}
+	} else if start.Program.Artifact.SizeBytes < 1 || start.Program.Artifact.SizeBytes > artifact.MaxProgramPhysicalBytes {
 		return errors.New("invalid preparation Program staging size")
 	}
 	capacity, err := instanceReservationVectorWithProjection(shape.CPUMillis, shape.MemoryBytes/mebibyte, shape.ScratchBytes/mebibyte, disk.SeedCapacity)
@@ -170,29 +177,31 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if err := o.stageImage(ctx, o.stage, o.identity, start); err != nil {
 		return err
 	}
-	o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
-	if err != nil {
-		return err
-	}
-	if o.machine == nil {
-		return errors.New("preparation backend returned no machine")
-	}
-	jobs.Go(func() {
-		err := o.machine.Wait(ctx)
-		if !o.stopping.Load() {
-			if err == nil {
-				err = errors.New("preparation VM exited")
-			}
-			cancel(err)
+	if !start.SeedOnly {
+		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
+		if err != nil {
+			return err
 		}
-	})
-	logCtx, stopLogs := context.WithCancel(ctx)
-	o.stopLogs = stopLogs
-	for _, stream := range []string{"stdout", "stderr"} {
-		jobs.Go(func() { o.deliverPreparationLogs(logCtx, stream) })
-	}
-	if err := o.runGuestPreparation(ctx, start); err != nil {
-		return err
+		if o.machine == nil {
+			return errors.New("preparation backend returned no machine")
+		}
+		jobs.Go(func() {
+			err := o.machine.Wait(ctx)
+			if !o.stopping.Load() {
+				if err == nil {
+					err = errors.New("preparation VM exited")
+				}
+				cancel(err)
+			}
+		})
+		logCtx, stopLogs := context.WithCancel(ctx)
+		o.stopLogs = stopLogs
+		for _, stream := range []string{"stdout", "stderr"} {
+			jobs.Go(func() { o.deliverPreparationLogs(logCtx, stream) })
+		}
+		if err := o.runGuestPreparation(ctx, start); err != nil {
+			return err
+		}
 	}
 	var key workerapi.ComputerKeyMaterial
 	err = retryPreparation(ctx, func(ctx context.Context) error {
@@ -231,13 +240,16 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		return err
 	}
 	receipt := workerapi.PreparationPublication{Executor: o.executor, Root: root, Evidence: "private preparation exited, filesystem flushed and VM absent before full disk capture"}
+	if start.SeedOnly {
+		receipt.Evidence = "verified seed decoded and captured without guest mutation"
+	}
 	if err := retryPreparation(ctx, func(ctx context.Context) error { return o.client.RecordPreparationCapture(ctx, receipt) }); err != nil {
 		return err
 	}
 	if err := o.qualifyPreparation(ctx, start, shape, root, key); err != nil {
 		return err
 	}
-	receipt.Evidence = "private preparation captured; isolated clone started and passed managed runtime execution; both VMs absent"
+	receipt.Evidence = "image captured; isolated clone passed the fixed Runtime probe; all preparation VMs absent"
 	if err := retryPreparation(ctx, func(ctx context.Context) error { return o.client.PublishPreparation(ctx, receipt) }); err != nil {
 		return err
 	}
@@ -309,6 +321,14 @@ func (o *PreparationAllocationOwner) stopMachine(ctx context.Context) error {
 	return nil
 }
 func (o *PreparationAllocationOwner) cleanup() error {
+	// No launch or qualification can follow terminal cleanup. Release source
+	// handles even if physical cleanup fails; VM links remain reservation-funded.
+	if o.stage != nil && o.stage.images != nil {
+		if err := o.stage.images.close(); err != nil {
+			return err
+		}
+		o.stage.images = nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := o.stopMachine(ctx); err != nil {

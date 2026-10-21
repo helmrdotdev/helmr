@@ -2,11 +2,13 @@ package computerhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -20,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"golang.org/x/sync/errgroup"
 )
 
 type AllocatedComputerClient interface {
@@ -53,14 +56,18 @@ type ComputerAllocationOwner struct {
 	observe                  func(context.Context, *agentv1.GuestSessionMessage) error
 	operation                sync.Mutex
 	machine                  vm.CheckpointableMachine
+	bootProgram              *computercheckpoint.Program
 	saves                    *agentComputerSaves
 	saveWake                 chan struct{}
 	workWake                 allocationWake
 	checkpoint               *computercheckpoint.Manifest
+	restoreMemory            *checkpointMemorySource
 	checkpointCut            disk.CapturedVersion
 	checkpointRetryAt        time.Time
 	checkpointRetryDelay     time.Duration
 	invalidCheckpointID      string
+	bootSeedID               string
+	failedBootSeedID         string
 	closing                  bool
 	finished                 atomic.Bool
 	// This typed operation allows device attachment failures to be tested without
@@ -122,9 +129,18 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	var jobs sync.WaitGroup
+	var machineWaitErr error
 	defer func() {
 		cancel(context.Canceled)
 		jobs.Wait()
+		if o.bootSeedID != "" && bootSeedArtifactFailure(errors.Join(resultErr, machineWaitErr, context.Cause(ctx))) {
+			o.failedBootSeedID = o.bootSeedID
+			resultErr = errors.Join(resultErr, machineWaitErr)
+		}
+		if o.checkpoint != nil && errors.Is(errors.Join(resultErr, machineWaitErr, context.Cause(ctx)), vm.ErrInvalidCheckpointContent) {
+			o.invalidCheckpointID = o.checkpoint.CheckpointID.String()
+			resultErr = errors.Join(resultErr, machineWaitErr)
+		}
 		if o.closing {
 			resultErr = errors.Join(resultErr, o.cleanup())
 		}
@@ -144,6 +160,23 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if shape.CPUMillis <= 0 || shape.VCPUCount <= 0 || shape.VCPUCount > math.MaxInt32 || shape.VCPUCount > math.MaxInt64/1000 || shape.CPUMillis != shape.VCPUCount*1000 || shape.MemoryBytes <= 0 || shape.MemoryBytes%mebibyte != 0 || shape.ScratchBytes <= 0 || shape.ScratchBytes%mebibyte != 0 {
 		return errors.New("invalid physical Computer allocation shape")
 	}
+	initialProgram, err := bootProgram(source.BootProgram)
+	if err != nil {
+		return err
+	}
+	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
+		manifest, readErr := o.client.ReadAgentCheckpoint(ctx, o.identity)
+		if readErr != nil {
+			return readErr
+		}
+		if _, readErr = manifest.Encode(); readErr != nil {
+			o.invalidCheckpointID = manifest.CheckpointID.String()
+			o.closing = true
+			return invalidCheckpoint(readErr)
+		}
+		o.checkpoint = &manifest
+		initialProgram = manifest.BootProgram
+	}
 	request, err := instanceReservationVectorWithProjection(shape.CPUMillis, shape.MemoryBytes/mebibyte, shape.ScratchBytes/mebibyte, source.Disk.Root.LogicalBytes)
 	if err != nil {
 		return err
@@ -160,7 +193,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	for _, extra := range []int64{limits.total, shape.MemoryBytes, state} {
+	for _, extra := range []int64{limits.total, shape.MemoryBytes, state, initialProgram.Size()} {
 		if request.HostDiskBytes > math.MaxInt64-extra {
 			return reservation.ErrOverflow
 		}
@@ -177,7 +210,47 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	// later invocation only retries physical cleanup; this instance never boots twice.
 	o.closing = true
 	phaseStarted = time.Now()
-	device, err := o.attachDevice(ctx, o.identity, source)
+	var device vm.ComputerDevice
+	var images *programSnapshots
+	defer func() { resultErr = errors.Join(resultErr, images.close()) }()
+	group, stageCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		var attachErr error
+		device, attachErr = o.attachDevice(stageCtx, o.identity, source)
+		return attachErr
+	})
+	if source.BootProgram != nil && (delivery.RestoredFrom == "" || delivery.DiskOnlyRecovery) {
+		group.Go(func() error {
+			directory := o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)
+			if err := os.MkdirAll(directory, 0700); err != nil {
+				return err
+			}
+			// A selected seed includes the exact read-only drive topology. Allow
+			// its required content to finish staging within the allocation lifetime;
+			// the optional cold-boot prefetch budget must not discard that topology.
+			prefetchCtx := stageCtx
+			prefetchCancel := func() {}
+			if source.BootSeed == nil {
+				prefetchCtx, prefetchCancel = context.WithTimeout(stageCtx, 5*time.Second)
+			}
+			defer prefetchCancel()
+			var stageErr error
+			images, stageErr = o.machines.prepareProgramArtifacts(prefetchCtx, directory, o.identity.AllocationID, source.BootProgram)
+			if stageErr != nil {
+				if stageCtx.Err() != nil {
+					return stageCtx.Err()
+				}
+				o.machines.logInfo("Computer boot Program prefetch unavailable", "computer_id", o.identity.OwnerID, "error", stageErr.Error())
+				if err := os.RemoveAll(directory); err != nil {
+					return err
+				}
+				return o.machines.Reservations.ReleaseHostDisk(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), initialProgram.Size())
+			}
+			o.bootProgram = initialProgram
+			return nil
+		})
+	}
+	err = group.Wait()
 	// The local disk takes its own key copies. Do not retain the transport's
 	// plaintext for the potentially long lifetime of this Computer.
 	source.Disk.Clear()
@@ -189,9 +262,52 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
 		err = o.restore(ctx, delivery, source, device)
 	} else {
-		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
+		materialize := vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(o.bootProgram, images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}}
+		if source.BootSeed != nil && delivery.RestoredFrom == "" && !delivery.DiskOnlyRecovery {
+			matches, matchErr := o.machines.Backend.BootSeedMatches(materialize, source.BootSeed.Config)
+			if matchErr != nil {
+				o.failedBootSeedID = source.BootSeed.BuildID.String()
+				return matchErr
+			}
+			if matches {
+				o.bootSeedID = source.BootSeed.BuildID.String()
+				directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "boot-seed")
+				if err := os.MkdirAll(directory, 0700); err != nil {
+					return err
+				}
+				materialize.BootSeed, err = o.machines.openBootSeed(ctx, directory, *source.BootSeed, shape.MemoryBytes, shape.ScratchBytes)
+				if err != nil {
+					if errors.Is(err, ErrCheckpointKeyUnavailable) {
+						o.checkpointKeyUnavailable()
+					}
+					if bootSeedArtifactFailure(err) {
+						o.failedBootSeedID = o.bootSeedID
+					}
+					return err
+				}
+			}
+		}
+		if materialize.BootSeed != nil {
+			// Any unsuccessful seed startup is excluded for this Computer only.
+			// Keep the report pending until the control plane acknowledges readiness;
+			// cleanup sends it only after proving physical closure.
+			o.failedBootSeedID = o.bootSeedID
+		}
+		o.machine, err = o.machines.Backend.Materialize(ctx, materialize)
+		if err == nil && o.machine != nil && materialize.BootSeed != nil {
+			// The backend has unpacked scratch into its owned disk. Retain only the
+			// live memory source; a later capture has its own accounted packed input.
+			err = os.Remove(materialize.BootSeed.ScratchDisk)
+		}
 	}
 	if err != nil {
+		return err
+	}
+	if err := images.close(); err != nil {
+		return err
+	}
+	images = nil
+	if err := os.RemoveAll(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); err != nil {
 		return err
 	}
 	if o.machine == nil {
@@ -201,6 +317,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	phaseStarted = time.Now()
 	jobs.Go(func() {
 		err := o.machine.Wait(ctx)
+		machineWaitErr = err
 		if err == nil {
 			err = errors.New("computer VM exited")
 		}
@@ -211,7 +328,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 			return err
 		}
 	} else {
-		if err := prepareAllocationImage(ctx, o.machine, delivery.Identity, delivery.ChannelCredential, delivery.BaseVersion, source.ImageConfig); err != nil {
+		if err := prepareAllocationImageWithProgram(ctx, o.machine, delivery.Identity, delivery.ChannelCredential, delivery.BaseVersion, source.ImageConfig, o.bootProgram); err != nil {
 			return err
 		}
 		for {
@@ -219,6 +336,10 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 			err = o.client.ObserveFreshComputerReady(requestCtx, workerapi.ComputerAllocationReady{Identity: o.identity, Shape: shape, BaseVersion: delivery.BaseVersion})
 			requestCancel()
 			if err == nil {
+				if o.bootSeedID != "" {
+					o.machines.logInfo("Computer boot seed initialized", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "boot_seed_id", o.bootSeedID)
+				}
+				o.failedBootSeedID = ""
 				break
 			}
 			var closed *httpclient.Error
@@ -254,7 +375,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		done := sessionDone
 		jobs.Go(func() {
 			defer close(done)
-			err := o.machines.serveAllocatedSessions(sessionCtx, o.machine, delivery, o.hostID, o.client, o.observe, &o.workWake)
+			err := o.machines.serveAllocatedSessions(sessionCtx, o.machine, delivery, o.hostID, o.client, o.observe, &o.workWake, o.bootProgram)
 			if sessionCtx.Err() == nil {
 				cancel(err)
 			}
@@ -342,7 +463,7 @@ func (o *ComputerAllocationOwner) cleanup() error {
 	if err := o.machines.releaseComputerDevice(o.identity.AllocationID, o.identity.Epoch); err != nil {
 		return err
 	}
-	if err := o.client.ObserveAgentComputerStopped(ctx, workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: o.leaseRequest(), InvalidCheckpointID: o.invalidCheckpointID}); err != nil {
+	if err := o.client.ObserveAgentComputerStopped(ctx, workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: o.leaseRequest(), InvalidCheckpointID: o.invalidCheckpointID, FailedBootSeedID: o.failedBootSeedID}); err != nil {
 		return err
 	}
 	if o.saves != nil {
@@ -369,13 +490,44 @@ func (o *ComputerAllocationOwner) WakeSaves() {
 }
 
 func (o *ComputerAllocationOwner) phaseCompleted(phase string, started time.Time) {
-	slog.Info("Computer allocation phase completed", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
+	attrs := []any{"computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase, "duration_ms", float64(time.Since(started)) / float64(time.Millisecond)}
+	if phase == "agent_ready" {
+		if diagnostic, ok := o.machine.(interface{ MemoryRestoreDiagnostics() *vm.MemoryRestoreStats }); ok {
+			if stats := diagnostic.MemoryRestoreDiagnostics(); stats != nil {
+				o.recordVMPhase("restore", vm.Phase{Name: "restore_memory_agent_ready", Memory: stats})
+			}
+		}
+	}
+	if phase == "agent_ready" && o.restoreMemory != nil {
+		stats := o.restoreMemory.MemoryReadStats()
+		attrs = append(attrs, memoryReadDiagnosticAttrs(stats)...)
+		attrs = append(attrs, "memory_range_requests", stats.RangeRequests, "memory_ciphertext_bytes", stats.CiphertextBytes, "memory_decode_ms", stats.DecodeDurationMs)
+	}
+	slog.Info("Computer allocation phase completed", attrs...)
 }
 
 func (o *ComputerAllocationOwner) recordVMPhase(launch string, phase vm.Phase) {
 	attrs := []any{"launch", launch, "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "phase", phase.Name, "duration_ms", phase.DurationMs, "role", phase.Role, "error_class", phase.ErrorClass}
+	if !phase.StartedAt.IsZero() {
+		attrs = append(attrs, "phase_started_at", phase.StartedAt.UTC().Format(time.RFC3339Nano))
+	}
+	if phase.Memory != nil {
+		attrs = append(attrs, memoryReadDiagnosticAttrs(phase.Memory.MemoryReadStats)...)
+		m := phase.Memory
+		attrs = append(attrs, "memory_demand_duration_buckets_us", m.DemandDurationBuckets, "memory_join_duration_buckets_us", m.JoinDurationBuckets)
+		var observations []byte
+		if phase.Name == "restore_memory_hydration" {
+			observations, _ = json.Marshal(m.FaultObservations)
+		}
+		attrs = append(attrs, "memory_observed_demand_pages", m.ObservedDemandPages, "memory_observed_demand_windows", m.ObservedDemandWindows, "memory_demand_load_attempts", m.DemandLoads, "memory_background_load_attempts", m.BackgroundLoads, "memory_background_discarded_windows", m.BackgroundDiscardedWindows, "memory_background_demand_wait_ms", m.BackgroundDemandWaitMs, "memory_demand_load_errors", m.DemandLoadErrors, "memory_background_load_errors", m.BackgroundLoadErrors, "memory_join_background_attempts", m.JoinBackground, "memory_join_demand_attempts", m.JoinDemand, "memory_join_background_ms", m.JoinBackgroundMs, "memory_join_demand_ms", m.JoinDemandMs, "memory_fault_queue_ms", m.FaultQueueMs, "memory_fault_service_ms", m.FaultServiceMs, "memory_demand_read_ms", m.DemandSourceReadMs, "memory_background_read_ms", m.BackgroundSourceReadMs, "memory_demand_populate_ms", m.DemandPopulateMs, "memory_background_populate_ms", m.BackgroundPopulateMs, "memory_observation_started_at", m.ObservationStartedAt.UTC().Format(time.RFC3339Nano), "memory_fault_observations_json", string(observations), "memory_dropped_fault_observations", m.DroppedFaultObservations)
+		attrs = append(attrs, "memory_demand_faults", phase.Memory.DemandFaults, "memory_loaded_chunks", phase.Memory.LoadedChunks, "memory_total_chunks", phase.Memory.TotalChunks, "memory_range_requests", phase.Memory.RangeRequests, "memory_ciphertext_bytes", phase.Memory.CiphertextBytes, "memory_decode_ms", phase.Memory.DecodeDurationMs)
+	}
 	if phase.Filepack != nil {
 		attrs = append(attrs, "logical_bytes", phase.Filepack.LogicalBytes, "encoded_chunks", phase.Filepack.EncodedChunks, "unpack_written_bytes", phase.Filepack.UnpackWrittenBytes)
 	}
 	slog.Info("Computer VM phase completed", attrs...)
+}
+
+func memoryReadDiagnosticAttrs(stats vm.MemoryReadStats) []any {
+	return []any{"memory_background_range_requests", stats.BackgroundRangeRequests, "memory_background_ciphertext_bytes", stats.BackgroundCiphertextBytes, "memory_background_range_header_ms", stats.BackgroundRangeHeaderMs, "memory_background_range_body_ms", stats.BackgroundRangeBodyMs, "memory_range_header_ms", stats.RangeHeaderMs, "memory_range_body_ms", stats.RangeBodyMs, "memory_range_active", stats.RangeActive, "memory_range_peak", stats.RangePeak}
 }

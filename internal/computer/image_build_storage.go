@@ -246,9 +246,11 @@ func (p *ImageBuildPublisher) Publish(ctx context.Context, host workergroup.Host
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence)
+		imageID := uuid.NewV7()
+		var imageSpecID uuid.UUID
+		if err = tx.QueryRow(ctx, `INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence)
  SELECT p.environment_id,$5,p.image_spec_id,p.id,COALESCE((SELECT max(i.seq) FROM images i WHERE i.environment_id=p.environment_id AND i.image_spec_id=p.image_spec_id),0)+1,$3,$4
- FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.ImageBuildID, rootID, evidence, uuid.NewV7()); err != nil {
+ FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2 RETURNING image_spec_id`, ref.EnvironmentID, ref.ImageBuildID, rootID, evidence, imageID).Scan(&imageSpecID); err != nil {
 			return err
 		}
 		// Recheck expiry after any graph/FK lock waits, before changing status.
@@ -257,6 +259,9 @@ func (p *ImageBuildPublisher) Publish(ctx context.Context, host workergroup.Host
 		}
 		_, err = tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='succeeded' WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID)
 		if err != nil {
+			return err
+		}
+		if err := QueueImageBootSeeds(ctx, tx, ref.EnvironmentID, imageSpecID, imageID); err != nil {
 			return err
 		}
 		return notifyImageBuildChanged(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)

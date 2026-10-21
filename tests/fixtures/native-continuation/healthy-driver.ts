@@ -12,7 +12,7 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 // PostgreSQL observations are written by the surrounding qualification process.
 // They only observe checkpoint readiness and ordinary Worker physical-stop
 // receipts; the driver never manufactures an allocation or a source fence.
-export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
+export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
  const soakMS = Number(process.env["HELMR_NATIVE_PERFORMANCE_SOAK_MS"] ?? "0")
  assert(Number.isSafeInteger(soakMS) && soakMS >= 0 && soakMS <= 900000, "performance soak must be 0–900000 milliseconds")
  assert(!soakMS || options.performanceKind === "no-op", "performance soak uses the no-op native workload")
@@ -27,6 +27,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  const nativeStops: Record<string, unknown>[] = []
  const clientTimings = new Map<string, { provider: string; phase: string; sessionId: string; turnId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number; runningObservedMS?: number; firstOutputObservedMS?: number; firstOutputSequence?: number; settlementObservedMS?: number }>()
  const nativeEvents: (SessionEvent & { clientObservedMS: number })[] = []
+ const approvalTimings: { sessionId: string; turnId: string; askId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number }[] = []
  const eventCursors = new Map<string, number>()
  function admitted(provider: string, phase: string, turn: TurnRef, started: number, at: string) {
   if (options.performanceKind) clientTimings.set(turn.id, { provider, phase, sessionId: turn.sessionId, turnId: turn.id, requestStartedAt: at, requestStartedMS: started, ackMS: performance.now() - started })
@@ -161,7 +162,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       assert.equal(value["toolName"], "mcp__helmr__enqueue")
       assert.deepEqual(value["input"], { sessionId: peer.session.id, input: fixtureInput(`claude-${count * 2 - 1}`), idempotencyKey: `claude-${count * 2 - 1}` })
      }
+     const answerStartedAt = new Date().toISOString()
+     const answerStartedMS = performance.now()
      await turn.asks.answer(ask.id, { answer: { selectedIds: ["allow"] }, answerId: `healthy-${ask.id}` }, { signal })
+     if (options.performanceKind) approvalTimings.push({ sessionId: turn.sessionId, turnId: turn.id, askId: ask.id, requestStartedAt: answerStartedAt, requestStartedMS: answerStartedMS, ackMS: performance.now() - answerStartedMS })
      answered.add(ask.id)
     }
     cursor = page.nextCursor
@@ -177,6 +181,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    await observeEvents(client.sessions.ref(turn.sessionId))
    if (options.performanceKind) {
     assert(timing && timing.runningObservedMS !== undefined && timing.firstOutputObservedMS !== undefined, "native client timing is incomplete")
+    assert.equal(approvalTimings.filter(row => row.turnId === turn.id).length, provider === "claude" ? 1 : 0, "native approval timing is incomplete")
    }
    if (options.performanceKind) {
     const prior = turns.findLast(item => item.sessionId === state.sessionId)
@@ -319,11 +324,38 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     assert.equal(fault.kind, options.checkpointFault)
     assert.equal(fault.role, options.checkpointFault === "corrupt-config" ? "vm_config" : "memory")
     assert.equal(fault.originalDigest, checkpoint.runtimeObjects.find(object => object.role === fault.role)?.digest)
-    if (options.checkpointFault === "corrupt-config") {
+    if (options.checkpointFault === "corrupt-config" || options.checkpointFault === "corrupt-memory") {
      assert(fault.corruptedDigest)
      assert.notEqual(fault.originalDigest, fault.corruptedDigest)
     } else { assert(fault.deleteMarkerVersionId); assert.equal(fault.observedAbsent, true) }
-    if (options.checkpointFault === "corrupt-config") {
+    if (options.checkpointFault === "corrupt-config" || options.checkpointFault === "corrupt-memory") {
+     if (options.checkpointFault === "corrupt-memory") {
+      const interrupted = await peer.session.enqueue(fixtureInput("hold"), undefined, { signal })
+      for (;;) {
+       const status = (await interrupted.get({ signal })).status
+       if (status === "running") break
+       assert.equal(status, "queued", "restore trigger terminated before fault activation")
+       await delay(50, undefined, { signal })
+      }
+      await writeFile(options.checkpointObservations + ".activate-fault-request", JSON.stringify({ checkpointId: checkpoint.checkpointId, turnId: interrupted.id }), { flag: "wx", mode: 0o600 })
+      for (;;) {
+       try {
+        const activated = JSON.parse(await readFile(options.checkpointObservations + ".activate-fault-receipt", "utf8"))
+        assert.equal(activated.checkpointId, checkpoint.checkpointId)
+        assert(activated.activatedVersionId)
+        break
+       } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+       await delay(100, undefined, { signal })
+      }
+      const lossDeadline = performance.now() + 30_000
+      for (;;) {
+       const rows: typeof checkpoint[] = JSON.parse(await readFile(options.checkpointObservations, "utf8"))
+       if (rows.some(row => row.checkpointId === checkpoint.checkpointId && row.status === "lost")) break
+       assert(performance.now() < lossDeadline, "live memory fault was not observed within 30 seconds; hydration may have finished before the object swap")
+       await delay(100, undefined, { signal })
+      }
+      assert.equal((await interrupted.wait({ signal })).status, "interrupted", "live memory loss must interrupt the running turn")
+     }
      const recovery = await peer.session.enqueue(fixtureInput("recover-check"), undefined, { signal })
      assert.equal((await recovery.wait({ signal })).status, "completed")
      const recovered = await recovery.get({ signal })
@@ -332,7 +364,9 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      assert.equal(value["count"], 0)
      const retained = value["retained"] as Record<string, unknown>
      assert.equal(retained["nonce"], peerState["nonce"])
-     assert.equal(retained["count"], peerState["count"])
+     if (options.checkpointFault === "corrupt-memory") {
+      assert(typeof retained["count"] === "number" && typeof peerState["count"] === "number" && retained["count"] >= peerState["count"], "disk recovery lost previously saved progress")
+     } else assert.equal(retained["count"], peerState["count"])
      for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds, [])
      for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
      process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns,
@@ -416,10 +450,6 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     resumeTiming.outputSequence = resumedOutput.sequence
    }
    const modelTurn = await model.session.enqueue(fixtureInput(modelInput), undefined, { signal })
-   const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
-   const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
-   for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
-   assert.equal(restoredModel["count"], cycle + 1)
    const before = Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous]))
    for (const provider of ["codex", "claude"]) {
     const started = performance.now(), at = new Date().toISOString()
@@ -428,8 +458,20 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
           nativeInput(`${provider} after idle ${cycle}`), options.checkpointObservations + ".stops", signal, nativeStops)
       : await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} after idle ${cycle}`)), undefined, { signal })
     admitted(provider, `after-resume-${cycle}`, turn, started, at)
-    await finish(turn, provider, cycle + 2)
+    let successor: TurnRef | undefined
+    if (options.performanceKind) {
+     const enqueueMS = performance.now(), enqueueAt = new Date().toISOString()
+     successor = await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} immediate after idle ${cycle}`)), undefined, { signal })
+     admitted(provider, `after-resume-${cycle}-successor`, successor, enqueueMS, enqueueAt)
+    }
+    const count = options.performanceKind ? 2 * cycle + 1 : cycle + 2
+    await finish(turn, provider, count)
+    if (successor) await finish(successor, provider, count + 1)
    }
+   const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
+   const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
+   for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
+   assert.equal(restoredModel["count"], cycle + 1)
    const evidence = { cycle, checkpoint, keyFault, releaseRequestToCheckpointObservedMS, resumeTiming, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples, idleAndResumeMs: performance.now() - idleStarted, before,
     after: Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous])), model: restoredModel }
    continuations.push(evidence)
@@ -465,7 +507,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)
   }
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, preparedWork, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
+  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, preparedWork, clientTimings: [...clientTimings.values()], nativeEvents, approvalTimings } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {
   const cleanupSignal = AbortSignal.timeout(10_000)
   const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(sessions.map(session => session.cancel(undefined, { signal: cleanupSignal })))

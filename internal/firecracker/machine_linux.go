@@ -23,12 +23,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"golang.org/x/sync/errgroup"
 )
 
 const stopTimeout = 10 * time.Second
 
 type guestMachine struct {
+	bootstrap                bootstrapReceipt
+	memoryPager              *memoryPager
 	mu                       sync.Mutex
 	computerBarrier          chan struct{}
 	computerCancel           context.CancelFunc
@@ -122,7 +123,7 @@ func (s *guestMachine) Wait(ctx context.Context) error {
 	if s.computerExport != nil {
 		exportErr = s.computerExport.failure()
 	}
-	return errors.Join(waitErr, networkErr, exportErr)
+	return errors.Join(waitErr, networkErr, exportErr, s.memoryPager.failure())
 }
 
 func (s *guestMachine) watchNetworkFailure() {
@@ -190,6 +191,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
+		pagerErr := s.memoryPager.Close()
 		var exportErr error
 		if s.computerExport != nil {
 			exportErr = s.computerExport.join()
@@ -214,6 +216,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 			}
 		}
 		s.err = errors.Join(
+			pagerErr,
 			streamErr,
 			exportErr,
 			diskFilesErr,
@@ -322,37 +325,12 @@ func (s *guestMachine) createCheckpointSnapshot(ctx context.Context, request vm.
 		return vm.SnapshotArtifact{}, errors.New("snapshot runtime config exceeds staging limit")
 	}
 	recordPhase("vm_config_digest", started)
-	var scratchFile vm.SnapshotFile
-	var memoryFile vm.SnapshotFile
-	var scratchPhase vm.Phase
-	var memoryPhase vm.Phase
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, s.scratchDisk, filepack.ScratchRole, checkpointID+snapshotScratchPackSuffix, cas.CheckpointScratchDiskMediaType)
-		if err != nil {
-			return fmt.Errorf("pack checkpoint scratch disk: %w", err)
-		}
-		scratchFile = file
-		scratchPhase = phase
-		return nil
-	})
-	group.Go(func() error {
-		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, memPath, filepack.MemoryRole, checkpointID+snapshotMemoryPackSuffix, cas.CheckpointMemoryMediaType)
-		if err != nil {
-			return fmt.Errorf("pack checkpoint memory: %w", err)
-		}
-		memoryFile = file
-		memoryPhase = phase
-		return nil
-	})
-	if err := group.Wait(); err != nil {
-		removeFiles([]string{scratchFile.Path, memoryFile.Path})
-		return vm.SnapshotArtifact{}, err
+	scratchFile, scratchPhase, err := s.packSnapshotRuntimeFile(ctx, s.scratchDisk, filepack.ScratchRole, checkpointID+snapshotScratchPackSuffix, cas.CheckpointScratchDiskMediaType)
+	if err != nil {
+		return vm.SnapshotArtifact{}, fmt.Errorf("pack checkpoint scratch disk: %w", err)
 	}
-	phases = append(phases, scratchPhase, memoryPhase)
-	if err := os.Remove(memPath); err != nil {
-		return vm.SnapshotArtifact{}, fmt.Errorf("remove raw checkpoint memory: %w", err)
-	}
+	memoryFile := vm.SnapshotFile{Path: memPath, MediaType: cas.CheckpointMemoryMediaType}
+	phases = append(phases, scratchPhase)
 	cleanupRawSnapshot = false
 	transferredCapture = true
 	return vm.SnapshotArtifact{
@@ -528,4 +506,16 @@ func (s *guestMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 		return vm.SnapshotLimits{}, errors.New("checkpoint runtime size overflow")
 	}
 	return vm.SnapshotLimits{ComputerBytes: s.topology.Computer.SizeBytes, MemoryBytes: s.cfg.MemoryMiB * (1 << 20), ScratchBytes: s.cfg.ScratchDiskMiB * (1 << 20), StateBytes: snapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, nil
+}
+
+func (s *guestMachine) MemoryRestoreDiagnostics() *vm.MemoryRestoreStats {
+	return s.memoryPager.stats()
+}
+
+func (s *guestMachine) PrepareCheckpoint(ctx context.Context) error {
+	return s.memoryPager.WaitHydration(ctx)
+}
+
+func (s *guestMachine) CheckpointReady() (bool, error) {
+	return s.memoryPager.hydrationReady()
 }

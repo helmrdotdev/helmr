@@ -196,3 +196,29 @@ func fits(used, capacity Vector) bool {
 
 // Changes returns the capacity-release edge to sample before attempting Reserve.
 func (l *Ledger) Changes() <-chan struct{} { l.mu.Lock(); defer l.mu.Unlock(); return l.changed }
+
+// ReleaseHostDisk returns a discarded optional staging budget while retaining
+// the physical allocation's other resources. It never increases a reservation.
+func (l *Ledger) ReleaseHostDisk(key Key, bytes int64) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if bytes <= 0 {
+		return ErrInvalidRequest
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	reserved, ok := l.reservations[key]
+	if !ok || reserved.HostDiskBytes < bytes {
+		return ErrInvalidRequest
+	}
+	reserved.HostDiskBytes -= bytes
+	if err := validateRequest(reserved); err != nil {
+		return err
+	}
+	l.reservations[key] = reserved
+	l.used.HostDiskBytes -= bytes
+	close(l.changed)
+	l.changed = make(chan struct{})
+	return nil
+}

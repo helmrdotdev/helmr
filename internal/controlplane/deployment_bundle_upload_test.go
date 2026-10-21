@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -203,9 +204,16 @@ func bundleCASObject(object bundle.Object) cas.Object {
 	return cas.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 }
 
-func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
+func controlPlaneDeploymentBundle(t *testing.T, prepared ...bool) ([]byte, bundle.Manifest) {
 	t.Helper()
 	metadata := artifacttest.ProgramMetadata(t)
+	if len(prepared) > 0 && prepared[0] {
+		for i := range metadata.Definitions {
+			if metadata.Definitions[i].Template != nil {
+				metadata.Definitions[i].Template.Prepare = true
+			}
+		}
+	}
 	plan := bundle.Plan{FormatVersion: definition.DeploymentPlanFormatVersion, Definitions: metadata.Definitions}
 	programDigest := "sha256:" + strings.Repeat("a", 64)
 	manifest := bundle.Manifest{
@@ -232,6 +240,11 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
 			Digest: programDigest, SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 		}, {Digest: "sha256:" + strings.Repeat("d", 64), MediaType: definition.ComputerSeedMediaType, SizeBytes: 4096}},
 	}
+	manifest.Preparations = artifacttest.PreparationOutputs(t, manifest.Program)
+	for _, preparation := range manifest.Preparations {
+		manifest.Objects = append(manifest.Objects, bundle.Object{Digest: preparation.Artifact.Digest, SizeBytes: preparation.Artifact.SizeBytes, MediaType: preparation.Artifact.MediaType})
+	}
+	sort.Slice(manifest.Objects, func(i, j int) bool { return manifest.Objects[i].Digest < manifest.Objects[j].Digest })
 	raw, err := bundle.Canonical(manifest)
 	if err != nil {
 		t.Fatal(err)

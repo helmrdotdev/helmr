@@ -68,7 +68,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)

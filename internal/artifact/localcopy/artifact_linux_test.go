@@ -251,6 +251,16 @@ func TestArtifactCopyRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing.T)
 		source     []byte
 	}{
 		{
+			name:       "same-size digest mismatch",
+			descriptor: testProgramDescriptor(artifact.RoleProgram, []byte("original")),
+			source:     []byte("modified"),
+		},
+		{
+			name:       "short input",
+			descriptor: testProgramDescriptor(artifact.RoleProgram, []byte("original")),
+			source:     []byte("short"),
+		},
+		{
 			name:       "size mismatch",
 			descriptor: testProgramDescriptor(artifact.RoleProgram, []byte("short")),
 			source:     []byte("longer"),

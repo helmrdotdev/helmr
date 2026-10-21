@@ -24,8 +24,8 @@ func captureComputerSave(ctx context.Context, machine liveCaptureMachine, comput
 	if snapshot == nil || snapshot.Capture == nil {
 		return nil, &saveProtocolError{errors.New("live Computer capture is missing")}
 	}
-	capture, ok := snapshot.Capture.(computerSaveCapture)
-	if !ok || snapshot.ComputerID != computerID {
+	capture := snapshot.Capture
+	if snapshot.ComputerID != computerID {
 		snapshot.Capture.Release()
 		return nil, &saveProtocolError{errors.New("live Computer capture differs from save owner")}
 	}

@@ -1,20 +1,27 @@
 package computerhost
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bootseed"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -31,6 +38,7 @@ type allocationOwnerTestClient struct {
 	nextSave       func(context.Context, workerapi.AgentSaveDiscovery) (workerapi.AgentSavePending, error)
 	claimCommand   func(context.Context, workerapi.ComputerCommandClaimRequest) (workerapi.ComputerCommandClaimResponse, error)
 	beforeStop     func()
+	stopped        workerapi.AgentComputerStoppedRequest
 	deliveryError  error
 	readinessError error
 
@@ -68,7 +76,8 @@ func (c *allocationOwnerTestClient) ObserveFreshComputerReady(context.Context, w
 	}
 	return nil
 }
-func (c *allocationOwnerTestClient) ObserveAgentComputerStopped(context.Context, workerapi.AgentComputerStoppedRequest) error {
+func (c *allocationOwnerTestClient) ObserveAgentComputerStopped(_ context.Context, request workerapi.AgentComputerStoppedRequest) error {
+	c.stopped = request
 	if c.beforeStop != nil {
 		c.beforeStop()
 	}
@@ -96,6 +105,8 @@ type allocationOwnerTestMachine struct {
 	*agentControlMachine
 	unusedCheckpoint
 	captureError error
+	waitError    error
+	waitFailure  <-chan error
 	failClose    atomic.Bool
 	closes       atomic.Int64
 }
@@ -103,7 +114,14 @@ type allocationOwnerTestMachine struct {
 func (m *allocationOwnerTestMachine) WithRunningGuestControl(ctx context.Context, _ vm.GuestControlStage, run func(context.Context) error) error {
 	return run(ctx)
 }
-func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (m *allocationOwnerTestMachine) Wait(ctx context.Context) error {
+	select {
+	case err := <-m.waitFailure:
+		return err
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), m.waitError)
+	}
+}
 func (m *allocationOwnerTestMachine) Close(context.Context) error {
 	m.closes.Add(1)
 	if m.failClose.Load() {
@@ -121,6 +139,7 @@ func (m *allocationOwnerTestMachine) CaptureComputer(context.Context) (*vm.Compu
 type allocationOwnerTestBackend struct {
 	unsupportedMachineStarts
 	t                *testing.T
+	materializeError error
 	machine          *allocationOwnerTestMachine
 	starts, cleanups atomic.Int64
 	failCleanup      atomic.Bool
@@ -131,7 +150,7 @@ func (b *allocationOwnerTestBackend) Materialize(_ context.Context, r vm.Materia
 	if r.Topology.Computer == nil || r.Topology.Computer.Device == nil || len(r.ReadOnlyDrives) != 0 || r.Binding.ComputerInstanceID != r.ID || r.Binding.Generation != 1 {
 		b.t.Error("invalid allocated boot topology or binding")
 	}
-	return b.machine, nil
+	return b.machine, b.materializeError
 }
 func (b *allocationOwnerTestBackend) Cleanup(context.Context, vm.Owner) error {
 	b.cleanups.Add(1)
@@ -616,4 +635,234 @@ func TestComputerAllocationRetainsRequestDuringCaptureAmbiguity(t *testing.T) {
 			t.Fatalf("optional failure did not close exact source: requests=%d starts=%d closes=%d stops=%d finished=%v", requests, backend.starts.Load(), backend.machine.closes.Load(), client.stops.Load(), owner.Finished())
 		}
 	})
+}
+
+type unavailableBootReader struct {
+	cas.Store
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (r *unavailableBootReader) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("unexpected Get")
+}
+func (r *unavailableBootReader) Stat(ctx context.Context, _ string) (cas.Object, error) {
+	r.once.Do(func() { close(r.opened) })
+	<-ctx.Done()
+	return cas.Object{}, ctx.Err()
+}
+func TestComputerBootPrefetchDoesNotClaimDeviceArena(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o, client, backend := allocationOwnerFixture(t)
+		reader := &unavailableBootReader{opened: make(chan struct{})}
+		o.machines.RuntimeArchitecture = definition.ArchitectureX8664
+		o.machines.PlatformStore = reader
+		o.machines.CAS = reader
+		client.source.BootProgram = &workerapi.RuntimeProgram{DeploymentID: uuid.NewV7().String(), Runtime: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("runtime")), SizeBytes: 4096, MediaType: artifact.RuntimeArtifactMediaType}, Artifact: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("program")), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+		attach := o.attachDevice
+		o.attachDevice = func(ctx context.Context, id workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+			select {
+			case <-reader.opened:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			if err := os.Mkdir(o.machines.computerPreparationDirectory(id.AllocationID, id.Epoch), 0700); err != nil {
+				return nil, err
+			}
+			return attach(ctx, id, source)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- o.Run(ctx) }()
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		if backend.starts.Load() != 1 || o.bootProgram != nil {
+			t.Fatal("optional prefetch prevented cold boot")
+		}
+		cancel()
+		<-done
+		if err := o.Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("boot staging remained", err)
+		}
+	})
+}
+
+func TestSelectedBootSeedStagingSurvivesOptionalPrefetchBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o, client, backend := allocationOwnerFixture(t)
+		reader := &unavailableBootReader{opened: make(chan struct{})}
+		o.machines.RuntimeArchitecture = definition.ArchitectureX8664
+		o.machines.PlatformStore, o.machines.CAS = reader, reader
+		client.source.BootSeed = &bootseed.Manifest{}
+		client.source.BootProgram = &workerapi.RuntimeProgram{DeploymentID: uuid.NewV7().String(), Runtime: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("runtime")), SizeBytes: 4096, MediaType: artifact.RuntimeArtifactMediaType}, Artifact: workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("program")), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- o.Run(ctx) }()
+		<-reader.opened
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		if backend.starts.Load() != 0 {
+			t.Fatal("selected seed lost its required drives at optional prefetch deadline")
+		}
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("staging did not obey allocation cancellation: %v", err)
+		}
+	})
+}
+
+func TestComputerAllocationRetainsPagerFailureAfterEarlierCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o, client, backend := allocationOwnerFixture(t)
+		checkpoint := uuid.NewV7()
+		o.checkpoint = &computercheckpoint.Manifest{CheckpointID: checkpoint}
+		backend.machine.waitError = vm.ErrInvalidCheckpointContent
+		client.loseStop.Store(false)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- o.Run(ctx) }()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		cancel()
+		err := <-done
+		if !errors.Is(err, vm.ErrInvalidCheckpointContent) || o.invalidCheckpointID != checkpoint.String() || client.stops.Load() != 1 {
+			t.Fatalf("lost post-cancel integrity failure: invalid=%s stops=%d err=%v", o.invalidCheckpointID, client.stops.Load(), err)
+		}
+	})
+}
+
+type invalidManifestClient struct {
+	*allocationOwnerTestClient
+	manifest computercheckpoint.Manifest
+}
+
+func (c *invalidManifestClient) ReadAgentCheckpoint(context.Context, workerapi.AllocationIdentity) (computercheckpoint.Manifest, error) {
+	return c.manifest, nil
+}
+func TestComputerAllocationRejectsMalformedManifestOnce(t *testing.T) {
+	o, client, backend := allocationOwnerFixture(t)
+	checkpoint := uuid.NewV7()
+	client.delivery.RestoredFrom = checkpoint.String()
+	client.loseStop.Store(false)
+	o.client = &invalidManifestClient{allocationOwnerTestClient: client, manifest: computercheckpoint.Manifest{CheckpointID: checkpoint}}
+	if err := o.Run(t.Context()); !errors.Is(err, errInvalidCheckpoint) {
+		t.Fatal(err)
+	}
+	if !o.closing || o.invalidCheckpointID != checkpoint.String() || backend.starts.Load() != 0 {
+		t.Fatal("malformed checkpoint remained retryable")
+	}
+	if err := o.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !o.Finished() || client.stops.Load() != 1 || client.deliveries.Load() != 1 {
+		t.Fatal("invalid checkpoint was not closed")
+	}
+}
+
+func (b *allocationOwnerTestBackend) BootSeedMatches(vm.MaterializeRequest, []byte) (bool, error) {
+	return true, nil
+}
+
+func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) {
+	for _, fault := range []string{"materialize", "readiness", "key", "missing", "late", "none"} {
+		t.Run(fault, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				o, client, backend := allocationOwnerFixture(t)
+				client.delivery.Shape.MemoryBytes = 1 << 20
+				client.delivery.Shape.ScratchBytes = 1 << 20
+				builder := t.TempDir()
+				file := func(role, media string, data []byte) vm.SnapshotFile {
+					path := filepath.Join(builder, role)
+					if err := os.WriteFile(path, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					return vm.SnapshotFile{Path: path, MediaType: media}
+				}
+				artifact := vm.BootSeedArtifact{Manifest: []byte(`{"contract":"helmr.boot-seed.v1"}`), MemoryBytes: 1 << 20,
+					VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("state")),
+					ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("scratch")),
+					Memory:      file("memory", cas.BootSeedMemoryMediaType, make([]byte, 1<<20))}
+				manifest, err := o.machines.publishBootSeed(t.Context(), t.TempDir(), uuid.MustParse(o.identity.EnvironmentID), uuid.NewV7(), artifact, 1<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				client.source.BootSeed = &manifest
+				var paused bool
+				o.checkpointKeyUnavailable = func() { paused = true }
+				lateFailure := make(chan error, 1)
+				if fault == "late" {
+					backend.machine.waitFailure = lateFailure
+				}
+				switch fault {
+				case "missing":
+					if err := o.machines.ComputerObjects.(preparationOwnerStore).Delete(t.Context(), manifest.Memory.Digest); err != nil {
+						t.Fatal(err)
+					}
+				case "materialize":
+					backend.materializeError = errors.New("bootstrap handshake failed")
+				case "readiness":
+					client.readinessError = &httpclient.Error{StatusCode: http.StatusBadRequest}
+				case "key":
+					o.machines.CheckpointCipher, err = NewCheckpointEncryptor(bytes.Repeat([]byte{21}, 32))
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				backend.failCleanup.Store(true)
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- o.Run(ctx) }()
+				time.Sleep(time.Second)
+				synctest.Wait()
+				if fault == "late" {
+					if client.readiness.Load() < 2 || o.failedBootSeedID != "" {
+						t.Fatal("late fault did not follow acknowledged fresh guest binding")
+					}
+					lateFailure <- vm.ErrInvalidCheckpointContent
+					synctest.Wait()
+				}
+				if fault == "none" {
+					directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "boot-seed")
+					files, err := filepath.Glob(filepath.Join(directory, "scratch_disk-plain-*"))
+					if err != nil || len(files) != 0 {
+						t.Fatalf("consumed seed scratch retained: %v %v", files, err)
+					}
+				}
+				cancel()
+				if err := <-done; err == nil {
+					t.Fatal("cleanup failure hidden")
+				}
+				if client.stops.Load() != 0 {
+					t.Fatal("reported seed failure before physical closure")
+				}
+				if paused != (fault == "key") {
+					t.Fatalf("admission pause=%v", paused)
+				}
+				backend.failCleanup.Store(false)
+				if err := o.Run(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				want := ""
+				if fault == "materialize" || fault == "readiness" || fault == "missing" || fault == "late" {
+					want = manifest.BuildID.String()
+				}
+				if client.stopped.FailedBootSeedID != want {
+					t.Fatalf("failed seed=%q want=%q", client.stopped.FailedBootSeedID, want)
+				}
+				starts := int64(1)
+				if fault == "key" || fault == "missing" {
+					starts = 0
+				}
+				if backend.starts.Load() != starts {
+					t.Fatalf("starts=%d want=%d", backend.starts.Load(), starts)
+				}
+			})
+		})
+	}
 }

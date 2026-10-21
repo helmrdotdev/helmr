@@ -862,6 +862,77 @@ CREATE TABLE images (
     FOREIGN KEY (environment_id, root_id) REFERENCES disk_roots(environment_id, id)
 );
 
+-- Derived launch work owns its private executors independently of authored
+-- preparation. Missing or failed launch artifacts do not block image readiness.
+CREATE TABLE boot_seed_builds (
+    environment_id uuid NOT NULL,
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    image_spec_id uuid NOT NULL,
+    image_id uuid,
+    cpu_millis bigint NOT NULL CHECK (cpu_millis>0),
+    memory_bytes bigint NOT NULL CHECK (memory_bytes>0 AND memory_bytes%1048576=0),
+    status text NOT NULL CHECK (status IN ('waiting','queued','running','succeeded','failed')),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    deadline_at timestamptz,
+    error_code text,
+    worker_host_id uuid REFERENCES worker_hosts(id),
+    worker_epoch bigint CHECK (worker_epoch>0),
+    allocation_id uuid UNIQUE,
+    executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch>=0),
+    channel_credential_digest bytea CHECK (octet_length(channel_credential_digest)=32),
+    delivered_at timestamptz,
+    started_at timestamptz,
+    executor_expires_at timestamptz,
+    reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
+    reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
+    vm_platform_id text REFERENCES vm_platforms(id),
+    vm_vcpu_count integer CHECK (vm_vcpu_count>0),
+    cpu_config_digest text CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'),
+    fenced_at timestamptz,
+    fence_evidence text,
+    manifest bytea,
+    qualification_evidence text CHECK (octet_length(qualification_evidence) BETWEEN 1 AND 4096),
+    payload_retired_at timestamptz,
+    PRIMARY KEY (environment_id,id),
+    UNIQUE NULLS NOT DISTINCT (environment_id,deployment_id,image_spec_id,image_id,cpu_millis,memory_bytes),
+    FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id),
+    FOREIGN KEY (environment_id,image_spec_id) REFERENCES image_specs(environment_id,id),
+    FOREIGN KEY (environment_id,image_spec_id,image_id) REFERENCES images(environment_id,image_spec_id,id),
+    CHECK ((status='failed')=(error_code IS NOT NULL)),
+    CHECK ((fenced_at IS NULL)=(fence_evidence IS NULL)),
+    CHECK ((delivered_at IS NULL)=(executor_expires_at IS NULL)),
+    CHECK (started_at IS NULL OR delivered_at IS NOT NULL),
+    CHECK (status<>'waiting' OR image_id IS NULL),
+    CHECK (status NOT IN ('queued','running','succeeded') OR image_id IS NOT NULL),
+    CHECK (status NOT IN ('waiting','queued') OR worker_host_id IS NULL),
+    CHECK (status<>'running' OR worker_host_id IS NOT NULL),
+    CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
+    CHECK ((status='succeeded')=(manifest IS NOT NULL AND qualification_evidence IS NOT NULL)),
+    CHECK (manifest IS NULL OR octet_length(manifest)<=1048576),
+    CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND executor_epoch=0 AND channel_credential_digest IS NULL AND deadline_at IS NULL)
+        OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch=1 AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
+    CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
+        OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000 AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
+);
+
+CREATE INDEX boot_seed_builds_host ON boot_seed_builds(worker_host_id,worker_epoch) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
+CREATE INDEX boot_seed_builds_image ON boot_seed_builds(environment_id,image_id);
+
+CREATE TABLE boot_seed_objects (
+    environment_id uuid NOT NULL,
+    build_id uuid NOT NULL,
+    role text NOT NULL CHECK (role IN ('vm_state','memory','scratch_disk')),
+    digest text NOT NULL,
+    size_bytes bigint NOT NULL CHECK (size_bytes>0),
+    media_type text NOT NULL,
+    availability_required boolean GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id,build_id,role),
+    FOREIGN KEY (environment_id,build_id) REFERENCES boot_seed_builds(environment_id,id),
+    FOREIGN KEY (digest,size_bytes,availability_required) REFERENCES cas_blobs(digest,size_bytes,not_retired)
+);
+
 CREATE TABLE computers (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
@@ -964,6 +1035,8 @@ CREATE TABLE computer_leases (
     allocation_id uuid NOT NULL UNIQUE,
     channel_credential_digest bytea NOT NULL CHECK (octet_length(channel_credential_digest)=32),
     restored_from_save_id uuid,
+    boot_seed_build_id uuid,
+    boot_seed_failed_at timestamptz,
     disk_only_recovery boolean NOT NULL DEFAULT false,
     save_retirement_seq bigint CHECK (save_retirement_seq > 0),
     storage_pressure_since timestamptz,
@@ -988,6 +1061,8 @@ CREATE TABLE computer_leases (
         (CASE WHEN disk_released_at IS NULL THEN true END) STORED,
     PRIMARY KEY (environment_id, computer_id, epoch),
     FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id),
+    FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id),
+    CHECK (boot_seed_failed_at IS NULL OR boot_seed_build_id IS NOT NULL),
     CHECK ((delivered_at IS NULL)=(expires_at IS NULL)),
     CHECK (reserved_cpu_millis=vm_vcpu_count::bigint*1000),
     CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL),
@@ -1096,7 +1171,7 @@ CREATE INDEX commands_unreconciled ON commands(environment_id, computer_id, comp
 CREATE TABLE idempotency_receipts (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
-    operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
+    operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'template.refresh', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
     slot_hash bytea NOT NULL CHECK (octet_length(slot_hash)=32),
     request_fingerprint bytea NOT NULL CHECK (octet_length(request_fingerprint)=32),
     scope_secret_name text,
@@ -1126,7 +1201,7 @@ CREATE TABLE idempotency_receipts (
     FOREIGN KEY (environment_id, scope_computer_id, command_id) REFERENCES commands(environment_id, computer_id, id),
     CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=accepted_at+interval '720 hours')),
     CHECK ((
-        (operation='deployment.finalize' AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
+        (operation IN ('deployment.finalize','template.refresh') AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation='secret.create' AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name)>0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation IN ('secret.rotate', 'secret.revoke') AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
         OR (operation='computer.create' AND scope_caller_kind='external' AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key)>0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id)=0)
@@ -1137,7 +1212,7 @@ CREATE TABLE idempotency_receipts (
         num_nonnulls(deployment_id, secret_id, computer_id, command_id)=1
         AND (receipt IS NOT NULL OR receipt_pruned_at IS NOT NULL)
         AND (
-        (operation='deployment.finalize' AND deployment_id IS NOT NULL AND secret_version_id IS NULL)
+        (operation IN ('deployment.finalize','template.refresh') AND deployment_id IS NOT NULL AND secret_version_id IS NULL)
         OR (operation='secret.create' AND secret_id IS NOT NULL AND secret_version_id IS NOT NULL)
         OR (operation='secret.rotate' AND secret_id=scope_secret_id AND secret_version_id IS NOT NULL)
         OR (operation='secret.revoke' AND secret_id=scope_secret_id AND secret_version_id IS NULL)
@@ -1676,7 +1751,7 @@ CREATE TABLE checkpoints (
     CHECK (status <> 'restoring' OR target_lease_epoch IS NOT NULL),
     CHECK (restore_identity IS NULL OR target_lease_epoch IS NOT NULL),
     FOREIGN KEY (environment_id, computer_id, target_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch),
-    CHECK (controls_reconciled_at IS NULL OR status='consumed'),
+    CHECK (controls_reconciled_at IS NULL OR status IN ('consumed','lost')),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, computer_id, id),
     UNIQUE (environment_id, computer_id, control_version),

@@ -15,7 +15,7 @@ import (
 // ObserveLeaseStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint uuid.UUID) error {
+func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -23,7 +23,7 @@ func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergro
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint)
+		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint, failedBootSeed)
 	}))
 }
 
@@ -84,7 +84,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
-func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
+func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	members, err := session.LockCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err
@@ -93,13 +93,16 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 	if err = tx.QueryRow(ctx, `SELECT fenced_at IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, hostID, hostEpoch).Scan(&fenced); err != nil {
 		return err
 	}
+	if err := computer.RecordBootSeedFailure(ctx, tx, identity, failedBootSeed); err != nil {
+		return err
+	}
 	if fenced {
 		return computer.ReleaseDeletedKey(ctx, tx, identity.EnvironmentID, identity.ComputerID)
 	}
 
 	if invalidCheckpoint != uuid.Nil() {
 		var bound bool
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(cp.status IN ('ready','restoring') AND cp.disk_save_id=l.restored_from_save_id
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((cp.status IN ('ready','restoring') OR (cp.status='consumed' AND cp.target_lease_epoch=l.epoch)) AND cp.disk_save_id=l.restored_from_save_id
    AND cp.source_lease_epoch<l.epoch AND (cp.target_lease_epoch IS NULL OR cp.target_lease_epoch<=l.epoch),false)
    FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id)=(cp.environment_id,cp.computer_id)
    WHERE cp.environment_id=$1 AND cp.computer_id=$2 AND cp.id=$3 AND l.epoch=$4 FOR NO KEY UPDATE OF cp`, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint, identity.Epoch).Scan(&bound); err != nil {

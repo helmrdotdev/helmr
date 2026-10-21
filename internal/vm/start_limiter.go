@@ -37,6 +37,20 @@ func (l *StartLimiter) Materialize(ctx context.Context, request MaterializeReque
 	return l.withPermit(ctx, func() (CheckpointableMachine, error) { return l.backend.Materialize(ctx, request) })
 }
 
+func (l *StartLimiter) PrepareBootSeed(ctx context.Context, request MaterializeRequest) (BootSeedCapture, error) {
+	select {
+	case l.permits <- struct{}{}:
+		defer func() { <-l.permits }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return l.backend.PrepareBootSeed(ctx, request)
+}
+
+func (l *StartLimiter) BootSeedMatches(request MaterializeRequest, manifest []byte) (bool, error) {
+	return l.backend.BootSeedMatches(request, manifest)
+}
+
 func (l *StartLimiter) Cleanup(ctx context.Context, owner Owner) error {
 	return l.backend.Cleanup(ctx, owner)
 }

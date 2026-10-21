@@ -115,6 +115,7 @@ go -C "$repo_root" build \
 # packages its config imports here. The fixtures use the current packed SDK;
 # host node_modules stay out of the captured source and out of the Program.
 (cd "$repo_root" && scripts/build-npm-packages.sh >/dev/null)
+bash "$repo_root/tests/build/preparation-programs.test.sh"
 prepare_host_sdk() {
   local target="$1"
   mkdir -p "$target/node_modules/@helmr" "$target/node_modules/@bufbuild"
@@ -162,9 +163,9 @@ TS
 }
 write_config "$project"
 cat >"$project/agents/hello.ts" <<TS
-import { agent, computer, image } from "@helmr/sdk"
-const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
-export const hello = agent({ id: "hello", computer: machine, turn: () => "hello" })
+import { agent, template, image } from "@helmr/sdk"
+const machine = template({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+export const hello = agent({ id: "hello", template: machine, turn: () => "hello" })
 TS
 
 write_package_json() {
@@ -261,7 +262,7 @@ TS
 cat >"$mutation_project/agents/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { agent, computer } from "@helmr/sdk"
+import { agent, template } from "@helmr/sdk"
 import { fixtureImage } from "./fixture-image"
 if (existsSync("/workspace/program")) {
   throw new Error("tenant code can observe the private Program assembly tree")
@@ -291,7 +292,7 @@ const child = spawn(process.execPath, ["-e", `
   }, 5)
 `], { detached: true, stdio: "ignore" })
 child.unref()
-export const hello = agent({ id: "hello", computer: computer({ id: "machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" } }), turn: () => "hello" })
+export const hello = agent({ id: "hello", template: template({ id: "machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" } }), turn: () => "hello" })
 TS
 "$tmp/helmr" build "$mutation_project" \
   --output "$tmp/mutation-bundle" \
@@ -315,12 +316,12 @@ cp -R "$project/vendor" "$computer_project/vendor"
 cp "$project/runtime-dependencies.json" "$computer_project/runtime-dependencies.json"
 cp "$project/prepare.sh" "$computer_project/prepare.sh"
 cat >"$computer_project/agents/hello.ts" <<TS
-import { agent, computer, image, triggers } from "@helmr/sdk"
-export const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+import { agent, template, image, triggers } from "@helmr/sdk"
+export const machine = template({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
 export const hello = agent({
   id: "hello",
-  triggers: [triggers.cron("daily", "0 9 * * *", { timezone: "UTC", input: null })],
-  computer: machine,
+  triggers: [triggers.cron("daily", "0 9 * * *", { timezone: "UTC", input: [{ type: "text", text: "hello" }] })],
+  template: machine,
   turn: () => "hello",
 })
 TS
@@ -331,6 +332,25 @@ write_config "$computer_project" '{ installCommand: "./prepare.sh" }'
 jq -e \
   '.contract == "helmr.deployment-bundle.v0" and (.computerSeeds | length) == 1 and .computerSeeds[0].declaredId == "machine"' \
   "$tmp/computer/bundle.json" >/dev/null
+
+# Build one callback Template through the complete CLI graph, including the
+# exported preparation tree and final independent SquashFS artifact.
+preparation_project="$tmp/preparation-project"
+cp -a "$computer_project" "$preparation_project"
+cat >"$preparation_project/agents/hello.ts" <<TS
+import { agent, template, image } from "@helmr/sdk"
+export const machine = template({
+  id: "machine", image: image("machine").from("$builder_image"),
+  resources: { cpu: 1, memory: "1GiB" },
+  async prepare(build) { await build.exec(["node", "-e", "process.stdout.write('prepared')"]) },
+})
+export const hello = agent({ id: "hello", template: machine, turn: () => "hello" })
+TS
+"$tmp/helmr" build "$preparation_project" --output "$tmp/preparation-program"
+jq -e '(.preparations | length) == 1 and
+  (.preparations[0].metadata.definitions | length) == 1 and
+  .preparations[0].artifact.digest != .program.artifact.digest' \
+  "$tmp/preparation-program/bundle.json" >/dev/null
 
 # Native environment: build.builder copies and runs a setup script that installs
 # an OS tool, node-gyp compiles an addon against a distribution library, a
@@ -459,6 +479,16 @@ HELMR_NATIVE_BUNDLE="$tmp/native-recipe-input" bash "$repo_root/tests/build/gues
 agentic_project="$tmp/agentic-project"
 cp -a "$repo_root/tests/fixtures/agentic-work" "$agentic_project"
 prepare_host_sdk "$agentic_project"
+mkdir -p "$agentic_project/vendor"
+cp -R "$repo_root/dist/npm/sdk/package" "$agentic_project/vendor/sdk"
+cp -R "$repo_root/dist/npm/proto/package" "$agentic_project/vendor/proto"
+cp -RL "$repo_root/sdk/typescript/node_modules/@bufbuild/protobuf" "$agentic_project/vendor/protobuf"
+python3 - "$agentic_project/package.json" <<'PYSDK'
+import json,sys,pathlib
+p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
+d['dependencies'].update({'@helmr/sdk':'file:vendor/sdk','@helmr/proto':'file:vendor/proto','@bufbuild/protobuf':'file:vendor/protobuf'})
+p.write_text(json.dumps(d))
+PYSDK
 "$tmp/helmr" build "$agentic_project" --output "$tmp/agentic" 2>"$tmp/agentic.log" ||
   { tail -n 120 "$tmp/agentic.log" >&2; exit 1; }
 jq -e '[.computerSeeds[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
@@ -503,7 +533,7 @@ test ! -e "$tmp/program/tsconfig.json"
 test ! -e "$tmp/program/node_modules/@helmr/sdk"
 test -f "$tmp/program/mixed/asset.txt"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/builder.test" ./internal/builder
-docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
+docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -v "$tmp/native-program-bundle/bundle.json:/fixture-bundle.json:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
 grep -E '^--- PASS: TestPreparedProgramFinalization ' "$tmp/finalization.log"
 if grep -E '^\s*--- (SKIP|FAIL)' "$tmp/finalization.log"; then
   echo "prepared Program finalization test did not run every case" >&2

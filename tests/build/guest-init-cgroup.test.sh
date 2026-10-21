@@ -23,6 +23,12 @@ empty_line="$(line_number 'if [ -n "$(cat /sys/fs/cgroup/helmr/cgroup.procs)" ];
 identity_line="$(line_number "if ! grep -qx '0::/helmr/supervisor' /proc/self/cgroup; then")"
 bootstrap_line="$(line_number 'configure_program_cgroups')"
 guestd_line="$(line_number "exec /usr/bin/guestd \\")"
+gate_line="$(line_number '/usr/bin/guestd --boot-gate')"
+scratch_line="$(line_number 'mount_scratch')"
+vsock_line="$(line_number 'load_vsock')"
+computer_line="$(line_number 'mount_computer')"
+program_line="$(line_number 'mount_program')"
+network_line="$(line_number 'configure_network')"
 
 if ! ((
   mount_line < parent_line &&
@@ -30,7 +36,13 @@ if ! ((
   supervisor_line < move_line &&
   move_line < empty_line &&
   empty_line < identity_line &&
-  bootstrap_line < guestd_line
+  bootstrap_line < guestd_line &&
+  scratch_line < gate_line &&
+  vsock_line < gate_line &&
+  gate_line < computer_line &&
+  gate_line < program_line &&
+  gate_line < network_line &&
+  network_line < guestd_line
 )); then
   printf 'guest init Program cgroup bootstrap order is invalid\n' >&2
   exit 1

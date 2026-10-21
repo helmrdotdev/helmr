@@ -31,6 +31,16 @@ import (
 // remote store and guest commands. It does not prove CP authority, native
 // harnesses or RAM continuation. Keep failed arenas.
 func TestComputerRuntimeKVM(t *testing.T) {
+	runComputerRuntimeKVM(t, false)
+}
+
+// This bounded backend proof uses raw retained fixture RAM. Publication,
+// encryption, cold remote reads and build ownership are separate acceptance.
+func TestBootSeedRuntimeKVM(t *testing.T) {
+	runComputerRuntimeKVM(t, true)
+}
+
+func runComputerRuntimeKVM(t *testing.T, bootSeed bool) {
 	path := os.Getenv("HELMR_COMPUTER_KVM_CONFIG")
 	if path == "" {
 		t.Skip("requires disposable KVM qualification configuration")
@@ -54,6 +64,9 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
 		t.Fatal(err)
+	}
+	if bootSeed && input.SeedRoot == "" {
+		t.Fatal("boot seed qualification requires a guest shell root")
 	}
 	if !filepath.IsAbs(input.Arena) || !filepath.IsAbs(input.Helper) || len(input.Devices) == 0 {
 		t.Fatal("explicit arena, helper and devices required")
@@ -178,7 +191,14 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	}
 	// Each iteration uses a fresh local version; only published objects cross
 	// the boundary. No previous mutable directory or device is reused.
-	for _, name := range []string{"initial", "cold"} {
+	names := []string{"initial", "cold"}
+	var seed *vm.BootSeedRestore
+	var cloneReceipts []bootstrapReceipt
+	var cloneScratches []*os.File
+	if bootSeed {
+		names = []string{"seed-builder", "seed-clone-one", "seed-clone-two"}
+	}
+	for _, name := range names {
 		func() {
 			dir := filepath.Join(input.Arena, name)
 			if err := os.Mkdir(dir, 0700); err != nil {
@@ -220,7 +240,46 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				}
 			}()
 			start := time.Now()
-			machine, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: vm.Resources{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
+			version, err := root.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version, Resources: vm.Resources{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: version, SizeBytes: capacity, Device: device}}}
+			if name == "seed-builder" {
+				builder, err := runtime.PrepareBootSeed(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					if err := builder.Close(ctx); err != nil {
+						t.Error(err)
+					}
+				}()
+				artifact, err := builder.Capture(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if device.Changes().Generation != 0 {
+					t.Fatal("builder mutated the prepared Computer root")
+				}
+				paths := make([]string, 3)
+				for i, file := range []vm.SnapshotFile{artifact.VMState, artifact.ScratchDisk, artifact.Memory} {
+					paths[i] = filepath.Join(input.Arena, filepath.Base(file.Path))
+					if err := os.Link(file.Path, paths[i]); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := builder.Close(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				seed = &vm.BootSeedRestore{Manifest: artifact.Manifest, VMState: paths[0], ScratchDisk: paths[1], MemorySource: testMemorySource{path: paths[2], size: artifact.MemoryBytes}}
+				t.Logf("private pre-mount seed captured=%s, Computer mutation generation=0", time.Since(start))
+				return
+			}
+			request.BootSeed = seed
+			machine, err := runtime.Materialize(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,6 +291,26 @@ func TestComputerRuntimeKVM(t *testing.T) {
 					t.Errorf("machine close: %v", err)
 				}
 			}()
+			if bootSeed {
+				guest := machine.(*guestMachine)
+				cloneReceipts = append(cloneReceipts, guest.bootstrap)
+				scratch, err := os.Open(guest.scratchDisk)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { scratch.Close() })
+				current, err := scratch.Stat()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, previous := range cloneScratches {
+					prior, err := previous.Stat()
+					if err != nil || os.SameFile(prior, current) {
+						t.Fatalf("clones share a writable scratch inode: %v", err)
+					}
+				}
+				cloneScratches = append(cloneScratches, scratch)
+			}
 			if len(wantMarker) != 0 {
 				got := make([]byte, len(wantMarker))
 				n, err := local.ReadAt(t.Context(), got, filesystemBytes)
@@ -240,7 +319,10 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				}
 			}
 			if input.SeedRoot != "" {
-				root = qualifyOnlineGuestWrites(t, machine.(*guestMachine), name, publisher)
+				published := qualifyOnlineGuestWrites(t, machine.(*guestMachine), name, publisher)
+				if !bootSeed {
+					root = published
+				}
 				return
 			}
 			live := machine.(interface {
@@ -304,6 +386,13 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			t.Log("source mutable disk state removed before remote-backed cold recovery")
 		}
 	}
+	if bootSeed {
+		if len(cloneReceipts) != 2 || cloneReceipts[0].BootID == "" || cloneReceipts[0].BootID == cloneReceipts[1].BootID || cloneReceipts[0].Random == cloneReceipts[1].Random {
+			t.Fatal("seed clones did not establish independent boot identity and randomness")
+		}
+		t.Log("two seed clones passed fresh bootstrap, independent guest Computer writes and scratch backings")
+		return
+	}
 	t.Log("production Computer capture and cold materialization passed; no CP or RAM continuation claim")
 }
 
@@ -313,16 +402,21 @@ type kvmPublication struct {
 	certified map[string]bool
 }
 
-func (p *kvmPublication) Register(context.Context, blockformat.ObjectInspection) error { return nil }
+func (p *kvmPublication) RegisterBatch(context.Context, []blockformat.ObjectInspection) error {
+	return nil
+}
 func (p *kvmPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	return p.upload(ctx, d, file)
 }
-func (p *kvmPublication) Certify(_ context.Context, e blockformat.ObjectInspection) error {
-	raw, err := json.Marshal(e)
-	if err == nil {
+func (p *kvmPublication) CertifyBatch(_ context.Context, inspections []blockformat.ObjectInspection) error {
+	for _, e := range inspections {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
 		p.certified[string(raw)] = true
 	}
-	return err
+	return nil
 }
 func (p *kvmPublication) Reuse(_ context.Context, e blockformat.ObjectInspection) error {
 	raw, err := json.Marshal(e)

@@ -34,6 +34,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -50,6 +52,9 @@ import (
 // explicitly instrument its storage client. Enrollment, physical qualification,
 // allocation and cleanup use their production owners in both cases.
 type nativeExecutionConfig struct {
+	RequirePostCutContinuation                                                              bool
+	RequireBootSeed                                                                         bool
+	RequireConcurrentRestores                                                               bool
 	Performance                                                                             *nativePerformanceConfig
 	RestartPublicationOwner                                                                 bool
 	Worker, Node, Driver, Model, Bundle, RuntimeDescriptor, Runtime, Evidence, WorkerCgroup string
@@ -75,7 +80,9 @@ const (
 	nativeExecutionCheckpointRetry nativeExecutionMode = "checkpoint-retry"
 	nativeExecutionCrossHost       nativeExecutionMode = "cross-host"
 	nativeExecutionCorruptConfig   nativeExecutionMode = "corrupt-config"
+	nativeExecutionCorruptMemory   nativeExecutionMode = "corrupt-memory"
 	nativeExecutionMissingMemory   nativeExecutionMode = "missing-memory"
+	nativeExecutionLateSeedFault   nativeExecutionMode = "late-seed-fault"
 )
 
 func TestWorkerAgentNativeExecution(t *testing.T) {
@@ -111,8 +118,14 @@ func TestWorkerAgentCrossHostContinuation(t *testing.T) {
 func TestWorkerAgentCorruptCheckpoint(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionCorruptConfig)
 }
+func TestWorkerAgentCorruptMemory(t *testing.T) {
+	runWorkerAgentNativeExecution(t, nativeExecutionCorruptMemory)
+}
 func TestWorkerAgentMissingCheckpointMemory(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionMissingMemory)
+}
+func TestWorkerAgentLateBootSeedFault(t *testing.T) {
+	runWorkerAgentNativeExecution(t, nativeExecutionLateSeedFault)
 }
 
 func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
@@ -125,9 +138,10 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	checkpointRetry := mode == nativeExecutionCheckpointRetry
 	sessionDiscovery := mode == nativeExecutionDiscovery
 	secretBindings := mode == nativeExecutionSecrets
-	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory
+	lateSeedFault := mode == nativeExecutionLateSeedFault
+	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory || lateSeedFault
 	checkpointFault := ""
-	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionMissingMemory {
+	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionCorruptMemory || mode == nativeExecutionMissingMemory {
 		checkpointFault = string(mode)
 	}
 
@@ -184,6 +198,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 
 	duration, driverTimeout := 15*time.Minute, 600000
+	if input.RequireConcurrentRestores {
+		duration = 35 * time.Minute
+	}
 	if os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1" {
 		if mode != nativeExecutionBaseline {
 			t.Fatal("starter proof requires baseline execution mode")
@@ -204,6 +221,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	// treating the harness deadline as a product latency acceptance threshold.
 	if performanceCase {
 		duration, driverTimeout = 35*time.Minute, 30*60*1000
+		if input.RequireBootSeed {
+			duration += 10 * time.Minute
+		}
 	}
 	longIdle := mode == nativeExecutionLongIdle
 	// Discovery includes sequential interruption, retained-process continuation and cancellation before both restores.
@@ -309,6 +329,16 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		workerEnv[k] = v
 	}
 	workerEnv["CONTROL_PLANE_URL"], workerEnv["CAS_URI"], workerEnv["PLATFORM_STORE_URI"] = server.URL, input.CASURI, input.PlatformURI
+	var seedFault *nativeSeedFaultProxy
+	if lateSeedFault {
+		proof, proxyServer, proxyURI, err := newNativeSeedFaultProxy(ctx, input.CASURI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer proxyServer.Close()
+		seedFault = proof
+		workerEnv["CAS_URI"] = proxyURI
+	}
 	workerEnv["WORKER_ENROLLMENT_TOKEN_FILE"], workerEnv["WORKER_POOL_NAME"] = tokenPath, "native-proof"
 	workerEnv["WORKER_RESOURCE_ID"] = "native-proof-" + uuid.NewV7().String()
 	workerEnv["CHECKPOINT_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(keyBytes)
@@ -320,6 +350,11 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	gate.reader = deploymentClient
+	if input.RequirePostCutContinuation {
+		proof := newNativePostCutProof(ctx, database.Pool, deploymentClient, env, input.Evidence)
+		gate.postCut = proof
+		defer proof.join(t)
+	}
 
 	if protectedModel != nil {
 		workerEnv["WORKER_NETWORK_BLOCKED_IPV4_CIDRS"] = protectedModelBlocked()
@@ -381,7 +416,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		// cuts through the production handler so ordinary retirement can converge.
 		gate.retiring.Store(true)
 		retirementTimeout := 60 * time.Second
-		if crossHost {
+		if crossHost || input.RequireConcurrentRestores || lateSeedFault || (performanceCase && input.RequireBootSeed) {
 			retirementTimeout = 5 * time.Minute
 		}
 		cleanup, cancelCleanup := context.WithTimeout(context.Background(), retirementTimeout)
@@ -450,6 +485,55 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
  WHERE e.id=$1 AND t.prepare AND i.root_id IS NOT NULL
  AND i.publication_evidence LIKE '%isolated clone%')`, env).Scan(&qualified); err != nil || !qualified {
 		t.Fatalf("promotion did not qualify the prepared environment: %v", err)
+	}
+	// Exercise cold seed-only admission through image publication and pinning.
+	// Wait for the build fence so preparation cleanup cannot overlap the driver.
+	seedComputer, err := deploymentClient.CreateComputer(ctx, api.CreateComputerRequest{Template: "native-seed-only", IdempotencyKey: "seed-only-proof"}, client.ComputerScopeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCtx, stopSeed := context.WithTimeout(ctx, 2*time.Minute)
+	defer stopSeed()
+	seedTick := time.NewTicker(200 * time.Millisecond)
+	defer seedTick.Stop()
+	for {
+		var pinned bool
+		var evidence string
+		err := database.Pool.QueryRow(seedCtx, `SELECT c.initial_root_id IS NOT NULL AND c.image_id=i.id AND c.initial_root_id=i.root_id AND p.status='succeeded' AND p.fenced_at IS NOT NULL,COALESCE(i.publication_evidence,'')
+   FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
+   JOIN images i ON (i.environment_id,i.image_build_id)=(p.environment_id,p.id)
+   WHERE c.environment_id=$1 AND c.id=$2`, env, seedComputer.ID).Scan(&pinned, &evidence)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		if pinned {
+			if !strings.Contains(evidence, "isolated clone") {
+				t.Fatal("seed-only image skipped qualification")
+			}
+			proof, err := json.Marshal(map[string]any{"computer_id": seedComputer.ID, "pinned": true, "evidence": evidence})
+			if err == nil {
+				err = os.WriteFile(filepath.Join(input.Evidence, "seed-only-preparation.json"), proof, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		select {
+		case <-seedCtx.Done():
+			t.Fatal("seed-only preparation did not publish and pin: ", seedCtx.Err())
+		case <-seedTick.C:
+		}
+	}
+	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, client.ComputerScopeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if input.RequireBootSeed || lateSeedFault {
+		waitNativeBootSeeds(t, ctx, database.Pool, env, input.Evidence)
+	}
+	if lateSeedFault {
+		verifyNativeLateSeedFault(t, ctx, database.Pool, deploymentClient, env, input.CASURI, input.Evidence, seedFault)
+		return
 	}
 	driverCtx, stopDriver := context.WithCancelCause(ctx)
 	defer stopDriver(nil)
@@ -654,6 +738,12 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if err := json.Unmarshal(result.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
+	if gate.postCut != nil {
+		gate.postCut.verify(t)
+	}
+	if input.RequireBootSeed {
+		verifyNativeBootSeedSelection(t, ctx, database.Pool, env, receipt.NativeSessions, input.Evidence, "boot-seed-selection.json")
+	}
 	if protectedModel != nil {
 		expected := []string{"claude", "codex", "opencode-anthropic", "opencode-openai", "opencode-go", "pi-anthropic", "pi-openai", "pi-go"}
 		if len(receipt.ProtectedStarters) != len(expected) {
@@ -697,7 +787,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			t.Fatal(err)
 		}
 	}
-	if mode == nativeExecutionCorruptConfig {
+	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionCorruptMemory {
 		if err := verifyNativeCheckpointLoss(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
 			t.Fatal(err)
 		}
@@ -723,6 +813,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	expectedTurns := 4
 	if healthyRAM {
 		expectedTurns = 8
+		if performanceCase {
+			expectedTurns = 12
+		}
 		if err := verifyNativeHealthyContinuation(ctx, database.Pool, env, result.Bytes(), input.Evidence, longIdle, keyMismatch); err != nil {
 			t.Fatal(err)
 		}
@@ -893,6 +986,9 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 		if err := gate.performance.verify(saves); err != nil {
 			t.Fatal(err)
 		}
+		if input.RequireBootSeed {
+			verifyNativeSeedGeneration(t, ctx, database.Pool, deploymentClient, env, receipt.ComputerID, input.Evidence)
+		}
 		return
 	}
 	// Coverage can legitimately coalesce concurrent native results. Qualify
@@ -904,12 +1000,17 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 		expectedSaves = 0 // Per-Turn publication and checkpoint assertions above still apply.
 	}
 	gate.mu.Lock()
-	defer gate.mu.Unlock()
-	if backgroundSaves && len(gate.background) != 3 {
-		t.Fatalf("background publication evidence: %d saves", len(gate.background))
+	backgroundCount, observedCount := len(gate.background), len(gate.observed)
+	gateErrors := append([]error(nil), gate.errors...)
+	gate.mu.Unlock()
+	if backgroundSaves && backgroundCount != 3 {
+		t.Fatalf("background publication evidence: %d saves", backgroundCount)
 	}
-	if len(gate.errors) != 0 || len(gate.observed) != expectedSaves {
-		t.Fatalf("publication gate evidence: %d saves, %v", len(gate.observed), gate.errors)
+	if len(gateErrors) != 0 || observedCount != expectedSaves {
+		t.Fatalf("publication gate evidence: %d saves, %v", observedCount, gateErrors)
+	}
+	if input.RequireConcurrentRestores {
+		verifyNativeConcurrentRestores(t, ctx, database.Pool, deploymentClient, env, input.Evidence)
 	}
 
 }
@@ -988,9 +1089,30 @@ func retireNativeExecution(ctx context.Context, pool *pgxpool.Pool, c *client.Cl
 		}
 	}
 	for {
+		// Never-started optional builders need no physical owner. Settle them
+		// through their owning transition and let assigned builders finish.
+		pending, err := ids(`SELECT id::text FROM boot_seed_builds WHERE environment_id=$1 AND worker_host_id IS NULL AND status IN ('waiting','queued') ORDER BY id`)
+		if err != nil {
+			return err
+		}
+		for _, id := range pending {
+			if err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+				build, err := computer.LockBootSeedBuild(ctx, tx, env, uuid.MustParse(id))
+				if err != nil {
+					return err
+				}
+				if build.Status != "waiting" && build.Status != "queued" {
+					return nil
+				}
+				return computer.TerminateBootSeedBuild(ctx, tx, env, uuid.MustParse(id), "fixture_retired")
+			}); err != nil {
+				return err
+			}
+		}
 		var stopped bool
-		err := pool.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL)
-      AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL)`, env).Scan(&stopped)
+		err = pool.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL)
+      AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM boot_seed_builds WHERE environment_id=$1 AND ((worker_host_id IS NOT NULL AND fenced_at IS NULL) OR status IN ('waiting','queued')))`, env).Scan(&stopped)
 		if err != nil {
 			return err
 		}
@@ -1029,7 +1151,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO org_members(org_id,user_id,role) VALUES($1,$2,'owner');
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'native-proof','Native proof','#112233',128,8,2,4000,17179869184,137438953472,600000,100,100,100,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
-	issued, err := identity.IssueAPIKey(t.Context(), pool, auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksAnswer}, extraPermissions...)})
+	issued, err := identity.IssueAPIKey(t.Context(), pool, auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersCreate, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksAnswer}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1061,6 +1183,7 @@ type nativePublicationGate struct {
 	restart             *nativeControlPlaneProcess
 	pool                *pgxpool.Pool
 	environment         uuid.UUID
+	postCut             *nativePostCutProof
 	next                http.Handler
 	reader              *client.Client
 	mu                  sync.Mutex
@@ -1147,6 +1270,9 @@ func TestNativePublicationRetirementPreservesFailureAndForwards(t *testing.T) {
 func (g *nativePublicationGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if g.retiring.Load() {
 		g.next.ServeHTTP(w, r)
+		return
+	}
+	if g.postCut != nil && g.postCut.intercept(w, r) {
 		return
 	}
 	if g.protectedModel != nil {

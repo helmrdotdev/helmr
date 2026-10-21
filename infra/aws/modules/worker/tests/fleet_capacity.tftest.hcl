@@ -305,7 +305,7 @@ run "lifecycle_capacity_at_mib_boundary" {
   command = plan
   variables {
     root_volume_size_gb     = 512
-    worker_disk_mib         = 450634
+    worker_disk_mib         = 479302
     worker_disk_reserve_mib = 8192
     worker_execution_slots  = 2
     vm_scratch_disk_mib     = 32768
@@ -322,7 +322,7 @@ run "reject_lifecycle_capacity_one_mib_short" {
   command = plan
   variables {
     root_volume_size_gb     = 512
-    worker_disk_mib         = 450633
+    worker_disk_mib         = 479301
     worker_disk_reserve_mib = 8192
     worker_execution_slots  = 2
     vm_scratch_disk_mib     = 32768
@@ -376,11 +376,11 @@ run "slot_memory_funds_guest_and_caches" {
   variables {
     worker_execution_slots     = 2
     vm_memory_mib              = 2048
-    worker_capacity_memory_mib = 4128
+    worker_capacity_memory_mib = 4242
   }
   assert {
-    condition     = local.worker_slot_memory_mib == 2064
-    error_message = "slot memory must include both bounded 8-MiB disk caches"
+    condition     = local.worker_slot_memory_mib == 2121
+    error_message = "slot memory must include disk caches and bounded lazy-memory restore overhead"
   }
 }
 
@@ -389,7 +389,7 @@ run "slot_memory_rejects_one_mib_short" {
   variables {
     worker_execution_slots     = 2
     vm_memory_mib              = 2048
-    worker_capacity_memory_mib = 4127
+    worker_capacity_memory_mib = 4241
   }
   expect_failures = [terraform_data.network_preconditions]
 }

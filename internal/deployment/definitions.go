@@ -22,13 +22,38 @@ import (
 // registration transaction. The caller must admit the exact Program and all seed
 // objects before calling; this operation does not turn producer metadata into proof.
 // The caller holds the Environment lock before Secret and preparation-spec locks.
-func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
+func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput, preparations ...artifact.ProgramOutput) error {
 	if env == uuid.Nil() || deployment == uuid.Nil() {
 		return computer.ErrInvalidInput
 	}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil {
 		return fmt.Errorf("%w: %v", computer.ErrInvalidInput, err)
+	}
+	selected := make(map[string]artifact.ProgramOutput, len(preparations))
+	for _, preparation := range preparations {
+		if len(preparation.Metadata.Definitions) != 1 {
+			return computer.ErrInvalidInput
+		}
+		id := preparation.Metadata.Definitions[0].DeclaredID
+		if _, duplicate := selected[id]; duplicate {
+			return computer.ErrInvalidInput
+		}
+		selected[id] = preparation
+	}
+	for i := range specs {
+		if specs[i].Template != nil {
+			continue
+		}
+		preparation, ok := selected[specs[i].TemplateDefinitionID]
+		if !ok {
+			return computer.ErrInvalidInput
+		}
+		specs[i].Program = preparation.Artifact
+		delete(selected, specs[i].TemplateDefinitionID)
+	}
+	if len(selected) != 0 {
+		return computer.ErrInvalidInput
 	}
 	manifests := make(map[string]*definition.TemplateManifest, len(specs))
 	var refs []secretbinding.Reference
@@ -262,8 +287,8 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 // Agent identities survive deployments; their definitions remain pinned to one
 // deployment. The caller must hold the Environment lock and verify Program and
 // seed bytes before registration.
-func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
-	if err := registerTemplateDefinitions(ctx, tx, env, deployment, output); err != nil {
+func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput, preparations ...artifact.ProgramOutput) error {
+	if err := registerTemplateDefinitions(ctx, tx, env, deployment, output, preparations...); err != nil {
 		return err
 	}
 

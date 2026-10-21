@@ -16,6 +16,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/oci"
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"google.golang.org/protobuf/proto"
@@ -64,6 +65,7 @@ type computerMountEntry struct {
 }
 
 type preparedComputerRuntime struct {
+	bootProgram        *agentv1.SessionProgram
 	computerID         string
 	writerGeneration   int64
 	computerInstanceID string
@@ -87,6 +89,10 @@ func (r *computerOperationRegistry) setPreparedRuntime(runtime *preparedComputer
 	if r.captureSealedLocked() {
 		r.mu.Unlock()
 		return errors.New("computer capture has sealed preparation")
+	}
+	if err := r.agentPrograms.installBoot(runtime.bootProgram, bootProgramMounts()); err != nil {
+		r.mu.Unlock()
+		return err
 	}
 	previous := r.preparedRuntime
 	r.preparedRuntime = runtime
@@ -349,6 +355,16 @@ func restorePreparedComputerRuntime(request *computerv0.PrepareComputerRuntimeRe
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, phases, fmt.Errorf("computer runtime prepare mount_path %q is invalid", request.GetMountPath())
 	}
+	var boot *agentv1.SessionProgram
+	if request.BootProgram != nil {
+		boot = &agentv1.SessionProgram{Runtime: &agentv1.SessionProgramArtifact{Digest: request.BootProgram.GetRuntime().GetDigest(), SizeBytes: request.BootProgram.GetRuntime().GetSizeBytes()}, Artifact: &agentv1.SessionProgramArtifact{Digest: request.BootProgram.GetArtifact().GetDigest(), SizeBytes: request.BootProgram.GetArtifact().GetSizeBytes()}}
+		if err := validateAgentProgram(boot); err != nil {
+			return nil, phases, err
+		}
+		if err := validateBootProgramMounts(); err != nil {
+			return nil, phases, err
+		}
+	}
 	phaseStarted := time.Now()
 	image, cleanupImage, err := restorePreparedComputerImage(request)
 	phases = append(phases, computerMountPhase("guest_computer_image_restore", phaseStarted, 0, err))
@@ -371,7 +387,7 @@ func restorePreparedComputerRuntime(request *computerv0.PrepareComputerRuntimeRe
 		cleanup()
 		return nil, phases, fmt.Errorf("resolve prepared runtime computer mount: %w", err)
 	}
-	return &preparedComputerRuntime{
+	return &preparedComputerRuntime{bootProgram: boot,
 		computerID: request.GetComputerId(), writerGeneration: request.GetWriterGeneration(),
 		computerInstanceID: computerInstanceID,
 		imageRoot:          image.RootfsDir,

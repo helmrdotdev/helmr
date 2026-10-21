@@ -15,7 +15,10 @@ import (
 
 // Snapshot format bounds shared by producers and host capacity admission.
 const (
-	SnapshotStateLimit  int64 = 10_000_000
+	SnapshotStateLimit int64 = 10_000_000
+	MemoryChunkBytes         = 256 << 10
+	// MemoryReadBytes groups adjacent authenticated chunks into one read window.
+	MemoryReadBytes           = 2 << 20
 	SnapshotConfigLimit int64 = 65_536
 )
 
@@ -36,6 +39,8 @@ type Cleaner interface {
 type Backend interface {
 	RestoringBackend
 	MaterializingBackend
+	PrepareBootSeed(context.Context, MaterializeRequest) (BootSeedCapture, error)
+	BootSeedMatches(MaterializeRequest, []byte) (bool, error)
 	Cleaner
 }
 
@@ -92,6 +97,10 @@ type CheckpointCapture interface {
 
 type CheckpointableMachine interface {
 	GuestControlMachine
+	// CheckpointReady observes hydration without blocking the serial save owner.
+	CheckpointReady() (bool, error)
+	// PrepareCheckpoint enforces completed memory reads at actual serialization.
+	PrepareCheckpoint(context.Context) error
 	SnapshotLimits() (SnapshotLimits, error)
 	BeginCheckpoint(context.Context, SnapshotRequest) (CheckpointCapture, error)
 	CaptureComputer(context.Context) (*ComputerSnapshot, error)
@@ -159,7 +168,7 @@ type ComputerDisk struct {
 type ComputerDevice interface {
 	Changes() disk.VersionChanges
 	PinCommitted(context.Context) (disk.RetainedVersion, error)
-	Capture(context.Context) (disk.CapturedVersion, error)
+	Capture(context.Context) (disk.RetainedVersion, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -174,7 +183,7 @@ type SnapshotRequest struct {
 // The receiver releases Capture after all publishers have joined.
 type ComputerSnapshot struct {
 	ComputerID string
-	Capture    disk.CapturedVersion
+	Capture    disk.RetainedVersion
 }
 
 type SnapshotArtifact struct {
@@ -202,6 +211,21 @@ type SnapshotFile struct {
 	Filepack  *FilepackStats
 }
 
+// MemorySource authenticates each bounded logical read before returning bytes.
+// Demand reads fit within one MemoryReadBytes window. Background reads stream
+// authenticated windows with bounded buffering. Its owner retains it until all
+// pager and hydration jobs have joined, including failure teardown.
+type MemorySource interface {
+	MemoryReadStats() MemoryReadStats
+	Size() int64
+	ReadAt(context.Context, []byte, int64) (int, error)
+	// ReadWindows streams one bounded segment starting at an aligned logical
+	// window. consume is synchronous; its authenticated buffer is borrowed until
+	// it returns. The result is the first unconsumed offset, including on error.
+	// A successful call advances toward Size. The caller owns retries.
+	ReadWindows(context.Context, int64, func(int64, []byte) error) (int64, error)
+}
+
 type RestoreRequest struct {
 	Resources            Resources
 	ID                   string
@@ -212,13 +236,14 @@ type RestoreRequest struct {
 	VMStateMediaType     string
 	ScratchDisk          string
 	ScratchDiskMediaType string
-	Memory               []string
-	MemoryMediaTypes     []string
-	Manifest             []byte
-	Checkpoint           CheckpointIdentity
-	Topology             Topology
-	ReadOnlyDrives       []ReadOnlyDrive
-	RecordPhase          func(Phase)
+	MemorySource         MemorySource
+	// EagerMemory materializes the same format for controlled diagnostics.
+	EagerMemory    bool
+	Manifest       []byte
+	Checkpoint     CheckpointIdentity
+	Topology       Topology
+	ReadOnlyDrives []ReadOnlyDrive
+	RecordPhase    func(Phase)
 }
 
 type MaterializePurpose uint8
@@ -231,6 +256,7 @@ const (
 )
 
 type MaterializeRequest struct {
+	BootSeed                  *BootSeedRestore
 	Purpose                   MaterializePurpose
 	ID                        string
 	OwnerKind                 OwnerKind
@@ -244,6 +270,44 @@ type MaterializeRequest struct {
 	Topology                  Topology
 	ReadOnlyDrives            []ReadOnlyDrive
 	RecordPhase               func(Phase)
+}
+
+// BootSeedCapture is a private builder stopped before Computer/Program mounts
+// and guest control. It has no customer continuation identity. Close joins and
+// stops the builder and releases its files. The caller must finish reading or
+// retain immutable artifact files before Close.
+type BootSeedCapture interface {
+	Capture(context.Context) (BootSeedArtifact, error)
+	Close(context.Context) error
+}
+
+type BootSeedArtifact struct {
+	Manifest    []byte
+	VMState     SnapshotFile
+	ScratchDisk SnapshotFile
+	Memory      SnapshotFile
+	MemoryBytes int64
+}
+
+// BootSeedRestore contains already authenticated, retained launch artifacts.
+// The backend matches the exact immutable content and resource shape before
+// launching. Once selected, a restore failure cannot fall back to another boot.
+type BootSeedRestore struct {
+	Manifest     []byte
+	VMState      string
+	ScratchDisk  string
+	MemorySource MemorySource
+}
+
+type BootSeedIdentity struct {
+	BootID       string `json:"boot_id"`
+	RandomDigest string `json:"random_digest"`
+}
+
+// BootSeedClone supplies freshness evidence from the host's authenticated
+// bootstrap exchange, before any user process receives authority.
+type BootSeedClone interface {
+	BootSeedIdentity() BootSeedIdentity
 }
 
 // WorkloadBinding is the closed logical authority that a backend binds to
@@ -346,12 +410,72 @@ type CheckpointIdentity struct {
 }
 
 type Phase struct {
+	StartedAt  time.Time
 	Name       string
 	DurationMs int64
 	Role       string
 	MediaType  string
 	ErrorClass string
 	Filepack   *FilepackStats
+	Memory     *MemoryRestoreStats
+}
+
+type MemoryReadStats struct {
+	BackgroundRangeRequests   int64
+	BackgroundCiphertextBytes int64
+	BackgroundRangeHeaderMs   int64
+	BackgroundRangeBodyMs     int64
+	RangeRequests             int64
+	CiphertextBytes           int64
+	DecodeDurationMs          int64
+	RangeHeaderMs             int64
+	RangeBodyMs               int64
+	RangeActive               int64
+	RangePeak                 int64
+}
+
+// MemoryFaultObservation records reader/worker timings, not kernel fault latency.
+// Only the slowest 256 worker operations lasting at least 1ms are retained.
+type MemoryFaultObservation struct {
+	Window           int64  `json:"window"`
+	ReceivedNs       int64  `json:"received_ns"`
+	StartedNs        int64  `json:"started_ns"`
+	FinishedNs       int64  `json:"finished_ns"`
+	JoinBackgroundNs int64  `json:"join_background_ns"`
+	JoinDemandNs     int64  `json:"join_demand_ns"`
+	SourceReadNs     int64  `json:"source_read_ns"`
+	PopulateNs       int64  `json:"populate_ns"`
+	ErrorClass       string `json:"error_class"`
+}
+type MemoryRestoreStats struct {
+	// Bucket zero is under 1us; bucket i covers [2^(i-1),2^i)us, with overflow in 31.
+	DemandDurationBuckets [32]int64
+	JoinDurationBuckets   [32]int64
+	ObservedDemandPages   int64
+	ObservedDemandWindows int64
+	ObservationStartedAt  time.Time
+	MemoryReadStats
+	DemandFaults               int64
+	DemandLoads                int64
+	BackgroundLoads            int64
+	BackgroundDiscardedWindows int64
+	BackgroundDemandWaitMs     int64
+	DemandLoadErrors           int64
+	BackgroundLoadErrors       int64
+	JoinBackground             int64
+	JoinDemand                 int64
+	JoinBackgroundMs           int64
+	JoinDemandMs               int64
+	FaultQueueMs               int64
+	FaultServiceMs             int64
+	DemandSourceReadMs         int64
+	BackgroundSourceReadMs     int64
+	DemandPopulateMs           int64
+	BackgroundPopulateMs       int64
+	LoadedChunks               int64
+	TotalChunks                int64
+	FaultObservations          []MemoryFaultObservation
+	DroppedFaultObservations   int64
 }
 
 type FilepackStats struct {
@@ -400,4 +524,19 @@ type SnapshotLimits struct {
 	ScratchBytes  int64
 	StateBytes    int64
 	ConfigBytes   int64
+}
+
+// MemoryRestoreOverhead funds the complete restore-to-save lifecycle: 20 MiB
+// for retained source/pager workspaces, 28 MiB for overlapping scratch packing,
+// and 8 MiB for codec, transport and allocation-growth margin. Scratch packing
+// uses one encoder; RAM and object encryption run sequentially and fit below
+// that peak. Per-chunk storage covers the retained source index, pager state,
+// and the next memory object's plaintext and sealed indexes.
+// Fresh VMs pay the same charge because they can save under this reservation.
+func MemoryRestoreOverhead(memoryBytes int64) (int64, error) {
+	if memoryBytes <= 0 {
+		return 0, errors.New("memory capacity must be positive")
+	}
+	chunks := (memoryBytes-1)/MemoryChunkBytes + 1
+	return 56*(1<<20) + chunks*64, nil
 }

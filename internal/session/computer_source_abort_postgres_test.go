@@ -205,6 +205,40 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	}
 }
 
+func TestSourceAbortPublishesRetainedCutRecordedAfterContinuation(t *testing.T) {
+	f := newFixture(t)
+	storage := newSaveStorageFixture(t, f)
+	p, save := sourceAbort(t, f)
+	cut, root := storage.cut(t, 4)
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+		t.Fatal(err)
+	}
+	acknowledgeComputerMembers(t, f, *f.host(), p)
+	if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "retained frozen cut recorded after source continuation"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.publish(t, save, cut); err != nil {
+		t.Fatal(err)
+	}
+	var checkpointState, saveState string
+	if err := f.pool.QueryRow(t.Context(), `SELECT c.status,s.status FROM checkpoints c JOIN computer_saves s ON (s.environment_id,s.id)=(c.environment_id,c.disk_save_id) WHERE c.environment_id=$1 AND c.id=$2`, f.env, p.Capture.CheckpointId).Scan(&checkpointState, &saveState); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointState != "consumed" || saveState != "published" {
+		t.Fatalf("checkpoint=%s save=%s", checkpointState, saveState)
+	}
+	f.enqueue(t, "continued")
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSourceAbortRequiresRetainedGuestAndBoundsUninstalledRetries(t *testing.T) {
 	f := newFixture(t)
 	p, _ := sourceAbort(t, f)

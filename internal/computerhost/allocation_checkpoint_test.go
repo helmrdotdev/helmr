@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -30,6 +32,8 @@ import (
 )
 
 type checkpointPipelineClient struct {
+	stepMu      sync.Mutex
+	workPending atomic.Bool
 	AllocatedComputerClient
 	stepErr        error
 	beginNotReady  bool
@@ -49,6 +53,8 @@ type checkpointPipelineClient struct {
 }
 
 func (c *checkpointPipelineClient) step(name string) error {
+	c.stepMu.Lock()
+	defer c.stepMu.Unlock()
 	c.calls = append(c.calls, name)
 	if name == c.failure && !c.failed {
 		c.failed = true
@@ -72,7 +78,7 @@ func (c *checkpointPipelineClient) BeginAgentComputerCapture(_ context.Context, 
 	if r.CheckpointID != capture.CheckpointId {
 		c.t.Fatal("retry changed capture identity")
 	}
-	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save}, c.step("begin")
+	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save, WorkPending: c.workPending.Load()}, c.step("begin")
 }
 func (c *checkpointPipelineClient) SealAgentComputerCapture(context.Context, workerapi.AgentComputerReceiptRequest) error {
 	return c.step("seal")
@@ -110,6 +116,8 @@ func (c *checkpointPipelineClient) CompleteAgentCheckpoint(ctx context.Context, 
 }
 
 type checkpointPipelineMachine struct {
+	hydrating    bool
+	hydrationErr error
 	vm.CheckpointableMachine
 	control                    *agentControlMachine
 	artifact                   vm.SnapshotArtifact
@@ -180,7 +188,7 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 		*object.target = vm.SnapshotFile{Path: path, MediaType: object.media}
 	}
 	memory := filepath.Join(dir, "memory")
-	if err = os.WriteFile(memory, []byte("native-memory-sentinel"), 0600); err != nil {
+	if err = os.WriteFile(memory, append([]byte("native-memory-sentinel"), make([]byte, 4096-len("native-memory-sentinel"))...), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m.artifact.Memory = []vm.SnapshotFile{{Path: memory, MediaType: cas.CheckpointMemoryMediaType}}
@@ -207,7 +215,7 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 		}
 		_ = frameio.WriteProtoFrame(stream, receipt)
 	}}
-	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: saveStoragePublisher{store}, TempDir: t.TempDir()}}
+	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: saveStoragePublisher{store}, ComputerRanges: store, TempDir: t.TempDir()}}
 	return o, c, m, cut
 }
 
@@ -232,12 +240,13 @@ func TestComputerCheckpointPipelineRetainsOneCutThroughPublicationUncertainty(t 
 				}
 			}
 			manifest := c.manifests[0]
-			path, err := downloadCheckpointObject(t.Context(), c.store, o.machines.CheckpointCipher, t.TempDir(), manifest.CheckpointID.String(), computercheckpoint.RuntimeObject{Role: "memory", Object: manifest.Memory}, 4096)
+			source, err := openCheckpointMemory(t.Context(), o.machines.ComputerRanges, o.machines.CheckpointCipher, cas.Descriptor(manifest.Memory), manifest.MemoryHeaderDigest, o.identity.EnvironmentID+"/"+o.identity.OwnerID+"/"+manifest.CheckpointID.String()+"/memory", 4096)
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := os.ReadFile(path)
-			if err != nil || string(data) != "native-memory-sentinel" {
+			data := make([]byte, 4096)
+			_, err = source.ReadAt(t.Context(), data, 0)
+			if err != nil || !bytes.HasPrefix(data, []byte("native-memory-sentinel")) {
 				t.Fatalf("roundtrip %q %v", data, err)
 			}
 			o.checkpointCut.Release()
@@ -285,11 +294,12 @@ type checkpointRestoreBackend struct {
 
 func (b *checkpointRestoreBackend) Restore(_ context.Context, r vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	b.calls++
-	if r.ComputerInstanceID != b.identity.AllocationID || r.Binding.ComputerInstanceID != b.identity.AllocationID || r.Topology.Computer.ComputerID != b.identity.OwnerID || len(r.Memory) != 1 {
+	if r.ComputerInstanceID != b.identity.AllocationID || r.Binding.ComputerInstanceID != b.identity.AllocationID || r.Topology.Computer.ComputerID != b.identity.OwnerID || r.MemorySource == nil {
 		b.t.Fatal("restore lost target ownership")
 	}
-	data, err := os.ReadFile(r.Memory[0])
-	if err != nil || string(data) != "native-memory-sentinel" {
+	data := make([]byte, 4096)
+	_, err := r.MemorySource.ReadAt(context.Background(), data, 0)
+	if err != nil || !bytes.HasPrefix(data, []byte("native-memory-sentinel")) {
 		b.t.Fatalf("backend received non-decrypted memory %q %v", data, err)
 	}
 	if b.verifyFilepack {
@@ -317,29 +327,8 @@ func (c *checkpointPipelineClient) ReadAgentCheckpoint(context.Context, workerap
 	return c.manifests[0], nil
 }
 
-type corruptCheckpointStore struct {
-	cas.ImmutableStore
-	digest string
-}
-
-func (s corruptCheckpointStore) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
-	if digest == s.digest {
-		body, err := s.ImmutableStore.Get(ctx, digest)
-		if err != nil {
-			return nil, err
-		}
-		raw, readErr := io.ReadAll(body)
-		if err = errors.Join(readErr, body.Close()); err != nil {
-			return nil, err
-		}
-		raw[len(raw)/2] ^= 1
-		return cas.NewVerifyingReadCloser(io.NopCloser(bytes.NewReader(raw)), digest), nil
-	}
-	return s.ImmutableStore.Get(ctx, digest)
-}
-
 func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing.T) {
-	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-key", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
+	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-memory-descriptor", "wrong-key", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
 		t.Run(fault, func(t *testing.T) {
 			source, c, _, _ := checkpointPipelineFixture(t, "", "")
 			if err := source.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} }); !errors.Is(err, errComputerHibernated) {
@@ -352,7 +341,7 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 			m := c.manifests[0]
 			b := &checkpointRestoreBackend{t: t, identity: id, machine: &checkpointPipelineMachine{}}
 			paused := false
-			target := &ComputerAllocationOwner{identity: id, client: c, checkpointKeyUnavailable: func() { paused = true }, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, TempDir: t.TempDir()}}
+			target := &ComputerAllocationOwner{identity: id, client: c, checkpointKeyUnavailable: func() { paused = true }, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
 			delivery := workerapi.ComputerAllocationDelivery{Identity: id, BaseVersion: c.save, RestoredFrom: c.save, Shape: workerapi.AllocationShape{VMPlatformID: m.Runtime.RuntimeID, VCPUCount: 1, MemoryBytes: 4096, ScratchBytes: 4096}}
 			material := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{Root: m.Disk}}
 			switch fault {
@@ -364,8 +353,10 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 				delivery.Shape.VMPlatformID = "other"
 			case "wrong-vcpu":
 				delivery.Shape.VCPUCount = 2
+			case "wrong-memory-descriptor":
+				c.manifests[0].Memory.SizeBytes++
 			case "corrupt-memory":
-				target.machines.ComputerObjects = corruptCheckpointStore{ImmutableStore: target.machines.ComputerObjects, digest: m.Memory.Digest}
+				c.manifests[0].MemoryHeaderDigest = sha256sum.DigestBytes([]byte("altered header"))
 			case "invalid-filepack":
 				b.verifyFilepack = true
 			case "invalid-runtime-content":
@@ -380,10 +371,10 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 				t.Fatalf("incorrect key fault classification: paused=%v error=%v", paused, err)
 			}
 
-			if (target.invalidCheckpointID != "") != (fault == "corrupt-memory" || (fault == "invalid-filepack" || fault == "invalid-runtime-content")) {
+			if (target.invalidCheckpointID != "") != ((fault == "corrupt-memory" || fault == "wrong-memory-descriptor") || (fault == "invalid-filepack" || fault == "invalid-runtime-content")) {
 				t.Fatalf("incorrect invalid checkpoint report: %q", target.invalidCheckpointID)
 			}
-			if fault == "wrong-key" || fault == "corrupt-memory" || (fault == "invalid-filepack" || fault == "invalid-runtime-content") {
+			if fault == "wrong-key" || (fault == "corrupt-memory" || fault == "wrong-memory-descriptor") || (fault == "invalid-filepack" || fault == "invalid-runtime-content") {
 				stopped := false
 				c.stopped = func(request workerapi.AgentComputerStoppedRequest) {
 					stopped = true
@@ -398,7 +389,7 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 					t.Fatalf("failed target did not finish cleanup: %v", err)
 				}
 				if fault == "wrong-key" {
-					replacement := &ComputerAllocationOwner{identity: id, client: c, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, TempDir: t.TempDir()}}
+					replacement := &ComputerAllocationOwner{identity: id, client: c, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
 					if err := replacement.restore(t.Context(), delivery, material, nil); err != nil || replacement.checkpoint == nil || b.calls != 1 {
 						t.Fatalf("correct key failed ordinary retained restore: %v", err)
 					}
@@ -602,4 +593,27 @@ func (c *uncutCheckpointClient) BeginAgentComputerCapture(ctx context.Context, r
 		err = proto.Unmarshal(response.Capture, c.continuation.capture)
 	}
 	return response, err
+}
+
+func (*checkpointPipelineMachine) PrepareCheckpoint(context.Context) error { return nil }
+
+func (m *checkpointPipelineMachine) CheckpointReady() (bool, error) {
+	return !m.hydrating, m.hydrationErr
+}
+
+func TestComputerCheckpointPendingHydrationLeavesSaveOwnerAvailable(t *testing.T) {
+	o, c, m, _ := checkpointPipelineFixture(t, "", "")
+	m.hydrating = true
+	o.checkpointRetryDelay = 4 * time.Second
+	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, func() func() { t.Fatal("suspended a hydrating Computer"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 0 || m.snapshots != 0 || o.checkpointRetryDelay != 0 {
+		t.Fatalf("hydration blocked or admitted capture: calls=%v delay=%v", c.calls, o.checkpointRetryDelay)
+	}
+	m.hydrationErr = errors.New("late memory failure")
+	o.checkpointRetryAt = time.Time{}
+	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, nil); !errors.Is(err, m.hydrationErr) {
+		t.Fatalf("pager failure hidden: %v", err)
+	}
 }

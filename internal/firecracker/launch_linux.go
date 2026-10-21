@@ -47,11 +47,12 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 		return err
 	}
-	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
+	runtimeOnly := request.Purpose == vm.MaterializePreparationQualification && isRuntimeDriveSet(request.ReadOnlyDrives)
+	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) && !runtimeOnly {
 		return errors.New("runtime read-only drives must be the complete program drive set")
 	}
-	if isProgramDriveSet(request.ReadOnlyDrives) {
-		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
+	if isProgramDriveSet(request.ReadOnlyDrives) || runtimeOnly {
+		if err := validateExecutableDriveIdentities(request.ReadOnlyDrives); err != nil {
 			return err
 		}
 	}
@@ -115,6 +116,8 @@ func runtimeKernelArgs(
 	}
 	if isProgramDriveSet(readOnlyDrives) {
 		args += " " + runtimeProgramKernelFlag
+	} else if isRuntimeDriveSet(readOnlyDrives) {
+		args += " " + runtimeQualificationKernelFlag
 	}
 	return args
 }
@@ -165,10 +168,14 @@ func (c *Connector) start(ctx context.Context, mode launchMode, instanceID strin
 	if err != nil {
 		return nil, err
 	}
+	if mode == bootSeedBuildLaunch {
+		return machine, nil
+	}
 	if _, err := machine.Open(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 		defer cancel()
-		return nil, errors.Join(err, machine.Close(cleanupCtx))
+		closeErr := machine.Close(cleanupCtx)
+		return nil, errors.Join(err, machine.memoryPager.failure(), closeErr)
 	}
 	return machine, nil
 }
@@ -252,7 +259,9 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	computerDiskPath := ""
 	if topology.Computer != nil {
+		attachStarted := time.Now()
 		computerDiskPath, err = attachComputerDisk(ctx, topology.Computer, instanceDir, c.cfg.JailerUID, c.cfg.JailerGID)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_attach_computer_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(attachStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}
@@ -263,12 +272,14 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	}
 	readOnlyDrivePaths := map[string]string(nil)
 	if restoring && len(readOnlyDrives) != 0 {
+		drivesStarted := time.Now()
 		readOnlyDrivePaths, err = prepareRestoreReadOnlyDrivePaths(
 			instanceDir,
 			readOnlyDrives,
 			c.cfg.JailerUID,
 			c.cfg.JailerGID,
 		)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_prepare_read_only_drives", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(drivesStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}
@@ -358,6 +369,17 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	// Keep it separate from the startup request so prepared machines can outlive
 	// a background warm command after boot succeeds.
 	machineCtx, machineCancel := context.WithCancel(context.Background())
+	var pager *memoryPager
+	if c.restoreMemory != nil {
+		opts = append(opts, withLazyMemoryRestore(c.restoreMemory, machineCtx, machineCancel, &pager))
+	}
+	defer func() {
+		if retErr != nil {
+			machineCancel()
+			closeErr := pager.Close()
+			retErr = errors.Join(retErr, pager.failure(), closeErr)
+		}
+	}()
 	phaseStarted = time.Now()
 	sdkMachine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
 	reportPhase(recordPhase, vm.Phase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
@@ -408,17 +430,35 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 			return nil, fmt.Errorf("resume restored Firecracker machine: %w", err)
 		}
 		reportPhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		if pager != nil {
+			pager.recordPhase = recordPhase
+		}
+		pager.StartHydration()
 	}
-	sdkMachine.Logger().Printf("waiting for guest health")
-	phaseStarted = time.Now()
-	err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
-	reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-	if err != nil {
-		started = false
-		return nil, err
+	var bootstrap bootstrapReceipt
+	if !restoring || c.seedRestore {
+		phaseStarted = time.Now()
+		bootstrap, err = c.bootstrapGuest(ctx, vsockHostPath, machineExit, mode == bootSeedBuildLaunch)
+		reportPhase(recordPhase, vm.Phase{Name: "materialize_guest_bootstrap", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		if err != nil {
+			started = false
+			return nil, err
+		}
 	}
-	sdkMachine.Logger().Printf("guest health ready")
+	if mode != bootSeedBuildLaunch {
+		sdkMachine.Logger().Printf("waiting for guest health")
+		phaseStarted = time.Now()
+		err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
+		reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err), Memory: pager.stats()})
+		if err != nil {
+			started = false
+			return nil, err
+		}
+		sdkMachine.Logger().Printf("guest health ready")
+	}
 	machine := &guestMachine{
+		bootstrap:       bootstrap,
+		memoryPager:     pager,
 		machine:         sdkMachine,
 		machineCancel:   machineCancel,
 		machineExit:     machineExit,

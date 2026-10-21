@@ -43,6 +43,13 @@ export const workspace = template({
   },
 })
 
+// Seed-only admission must qualify its Runtime without an authored Program.
+export const seedWorkspace = template({
+  id: "native-seed-only",
+  image: baseImage.run(["mkdir", "-p", "/workspace"]),
+  resources: { cpu: 1, memory: "1GiB", disk: "32GiB" },
+})
+
 function native(definition: typeof nativeCodex) {
   return agent({
     id: definition.id,
@@ -87,7 +94,10 @@ function native(definition: typeof nativeCodex) {
         await definition.turn(turn, context)
         throw new Error("Lost launcher unexpectedly accepted native work")
       }
+      const handlerMonotonicNs = process.hrtime.bigint().toString()
       const performanceKind = typeof input === "string" && input.startsWith("performance:") ? input.slice("performance:".length) : undefined
+      const diagnosticPhase = (phase: string) => { if (performanceKind) console.error(JSON.stringify({event:"native.performance.handler_phase",provider:definition.id,turnId:turn.id,sequence:turn.sequence,phase,wallMs:Date.now(),monotonicNs:process.hrtime.bigint().toString(),handlerMonotonicNs})) }
+      diagnosticPhase("entry")
       if (performanceKind) {
         assert(["no-op", "edit-test", "dependencies"].includes(performanceKind))
         const directory = `/workspace/${context.session.id}`
@@ -98,7 +108,7 @@ function native(definition: typeof nativeCodex) {
       const stopPath = `/workspace/native-stop-${definition.id}.json`
       if (stopping) await writeFile(stopPath, JSON.stringify({ turnId: turn.id, directory: `/workspace/${context.session.id}` }))
       let nativeResult: Awaited<ReturnType<typeof definition.turn>>
-      try { nativeResult = await definition.turn(turn, context) }
+      try { diagnosticPhase("native_start"); nativeResult = await definition.turn(turn, context); diagnosticPhase("native_end") }
       catch (error) {
         if (!stopping) throw error
         assert(turn.signal.aborted, "native control Turn failed without interruption")
@@ -135,7 +145,9 @@ function native(definition: typeof nativeCodex) {
       const workload = performanceKind ? JSON.parse(await readFile(`/workspace/${context.session.id}/performance-result-${turn.sequence}.json`, "utf8")) : undefined
       if (workload) { assert.equal(workload.kind, performanceKind); assert.equal(workload.sequence, turn.sequence) }
       const result = { ...nativeResult, setupCount: context.initResult.setupCount, nativeConversationId: saved.id, ...(workload ? { workload } : {}) }
+      diagnosticPhase("output_start")
       await turn.output.write([{ type: "json", value: result }])
+      diagnosticPhase("output_end")
       await writeFile(`/workspace/${context.session.id}/result-${turn.sequence}.json`, JSON.stringify(result))
       return result
     },
@@ -243,24 +255,29 @@ export const peer = agent({
     }
     let released = false
     await turn.onMessage(message => { if (fixtureValue(message.content) === "release") released = true })
+    let previousProgressDelivery: { startedNs: string; stateWrittenNs: string; completedNs: string } | undefined
     while (!released) {
       turn.signal.throwIfAborted()
-      let io: { bytes: number; writeReadMs: number; observedAt: string } | undefined
+      let io: { bytes: number; writeReadMs: number; observedAt: string; startedNs: string; completedNs: string } | undefined
       if (performanceProbe) {
         const data = Buffer.alloc(32 * 1024, state.count % 256)
         const started = performance.now()
+        const startedNs = process.hrtime.bigint().toString()
         const path = `/workspace/peer-io-${session.id}`
         await writeFile(path, data)
         assert.deepEqual(await readFile(path), data)
-        io = { bytes: data.length * 2, writeReadMs: performance.now() - started, observedAt: new Date().toISOString() }
+        io = { startedNs, completedNs: process.hrtime.bigint().toString(), bytes: data.length * 2, writeReadMs: performance.now() - started, observedAt: new Date().toISOString() }
       }
-      const progress = { nonce: state.nonce, count: ++state.count, pid: process.pid, ...(io ? { io } : {}), ...(preparedWork ? { preparedWork } : {}),
+      const progress = { nonce: state.nonce, count: ++state.count, pid: process.pid, ...(io ? { io, previousProgressDelivery } : {}), ...(preparedWork ? { preparedWork } : {}),
         ...(state.secrets ? { secretChecks: state.secrets.checks } : {}),
         ...(state.discovery ? { discovery: { owned: state.discovery.owned.id, requested: state.discovery.requested.id,
           ownedTurn: state.discovery.ownedTurn, requestedTurn: state.discovery.requestedTurn,
           controls: state.discovery.controls, checks: state.discovery.checks } } : {}) }
+      const deliveryStartedNs = process.hrtime.bigint().toString()
       await writeFile(`/workspace/peer-${session.id}.json`, JSON.stringify(progress))
+      const stateWrittenNs = process.hrtime.bigint().toString()
       await turn.output.write(JSON.stringify(progress))
+      previousProgressDelivery = { startedNs: deliveryStartedNs, stateWrittenNs, completedNs: process.hrtime.bigint().toString() }
       preparedWork = undefined
       await delay(100, undefined, { signal: turn.signal })
     }
