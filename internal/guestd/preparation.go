@@ -104,7 +104,7 @@ func (r *computerOperationRegistry) controlPreparation(ctx context.Context, requ
 		return &computerv0.PreparationControlResponse{State: "absent"}, nil
 	}
 	if start := request.GetStart(); start != nil {
-		if !definition.ValidDeclaredID(start.GetTemplateDefinitionId()) || wire.ValidatePreparationControl(request) != nil {
+		if (!start.GetQualificationOnly() && !definition.ValidDeclaredID(start.GetTemplateDefinitionId())) || wire.ValidatePreparationControl(request) != nil {
 			return nil, errors.New("invalid preparation start")
 		}
 		if p != nil {
@@ -139,6 +139,12 @@ func (r *computerOperationRegistry) controlPreparation(ctx context.Context, requ
 			defer r.release(entry)
 			defer cancel()
 			err, cleanupErr := run(entry, lifetime, startCopy, output)
+			// The runner's deferred filesystem cleanup has returned. Source
+			// success certifies a clean terminal image; qualification is read-only
+			// validation of a separate clone and must not finalize that clone.
+			if err == nil && cleanupErr == nil && !startCopy.GetQualificationOnly() {
+				err = r.writeback.finalizePreparation(lifetime)
+			}
 			// A failed launch or missing pipe proof is an unknown boundary. Actual
 			// pipe completion closes each buffer first and remains authoritative.
 			output.close(false)

@@ -103,6 +103,9 @@ func (c *preparationOwnerClient) PublishPreparation(_ context.Context, r workera
 	if r.Root != c.root {
 		return errors.New("capture root changed")
 	}
+	if !c.backend.qualifiedAbsent.Load() || c.backend.probes.Load() != 1 {
+		return errors.New("published before isolated qualification cleanup")
+	}
 	c.publications.Add(1)
 	if c.losePublish.Swap(false) {
 		return errors.New("publication reply lost")
@@ -128,19 +131,52 @@ func (s preparationOwnerStore) Publish(ctx context.Context, d cas.Descriptor, fi
 
 type preparationOwnerBackend struct {
 	unsupportedMachineStarts
-	machine                          *allocationOwnerTestMachine
-	starts, authored, flushes        atomic.Int64
-	failCleanup, absent, guestFailed atomic.Bool
+	machine                                                        *allocationOwnerTestMachine
+	starts, authored, flushes                                      atomic.Int64
+	failCleanup, absent, guestFailed                               atomic.Bool
+	probes                                                         atomic.Int64
+	qualificationID                                                string
+	qualifiedAbsent, failQualificationCleanup, qualificationFailed atomic.Bool
+	qualificationCancelled                                         atomic.Bool
 }
 
 func (b *preparationOwnerBackend) Materialize(_ context.Context, r vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
-	if r.Topology.Computer == nil || r.Topology.Computer.File == nil || r.Topology.Computer.Device != nil || len(r.ReadOnlyDrives) != 2 {
+	if r.Topology.Computer == nil || (r.Topology.Computer.File == nil) == (r.Topology.Computer.Device == nil) || len(r.ReadOnlyDrives) != 2 {
 		return nil, errors.New("invalid preparation VM topology")
 	}
+	if r.Topology.Computer.Device != nil {
+		if r.Purpose != vm.MaterializePreparationQualification {
+			return nil, errors.New("qualification requested workload Secret transport")
+		}
+		b.qualificationID = r.ID
+	} else if r.Purpose != vm.MaterializeWorkload {
+		return nil, errors.New("authored preparation skipped workload Secret transport")
+	}
 	b.starts.Add(1)
-	return b.machine, nil
+	machine := b.machine
+	if r.Topology.Computer.Device != nil {
+		machine = &allocationOwnerTestMachine{agentControlMachine: b.machine.agentControlMachine}
+	}
+	return &preparationGuardMachine{machine}, nil
 }
-func (b *preparationOwnerBackend) Cleanup(context.Context, vm.Owner) error {
+
+type preparationGuardMachine struct{ *allocationOwnerTestMachine }
+
+func (m *preparationGuardMachine) WithRunningGuestControl(ctx context.Context, stage vm.GuestControlStage, run func(context.Context) error) error {
+	if m.closes.Load() > 0 {
+		return errors.New("guest control after physical close")
+	}
+	return m.allocationOwnerTestMachine.WithRunningGuestControl(ctx, stage, run)
+}
+
+func (b *preparationOwnerBackend) Cleanup(_ context.Context, owner vm.Owner) error {
+	if owner.ID == b.qualificationID {
+		if b.failQualificationCleanup.Load() {
+			return errors.New("qualification absence unproved")
+		}
+		b.qualifiedAbsent.Store(true)
+		return nil
+	}
 	if b.failCleanup.Load() {
 		return errors.New("physical absence unproved")
 	}
@@ -192,6 +228,30 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 				}
 				return
 			}
+			if r.Identity.InstanceId != identity.AllocationID {
+				state := "absent"
+				if r.Start != nil {
+					if !r.Start.QualificationOnly || r.Start.TemplateDefinitionId != "" || len(r.Start.Secrets) != 0 || len(r.Start.ProtectedEnv) != 0 || len(r.Start.ProxyCa) != 0 {
+						t.Error("qualification received authored work or Secrets")
+					}
+					backend.probes.Add(1)
+				}
+				if backend.probes.Load() > 0 {
+					state = "succeeded"
+					if backend.qualificationFailed.Load() || backend.qualificationCancelled.Load() {
+						state = "failed"
+					}
+				}
+				code := ""
+				if state == "failed" {
+					code = "preparation_execution_failed"
+				}
+				if backend.qualificationCancelled.Load() {
+					code = "preparation_cancelled"
+				}
+				_ = frameio.WriteProtoFrame(stream, &computerv0.PreparationControlResponse{State: state, ErrorCode: code})
+				return
+			}
 			if r.Start != nil {
 				if len(r.Start.Secrets) != 2 || r.Start.Secrets[1].PlacementKind != "file" || r.Start.Secrets[1].PlacementTarget != "/etc/build/token" || string(r.Start.Secrets[1].Value) != "file-secret" || r.Start.ProtectedEnv["PROTECTED"] != "placeholder" || string(r.Start.ProxyCa) != "public trust" {
 					t.Error("preparation placement or public trust was lost")
@@ -223,10 +283,23 @@ func preparationOwnerFixture(t *testing.T) (*PreparationAllocationOwner, *prepar
 	if err != nil {
 		t.Fatal(err)
 	}
-	machines := &PreparedMachines{PreparationLogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, Backend: backend, CAS: store, PlatformStore: store, ComputerObjects: preparationOwnerStore{store}, Reservations: ledger, TempDir: t.TempDir(), RuntimeArchitecture: definition.ArchitectureX8664, ComputerStagingBytes: 4 << 20}
+	machines := &PreparedMachines{ComputerRanges: store, ComputerHelper: "/test/nbd-helper", ComputerDevices: []string{"/dev/nbd-test"}, PreparationLogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, Backend: backend, CAS: store, PlatformStore: store, ComputerObjects: preparationOwnerStore{store}, Reservations: ledger, TempDir: t.TempDir(), RuntimeArchitecture: definition.ArchitectureX8664, ComputerStagingBytes: 4 << 20}
 	owner, err := NewPreparationAllocationOwner(machines, client, identity, 1, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
+	}
+	owner.attachQualification = func(ctx context.Context, id workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+		if id.AllocationID == identity.AllocationID || source.Disk.Root != client.root || !backend.absent.Load() {
+			t.Fatal("qualification did not use captured root after original stop")
+		}
+		device := &countingCloseComputerDevice{}
+		machines.mu.Lock()
+		if machines.computerDevices == nil {
+			machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{}
+		}
+		machines.computerDevices[preparedMachineRef{id: id.AllocationID, epoch: id.Epoch}] = device
+		machines.mu.Unlock()
+		return device, nil
 	}
 	owner.stageImage = func(_ context.Context, stage *preparationStage, _ workerapi.AllocationIdentity, _ workerapi.PreparationStart) error {
 		var err error
@@ -254,7 +327,7 @@ func TestPreparationAllocationReconcilesLostStartPublishAndStop(t *testing.T) {
 	} else {
 		t.Logf("first operation outcome: %v", err)
 	}
-	if client.keyCalls.Load() != 2 || client.publications.Load() != 2 || backend.starts.Load() != 1 || backend.authored.Load() != 1 || backend.flushes.Load() != 1 || client.failures.Load() != 0 {
+	if client.keyCalls.Load() != 2 || client.publications.Load() != 2 || backend.starts.Load() != 2 || backend.authored.Load() != 1 || backend.flushes.Load() != 0 || client.failures.Load() != 0 {
 		t.Fatalf("ordering: publications=%d starts=%d authored=%d flushes=%d failures=%d", client.publications.Load(), backend.starts.Load(), backend.authored.Load(), backend.flushes.Load(), client.failures.Load())
 	}
 	owner.admitStart = func(context.Context) error {
@@ -264,7 +337,7 @@ func TestPreparationAllocationReconcilesLostStartPublishAndStop(t *testing.T) {
 	if err := owner.Run(t.Context()); err != nil || !owner.Finished() {
 		t.Fatalf("stop reconciliation: %v", err)
 	}
-	if backend.starts.Load() != 1 || backend.authored.Load() != 1 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+	if backend.starts.Load() != 2 || backend.authored.Load() != 1 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("cleanup restarted or retained released capacity")
 	}
 }
@@ -322,6 +395,12 @@ func TestPreparationOutputOutageDoesNotBlockPublication(t *testing.T) {
 				if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 					t.Error(err)
 				}
+				return
+			}
+			if request.Identity.InstanceId != owner.identity.AllocationID {
+				var payload bytes.Buffer
+				_ = frameio.WriteProtoFrame(&payload, &request)
+				fallback(&preparationReplayConn{Conn: stream, reader: io.MultiReader(bytes.NewReader(raw.Bytes()), bytes.NewReader(payload.Bytes()), stream)})
 				return
 			}
 			if request.Start != nil {
@@ -415,7 +494,7 @@ func TestPreparationAllocationHealthWaitRenewsSameGrant(t *testing.T) {
 		if err := o.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if time.Now().Before(readyAt) || backend.starts.Load() != 1 || client.deliveries.Load() != 1 || client.renewals.Load() < 3 || !o.Finished() {
+		if time.Now().Before(readyAt) || backend.starts.Load() != 2 || client.deliveries.Load() != 1 || client.renewals.Load() < 3 || !o.Finished() {
 			t.Fatal("preparation did not renew and finish same grant after health recovered")
 		}
 	})
@@ -429,5 +508,143 @@ func TestPreparationAllocationKeyFaultReleasesUnstartedOwner(t *testing.T) {
 	}
 	if !o.Finished() || backend.starts.Load() != 0 || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("unstarted preparation remained held or started")
+	}
+}
+
+func TestPreparationQualificationFailureNeverPublishes(t *testing.T) {
+	owner, client, backend := preparationOwnerFixture(t)
+	backend.qualificationFailed.Store(true)
+	backend.failQualificationCleanup.Store(true)
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("qualification failure hidden")
+	}
+	if owner.Finished() || owner.qualification == nil || client.publications.Load() != 0 || len(owner.machines.Reservations.Snapshot().Reservations) != 1 {
+		t.Fatal("failed clone cleanup released authority or published")
+	}
+	id := owner.qualification.identity.AllocationID
+	if id == owner.identity.AllocationID || backend.probes.Load() != 1 {
+		t.Fatal("qualification reused source identity or reran authored work")
+	}
+	backend.failQualificationCleanup.Store(false)
+	if err := owner.Run(t.Context()); err != nil || !owner.Finished() {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if owner.failureCode != "preparation_execution_failed" || owner.qualification != nil || client.publications.Load() != 0 || backend.authored.Load() != 1 || backend.starts.Load() != 2 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("cleanup reran preparation or retained released capacity")
+	}
+}
+
+func TestPreparationQualificationAttachmentFailureNeverPublishes(t *testing.T) {
+	owner, client, backend := preparationOwnerFixture(t)
+	attach := owner.attachQualification
+	owner.attachQualification = func(ctx context.Context, id workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+		device, err := attach(ctx, id, source)
+		if err != nil {
+			return device, err
+		}
+		return device, errors.New("attachment failed after retaining device")
+	}
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("attachment failure hidden")
+	}
+	if owner.failureCode != "preparation_qualification_unavailable" || !owner.Finished() || client.publications.Load() != 0 || backend.starts.Load() != 1 || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("failed attachment launched or retained capacity")
+	}
+}
+
+func TestPreparationQualificationRenewsItsOwnGuest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		owner, client, backend := preparationOwnerFixture(t)
+		client.delivery.ExpiresAt = time.Now().Add(15 * time.Second)
+		// Admission waiting must not consume the later execution budget.
+		owner.admitStart = func(context.Context) error {
+			if backend.absent.Load() {
+				time.Sleep(50 * time.Second)
+			}
+			return nil
+		}
+		fallback := backend.machine.handle
+		var guestExpiry, renewals, started atomic.Int64
+		backend.machine.handle = func(stream net.Conn) {
+			raw := new(bytes.Buffer)
+			header, _, err := wire.ReadStreamFrameHeader(io.TeeReader(stream, raw))
+			if err != nil {
+				return
+			}
+			if header.Type != wire.StreamTypePreparationControl {
+				fallback(&preparationReplayConn{Conn: stream, reader: io.MultiReader(bytes.NewReader(raw.Bytes()), stream)})
+				return
+			}
+			var request computerv0.PreparationControlRequest
+			if err := frameio.ReadProtoFrame(stream, &request); err != nil {
+				return
+			}
+			if request.Identity.InstanceId == owner.identity.AllocationID {
+				var payload bytes.Buffer
+				_ = frameio.WriteProtoFrame(&payload, &request)
+				fallback(&preparationReplayConn{Conn: stream, reader: io.MultiReader(bytes.NewReader(raw.Bytes()), bytes.NewReader(payload.Bytes()), stream)})
+				return
+			}
+			state := "absent"
+			if request.Start != nil {
+				backend.probes.Add(1)
+				started.Store(time.Now().UnixNano())
+				guestExpiry.Store(request.ExpiresAtUnixNano)
+			}
+			if request.RenewOnly {
+				renewals.Add(1)
+				guestExpiry.Store(request.ExpiresAtUnixNano)
+			}
+			if started.Load() != 0 {
+				state = "running"
+				if request.WaitForCompletion {
+					time.Sleep(20 * time.Second)
+					state = "succeeded"
+				}
+				if time.Now().UnixNano() >= guestExpiry.Load() {
+					state = "failed"
+				}
+			}
+			_ = frameio.WriteProtoFrame(stream, &computerv0.PreparationControlResponse{State: state})
+		}
+		if err := owner.Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if renewals.Load() == 0 || client.publications.Load() != 1 || backend.authored.Load() != 1 {
+			t.Fatal("qualification did not renew its own live guest")
+		}
+	})
+}
+
+func TestPreparationQualificationRechecksHostAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		owner, client, backend := preparationOwnerFixture(t)
+		owner.admitStart = func(context.Context) error {
+			if backend.absent.Load() {
+				return errors.New("host disk floor")
+			}
+			return nil
+		}
+		owner.attachQualification = func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
+			t.Fatal("attached under hard health denial")
+			return nil, nil
+		}
+		if err := owner.Run(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("qualification wait: %v", err)
+		}
+		if client.publications.Load() != 0 || backend.starts.Load() != 1 || !owner.Finished() || owner.failureCode != "preparation_qualification_unavailable" {
+			t.Fatal("health denial bypassed or reported as a defective image")
+		}
+	})
+}
+
+func TestPreparationQualificationCancellationIsUnavailable(t *testing.T) {
+	owner, client, backend := preparationOwnerFixture(t)
+	backend.qualificationCancelled.Store(true)
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("guest cancellation hidden")
+	}
+	if owner.failureCode != "preparation_qualification_unavailable" || !owner.Finished() || client.publications.Load() != 0 || owner.qualification != nil || len(owner.machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("cancelled qualification was published, retained, or reported as defective execution")
 	}
 }

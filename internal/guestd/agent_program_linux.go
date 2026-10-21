@@ -13,6 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"golang.org/x/sys/unix"
 )
@@ -49,7 +50,9 @@ func materializeAgentProgram(ctx context.Context, root string, kind agentv1.Sess
 	if kind == agentv1.SessionProgramRequest_KIND_RUNTIME {
 		role = artifact.RoleRuntime
 	}
-	image.content, err = localcopy.Produce(ctx, directory, role, localcopy.Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, func(file *os.File) error {
+	mediaType, _ := role.MediaType()
+	expected := cas.Descriptor{Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: mediaType}
+	image.content, err = localcopy.Receive(ctx, directory, role, expected, func(file *os.File) error {
 		// Reserve the actual bytes before receiving them. This shares the Computer's
 		// already-reserved scratch capacity and never evicts a peer's executable.
 		if err := unix.Fallocate(int(file.Fd()), 0, 0, descriptor.SizeBytes); err != nil {
@@ -59,10 +62,6 @@ func materializeAgentProgram(ctx context.Context, root string, kind agentv1.Sess
 	})
 	if err != nil {
 		return nil, err
-	}
-	actual := image.content.Descriptor()
-	if actual.Digest != descriptor.Digest || actual.SizeBytes != descriptor.SizeBytes {
-		return nil, errors.New("session Program bytes do not match pinned descriptor")
 	}
 	file, err := image.content.VerifierFile()
 	if err != nil {

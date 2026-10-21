@@ -543,11 +543,34 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, scope
 		return api.DeploymentResponse{}, err
 	}
 	path := environmentScopedResourcePath(basePath, deployment, "/promote")
-	var response api.DeploymentResponse
-	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
-		return api.DeploymentResponse{}, err
+	for {
+		var response api.DeploymentResponse
+		if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
+			return api.DeploymentResponse{}, err
+		}
+		if response.PreparationState != "preparing" {
+			return response, nil
+		}
+		// Observation never retries failed authored preparation. Only a new
+		// explicit promotion request starts another attempt after failure.
+		for response.PreparationState == "preparing" {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return api.DeploymentResponse{}, ctx.Err()
+			case <-timer.C:
+			}
+			response, err = c.GetDeployment(ctx, deployment, scope)
+			if err != nil {
+				return api.DeploymentResponse{}, err
+			}
+		}
+		if response.PreparationState != "ready" && response.PreparationState != "unprepared" {
+			return api.DeploymentResponse{}, fmt.Errorf("deployment %s preparation %s; current deployment was not changed", deployment, response.PreparationState)
+		}
+		// Promotion rechecks exact eligibility atomically with current cutover.
 	}
-	return response, nil
 }
 
 type SecretOptions struct {

@@ -221,7 +221,17 @@ type RestoreRequest struct {
 	RecordPhase          func(Phase)
 }
 
+type MaterializePurpose uint8
+
+const (
+	MaterializeWorkload MaterializePurpose = iota
+	// MaterializePreparationQualification runs only the fixed prepared-image probe,
+	// with fresh physical identity and no Control Plane Secret transport.
+	MaterializePreparationQualification
+)
+
 type MaterializeRequest struct {
+	Purpose                   MaterializePurpose
 	ID                        string
 	OwnerKind                 OwnerKind
 	Binding                   WorkloadBinding

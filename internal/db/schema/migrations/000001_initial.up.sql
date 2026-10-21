@@ -577,6 +577,7 @@ CREATE TABLE template_definitions (
     template_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
+    prepare boolean NOT NULL DEFAULT false,
     cpu_millis bigint NOT NULL CHECK (cpu_millis > 0),
     memory_bytes bigint NOT NULL CHECK (memory_bytes > 0 AND memory_bytes % 1048576 = 0),
     disk_bytes bigint CHECK (disk_bytes > 0 AND disk_bytes % 1048576 = 0),

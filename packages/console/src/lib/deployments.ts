@@ -12,6 +12,7 @@ export type Deployment = {
   version: string;
   bundle_digest: string;
   created_at: string;
+  preparation_state?: "ready" | "preparing" | "failed" | "unprepared" | "unavailable";
 };
 
 type ListDeploymentsResponse = {
@@ -53,11 +54,22 @@ export async function getDeployment(id: string, scope: DeploymentScope): Promise
   return request<Deployment>(`${deploymentsPath(scope)}/${encodeURIComponent(id)}`);
 }
 
-export async function promoteDeployment(id: string, scope: DeploymentScope): Promise<Deployment> {
-  return postJson<Record<string, never>, Deployment>(
-    `${deploymentsPath(scope)}/${encodeURIComponent(id)}/promote`,
-    {},
-  );
+export async function promoteDeployment(id: string, scope: DeploymentScope, signal?: AbortSignal): Promise<Deployment> {
+  const path = `${deploymentsPath(scope)}/${encodeURIComponent(id)}`;
+  const options = signal ? { signal } : {};
+  for (;;) {
+    signal?.throwIfAborted();
+    let result = await postJson<Record<string, never>, Deployment>(`${path}/promote`, {}, options);
+    if (result.preparation_state !== "preparing") return result;
+    while (result.preparation_state === "preparing") {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      signal?.throwIfAborted();
+      result = await request<Deployment>(path, options);
+    }
+    if (result.preparation_state !== "ready" && result.preparation_state !== "unprepared") {
+      throw new Error(`Environment preparation ${result.preparation_state}. The current deployment has not changed.`);
+    }
+  }
 }
 
 export async function getDeploymentEvents(

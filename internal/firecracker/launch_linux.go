@@ -30,6 +30,9 @@ const ext4Magic = 0xef53
 var nextGuestCID atomic.Uint32
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
+	if request.Purpose != vm.MaterializeWorkload && request.Purpose != vm.MaterializePreparationQualification {
+		return errors.New("the Firecracker materialize purpose is invalid")
+	}
 	if request.Topology.Computer != nil {
 		if err := validateComputerDisk(request.Topology.Computer); err != nil {
 			return err

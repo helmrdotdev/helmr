@@ -8,6 +8,8 @@ import (
 	"io"
 	"sync"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
 type cacheRangeSource func(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
@@ -151,5 +153,209 @@ func TestVersionRangeCacheSharesCompletePackAcrossPages(t *testing.T) {
 	}
 	if got := readCachedRange(t, c, "pack", 1<<20, 99, 100); !bytes.Equal(got, raw[99:199]) || calls != 1 {
 		t.Fatal("range did not reuse full pack")
+	}
+}
+
+func TestSegmentReadWindows(t *testing.T) {
+	var calls []versionRangeKey
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, d string, size, offset, length int64) (io.ReadCloser, error) {
+		calls = append(calls, versionRangeKey{d, size, offset, length})
+		b := make([]byte, length)
+		for i := range b {
+			b[i] = byte((offset + int64(i)) % 251)
+		}
+		return io.NopCloser(bytes.NewReader(b)), nil
+	}))
+	read := func(d string, size, offset, length int64) {
+		t.Helper()
+		r, err := c.GetSegmentRange(t.Context(), d, size, offset, length)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(r)
+		if err = errors.Join(err, r.Close()); err != nil {
+			t.Fatal(err)
+		}
+		if int64(len(b)) != length {
+			t.Fatal(len(b))
+		}
+		for i, v := range b {
+			if v != byte((offset+int64(i))%251) {
+				t.Fatal("wrong slice")
+			}
+		}
+	}
+	const w = int64(segmentReadWindowBytes)
+	read("a", 2*w+65549, 100, 65536)
+	read("a", 2*w+65549, 8192, 65536)
+	if len(calls) != 1 || calls[0].offset != 0 || calls[0].length != w {
+		t.Fatal(calls)
+	}
+	read("a", 2*w+65549, w-10, 20)
+	if calls[1].offset != w-10 || calls[1].length != 20 {
+		t.Fatal(calls)
+	}
+	read("a", 2*w+65549, 2*w+3, 65536)
+	if calls[2].offset != 2*w || calls[2].length != 65549 {
+		t.Fatal(calls)
+	}
+	read("b", 2*w+65549, 100, 65536)
+	read("a", 2*w+65550, 100, 65536)
+	if len(calls) != 5 {
+		t.Fatal(calls)
+	}
+	for _, k := range []versionRangeKey{{"a", 10, -1, 1}, {"a", 10, 0, 0}, {"a", 10, 9, 2}, {"a", 10, 0, 11}, {"a", 10, 1<<63 - 1, 1}} {
+		if _, err := c.GetSegmentRange(t.Context(), k.digest, k.size, k.offset, k.length); err == nil {
+			t.Fatal(k)
+		}
+	}
+	if len(calls) != 5 {
+		t.Fatal("invalid request fetched")
+	}
+	read("cross", 2*w, w-10, 65536)
+	if calls[5].offset != w-10 || calls[5].length != 65536 {
+		t.Fatal("cross-window demand widened", calls[5])
+	}
+	read("small", 2*w, 100, 65535)
+	if calls[6].offset != 100 || calls[6].length != 65535 {
+		t.Fatal("small demand widened", calls[6])
+	}
+
+}
+
+func TestSegmentWindowReadersSurviveEvictionAndConcurrentBudget(t *testing.T) {
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{37}, int(length)))), nil
+	}))
+	r, err := c.GetSegmentRange(t.Context(), "pinned", 2<<20, 100, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for worker := range 4 {
+		wg.Go(func() {
+			for i := range 8 {
+				r, err := c.GetSegmentRange(t.Context(), fmt.Sprintf("%d:%d", worker, i), 2<<20, 100, 65536)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if err := r.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if c.windowBytes > segmentReadCacheBytes || c.bytes > versionReadCacheBytes {
+		t.Fatalf("bytes=%d windows=%d", c.bytes, c.windowBytes)
+	}
+	c.clear()
+	b, err := io.ReadAll(r)
+	if err = errors.Join(err, r.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b, bytes.Repeat([]byte{37}, 65536)) {
+		t.Fatal("eviction changed open reader")
+	}
+	if c.windowBytes != 0 {
+		t.Fatal("retained window accounting")
+	}
+}
+
+func TestSegmentWindowReadAmplification(t *testing.T) {
+	for _, sparse := range []bool{false, true} {
+		t.Run(fmt.Sprint(sparse), func(t *testing.T) {
+			calls, total := 0, int64(0)
+			c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+				calls++
+				total += length
+				return io.NopCloser(bytes.NewReader(make([]byte, length))), nil
+			}))
+			for i := range 16 {
+				offset, length := int64(i*65536), int64(65536)
+				if sparse {
+					offset = int64(i) * segmentReadWindowBytes
+					length = 4096
+				}
+				r, err := c.GetSegmentRange(t.Context(), "a", 64<<20, offset, length)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.Close()
+			}
+			wantCalls, wantBytes := 1, int64(segmentReadWindowBytes)
+			if sparse {
+				wantCalls = 16
+				wantBytes = 16 * 4096
+			}
+			if calls != wantCalls || total != wantBytes {
+				t.Fatalf("calls=%d bytes=%d", calls, total)
+			}
+			t.Logf("remote_calls=%d remote_bytes=%d", calls, total)
+		})
+	}
+}
+
+func TestSegmentWindowAuthenticatesCachedNeighbor(t *testing.T) {
+	key := bytes.Repeat([]byte{1}, 32)
+	records := make([][]byte, 32)
+	for i := range records {
+		records[i] = bytes.Repeat([]byte{1}, 4096)
+	}
+	ref, raw, err := blockformat.Seal("scope", key, blockformat.Ref{Key: "key", Kind: blockformat.SegmentKind, Count: 32, Salt: [32]byte{4}}, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[len(raw)-1] ^= 1
+	calls := 0
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, offset, length int64) (io.ReadCloser, error) {
+		calls++
+		return io.NopCloser(bytes.NewReader(raw[offset : offset+length])), nil
+	}))
+	r, err := c.GetSegmentRange(t.Context(), "sha256:"+fmt.Sprintf("%x", ref.Digest), ref.Size, 0, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	b, err := blockformat.ReadBlock(t.Context(), c, "scope", key, ref, 0)
+	if err != nil || !bytes.Equal(b, bytes.Repeat([]byte{1}, 4096)) {
+		t.Fatalf("first block: %v", err)
+	}
+	before := calls
+	if _, err := blockformat.ReadBlock(t.Context(), c, "scope", key, ref, 31); err == nil {
+		t.Fatal("cached corrupt neighbor accepted")
+	}
+	if calls != before {
+		t.Fatal("neighbor did not use cached ciphertext")
+	}
+}
+
+func TestSegmentWindowEvictionPreservesMetadata(t *testing.T) {
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(make([]byte, length))), nil
+	}))
+	readCachedRange(t, c, "header", 2<<20, 0, 100)
+	r, err := c.GetPackRange(t.Context(), "pack", 1<<20, 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	for i := range 6 {
+		r, err := c.GetSegmentRange(t.Context(), fmt.Sprint(i), 2<<20, 100, 65536)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+	}
+	if c.entries[versionRangeKey{"header", 2 << 20, 0, 100}] == nil || c.entries[versionRangeKey{"pack", 1 << 20, 0, 1 << 20}] == nil {
+		t.Fatal("window eviction removed metadata")
+	}
+	if c.windowBytes > segmentReadCacheBytes || c.bytes > versionReadCacheBytes {
+		t.Fatal("cache budget exceeded")
+	}
+	c.clear()
+	if c.bytes != 0 || c.windowBytes != 0 {
+		t.Fatal("retained accounting after clear")
 	}
 }

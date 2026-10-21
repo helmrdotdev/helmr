@@ -10,15 +10,31 @@ import (
 // RangeSource opens only the requested range of an immutable object. Adapters
 // must check the object's total size, honor cancellation, and never fall back to
 // downloading the whole object. The caller owns closing a successful response.
-// Authentication is performed here, independently of the transport adapter.
+// Optional PackRangeSource and SegmentRangeSource capabilities permit bounded
+// read-ahead. Authentication is performed here, independently of the adapter.
 type RangeSource interface {
 	GetRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
 }
 
 // PackRangeSource opts into bounded whole-pack caching for metadata pages.
-// Segment reads continue to use RangeSource's exact requested ranges.
+// It returns only the requested ciphertext page bytes; callers authenticate them.
 type PackRangeSource interface {
 	GetPackRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
+}
+
+// SegmentRangeSource optionally amortizes adjacent frame reads with bounded
+// read-ahead. It returns exactly the requested bytes; authentication stays here.
+type SegmentRangeSource interface {
+	GetSegmentRange(context.Context, string, int64, int64, int64) (io.ReadCloser, error)
+}
+
+type segmentRangeSource struct{ RangeSource }
+
+func (s segmentRangeSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	if cached, ok := s.RangeSource.(SegmentRangeSource); ok {
+		return cached.GetSegmentRange(ctx, digest, size, offset, length)
+	}
+	return s.RangeSource.GetRange(ctx, digest, size, offset, length)
 }
 
 type metadataRangeSource struct{ RangeSource }
@@ -99,7 +115,7 @@ func readBlocks(ctx context.Context, source RangeSource, scope string, key []byt
 	if err != nil {
 		return nil, err
 	}
-	b, err := readRange(ctx, source, r.Digest, r.Size, int64(len(h))+int64(ordinal)*frame, int64(count)*frame)
+	b, err := readRange(ctx, segmentRangeSource{source}, r.Digest, r.Size, int64(len(h))+int64(ordinal)*frame, int64(count)*frame)
 	if err != nil {
 		return nil, err
 	}

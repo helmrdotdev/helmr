@@ -33,9 +33,8 @@ func encryptCheckpointObject(ctx context.Context, cipher *CheckpointEncryptor, d
 	if err == nil {
 		err = file.Chmod(0400)
 	}
-	if err == nil {
-		err = file.Sync()
-	}
+	// This file is upload staging, not a recovery record. Publication of the
+	// exact object establishes durability before the checkpoint becomes ready.
 	info, statErr := file.Stat()
 	err = errors.Join(err, statErr, file.Close())
 	if err != nil {
@@ -63,49 +62,49 @@ func downloadCheckpointObject(ctx context.Context, store cas.Reader, cipher *Che
 	if err := cas.RequireExact(observed, descriptor); err != nil {
 		return "", invalidCheckpoint(err)
 	}
-	ciphertext, err := os.CreateTemp(directory, object.Role+"-download-")
-	if err != nil {
-		return "", err
-	}
-	defer ciphertext.Close()
-	body, err := store.Get(ctx, object.Digest)
-	if err != nil {
-		return "", checkpointObjectReadError(err)
-	}
-	n, copyErr := io.Copy(ciphertext, io.LimitReader(body, object.SizeBytes+1))
-	err = errors.Join(copyErr, body.Close())
-	if err != nil {
-		if errors.Is(err, cas.ErrDigestMismatch) {
-			return "", invalidCheckpoint(err)
-		}
-		return "", err
-	}
-	if n != object.SizeBytes {
-		return "", invalidCheckpoint(errors.New("checkpoint download size differs from manifest"))
-	}
-	if err := cas.VerifyDescriptorFile(ctx, descriptor, ciphertext); err != nil {
-		if errors.Is(err, cas.ErrDigestMismatch) {
-			return "", invalidCheckpoint(err)
-		}
-		return "", err
-	}
 	plaintext, err := os.CreateTemp(directory, object.Role+"-plain-")
 	if err != nil {
 		return "", err
 	}
-	bounded := &checkpointBoundedWriter{writer: plaintext, remaining: limit}
-	err = cipher.Decrypt(ctx, io.NewSectionReader(ciphertext, 0, object.SizeBytes), bounded, checkpoint+"/"+object.Role)
-	err = errors.Join(err, plaintext.Close())
+	body, err := store.Get(ctx, object.Digest)
 	if err != nil {
+		return "", errors.Join(checkpointObjectReadError(err), plaintext.Close())
+	}
+	input := &checkpointDownloadReader{Reader: io.LimitReader(body, object.SizeBytes+1)}
+	bounded := &checkpointBoundedWriter{writer: plaintext, remaining: limit}
+	decryptErr := cipher.Decrypt(ctx, input, bounded, checkpoint+"/"+object.Role)
+	// Finish verification even when a header or chunk is rejected early. An
+	// unverified key id must not hide a corrupt or interrupted object stream.
+	_, drainErr := io.Copy(io.Discard, input)
+	streamErr := errors.Join(input.err, drainErr, body.Close(), ctx.Err())
+	closeErr := plaintext.Close()
+	if streamErr != nil {
+		return "", errors.Join(checkpointObjectReadError(streamErr), closeErr)
+	}
+	if input.n != object.SizeBytes {
+		return "", errors.Join(invalidCheckpoint(errors.New("checkpoint download size differs from manifest")), closeErr)
+	}
+	if err := errors.Join(decryptErr, closeErr); err != nil {
 		return "", fmt.Errorf("read checkpoint %s: %w", object.Role, err)
 	}
-	if err := ciphertext.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Remove(ciphertext.Name()); err != nil {
-		return "", err
-	}
+
 	return plaintext.Name(), nil
+}
+
+// Preserve read errors that decryption may wrap while it authenticates records.
+type checkpointDownloadReader struct {
+	io.Reader
+	n   int64
+	err error
+}
+
+func (r *checkpointDownloadReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.n += int64(n)
+	if err != nil && err != io.EOF && r.err == nil {
+		r.err = err
+	}
+	return n, err
 }
 
 type checkpointBoundedWriter struct {

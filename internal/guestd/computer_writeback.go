@@ -16,16 +16,43 @@ import (
 // be reset by reopening the filesystem for each save. The owner joins syncfs;
 // closing an RPC does not cancel kernel writeback or create another flush owner.
 type computerWriteback struct {
-	mu              sync.Mutex
-	syncFilesystem  func() error
-	closeFilesystem func() error
-	fault           error
-	closed          bool
+	mu               sync.Mutex
+	syncFilesystem   func() error
+	freezeFilesystem func() error
+	closeFilesystem  func() error
+	fault            error
+	closed           bool
+	frozen           bool
 }
 
 var errComputerWriteback = errors.New("computer writeback integrity fault")
 
 func (w *computerWriteback) flush(ctx context.Context) error {
+	if w == nil {
+		return errors.New("computer writeback unavailable")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed || w.frozen {
+		return errors.New("computer writeback closed or finalized")
+	}
+	if w.fault != nil {
+		return errComputerWriteback
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := w.syncFilesystem(); err != nil {
+		w.fault = err
+		return errComputerWriteback
+	}
+	return ctx.Err()
+}
+
+// finalizePreparation leaves the source clean and frozen until its private VM
+// stops. The preparation owner calls it only after all execution and cleanup join.
+// Keep the pinned descriptor's writeback error history and join both syscalls.
+func (w *computerWriteback) finalizePreparation(ctx context.Context) error {
 	if w == nil {
 		return errors.New("computer writeback unavailable")
 	}
@@ -40,10 +67,21 @@ func (w *computerWriteback) flush(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if w.frozen {
+		return nil
+	}
 	if err := w.syncFilesystem(); err != nil {
 		w.fault = err
 		return errComputerWriteback
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := w.freezeFilesystem(); err != nil {
+		w.fault = err
+		return errComputerWriteback
+	}
+	w.frozen = true
 	return ctx.Err()
 }
 

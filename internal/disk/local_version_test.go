@@ -19,6 +19,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/helmrdotdev/helmr/internal/objectcache"
 	"golang.org/x/sys/unix"
 )
 
@@ -411,7 +412,7 @@ func TestLocalVersionSourceLossStopsAllDiskOperations(t *testing.T) {
 }
 
 func TestLocalVersionCachesReadsWithoutCachingPublicationProof(t *testing.T) {
-	cfg, _ := localVersionFixture(t)
+	cfg, basePath := localVersionFixture(t)
 	remote := cfg.BaseSource
 	calls := 0
 	unavailable := false
@@ -423,6 +424,35 @@ func TestLocalVersionCachesReadsWithoutCachingPublicationProof(t *testing.T) {
 		}
 		return remote.GetRange(ctx, digest, size, offset, length)
 	})
+	// Even a host read source that remains available must never supply remote proof.
+	hostCache, err := objectcache.Open(filepath.Join(t.TempDir(), "host-cache"), 32<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostCache.Close()
+	store := remote.(*cas.File)
+	if err := filepath.WalkDir(basePath, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || len(entry.Name()) != 64 {
+			return nil
+		}
+		d := "sha256:" + entry.Name()
+		object, err := store.Stat(t.Context(), d)
+		if err != nil {
+			return err
+		}
+		body, err := store.Get(t.Context(), d)
+		if err != nil {
+			return err
+		}
+		_, seedErr := hostCache.Seed(t.Context(), cfg.Scope, cas.Descriptor{Digest: d, SizeBytes: object.SizeBytes, MediaType: "application/octet-stream"}, body)
+		return errors.Join(seedErr, body.Close())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ReadSource = hostCache.Ranges(cfg.Scope, cfg.BaseSource)
 	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -430,6 +460,9 @@ func TestLocalVersionCachesReadsWithoutCachingPublicationProof(t *testing.T) {
 	defer p.Close()
 	if localByte(t, p) != 1 {
 		t.Fatal("wrong first read")
+	}
+	if hostCache.Snapshot().Hits == 0 {
+		t.Fatal("host cache was not read")
 	}
 	initial := calls
 	if localByte(t, p) != 1 || calls != initial {

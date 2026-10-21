@@ -441,6 +441,16 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if _, err := deploymentClient.PromoteDeployment(ctx, deployment.ID, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// Promotion must finish initial preparation and isolated execution proof,
+	// even before the first Computer or Session is requested.
+	var qualified bool
+	if err := database.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e
+ JOIN template_definitions t ON t.environment_id=e.id AND t.deployment_id=e.current_deployment_id
+ JOIN images i ON i.environment_id=t.environment_id AND i.image_spec_id=t.image_spec_id
+ WHERE e.id=$1 AND t.prepare AND i.root_id IS NOT NULL
+ AND i.publication_evidence LIKE '%isolated clone%')`, env).Scan(&qualified); err != nil || !qualified {
+		t.Fatalf("promotion did not qualify the prepared environment: %v", err)
+	}
 	driverCtx, stopDriver := context.WithCancelCause(ctx)
 	defer stopDriver(nil)
 	checkpointObservations := filepath.Join(input.Evidence, "checkpoint-observations.json")

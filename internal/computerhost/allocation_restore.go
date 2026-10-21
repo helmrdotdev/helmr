@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"golang.org/x/sync/errgroup"
 )
 
 func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerapi.ComputerAllocationDelivery, source workerapi.ComputerAllocationSource, device vm.ComputerDevice) (resultErr error) {
@@ -47,19 +49,41 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if err != nil {
 		return err
 	}
-	paths := make(map[string]string)
-	for _, object := range m.Objects() {
-		limit := map[string]int64{"vm_config": limits.config, "vm_state": limits.state, "memory": limits.memory, "scratch_disk": limits.scratch}[object.Role]
-		path, err := downloadCheckpointObject(ctx, o.machines.ComputerObjects, o.machines.CheckpointCipher, directory, m.CheckpointID.String(), object, limit)
-		if err != nil {
-			if errors.Is(err, ErrCheckpointKeyUnavailable) {
-				// Pause before cleanup can release this allocation for redispatch.
-				o.checkpointKeyUnavailable()
-				slog.Error("Worker checkpoint key differs from retained Computer", "checkpoint_id", m.CheckpointID, "computer_id", o.identity.OwnerID, "error", err)
+	objects := m.Objects()
+	stagedPaths := make([]string, len(objects))
+	stageErrors := make([]error, len(objects))
+	group, stageCtx := errgroup.WithContext(ctx)
+	// The reservation already covers every ciphertext and plaintext together.
+	// Overlap two bounded transfers; join them before VM creation or cleanup.
+	group.SetLimit(2)
+	for i, object := range objects {
+		group.Go(func() error {
+			if err := stageCtx.Err(); err != nil {
+				stageErrors[i] = err
+				return err
 			}
+			limit := map[string]int64{"vm_config": limits.config, "vm_state": limits.state, "memory": limits.memory, "scratch_disk": limits.scratch}[object.Role]
+			started := time.Now()
+			path, err := downloadCheckpointObject(stageCtx, o.machines.ComputerObjects, o.machines.CheckpointCipher, directory, m.CheckpointID.String(), object, limit)
+			slog.Info("Computer checkpoint object staged", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "duration_ms", time.Since(started).Milliseconds(), "error_class", vm.RuntimeErrorClass(err))
+			stagedPaths[i], stageErrors[i] = path, err
 			return err
+		})
+	}
+	if group.Wait() != nil {
+		// Preserve every observed failure identity, even if another transfer's
+		// cancellation wins the group's first-error race.
+		err := errors.Join(stageErrors...)
+		if errors.Is(err, ErrCheckpointKeyUnavailable) {
+			// Pause before cleanup can release this allocation for redispatch.
+			o.checkpointKeyUnavailable()
+			slog.Error("Worker checkpoint key differs from retained Computer", "checkpoint_id", m.CheckpointID, "computer_id", o.identity.OwnerID, "error", err)
 		}
-		paths[object.Role] = path
+		return err
+	}
+	paths := make(map[string]string, len(objects))
+	for i, object := range objects {
+		paths[object.Role] = stagedPaths[i]
 	}
 	config, err := os.ReadFile(paths["vm_config"])
 	if err != nil {
@@ -68,7 +92,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if !bytes.Equal(config, m.Config) {
 		return invalidCheckpoint(errors.New("encrypted checkpoint config differs from manifest"))
 	}
-	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
+	o.machine, err = o.machines.Backend.Restore(ctx, vm.RestoreRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("restore", phase) }, ID: m.CheckpointID.String(), ComputerInstanceID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: delivery.Shape.VMPlatformID}, Resources: vm.Resources{MilliCPU: delivery.Shape.CPUMillis, MemoryMiB: delivery.Shape.MemoryBytes / mebibyte, DiskMiB: delivery.Shape.ScratchBytes / mebibyte, Slots: 1}, VMState: paths["vm_state"], VMStateMediaType: m.VMState.MediaType, ScratchDisk: paths["scratch_disk"], ScratchDiskMediaType: m.ScratchDisk.MediaType, Memory: []string{paths["memory"]}, MemoryMediaTypes: []string{m.Memory.MediaType}, Manifest: config, Checkpoint: m.Runtime, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: m.Disk.LogicalBytes, Device: device}}})
 	if err != nil {
 		if errors.Is(err, filepack.ErrInvalidContent) || errors.Is(err, vm.ErrInvalidCheckpointContent) {
 			return invalidCheckpoint(err)

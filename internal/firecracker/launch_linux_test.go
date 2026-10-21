@@ -159,6 +159,7 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 		edit func(*vm.MaterializeRequest)
 		want string
 	}{
+		{name: "unknown purpose", edit: func(request *vm.MaterializeRequest) { request.Purpose = vm.MaterializePurpose(255) }, want: "purpose is invalid"},
 		{name: "missing vcpu", edit: func(request *vm.MaterializeRequest) { request.VMVCPUCount = 0 }, want: "does not match"},
 		{name: "wrong vcpu", edit: func(request *vm.MaterializeRequest) { request.VMVCPUCount = 1 }, want: "does not match"},
 		{name: "invalid digest", edit: func(request *vm.MaterializeRequest) { request.CPUConfigDigest = "sha256:other" }, want: "not canonical"},

@@ -17,7 +17,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-const maxGuestHealthResponseBytes = 4096
+const (
+	maxGuestHealthResponseBytes = 4096
+	// The SDK waits for its retry tick even before the first CONNECT. Keep ready
+	// control streams responsive without spinning on a peer that rejects ACKs.
+	guestConnectRetryInterval = 10 * time.Millisecond
+)
 
 var dialVsock = vsock.DialContext
 
@@ -36,7 +41,7 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string, machine
 		stats.attempts++
 		attemptStarted := time.Now()
 		attemptCtx, cancelAttempt := healthAttemptContext(healthCtx, c.cfg.HealthAttemptTimeout)
-		conn, err := dialVsock(attemptCtx, vsockPath, c.cfg.HealthPort)
+		conn, err := dialVsock(attemptCtx, vsockPath, c.cfg.HealthPort, vsock.WithRetryInterval(guestConnectRetryInterval))
 		if err != nil {
 			cancelAttempt()
 			stats.recordError("dial", err)
@@ -129,7 +134,7 @@ func (c *Connector) connectGuestPortAt(ctx context.Context, vsockPath string, po
 		if err, ok := machineExit.Err(); ok {
 			return nil, fmt.Errorf("the Firecracker machine exited before guest port %d connection: %w", port, err)
 		}
-		conn, err := dialVsock(connectCtx, vsockPath, port)
+		conn, err := dialVsock(connectCtx, vsockPath, port, vsock.WithRetryInterval(guestConnectRetryInterval))
 		if err == nil {
 			return conn, nil
 		}

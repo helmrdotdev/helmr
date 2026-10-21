@@ -9,8 +9,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Linux UAPI _IOWR('X', 119/120, int), identical on supported amd64/arm64.
-const computerFreezeIOCTL = 0xc0045877
+// Linux UAPI _IOWR('X', 120, int), identical on supported amd64/arm64.
 const computerThawIOCTL = 0xc0045878
 
 // computerFilesystem pins a verified mount independently of later path changes.

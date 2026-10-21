@@ -3,10 +3,12 @@ package guestd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -127,4 +129,104 @@ func TestComputerWritebackRejectsMismatchedOperation(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("invalid operation reached writeback")
 	}
+}
+
+func TestComputerWritebackFinalizesOnce(t *testing.T) {
+	var calls []string
+	w := &computerWriteback{
+		syncFilesystem:   func() error { calls = append(calls, "sync"); return nil },
+		freezeFilesystem: func() error { calls = append(calls, "freeze"); return nil },
+		closeFilesystem:  func() error { calls = append(calls, "close"); return nil },
+	}
+	if err := w.finalizePreparation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.finalizePreparation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.flush(t.Context()); err == nil {
+		t.Fatal("ordinary flush accepted finalized source")
+	}
+	if err := w.close(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(calls) != "[sync freeze close]" {
+		t.Fatal(calls)
+	}
+}
+
+func TestComputerWritebackFinalizationRetainsFault(t *testing.T) {
+	for _, fail := range []string{"sync", "freeze"} {
+		t.Run(fail, func(t *testing.T) {
+			var syncs, freezes int
+			w := &computerWriteback{
+				syncFilesystem: func() error {
+					syncs++
+					if fail == "sync" {
+						return errors.New("io")
+					}
+					return nil
+				},
+				freezeFilesystem: func() error { freezes++; return errors.New("io") },
+			}
+			for range 2 {
+				if !errors.Is(w.finalizePreparation(t.Context()), errComputerWriteback) {
+					t.Fatal("fault lost")
+				}
+			}
+			want := 1
+			if fail == "sync" {
+				want = 0
+			}
+			if syncs != 1 || freezes != want {
+				t.Fatalf("sync=%d freeze=%d", syncs, freezes)
+			}
+		})
+	}
+}
+
+func TestComputerWritebackFinalizationJoinsCancelledFreeze(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		w := &computerWriteback{
+			syncFilesystem:   func() error { return nil },
+			freezeFilesystem: func() error { close(entered); <-release; return nil },
+			closeFilesystem:  func() error { close(closed); return nil },
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- w.finalizePreparation(ctx) }()
+		<-entered
+		cancel()
+		synctest.Wait()
+		// Mutex waits are not durably blocked for synctest. Check ownership
+		// before starting close so Wait only observes the blocked freeze.
+		if w.mu.TryLock() {
+			w.mu.Unlock()
+			close(release)
+			<-done
+			t.Fatal("freeze released writeback ownership")
+		}
+		go w.close()
+		select {
+		case <-closed:
+			close(release)
+			<-done
+			t.Fatal("close overtook freeze")
+		case <-done:
+			close(release)
+			<-closed
+			t.Fatal("cancel released syscall")
+		default:
+		}
+		close(release)
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		<-closed
+		if !w.frozen {
+			t.Fatal("completed freeze not retained after cancellation")
+		}
+	})
 }

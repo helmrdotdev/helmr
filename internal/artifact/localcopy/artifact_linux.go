@@ -67,11 +67,17 @@ func copyArtifact(
 			os.Remove(leaseDirectory),
 		)
 	}
+	// Copies are recreated from their authoritative source for each use. Their
+	// random lease is never a crash-recovery record, so synchronous writeback
+	// adds latency without establishing a retained durability boundary. Keep
+	// the sealed read-only descriptors and final content verification.
 	local, err := produceArtifactCopyWithSpec(
 		ctx,
 		leaseDirectory,
 		spec,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
+		nil,
 		func(destination *os.File) error {
 			return copyArtifactCopy(ctx, destination, source, expected)
 		},
@@ -104,7 +110,7 @@ func Produce(
 	if err != nil {
 		return nil, err
 	}
-	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, produce)
+	local, err := produceArtifactCopyWithSpec(ctx, directory, spec, owner, true, nil, produce)
 	if err != nil {
 		return nil, err
 	}
@@ -112,11 +118,28 @@ func Produce(
 	return local, nil
 }
 
+// Receive seals bytes transferred from an already-authoritative artifact. The
+// local file is disposable: its owner recreates it after loss, so publication
+// durability belongs to the source rather than this temporary copy. The callback
+// must join all writes before returning. The directory remains caller-owned.
+func Receive(ctx context.Context, directory string, role artifact.Role, expected cas.Descriptor, receive func(*os.File) error) (*Artifact, error) {
+	spec, err := artifactSpecForRole(role)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateArtifactCopyDescriptor(spec, expected); err != nil {
+		return nil, err
+	}
+	return produceArtifactCopyWithSpec(ctx, directory, spec, Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, &expected, receive)
+}
+
 func produceArtifactCopyWithSpec(
 	ctx context.Context,
 	directory string,
 	spec artifactSpec,
 	owner Owner,
+	syncToDisk bool,
+	expected *cas.Descriptor,
 	produce func(*os.File) error,
 ) (_ *Artifact, returnErr error) {
 	if ctx == nil {
@@ -202,20 +225,28 @@ func produceArtifactCopyWithSpec(
 			spec.maxBytes,
 		)
 	}
-	digest, err := hashArtifactCopy(ctx, writer, before.size)
-	if err != nil {
-		return nil, err
-	}
-	descriptor := cas.Descriptor{
-		Digest:    digest,
-		SizeBytes: before.size,
-		MediaType: spec.mediaType,
+	var descriptor cas.Descriptor
+	if expected != nil {
+		if before.size != expected.SizeBytes {
+			return nil, errors.New("received artifact size differs from pinned descriptor")
+		}
+		// The source already pins the content identity. Verify it after closing
+		// the writer and reopening the sealed inode, without hashing it twice.
+		descriptor = *expected
+	} else {
+		digest, err := hashArtifactCopy(ctx, writer, before.size)
+		if err != nil {
+			return nil, err
+		}
+		descriptor = cas.Descriptor{Digest: digest, SizeBytes: before.size, MediaType: spec.mediaType}
 	}
 	if err := validateArtifactCopyDescriptor(spec, descriptor); err != nil {
 		return nil, err
 	}
-	if err := writer.Sync(); err != nil {
-		return nil, fmt.Errorf("sync local artifact copy: %w", err)
+	if syncToDisk {
+		if err := writer.Sync(); err != nil {
+			return nil, fmt.Errorf("sync local artifact copy: %w", err)
+		}
 	}
 	if int(before.uid) != owner.UID || int(before.gid) != owner.GID {
 		if err := writer.Chown(owner.UID, owner.GID); err != nil {
@@ -225,8 +256,10 @@ func produceArtifactCopyWithSpec(
 	if err := writer.Chmod(0o400); err != nil {
 		return nil, fmt.Errorf("seal local artifact copy mode: %w", err)
 	}
-	if err := writer.Sync(); err != nil {
-		return nil, fmt.Errorf("sync sealed local artifact copy: %w", err)
+	if syncToDisk {
+		if err := writer.Sync(); err != nil {
+			return nil, fmt.Errorf("sync sealed local artifact copy: %w", err)
+		}
 	}
 	sealed, err := inspectSealedArtifactCopy(writer, descriptor, owner)
 	if err != nil {
@@ -599,9 +632,6 @@ func (local *Artifact) LinkInto(
 		if err := local.upload.Chown(owner.UID, owner.GID); err != nil {
 			return fmt.Errorf("transfer local artifact copy owner: %w", err)
 		}
-		if err := local.upload.Sync(); err != nil {
-			return fmt.Errorf("sync local artifact copy owner: %w", err)
-		}
 		transferred, err := inspectSealedArtifactCopy(
 			local.upload,
 			local.descriptor,
@@ -617,6 +647,11 @@ func (local *Artifact) LinkInto(
 			return errors.New("local artifact copy changed during owner transfer")
 		}
 		local.platform.identity = transferred
+	}
+	// A linked drive can outlive the transfer operation. Flush its data and
+	// ownership before exposing it, including transient same-owner copies.
+	if err := local.upload.Sync(); err != nil {
+		return fmt.Errorf("sync local artifact copy before link: %w", err)
 	}
 	source, err := inspectArtifactCopyAt(
 		int(local.platform.directory.Fd()),

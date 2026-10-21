@@ -198,6 +198,19 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  try {
   const initialPeerOutput = await progress()
   const initialPeerTiming = { requestStartedAt: initialPeerStartedAt, ackMS: initialPeerAckMS, firstOutputObservedMS: performance.now() - initialPeerStartedMS, turnId: peer.turn.id, outputSequence: initialPeerOutput.sequence }
+  let preparedWork: unknown
+  if (options.performanceKind) {
+   const parts = initialPeerOutput.data as { type: string; text?: string }[]
+   assert(Array.isArray(parts))
+   const text = parts.find(part => part.type === "text")?.text
+   assert(text)
+   const work = JSON.parse(text).preparedWork
+   assert.equal(work.kind, "edit-test")
+   assert.equal(work.detail.assertions, 5)
+   assert.equal(work.detail.preparedBeforeComputer, true)
+   assert(work.inventory.files > 0 && work.inventory.logicalBytes > 0)
+   preparedWork = work
+  }
   const computerID = (await peer.session.get({ signal })).computerId
   assert(computerID, "running peer must be placed on a Computer")
   const computer = { id: computerID }
@@ -452,7 +465,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)
   }
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
+  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, preparedWork, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secrets, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {
   const cleanupSignal = AbortSignal.timeout(10_000)
   const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(sessions.map(session => session.cancel(undefined, { signal: cleanupSignal })))

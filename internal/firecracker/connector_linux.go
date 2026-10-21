@@ -25,12 +25,13 @@ type Connector struct {
 }
 
 // Launch purpose is connector-owned, independent of the SDK's VM lifetime
-// context. Only the local qualification probe has no Control Plane reservation.
+// context. Host and prepared-image qualification never obtain Secret transport.
 type launchMode uint8
 
 const (
 	workloadLaunch launchMode = iota
 	startupProbeLaunch
+	preparationQualificationLaunch
 )
 
 // QualifiedRuntime is the only Firecracker value that implements workload VM
@@ -223,9 +224,13 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 	child := *c
 	child.cfg = cfg
 	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
+	mode := workloadLaunch
+	if request.Purpose == vm.MaterializePreparationQualification {
+		mode = preparationQualificationLaunch
+	}
 	return child.start(
 		ctx,
-		workloadLaunch,
+		mode,
 		request.ID,
 		request.OwnerKind,
 		request.Binding,

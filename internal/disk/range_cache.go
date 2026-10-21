@@ -13,6 +13,9 @@ import (
 
 const versionReadCacheBytes = 8 << 20
 const versionReadCacheEntries = 4096
+const segmentReadWindowBytes = 1 << 20
+const segmentReadWindowMinBytes = 64 << 10
+const segmentReadCacheBytes = 4 << 20
 
 type versionRangeKey struct {
 	digest               string
@@ -20,19 +23,21 @@ type versionRangeKey struct {
 }
 
 type versionCachedRange struct {
-	key  versionRangeKey
-	data []byte
+	key    versionRangeKey
+	data   []byte
+	window bool
 }
 
 // versionRangeCache retains only immutable ciphertext for one local owner.
-// Callers still authenticate every returned page/frame. Publication verification
-// uses the uncached remote source, independently of these disposable read copies.
+// Callers still authenticate every returned page/frame. These disposable read
+// copies do not establish publication authority.
 type versionRangeCache struct {
-	source  blockformat.RangeSource
-	mu      sync.Mutex
-	entries map[versionRangeKey]*list.Element
-	recent  list.List
-	bytes   int
+	source      blockformat.RangeSource
+	mu          sync.Mutex
+	entries     map[versionRangeKey]*list.Element
+	recent      list.List
+	bytes       int
+	windowBytes int
 }
 
 func newVersionRangeCache(source blockformat.RangeSource) *versionRangeCache {
@@ -47,6 +52,10 @@ func (c *versionRangeCache) GetRange(ctx context.Context, digest string, size, o
 	if length <= 0 || (length > 64<<10 && (offset != 0 || length != size || size > 4<<20)) || offset < 0 || size < length || offset > size-length {
 		return c.source.GetRange(ctx, digest, size, offset, length)
 	}
+	return c.getCachedRange(ctx, digest, size, offset, length, false)
+}
+
+func (c *versionRangeCache) getCachedRange(ctx context.Context, digest string, size, offset, length int64, window bool) (io.ReadCloser, error) {
 	key := versionRangeKey{digest, size, offset, length}
 	c.mu.Lock()
 	// A full-pack fetch also serves every later page in that exact object.
@@ -82,15 +91,21 @@ func (c *versionRangeCache) GetRange(ctx context.Context, digest string, size, o
 	}
 	c.mu.Lock()
 	if c.entries[key] == nil {
-		for c.bytes+cap(data) > versionReadCacheBytes || len(c.entries) >= versionReadCacheEntries {
+		for window && c.windowBytes+cap(data) > segmentReadCacheBytes {
 			e := c.recent.Back()
-			old := e.Value.(versionCachedRange)
-			delete(c.entries, old.key)
-			c.bytes -= cap(old.data)
-			c.recent.Remove(e)
+			for !e.Value.(versionCachedRange).window {
+				e = e.Prev()
+			}
+			c.remove(e)
 		}
-		c.entries[key] = c.recent.PushFront(versionCachedRange{key, data})
+		for c.bytes+cap(data) > versionReadCacheBytes || len(c.entries) >= versionReadCacheEntries {
+			c.remove(c.recent.Back())
+		}
+		c.entries[key] = c.recent.PushFront(versionCachedRange{key: key, data: data, window: window})
 		c.bytes += cap(data)
+		if window {
+			c.windowBytes += cap(data)
+		}
 	}
 	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -99,16 +114,56 @@ func (c *versionRangeCache) GetRange(ctx context.Context, digest string, size, o
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
+// remove is called with mu held. Outstanding readers retain their immutable bytes.
+func (c *versionRangeCache) remove(e *list.Element) {
+	old := e.Value.(versionCachedRange)
+	delete(c.entries, old.key)
+	c.bytes -= cap(old.data)
+	if old.window {
+		c.windowBytes -= cap(old.data)
+	}
+	c.recent.Remove(e)
+}
+
+// GetSegmentRange amortizes neighboring frame reads within one bounded window.
+// Small and cross-window requests retain exact range semantics, bounding
+// amplification to at most sixteen times the requested bytes.
+func (c *versionRangeCache) GetSegmentRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if offset < 0 || length <= 0 || size < length || offset > size-length {
+		return nil, errors.New("invalid cached segment range")
+	}
+	if length < segmentReadWindowMinBytes {
+		return c.GetRange(ctx, digest, size, offset, length)
+	}
+	start := offset / segmentReadWindowBytes * segmentReadWindowBytes
+	windowLength := min(int64(segmentReadWindowBytes), size-start)
+	if length > windowLength-(offset-start) {
+		return c.GetRange(ctx, digest, size, offset, length)
+	}
+	r, err := c.getCachedRange(ctx, digest, size, start, windowLength, true)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = io.CopyN(io.Discard, r, offset-start); err != nil {
+		return nil, errors.Join(err, r.Close())
+	}
+	return &packRangeReader{Reader: io.LimitReader(r, length), Closer: r}, nil
+}
+
 func (c *versionRangeCache) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	clear(c.entries)
 	c.recent.Init()
 	c.bytes = 0
+	c.windowBytes = 0
 }
 
-// GetPackRange explicitly fetches a bounded metadata pack. Segment reads keep
-// their ordinary range semantics and do not amplify a single block into a pack.
+// GetPackRange explicitly fetches a bounded metadata pack. Segment frame
+// read-ahead is separate and requires GetSegmentRange.
 func (c *versionRangeCache) GetPackRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	if size < 8 || size > 4<<20 || offset < 0 || length <= 0 || offset > size-length {
 		return nil, errors.New("invalid cached pack range")

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 )
 
@@ -57,33 +56,4 @@ func prepareLaunchPath(imageRoot string, launchCwd string, user *resolvedRuntime
 		return nil
 	}
 	return os.Chown(path, int(user.UID), int(user.GID))
-}
-
-func chownTree(root string, uid uint32, gid uint32) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-		mode := info.Mode()
-		if mode.IsDir() {
-			if err := os.Chmod(path, mode.Perm()|0o700); err != nil {
-				return err
-			}
-		} else if mode.IsRegular() {
-			if err := os.Chmod(path, mode.Perm()|0o600); err != nil {
-				return err
-			}
-		}
-		if err := os.Chown(path, int(uid), int(gid)); err != nil {
-			return err
-		}
-		return nil
-	})
 }

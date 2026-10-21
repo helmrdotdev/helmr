@@ -19,6 +19,8 @@ const ExpirableTagValue = "true"
 
 type Reader interface {
 	Stat(ctx context.Context, digest string) (Object, error)
+	// Get returns a digest-verifying body. Successful complete consumption and
+	// Close bind its bytes to digest; mismatch returns ErrDigestMismatch.
 	Get(ctx context.Context, digest string) (io.ReadCloser, error)
 }
 

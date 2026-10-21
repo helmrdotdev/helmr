@@ -43,7 +43,7 @@ func TestStartAllocatedAgentSessionRetainedProcessNeedsNoProgram(t *testing.T) {
 		_, _ = io.Copy(io.Discard, stream)
 	})
 	var machines PreparedMachines // No artifact stores or verifier are available.
-	connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retainedSessionStartClient{t})
+	connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retainedSessionStartClient{t}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestStartAllocatedAgentSessionBudgetsStagingAndKeepsPeerReservation(t *test
 				return frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: r.Grant.Identity, AttachmentSequence: r.AttachmentSequence, Message: &agentv1.GuestSessionMessage_Absent{Absent: &agentv1.SessionAbsent{}}})
 			})
 			machines := PreparedMachines{SessionLogLimits: &agentv1.SessionLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 2}, TempDir: t.TempDir(), Reservations: ledger}
-			_, _, err = machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), newSessionStartClient{retainedSessionStartClient{t}})
+			_, _, err = machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), newSessionStartClient{retainedSessionStartClient{t}}, false)
 			if err == nil {
 				t.Fatal("missing verifier unexpectedly succeeded")
 			}
@@ -102,7 +102,7 @@ func TestStartAllocatedAgentSessionBudgetsStagingAndKeepsPeerReservation(t *test
 func TestStartAllocatedAgentSessionDoesNotInferAbsenceFromTransportFailure(t *testing.T) {
 	machine, done := programTransferMachine(t, func(net.Conn, *agentv1.SessionAttach) error { return nil })
 	var machines PreparedMachines
-	_, _, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retainedSessionStartClient{t})
+	_, _, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retainedSessionStartClient{t}, false)
 	if err == nil || errors.Is(err, ErrAgentSessionAbsent) {
 		t.Fatalf("unknown outcome treated as absence: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestStartAllocatedAgentSessionRetiresAbsentWithoutProgram(t *testing.T) {
 		return frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: r.Grant.Identity, AttachmentSequence: r.AttachmentSequence, Message: &agentv1.GuestSessionMessage_Attached{Attached: &agentv1.SessionAttached{Terminal: true}}})
 	})
 	var machines PreparedMachines
-	connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retiringSessionStartClient{retainedSessionStartClient{t}})
+	connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), retiringSessionStartClient{retainedSessionStartClient{t}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestStartAllocatedAgentSessionControlAfterAbsentAttachment(t *testing.T) {
 			})
 			client := &absentSessionStartClient{retainedSessionStartClient: retainedSessionStartClient{t}, kind: test.kind, prepareErr: test.prepareErr, stopErr: test.stopErr}
 			var machines PreparedMachines
-			connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), client)
+			connection, attached, err := machines.StartAllocatedAgentSession(t.Context(), machine, "env", sessionTransportGrant(), client, false)
 			if err == nil || (test.wantErr != nil && !errors.Is(err, test.wantErr)) || connection != nil || attached != nil {
 				t.Fatalf("unexpected attachment result: %v %v %v", connection, attached, err)
 			}

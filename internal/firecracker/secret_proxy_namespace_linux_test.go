@@ -125,6 +125,9 @@ func TestSecretProxyPreparationRequiredExceptQualification(t *testing.T) {
 	if _, err := c.prepareSecretTransport(t.Context(), startupProbeLaunch, "synthetic-probe", blocked); err != nil || calls != 0 {
 		t.Fatal("qualification reached control plane")
 	}
+	if _, err := c.prepareSecretTransport(t.Context(), preparationQualificationLaunch, "prepared-image-probe", blocked); err != nil || calls != 0 {
+		t.Fatal("prepared-image qualification reached control plane")
+	}
 	if _, err := c.prepareSecretTransport(t.Context(), workloadLaunch, "assigned-runtime", blocked); !errors.Is(err, expected) || calls != 1 {
 		t.Fatal("real preparation failure did not stop network setup")
 	}

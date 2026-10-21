@@ -311,6 +311,12 @@ Stopping the private PostgreSQL service preserves this recovery state on disk.
 
 ## Healthy Full-RAM continuation
 
+The ordinary continuation entrypoint excludes the embedded starter imports. Their
+SDKs create process signal and native-addon resources during module evaluation,
+even when no embedded Agent runs. The embedded/protected starter modes select
+`production-starters.ts` explicitly; ordinary continuation keeps the runtime
+activity checks unchanged.
+
 `HELMR_NATIVE_HEALTHY_RAM_PROOF=1` selects
 `TestWorkerAgentHealthyContinuation` through the same production package and
 Worker launcher. It is exclusive with the fault/restart modes. The synthetic

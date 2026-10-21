@@ -13,7 +13,10 @@ const PreparationSecretEnvironmentBytes = 1 << 20
 const PreparationControlFrameBytes = PreparationSecretEnvironmentBytes + (64 << 10)
 
 func ValidatePreparationControl(request *computerv0.PreparationControlRequest) error {
-	if request.GetStart() != nil {
+	if start := request.GetStart(); start != nil {
+		if start.GetQualificationOnly() && (start.GetTemplateDefinitionId() != "" || len(start.GetSecrets()) != 0 || len(start.GetProtectedEnv()) != 0 || len(start.GetProxyCa()) != 0) {
+			return errors.New("qualification cannot execute authored preparation or receive Secrets")
+		}
 		if err := ValidatePreparationLogLimits(request.GetStart().GetLogLimits()); err != nil {
 			return err
 		}

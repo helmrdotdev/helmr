@@ -1668,7 +1668,9 @@ func (x *PreparationIdentity) GetChannelCredential() []byte {
 }
 
 type PreparationStart struct {
-	state                protoimpl.MessageState    `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Executes only the fixed managed-runtime probe; never authored preparation.
+	QualificationOnly    bool                      `protobuf:"varint,6,opt,name=qualification_only,json=qualificationOnly,proto3" json:"qualification_only,omitempty"`
 	TemplateDefinitionId string                    `protobuf:"bytes,1,opt,name=template_definition_id,json=templateDefinitionId,proto3" json:"template_definition_id,omitempty"`
 	Secrets              []*ComputerSecretDelivery `protobuf:"bytes,2,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	LogLimits            *PreparationLogLimits     `protobuf:"bytes,3,opt,name=log_limits,json=logLimits,proto3" json:"log_limits,omitempty"`
@@ -1706,6 +1708,13 @@ func (x *PreparationStart) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PreparationStart.ProtoReflect.Descriptor instead.
 func (*PreparationStart) Descriptor() ([]byte, []int) {
 	return file_computer_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *PreparationStart) GetQualificationOnly() bool {
+	if x != nil {
+		return x.QualificationOnly
+	}
+	return false
 }
 
 func (x *PreparationStart) GetTemplateDefinitionId() string {
@@ -2188,8 +2197,9 @@ const file_computer_proto_rawDesc = "" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
 	"instanceId\x12\x14\n" +
 	"\x05epoch\x18\x03 \x01(\x03R\x05epoch\x12-\n" +
-	"\x12channel_credential\x18\x04 \x01(\fR\x11channelCredential\"\x8d\x03\n" +
-	"\x10PreparationStart\x124\n" +
+	"\x12channel_credential\x18\x04 \x01(\fR\x11channelCredential\"\xbc\x03\n" +
+	"\x10PreparationStart\x12-\n" +
+	"\x12qualification_only\x18\x06 \x01(\bR\x11qualificationOnly\x124\n" +
 	"\x16template_definition_id\x18\x01 \x01(\tR\x14templateDefinitionId\x12C\n" +
 	"\asecrets\x18\x02 \x03(\v2).helmr.computer.v0.ComputerSecretDeliveryR\asecrets\x12F\n" +
 	"\n" +

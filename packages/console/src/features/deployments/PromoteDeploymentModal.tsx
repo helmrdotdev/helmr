@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/solid-query";
+import { onCleanup } from "solid-js";
 import { errorMessage } from "../../lib/error";
 import { promoteDeployment, type Deployment } from "../../lib/deployments";
 import type { Environment } from "../../lib/projects";
@@ -23,6 +24,8 @@ export function PromoteDeploymentModal(props: {
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
   return (
     <ConfirmDialog
       title="Promote deployment to current?"
@@ -32,13 +35,13 @@ export function PromoteDeploymentModal(props: {
       environment={environmentChip(props.environment)}
       onClose={props.onClose}
       onConfirm={async () => {
-        await promoteDeployment(props.deployment.id, { projectID: props.projectID, environmentID: props.environmentID });
+        await promoteDeployment(props.deployment.id, { projectID: props.projectID, environmentID: props.environmentID }, controller.signal);
         await queryClient.invalidateQueries({ queryKey: ["deployments"] });
         await queryClient.invalidateQueries({ queryKey: ["triggers"] });
       }}
       errorMessage={promoteErrorMessage}
     >
-      New sessions start on this deployment and its triggers take effect. Open sessions keep their deployment. Agents missing from it stop taking new sessions and Slack conversations.
+      Environment preparation completes before this deployment becomes current. New sessions then use it and its triggers take effect. Open sessions keep their deployment. Agents missing from it stop taking new sessions and Slack conversations.
     </ConfirmDialog>
   );
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -27,6 +28,7 @@ func (p *PreparedMachines) stagePreparation(ctx context.Context, stage *preparat
 	if err != nil {
 		return err
 	}
+	p.seedProgramArtifacts(ctx, stage.images, cas.Descriptor{Digest: start.Program.Artifact.Digest, SizeBytes: start.Program.Artifact.SizeBytes, MediaType: start.Program.Artifact.MediaType})
 	stage.drives = []vm.ReadOnlyDrive{
 		{ID: vm.ProgramRuntimeDrive, Digest: start.Program.Runtime.Digest, SizeBytes: start.Program.Runtime.SizeBytes, MediaType: start.Program.Runtime.MediaType, Source: stage.images.runtime},
 		{ID: vm.ProgramDrive, Digest: start.Program.Artifact.Digest, SizeBytes: start.Program.Artifact.SizeBytes, MediaType: start.Program.Artifact.MediaType, Source: stage.images.artifact},

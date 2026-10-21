@@ -43,7 +43,7 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, err
 	}
-	local, err := disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 1024, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+	local, err := disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, ReadSource: p.ObjectCache.Ranges("computer:"+scope, p.ComputerRanges), Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 1024, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 	if err != nil {
 		return nil, err
 	}

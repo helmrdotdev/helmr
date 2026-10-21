@@ -74,6 +74,9 @@ func Get(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Sc
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && (r.OrgID != principal.OrgID || r.ProjectID != pgvalue.MustUUIDValue(project)) {
 		return Record{}, ErrNotFound
 	}
+	if err == nil {
+		r.PreparationState, err = preparationState(ctx, q, r.EnvironmentID, id)
+	}
 	return r, err
 }
 

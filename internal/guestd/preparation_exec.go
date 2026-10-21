@@ -47,7 +47,13 @@ func (entry *computerMountEntry) executePreparation(ctx context.Context, start *
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd, err := imageCommand(lifetime, managedProgramNode, append(flags, managedProgramEntry, "prepare", start.GetTemplateDefinitionId()), cwd, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{Program: program, SecretRoot: secretRoot, CgroupNamespace: true, CgroupLeaf: leaf})
+	var args []string
+	if start.GetQualificationOnly() {
+		args = append(flags, "-e", "process.exit(0)")
+	} else {
+		args = append(flags, managedProgramEntry, "prepare", start.GetTemplateDefinitionId())
+	}
+	cmd, err := imageCommand(lifetime, managedProgramNode, args, cwd, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{Program: program, SecretRoot: secretRoot, CgroupNamespace: true, CgroupLeaf: leaf})
 	if err != nil {
 		return err, nil
 	}

@@ -1,5 +1,5 @@
-// Executed by the real native tool, inside its session directory. Assets are
-// immutable image inputs; all mutations remain in this session's workload copy.
+// Native tools mutate their Session copy. The explicit prepared mode is run
+// by the no-model peer against its Computer's previously prepared repository.
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
@@ -8,7 +8,7 @@ import { createRequire } from "node:module"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
-const [kind, sequenceText, assetsArgument = "/opt/native-performance"] = process.argv.slice(2)
+const [kind, sequenceText, assetsArgument = "/opt/native-performance", preparedArgument] = process.argv.slice(2)
 assert(["no-op", "edit-test", "dependencies"].includes(kind))
 const sequence = Number(sequenceText)
 assert(Number.isSafeInteger(sequence) && sequence > 0)
@@ -42,14 +42,16 @@ if (kind === "no-op") {
   // occurs, so this is not a claim of a zero-dirty Computer.
   detail = { sourceIdentity: JSON.parse(await readFile(join(assets, "source.json"), "utf8")) }
 } else if (kind === "edit-test") {
-  const repository = join(root, "repository")
-  if (sequence === 1) {
+  const repository = preparedArgument === "prepared" ? "/workspace/prepared-repository" : join(root, "repository")
+  if (sequence === 1 && preparedArgument !== "prepared") {
     await mkdir(repository)
     run("tar", ["-xf", join(assets, "repository.tar"), "-C", repository], root)
   }
   const file = join(repository, "sdk/typescript/src/content.ts")
   const before = await readFile(file, "utf8")
-  const limit = sequence % 2 ? 63 : 62
+  const limit = preparedArgument === "prepared"
+    ? (Number(before.match(/export const CONTENT_PARTS = (\d+)/)?.[1]) === 63 ? 62 : 63)
+    : (sequence % 2 ? 63 : 62)
   const after = before.replace(/export const CONTENT_PARTS = \d+/, `export const CONTENT_PARTS = ${limit}`)
   assert.notEqual(before, after)
   await writeFile(file, after)
@@ -63,7 +65,7 @@ if (kind === "no-op") {
   assert.throws(() => normalizeContent([...parts, parts[0]]), error => error.code === "content_limit_exceeded")
   assert.throws(() => normalizeContent([{ type: "json", value: NaN }]), error => error.code === "invalid_arguments")
   assert.deepEqual(normalizeContent("hello"), [{ type: "text", text: "hello" }])
-  detail = { beforeSha256: hash(before), afterSha256: hash(after), bundleSha256: hash(await readFile(output)), assertions: 5, limit }
+  detail = { beforeSha256: hash(before), afterSha256: hash(after), bundleSha256: hash(await readFile(output)), assertions: 5, limit, preparedBeforeComputer: preparedArgument === "prepared" }
 } else {
   const dependencies = join(root, "dependencies")
   await mkdir(dependencies, { recursive: true })
@@ -78,7 +80,7 @@ if (kind === "no-op") {
 }
 const operationMs = performance.now() - started
 const inventoryStarted = performance.now()
-const inventory = await footprint(root)
+const inventory = await footprint(preparedArgument === "prepared" ? "/workspace/prepared-repository" : root)
 const result = { kind, sequence, operationMs, inventoryMs: performance.now() - inventoryStarted, inventory, detail }
 await writeFile(resolve(`performance-result-${sequence}.json`), JSON.stringify(result))
 console.log(JSON.stringify(result))

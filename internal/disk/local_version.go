@@ -24,9 +24,11 @@ import (
 // stable keys during construction, and reserves StagedBytes for local ciphertext.
 // Parent directory durability and exclusive host ownership are prerequisites.
 type LocalVersionConfig struct {
-	Directory        string
-	Base             VersionRoot
-	BaseSource       blockformat.RangeSource
+	Directory  string
+	Base       VersionRoot
+	BaseSource blockformat.RangeSource
+	// ReadSource is optional disposable acceleration; BaseSource remains raw proof.
+	ReadSource       blockformat.RangeSource
 	Scope, ActiveKey string
 	Keys             map[string][]byte
 	DirtyBlocks      int
@@ -60,6 +62,14 @@ func (s localVersionSource) GetPackRange(ctx context.Context, digest string, siz
 	r, err := (guestIORangeSource{s.local}).GetRange(ctx, digest, size, offset, length)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.reads.GetPackRange(ctx, digest, size, offset, length)
+	}
+	return r, err
+}
+
+func (s localVersionSource) GetSegmentRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	r, err := (guestIORangeSource{s.local}).GetRange(ctx, digest, size, offset, length)
+	if errors.Is(err, os.ErrNotExist) {
+		return s.reads.GetSegmentRange(ctx, digest, size, offset, length)
 	}
 	return r, err
 }
@@ -270,7 +280,11 @@ func newLocalVersion(ctx context.Context, cfg LocalVersionConfig, lock *os.File,
 		return nil, err
 	}
 	source := guestIORangeSource{cfg.BaseSource}
-	reads := newVersionRangeCache(source)
+	readSource := cfg.ReadSource
+	if readSource == nil {
+		readSource = cfg.BaseSource
+	}
+	reads := newVersionRangeCache(guestIORangeSource{readSource})
 	writer := blockformat.Writer{Source: localVersionSource{local: store, base: source, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
 	disk, err := OpenWritableVersion(ctx, writer, head.Root, cfg.DirtyBlocks, remaining)
 	if err != nil {

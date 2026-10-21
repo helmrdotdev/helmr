@@ -106,10 +106,11 @@ type DeploymentBundleFinalizeError struct {
 }
 
 type DeploymentResponse struct {
-	ID           string    `json:"id"`
-	Version      string    `json:"version"`
-	BundleDigest string    `json:"bundle_digest"`
-	CreatedAt    time.Time `json:"created_at"`
+	PreparationState string    `json:"preparation_state,omitempty"`
+	ID               string    `json:"id"`
+	Version          string    `json:"version"`
+	BundleDigest     string    `json:"bundle_digest"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type DeploymentListItem struct {

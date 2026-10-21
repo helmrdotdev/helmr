@@ -3,6 +3,7 @@
 package guestd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -52,9 +53,9 @@ func TestPreparationExecutesAuthoredCodeAndJoinsDescendants(t *testing.T) {
 		}
 	}
 	write(filepath.Join(program, "package.json"), `{"type":"module"}`)
-	write(filepath.Join(program, "helmr/definition-index.json"), `{"apiVersion":"helmr.definition-index.v1","agents":[],"computers":[{"id":"repo","modulePath":"helmr/app/entry-0.mjs","exportName":"repo","throughAgent":false}]}`)
+	write(filepath.Join(program, "helmr/definition-index.json"), `{"apiVersion":"helmr.definition-index.v1","agents":[],"templates":[{"id":"repo","modulePath":"helmr/app/entry-0.mjs","exportName":"repo","throughAgent":false}]}`)
 	write(filepath.Join(program, "helmr/app/entry-0.mjs"), `import fs from 'node:fs';import {spawn} from 'node:child_process';
-export const repo={kind:'computer',id:'repo',async prepare(build){
+export const repo={kind:'template',id:'repo',async prepare(build){
  await build.exec([process.execPath,'-e',"require('node:fs').writeFileSync('/workspace/prepared',process.env.BUILD_TOKEN)"]);
  fs.writeFileSync('/workspace/prepared-file',fs.readFileSync('/etc/helmr-preparation-token'));
  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'inherit'});
@@ -62,7 +63,7 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
  if(process.env.MODE==='expiry') await new Promise(()=>{setInterval(()=>{},1000)});
  if(process.env.MODE==='failure') await build.exec([process.execPath,'-e','process.exit(7)']);
 }};`)
-	for _, mode := range []string{"success", "large secret", "expiry", "failure"} {
+	for _, mode := range []string{"success", "large secret", "expiry", "failure", "qualification"} {
 		t.Run(mode, func(t *testing.T) {
 			registry, entry, request := preparationGuestFixture(t)
 			entry.imageRoot = root
@@ -78,7 +79,31 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				secretValue = strings.Repeat("A", 80<<10)
 			}
 			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "BUILD_TOKEN", Value: []byte(secretValue)}, {PlacementKind: "env", PlacementTarget: "MODE", Value: []byte(mode)}, {PlacementKind: "file", PlacementTarget: "/etc/helmr-preparation-token", Value: []byte(secretValue)}}}
-			if _, err := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation); err != nil {
+			if mode == "qualification" {
+				request.Start = &computerv0.PreparationStart{QualificationOnly: true, LogLimits: request.Start.LogLimits}
+				entry.imageConfig.Env = []string{"NODE_OPTIONS=--require=/must-not-load", "LD_PRELOAD=/must-not-load"}
+				write(filepath.Join(program, "helmr/app/entry-0.mjs"), "throw new Error('qualification imported authored application')")
+				if err := os.Remove(filepath.Join(root, "workspace/prepared")); err != nil && !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+				// No shell is needed by the managed execution probe.
+				shell := filepath.Join(root, "bin")
+				if err := os.Rename(shell, shell+".qualification"); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Rename(shell+".qualification", shell); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			if _, err := registry.controlPreparation(t.Context(), request, func(entry *computerMountEntry, ctx context.Context, start *computerv0.PreparationStart, output *preparationOutput) (error, error) {
+				runErr, cleanupErr := entry.executePreparation(ctx, start, output)
+				if runErr != nil || cleanupErr != nil {
+					t.Logf("preparation execution: %v; cleanup: %v", runErr, cleanupErr)
+				}
+				return runErr, cleanupErr
+			}); err != nil {
 				t.Fatal(err)
 			}
 			request.Start = nil
@@ -92,12 +117,22 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 				t.Fatal(err)
 			}
 			want := "succeeded"
-			if mode != "success" && mode != "large secret" {
+			if mode != "success" && mode != "large secret" && mode != "qualification" {
 				want = "failed"
 			}
 			if result.State != want {
-				t.Logf("preparation output: %v", result.Log)
+				for _, stream := range []string{"stdout", "stderr"} {
+					request.LogStream = stream
+					logged, logErr := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation)
+					t.Logf("preparation %s: %s (%v)", stream, logged.GetLog().GetData(), logErr)
+				}
 				t.Fatalf("preparation result: %s %s", result.State, result.ErrorCode)
+			}
+			if mode == "qualification" {
+				if _, err := os.Stat(filepath.Join(root, "workspace/prepared")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("qualification reran authored preparation")
+				}
+				return
 			}
 			actual, err := os.ReadFile(filepath.Join(root, "workspace/prepared"))
 			if err != nil || string(actual) != secretValue {

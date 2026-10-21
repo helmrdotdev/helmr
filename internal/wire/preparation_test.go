@@ -52,3 +52,23 @@ func TestPreparationFileSecretDoesNotConsumeEnvironmentEntryLimit(t *testing.T) 
 		t.Fatal("unknown placement accepted")
 	}
 }
+
+func TestPreparationQualificationCannotReceiveAuthoredWork(t *testing.T) {
+	for _, mutate := range []func(*computerv0.PreparationStart){
+		func(s *computerv0.PreparationStart) { s.TemplateDefinitionId = "repo" },
+		func(s *computerv0.PreparationStart) {
+			s.Secrets = []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "TOKEN", Value: []byte("secret")}}
+		},
+		func(s *computerv0.PreparationStart) { s.ProtectedEnv = map[string]string{"TOKEN": "placeholder"} },
+		func(s *computerv0.PreparationStart) { s.ProxyCa = []byte("trust") },
+	} {
+		r := &computerv0.PreparationControlRequest{Start: &computerv0.PreparationStart{QualificationOnly: true, LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}}}
+		if err := ValidatePreparationControl(r); err != nil {
+			t.Fatal(err)
+		}
+		mutate(r.Start)
+		if err := ValidatePreparationControl(r); err == nil {
+			t.Fatal("qualification accepted application work or Secrets")
+		}
+	}
+}
