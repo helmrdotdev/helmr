@@ -42,6 +42,10 @@ export async function assembleRuntime(options: { bundle: string; installed: stri
 export async function installRuntimePackages() {
   const env: NodeJS.ProcessEnv = {
     HOME: "/workspace/home", TMPDIR: "/workspace/tmp", LANG: "C.UTF-8",
+    // Python helpers used by native installs must not add timestamped bytecode.
+    PYTHONDONTWRITEBYTECODE: "1",
+    // node-gyp emits Makefile rules by iterating Python sets.
+    PYTHONHASHSEED: "0",
     PATH: "/opt/helmr/runtime/bin:/usr/local/bin:/usr/bin:/bin",
   }
   for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "PKG_CONFIG_PATH"]) {

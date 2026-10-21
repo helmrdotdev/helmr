@@ -20,6 +20,7 @@ func deployCommand() *cobra.Command {
 	var projectRef string
 	var envRef string
 	var bundlePath string
+	var refreshDependencies bool
 	var skipPromotion bool
 	var jsonOutput bool
 	var idempotencyKey string
@@ -28,6 +29,9 @@ func deployCommand() *cobra.Command {
 		Short: "Build and deploy a verified deployment bundle.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (returnErr error) {
+			if strings.TrimSpace(bundlePath) != "" && refreshDependencies {
+				return errors.New("--refresh-dependencies requires a source build, not --bundle")
+			}
 			if strings.TrimSpace(bundlePath) != "" && len(args) != 0 {
 				return errors.New("deploy accepts either a source path or --bundle, not both")
 			}
@@ -70,7 +74,7 @@ func deployCommand() *cobra.Command {
 				if err := reporter.Step("Building deployment bundle"); err != nil {
 					return err
 				}
-				if err := buildDeploymentBundleAt(cmd.Context(), cmd, source, bundlePath, false); err != nil {
+				if err := buildDeploymentBundleAt(cmd.Context(), cmd, source, bundlePath, false, refreshDependencies); err != nil {
 					return err
 				}
 			}
@@ -120,6 +124,7 @@ func deployCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectRef, "project", "p", "", "Project ID.")
 	cmd.Flags().StringVarP(&envRef, "env", "e", "", "Environment ID for this deployment.")
+	cmd.Flags().BoolVar(&refreshDependencies, "refresh-dependencies", false, "Reinstall source and runtime dependencies without cached install layers.")
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "Existing verified deployment bundle directory.")
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Finalize the deployment without promoting it current.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
