@@ -4,7 +4,7 @@ export const workspace = template({
   id: "app",
   image: image("app")
     .from("node:24-bookworm")
-    .run(["npm", "install", "-g", "opencode-ai@1.18.30"]),
+    .run(["sh", "-c", "apt-get update && apt-get install -y ripgrep"]),
   resources: { cpu: 2, memory: "4GiB" },
 
   buildSecrets: [{
@@ -12,11 +12,11 @@ export const workspace = template({
     env: { name: "REGISTRY_TOKEN", mode: "raw" },
   }],
   secrets: [{
-    secret: "OPENAI_API_KEY",
+    secret: "ANTHROPIC_API_KEY",
     env: {
-      name: "OPENAI_API_KEY",
+      name: "ANTHROPIC_API_KEY",
       mode: "protected",
-      allowedOrigins: ["https://api.openai.com"],
+      allowedOrigins: ["https://api.anthropic.com"],
     },
   }],
 
