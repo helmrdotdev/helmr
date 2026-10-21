@@ -122,7 +122,7 @@ func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempD
 		}
 		started := time.Now()
 		var err error
-		images.runtime, err = localcopy.ReadRuntime(stageCtx, p.ObjectCache.Reader("runtime", p.PlatformStore), tempDir, runtimeDescriptor)
+		images.runtime, err = p.readRuntimeArtifact(stageCtx, tempDir, runtimeDescriptor)
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})
@@ -130,7 +130,7 @@ func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempD
 		group.Go(func() error {
 			started := time.Now()
 			var err error
-			images.artifact, err = localcopy.ReadProgram(stageCtx, p.ObjectCache.Reader("program", p.CAS), tempDir, programDescriptor)
+			images.artifact, err = p.readProgramArtifact(stageCtx, tempDir, programDescriptor)
 			p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 			return err
 		})

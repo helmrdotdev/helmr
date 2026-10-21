@@ -40,6 +40,7 @@ type artifactPlatform struct {
 	name            string
 	identity        fileIdentity
 	removeDirectory bool
+	borrowed        BorrowedDrive
 }
 
 func copyArtifact(
@@ -69,17 +70,16 @@ func copyArtifact(
 			os.Remove(leaseDirectory),
 		)
 	}
-	// Copies are recreated from their authoritative source for each use. Their
-	// random lease is never a crash-recovery record, so synchronous writeback
-	// adds latency without establishing a retained durability boundary. Keep
-	// the sealed read-only descriptors and final content verification.
+	// Verify the pinned content through the sealed read-only inode. Temporary
+	// copies defer writeback until LinkInto, which checks errors before exposing
+	// the drive; they are not crash-recovery records.
 	local, err := produceArtifactCopyWithSpec(
 		ctx,
 		leaseDirectory,
 		spec,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		false,
-		nil,
+		&expected,
 		func(destination *os.File) error {
 			return copyArtifactCopy(ctx, destination, source, expected)
 		},
@@ -88,12 +88,6 @@ func copyArtifact(
 		return nil, errors.Join(err, os.Remove(leaseDirectory))
 	}
 	local.platform.removeDirectory = true
-	if local.descriptor != expected {
-		return nil, errors.Join(
-			errors.New("local artifact copy descriptor changed during sealing"),
-			local.Close(),
-		)
-	}
 	return local, nil
 }
 
@@ -263,7 +257,7 @@ func produceArtifactCopyWithSpec(
 			return nil, fmt.Errorf("sync sealed local artifact copy: %w", err)
 		}
 	}
-	sealed, err := inspectSealedArtifactCopy(writer, descriptor, owner)
+	sealed, err := inspectSealedArtifactCopy(writer, descriptor, owner, 0400)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +344,6 @@ func copyArtifactCopy(
 	source io.Reader,
 	expected cas.Descriptor,
 ) error {
-	digest := sha256.New()
 	buffer := make([]byte, 128<<10)
 	var sizeBytes int64
 	for {
@@ -366,9 +359,6 @@ func copyArtifactCopy(
 			return errors.New("copy local artifact copy: source returned an invalid byte count")
 		}
 		if count > 0 {
-			if _, err := digest.Write(buffer[:count]); err != nil {
-				return fmt.Errorf("hash local artifact copy: %w", err)
-			}
 			if _, err := destination.Write(buffer[:count]); err != nil {
 				return fmt.Errorf("write local artifact copy: %w", err)
 			}
@@ -395,14 +385,6 @@ func copyArtifactCopy(
 			"local artifact copy size = %d, want %d",
 			sizeBytes,
 			expected.SizeBytes,
-		)
-	}
-	actualDigest := sha256sum.FormatDigest(digest.Sum(nil))
-	if actualDigest != expected.Digest {
-		return fmt.Errorf(
-			"local artifact copy digest = %s, want %s",
-			actualDigest,
-			expected.Digest,
 		)
 	}
 	return nil
@@ -459,6 +441,7 @@ func inspectSealedArtifactCopy(
 	file *os.File,
 	expected cas.Descriptor,
 	owner Owner,
+	mode uint32,
 ) (fileIdentity, error) {
 	identity, err := inspectArtifactCopy(file)
 	if err != nil {
@@ -471,10 +454,10 @@ func inspectSealedArtifactCopy(
 			expected.SizeBytes,
 		)
 	}
-	if identity.mode&0o7777 != 0o400 {
+	if identity.mode&0o7777 != mode {
 		return fileIdentity{}, fmt.Errorf(
-			"sealed local artifact copy mode = %#o, want 0400",
-			identity.mode&0o7777,
+			"sealed local artifact copy mode = %#o, want %#o",
+			identity.mode&0o7777, mode,
 		)
 	}
 	if identity.uid != uint32(owner.UID) || identity.gid != uint32(owner.GID) {
@@ -617,10 +600,18 @@ func (local *Artifact) LinkInto(
 		UID: int(local.platform.identity.uid),
 		GID: int(local.platform.identity.gid),
 	}
+	mode := uint32(0400)
+	if local.platform.borrowed != nil {
+		if uid == 0 || uid == currentOwner.UID || gid != currentOwner.GID {
+			return errors.New("shared artifact requires a distinct unprivileged jailer owner and matching group")
+		}
+		mode = 0440
+		owner = currentOwner
+	}
 	before, err := inspectSealedArtifactCopy(
 		local.upload,
 		local.descriptor,
-		currentOwner,
+		currentOwner, mode,
 	)
 	if err != nil {
 		return err
@@ -637,7 +628,7 @@ func (local *Artifact) LinkInto(
 		transferred, err := inspectSealedArtifactCopy(
 			local.upload,
 			local.descriptor,
-			owner,
+			owner, 0400,
 		)
 		if err != nil {
 			return err
@@ -704,7 +695,7 @@ func (local *Artifact) LinkInto(
 	after, err := inspectSealedArtifactCopy(
 		local.upload,
 		local.descriptor,
-		owner,
+		owner, mode,
 	)
 	if err != nil {
 		return cleanupArtifactCopyLink(destination, name, err)
@@ -765,12 +756,20 @@ func cleanupArtifactCopyLink(
 	return cause
 }
 
-func closeArtifactCopyPlatform(local *Artifact) error {
-	if local == nil || local.platform.directory == nil {
+func closeArtifactCopyPlatform(local *Artifact) (closeErr error) {
+	if local == nil {
 		return nil
 	}
-	var closeErr error
-	if local.platform.name != "" {
+	if local.platform.borrowed != nil {
+		defer func() {
+			closeErr = errors.Join(closeErr, local.platform.borrowed.Close())
+			local.platform.borrowed = nil
+		}()
+	}
+	if local.platform.directory == nil {
+		return nil
+	}
+	if local.platform.name != "" && local.platform.borrowed == nil {
 		closeErr = errors.Join(
 			closeErr,
 			removeArtifactCopy(

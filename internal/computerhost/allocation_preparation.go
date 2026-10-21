@@ -321,6 +321,14 @@ func (o *PreparationAllocationOwner) stopMachine(ctx context.Context) error {
 	return nil
 }
 func (o *PreparationAllocationOwner) cleanup() error {
+	// No launch or qualification can follow terminal cleanup. Release source
+	// handles even if physical cleanup fails; VM links remain reservation-funded.
+	if o.stage != nil && o.stage.images != nil {
+		if err := o.stage.images.close(); err != nil {
+			return err
+		}
+		o.stage.images = nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := o.stopMachine(ctx); err != nil {

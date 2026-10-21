@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -56,14 +55,14 @@ func (p *PreparedMachines) restoreBootProgram(ctx context.Context, directory str
 	group.Go(func() error {
 		var err error
 		started := time.Now()
-		images.runtime, err = localcopy.ReadRuntime(ctx, p.ObjectCache.Reader("runtime", p.PlatformStore), directory, p.sessionRuntimeDescriptor(workerapi.CASObject(program.Runtime)))
+		images.runtime, err = p.readRuntimeArtifact(ctx, directory, p.sessionRuntimeDescriptor(workerapi.CASObject(program.Runtime)))
 		slog.Info("Computer boot artifact staged", "started_at", started.UTC().Format(time.RFC3339Nano), "role", "runtime", "digest", program.Runtime.Digest, "bytes", program.Runtime.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
 		return err
 	})
 	group.Go(func() error {
 		var err error
 		started := time.Now()
-		images.artifact, err = localcopy.ReadProgram(ctx, p.ObjectCache.Reader("program", p.CAS), directory, sessionProgramDescriptor(workerapi.CASObject(program.Artifact)))
+		images.artifact, err = p.readProgramArtifact(ctx, directory, sessionProgramDescriptor(workerapi.CASObject(program.Artifact)))
 		slog.Info("Computer boot artifact staged", "started_at", started.UTC().Format(time.RFC3339Nano), "role", "program", "digest", program.Artifact.Digest, "bytes", program.Artifact.SizeBytes, "duration_ms", float64(time.Since(started))/float64(time.Millisecond), "error_class", vm.RuntimeErrorClass(err))
 		return err
 	})

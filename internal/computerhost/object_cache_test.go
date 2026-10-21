@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
@@ -18,6 +20,15 @@ import (
 )
 
 func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		name := "private"
+		if shared {
+			name = "shared"
+		}
+		t.Run(name, func(t *testing.T) { testPreparedObjectCacheAcrossConsumers(t, shared) })
+	}
+}
+func testPreparedObjectCacheAcrossConsumers(t *testing.T, shared bool) {
 	store := &fakeCAS{objects: map[string][]byte{}}
 	runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
 	programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
@@ -33,7 +44,23 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cache.Close()
+	defer func() {
+		done := make(chan error, 1)
+		go func() { done <- cache.Close() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("artifact staging retained a cache pin")
+		}
+	}()
+	if shared {
+		if err := cache.EnableDrives(12345, os.Getgid(), t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	p := &PreparedMachines{CAS: store, PlatformStore: store, ObjectCache: cache, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{rd: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}, programDescriptor: pd, programMetadata: &index}
 	program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: rd.Digest, SizeBytes: rd.SizeBytes, MediaType: rd.MediaType}, Artifact: workerapi.CASObject{Digest: pd.Digest, SizeBytes: pd.SizeBytes, MediaType: pd.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
 	firstDirectory := t.TempDir()
@@ -92,11 +119,57 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	delete(store.objects, pd.Digest)
 	// A second consumer requires its own real sealed snapshots even though the
 	// original staging directory and remote bytes are gone.
-	second, err := p.prepareProgramArtifacts(t.Context(), t.TempDir(), "second", program)
+	secondDirectory := t.TempDir()
+	second, err := p.prepareProgramArtifacts(t.Context(), secondDirectory, "second", program)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.close()
+	if shared {
+		files, err := os.ReadDir(secondDirectory)
+		if err != nil || len(files) != 0 {
+			t.Fatal("shared artifacts copied into staging directory", files, err)
+		}
+		programFile, err := second.artifact.VerifierFile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimeFile, _, err := second.runtime.VerifierFile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range []struct {
+			namespace  string
+			descriptor cas.Descriptor
+			file       *os.File
+		}{
+			{"program", cas.Descriptor(pd), programFile},
+			{"runtime", cas.Descriptor{Digest: rd.Digest, SizeBytes: rd.SizeBytes, MediaType: rd.MediaType}, runtimeFile},
+		} {
+			lease := cache.Borrow(t.Context(), check.namespace, check.descriptor)
+			if lease == nil {
+				t.Fatal("missing shared cache entry")
+			}
+			directory, name, gid, err := lease.Open()
+			if err != nil {
+				lease.Close()
+				t.Fatal(err)
+			}
+			expected, err := os.Stat(filepath.Join(directory.Name(), name))
+			directory.Close()
+			lease.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := check.file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(expected, actual) || actual.Mode().Perm() != 0440 || actual.Sys().(*syscall.Stat_t).Gid != uint32(gid) {
+				t.Fatal("shared stage fell back to a private inode")
+			}
+		}
+	}
 	if second.runtime == nil || second.artifact == nil {
 		t.Fatal("cache bypassed consumer snapshots")
 	}
@@ -112,6 +185,17 @@ func TestPreparedObjectCacheOwnsCopiesAcrossConsumers(t *testing.T) {
 	}
 	if err := session.close(); err != nil {
 		t.Fatal(err)
+	}
+	// A failed prefetch must return with all cache pins released before its
+	// caller drops the Program disk reservation. Keep the success case closed.
+	if err := second.close(); err != nil {
+		t.Fatal(err)
+	}
+	failedBoot := *boot
+	failedBoot.Artifact.Digest = sha256sum.DigestBytes([]byte("missing program"))
+	if failed, err := p.restoreBootProgram(t.Context(), t.TempDir(), &failedBoot); err == nil {
+		failed.close()
+		t.Fatal("missing Program accepted")
 	}
 	// Missing second object must release the first lease, including on shutdown.
 	partial, err := objectcache.Open(filepath.Join(t.TempDir(), "partial"), 16384)

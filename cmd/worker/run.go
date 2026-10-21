@@ -166,6 +166,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open worker object cache: %w", err)
 	}
+	if err := objectCache.EnableDrives(cfg.JailerUID, cfg.JailerGID, networkConfig.StateDir, cfg.JailerChrootDir); err != nil {
+		log.Info("shared artifact drives unavailable", "error", err)
+	}
 	cacheKey := reservation.Key{Kind: "object-cache", Epoch: 1, ID: "worker"}
 	defer func() {
 		log.Info("worker object cache usage", "stats", objectCache.Snapshot())

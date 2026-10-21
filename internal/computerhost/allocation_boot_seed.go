@@ -300,6 +300,12 @@ func (o *BootSeedAllocationOwner) stopVM(ctx context.Context) error {
 	return nil
 }
 func (o *BootSeedAllocationOwner) cleanup() error {
+	// All launches have joined before terminal cleanup. The VM owns its links;
+	// source handles must not retain cache pins after a failed cleanup attempt.
+	if err := o.images.close(); err != nil {
+		return err
+	}
+	o.images = nil
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := o.stopVM(ctx); err != nil {
@@ -310,10 +316,6 @@ func (o *BootSeedAllocationOwner) cleanup() error {
 			return err
 		}
 	}
-	if err := o.images.close(); err != nil {
-		return err
-	}
-	o.images = nil
 	if err := os.RemoveAll(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); err != nil {
 		return err
 	}
