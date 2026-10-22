@@ -46,7 +46,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		if err := r.ParseForm(); err != nil || r.Form.Get("redirect_uri") != "https://console.example.test/auth/slack/callback" || r.Form.Get("code") != "verified-code" {
 			t.Fatal("wrong OAuth exchange")
 		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"app_id":"app","team":{"id":"team","name":"Workspace"},"bot_user_id":"bot","token_type":"bot","access_token":"private-access","scope":"app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write"}`))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"app_id":"app","team":{"id":"team","name":"Workspace"},"bot_user_id":"bot","token_type":"bot","access_token":"private-access","scope":"app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write,im:history,im:read"}`))}, nil
 	})
 	cfg := completeServerConfig(t)
 	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}

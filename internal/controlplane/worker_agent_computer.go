@@ -59,7 +59,7 @@ func (server *Server) workerBeginAgentComputerCapture(w http.ResponseWriter, r *
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AgentComputerCaptureResponse{Capture: result.Request, SaveID: result.SaveID.String(), WorkPending: result.WorkPending})
+	writeJSON(w, http.StatusOK, workerapi.AgentComputerCaptureResponse{Capture: result.Request, SaveID: result.SaveID.String(), WorkPending: result.WorkPending, ReleaseSource: result.ReleaseSource})
 }
 func (server *Server) workerSealAgentComputerCapture(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentComputerReceiptRequest

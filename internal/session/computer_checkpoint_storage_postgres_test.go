@@ -309,6 +309,9 @@ func TestCheckpointRuntimeReadyCannotReplayAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
+	if _, err := session.ControlComputerExecution(ctx, f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}

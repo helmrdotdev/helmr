@@ -30,6 +30,7 @@ func newStatusFixture(t *testing.T) statusFixture {
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $8,$1,$7,$4,org_id,'team','C1','123.456','opening' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.installation, f.User, f.channel, f.publication, f.Agent, f.Session, f.thread, f.participant, f.registration)
 
+	sessiontest.ObserveProvisioning(t, f.Fixture)
 	return f
 }
 

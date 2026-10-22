@@ -59,8 +59,13 @@ names, and provider `resource_id` values are opaque canonical strings.
 
 ### Resolve and plan
 
-Resolve the group and pool first. Then ask Helmr how many additional Workers
-each provider pool can use:
+Resolve the group and pools, then observe provider and Worker inventory in the
+same reconciliation cycle. Record `observed_at` before starting those reads.
+The group response includes an opaque `supply_fingerprint`; return it as
+`expected_supply_fingerprint` in the plan request. Re-resolve after changing the
+primary pool, pool lifecycle or Worker inventory.
+
+Ask Helmr how many additional Workers each provider pool can use:
 
 ```sh
 printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
@@ -77,9 +82,45 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header @- \
   --header 'Accept: application/json' \
   --header 'Content-Type: application/json' \
-  --data '{"pools":[{"pool_id":"019...","max_additional_workers":10}]}' \
+  --data @capacity-plan.json \
   "$CONTROL_PLANE_URL/capacity/v1/worker-groups/$GROUP_ID/plan"
 ```
+
+The request file has this shape (use the current observation time and fingerprint):
+
+```json
+{
+  "expected_supply_fingerprint": "<fingerprint from group resolution>",
+  "observed_at": "2026-10-22T00:00:00Z",
+  "pools": [{
+    "pool_id": "019...",
+    "max_additional_workers": 10,
+    "active_workers": 1,
+    "registering_workers": 0
+  }]
+}
+```
+
+Include every active pool, including pools with zero provider headroom.
+`max_additional_workers` is the number of additional VM-capable hosts the provider
+can supply beyond the active Workers already represented in this observation.
+Account for desired, in-flight, unregistered and unresolved provider instances;
+do not derive it by subtracting registered Workers from the provider maximum.
+Report the active and registering counts from the same Worker inventory.
+
+An observation must be no more than 30 seconds old and must still match the
+current supply fingerprint. Old, future-dated or mismatched observations return
+`execution_capacity_unavailable`; reobserve instead of retrying the stale body.
+Requests cover at most 64 pools and at most 1,000 additional Workers per pool.
+A partial pool set or mismatched inventory counts can still produce an advisory
+plan, but cannot refresh capacity evidence for new execution admission.
+
+Helmr reserves bounded execution claims against current capacity and this fresh
+provider evidence. When evidence expires or topology changes, new work can use
+verified existing capacity but cannot rely on the old provider headroom. Keep
+observations current even when the provider is at its maximum. A rejected request
+has no accepted Turn waiting for capacity; the caller must submit new work after
+resolving the reported condition.
 
 The plan response has this shape:
 
@@ -150,7 +191,10 @@ The replacement requires every field and the revision returned by the read:
 ```
 
 All limits default to zero. Optional seed generation, prepared Computers and
-cache share these per-Worker ceilings. `local_headroom_slots` keeps full VM shapes
+cache share these per-Worker ceilings. A paused source retained after a durable
+Computer checkpoint uses these optional ceilings too; it reserves its full CPU,
+memory and lifecycle disk until physical teardown completes. Retention is an
+optimization, not a promise that the source will remain available. `local_headroom_slots` keeps full VM shapes
 available to real work by restricting optional admission. It does not request
 additional hosts or guarantee fleet-wide ready capacity. Set a provider minimum
 size when physical standing capacity is required. Replacing policy requires the
@@ -192,8 +236,10 @@ requires an operator recovery procedure; automatic recovery of these arenas is
 not provided.
 
 Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
-for that queue leaves normal save processing available, and a zero optional
-policy does not disable required checkpoint publication.
+for that queue leaves normal save processing available. Publication yields the
+capture permit so other Computers can capture while durable upload proceeds;
+retries preserve the same cut. A zero optional policy does not disable required
+checkpoint publication.
 
 All optional limits default to zero, which disables new artifact-cache fills as
 well as prepared VMs. Repeated starts can therefore fetch artifacts again. To
@@ -355,9 +401,10 @@ limited to 16 KiB.
 
 ## Compatibility
 
-`/capacity/v1` is the supported integration boundary. Additive response
-fields may appear within `v1`; clients must ignore unknown fields. A breaking
-wire change requires a new route version.
+`/capacity/v1` is the integration boundary. Deploy matching Control Plane and
+capacity-controller versions during pre-release. Clients must ignore unknown
+response fields; the request fields documented above are required for current
+capacity observations.
 
 The historical Go module release `capacity/v0.1.0` remains downloadable for
 reproducible builds, but it is frozen and receives no successor releases. New

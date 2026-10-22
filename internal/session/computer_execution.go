@@ -73,7 +73,7 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 				return err
 			}
 			if scope.Digest != req.ExpectedScope {
-				return ErrConflict
+				return ErrControlScopeChanged
 			}
 		}
 		if err = computer.RequireSecretsNotRevoked(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {

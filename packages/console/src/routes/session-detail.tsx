@@ -313,7 +313,7 @@ function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAd
           </Notice>
         )}
       </Show>
-      <For each={props.session.holds}>
+      <For each={props.session.status === "open" ? props.session.holds : []}>
         {hold => (
           <Notice tone="warning" role="status">
             <span>

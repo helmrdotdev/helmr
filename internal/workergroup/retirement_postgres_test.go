@@ -240,3 +240,49 @@ func TestCaptureRequiresRestoreAdmittingGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
+	f := newRetirementFixture(t)
+	key := uuid.NewV7()
+	var blocked workergroup.ScaleInConflict
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
+		t.Fatalf("mandatory execution selected for scale-in: %v", err)
+	}
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+		t.Fatal(err)
+	}
+	request := f.capture()
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
+		t.Fatalf("unpublished source selected for scale-in: %v", err)
+	}
+	// Supply a certified publication without fencing the retained VM or its
+	// captured process. Selection may drain it; physical custody must remain.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, request.CheckpointID, f.Worker)
+	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || demand {
+		t.Fatalf("idle retained source has demand: %v %v", demand, err)
+	}
+	// A wake arriving after an idle observation must block the final locked
+	// selection even though it creates no Turn.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE computer_id=$1 AND kind='hibernate' AND status='accepted'`, f.Computer)
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "wake", IdempotencyKey: "wake-after-observation"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "queued_work" {
+		t.Fatalf("accepted wake did not block scale-in: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Computer)
+	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.Pool); err != nil {
+		t.Fatal(err)
+	}
+	selected, created, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key)
+	if err != nil || !created || selected.WorkerHostID != f.Worker.String() || selected.Phase != "draining" {
+		t.Fatalf("retained source prevented scale-in: %+v %v", selected, err)
+	}
+	var retained bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_leases l JOIN session_processes p ON (p.environment_id,p.computer_id,p.computer_lease_epoch)=(l.environment_id,l.computer_id,l.epoch) WHERE l.worker_host_id=$1 AND l.fenced_at IS NULL AND p.fenced_at IS NULL)`, f.Worker).Scan(&retained); err != nil || !retained {
+		t.Fatalf("drain selection released physical custody: %v %v", retained, err)
+	}
+}

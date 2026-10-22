@@ -323,6 +323,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))
+	case errors.Is(err, session.ErrControlScopeChanged):
+		writeError(w, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady), errors.Is(err, session.ErrTerminal), errors.Is(err, computer.ErrTerminal):

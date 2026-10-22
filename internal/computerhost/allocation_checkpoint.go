@@ -305,6 +305,13 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 		if err != nil && !checkpointDurabilityRetryable(err) {
 			return err
 		}
+		if err == nil && pending.ReleaseSource {
+			<-done
+			if publicationErr != nil {
+				return publicationErr
+			}
+			return errComputerHibernated
+		}
 		if err == nil && pending.WorkPending {
 			if err := hold.ResumeGuestControl(ctx); err != nil {
 				return finishPublication(err)

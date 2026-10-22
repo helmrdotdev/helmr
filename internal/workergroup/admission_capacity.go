@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -34,9 +35,17 @@ func SupplyFingerprint(ctx context.Context, q db.Querier, group uuid.UUID) (stri
 }
 
 // LockExecutionSupply takes step 2 before any Environment, Slack or runtime
-// Host lock. All admissions and placements use the same region supply boundary.
+// Host lock. Admissions and placements serialize on the region's advisory gate;
+// shared Group locks exclude topology changes without blocking runtime renewal.
 func LockExecutionSupply(ctx context.Context, tx pgx.Tx, env uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT g.id FROM worker_groups g JOIN projects p ON p.default_region_id=g.region_id JOIN environments e ON e.project_id=p.id WHERE e.id=$1 ORDER BY g.id FOR UPDATE OF g`, env)
+	var region string
+	if err := tx.QueryRow(ctx, `SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, env).Scan(&region); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, pglock.Key("helmr:execution-supply:"+region)); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM worker_groups WHERE region_id=$1 ORDER BY id FOR SHARE`, region)
 	if err != nil {
 		return err
 	}

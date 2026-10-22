@@ -44,7 +44,7 @@ WITH RECURSIVE held AS (
  AND (c.execution_deadline_at>statement_timestamp() OR EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')
  OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing')
-  AND (cp.id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued'))
+  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )

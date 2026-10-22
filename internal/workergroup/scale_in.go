@@ -156,7 +156,9 @@ func SelectScaleIn(ctx context.Context, txb db.TxBeginner, actor audit.Actor, gr
  AND NOT EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) a WHERE a.worker_host_id=h.id AND a.kind NOT IN ('seed','retained'))
  AND NOT EXISTS(SELECT 1 FROM session_processes p JOIN computer_leases l
  ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
- WHERE l.worker_host_id=h.id AND p.fenced_at IS NULL)
+ WHERE l.worker_host_id=h.id AND p.fenced_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id
+ AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready'))
  ORDER BY h.id LIMIT 1 FOR UPDATE OF h`, groupID, poolID, ObservationFreshnessSeconds).Scan(&host, &epoch, &claim)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ScaleInConflict{Code: "scale_in_blocked", Blockers: []string{"no_eligible_host"}}

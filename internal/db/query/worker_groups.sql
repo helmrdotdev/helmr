@@ -367,7 +367,12 @@ SELECT live_workers.worker_group_id,
  JOIN usage USING (worker_host_id)
  ORDER BY live_workers.worker_host_id;
 -- name: RecordWorkerObservation :one
-WITH updated AS (
+WITH eligible AS MATERIALIZED (
+ SELECT * FROM worker_hosts
+ WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
+ AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+ FOR UPDATE
+), updated AS (
 UPDATE worker_hosts
    SET observed_at=clock_timestamp(), admission_paused_reason=sqlc.narg(admission_paused_reason),
        resource_observation_sequence=sqlc.arg(sequence)::bigint,
@@ -384,14 +389,13 @@ UPDATE worker_hosts
        updated_at=clock_timestamp()
  WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
    AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+   AND EXISTS(SELECT 1 FROM eligible)
    AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<sqlc.arg(sequence))
  RETURNING worker_hosts.*
 )
 SELECT * FROM updated
 UNION ALL
-SELECT * FROM worker_hosts WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
- AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
- AND NOT EXISTS(SELECT 1 FROM updated);
+SELECT * FROM eligible WHERE NOT EXISTS(SELECT 1 FROM updated);
 
 -- name: GetWorkerPool :one
 SELECT * FROM worker_pools

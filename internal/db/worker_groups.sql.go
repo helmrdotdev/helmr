@@ -1030,34 +1030,41 @@ func (q *Queries) LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerP
 }
 
 const recordWorkerObservation = `-- name: RecordWorkerObservation :one
-WITH updated AS (
+WITH eligible AS MATERIALIZED (
+ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM worker_hosts
+ WHERE worker_hosts.id=$1 AND worker_hosts.worker_group_id=$2
+ AND worker_hosts.current_epoch=$3 AND worker_hosts.status IN ('active','draining')
+ FOR UPDATE
+), updated AS (
 UPDATE worker_hosts
-   SET observed_at=clock_timestamp(), admission_paused_reason=$1,
-       resource_observation_sequence=$2::bigint,
-       resource_policy_revision=$3::bigint,
+   SET observed_at=clock_timestamp(), admission_paused_reason=$4,
+       resource_observation_sequence=$5::bigint,
+       resource_policy_revision=$6::bigint,
        resource_observed_at=clock_timestamp(),
-       local_optional_cpu_millis=$4::bigint,
-       local_optional_memory_bytes=$5::bigint,
-       local_optional_vm_slots=$6::integer,
-       local_optional_tasks=$7::integer,
-       optional_disk_bytes=$8::bigint,
-       disk_slots_for_real_work=$9::integer,
-       optional_reclaim_pending=$10::boolean,
-       ready_leaf_keys=$11::jsonb,
+       local_optional_cpu_millis=$7::bigint,
+       local_optional_memory_bytes=$8::bigint,
+       local_optional_vm_slots=$9::integer,
+       local_optional_tasks=$10::integer,
+       optional_disk_bytes=$11::bigint,
+       disk_slots_for_real_work=$12::integer,
+       optional_reclaim_pending=$13::boolean,
+       ready_leaf_keys=$14::jsonb,
        updated_at=clock_timestamp()
- WHERE worker_hosts.id=$12 AND worker_hosts.worker_group_id=$13
-   AND worker_hosts.current_epoch=$14 AND worker_hosts.status IN ('active','draining')
-   AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<$2)
+ WHERE worker_hosts.id=$1 AND worker_hosts.worker_group_id=$2
+   AND worker_hosts.current_epoch=$3 AND worker_hosts.status IN ('active','draining')
+   AND EXISTS(SELECT 1 FROM eligible)
+   AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<$5)
  RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 )
 SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM updated
 UNION ALL
-SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM worker_hosts WHERE worker_hosts.id=$12 AND worker_hosts.worker_group_id=$13
- AND worker_hosts.current_epoch=$14 AND worker_hosts.status IN ('active','draining')
- AND NOT EXISTS(SELECT 1 FROM updated)
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM eligible WHERE NOT EXISTS(SELECT 1 FROM updated)
 `
 
 type RecordWorkerObservationParams struct {
+	WorkerHostID          pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch           pgtype.Int8 `json:"worker_epoch"`
 	AdmissionPausedReason pgtype.Text `json:"admission_paused_reason"`
 	Sequence              int64       `json:"sequence"`
 	PolicyRevision        int64       `json:"policy_revision"`
@@ -1069,9 +1076,6 @@ type RecordWorkerObservationParams struct {
 	DiskSlotsForRealWork  int32       `json:"disk_slots_for_real_work"`
 	ReclaimPending        bool        `json:"reclaim_pending"`
 	ReadyLeafKeys         []byte      `json:"ready_leaf_keys"`
-	WorkerHostID          pgtype.UUID `json:"worker_host_id"`
-	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch           pgtype.Int8 `json:"worker_epoch"`
 }
 
 type RecordWorkerObservationRow struct {
@@ -1119,6 +1123,9 @@ type RecordWorkerObservationRow struct {
 
 func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error) {
 	row := q.db.QueryRow(ctx, recordWorkerObservation,
+		arg.WorkerHostID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
 		arg.AdmissionPausedReason,
 		arg.Sequence,
 		arg.PolicyRevision,
@@ -1130,9 +1137,6 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 		arg.DiskSlotsForRealWork,
 		arg.ReclaimPending,
 		arg.ReadyLeafKeys,
-		arg.WorkerHostID,
-		arg.WorkerGroupID,
-		arg.WorkerEpoch,
 	)
 	var i RecordWorkerObservationRow
 	err := row.Scan(

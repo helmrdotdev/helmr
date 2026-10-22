@@ -153,7 +153,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 			if scope.Digest != req.ExpectedScope {
-				return ErrConflict
+				return ErrControlScopeChanged
 			}
 		}
 		if req.Observed != nil {

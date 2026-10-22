@@ -46,6 +46,9 @@ func TestExecutionAdmissionReservesPendingEnvironmentQuotaOnce(t *testing.T) {
 	if err := admitCapacityComputer(t.Context(), f, f.env, first); err != nil {
 		t.Fatal(err)
 	}
+	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.pool, f.group); err != nil || !demand {
+		t.Fatalf("Computer claim without Sessions was invisible to scale-in: %v %v", demand, err)
+	}
 	var before, after time.Time
 	if err := f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at FROM computers WHERE id=$1`, first).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -255,5 +258,83 @@ func TestExecutionImageBuildSharesOnlyOnePendingClaim(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET image_build_id=$2 WHERE id=$1`, second, p.ID)
 	if err := admitCapacityComputer(t.Context(), f.fixture, f.env, second); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("second claimant borrowed same build: %v", err)
+	}
+}
+
+func TestExecutionExpiredBootCannotRenewOrReportReady(t *testing.T) {
+	f, a, id := freshComputerAllocationFixture(t)
+	allocation, err := a.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: id, InstanceID: allocation.InstanceID, Epoch: 1}
+	if _, err = a.DeliverLease(t.Context(), *f.host(), identity); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
+		t.Fatal("expired provisioning lease renewed")
+	}
+	if err = dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, allocation.Shape, allocation.BaseVersion); !errors.Is(err, dispatch.ErrAllocationClosed) {
+		t.Fatalf("late ready accepted: %v", err)
+	}
+	var charged bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT initialized_at IS NULL AND fenced_at IS NULL AND reserved_cpu_millis>0 FROM computer_leases WHERE computer_id=$1`, id).Scan(&charged); err != nil || !charged {
+		t.Fatalf("deadline released physical custody: %v %v", charged, err)
+	}
+}
+
+func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
+	f := newAdmissionFixture(t)
+	started, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("held-input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
+	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: started.SessionID, IdempotencyKey: "held-followup", Input: f.startRequest("").Input}); err != nil {
+		t.Fatal(err)
+	}
+	var reserved bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT c.execution_pending_since IS NOT NULL FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE s.id=$1`, started.SessionID).Scan(&reserved); err != nil || reserved {
+		t.Fatalf("held input reserved execution: %v %v", reserved, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
+	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
+	f, allocator, id := freshComputerAllocationFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
+		t.Fatal(err)
+	}
+	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.pool, f.group); err != nil || demand {
+		t.Fatalf("expired request retained scale-out demand: %v %v", demand, err)
+	}
+	if _, _, err := allocator.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err == nil {
+		t.Fatal("expired initial request allocated without readmission")
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE computer_id=$1`, id).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("silent retry created %d leases: %v", count, err)
+	}
+	var target uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE computer_id=$1`, id).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "explicit-retry", Input: f.startRequest("").Input}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err != nil {
+		t.Fatalf("new input failed to readmit execution: %v", err)
 	}
 }

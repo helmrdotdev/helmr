@@ -333,6 +333,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		var base string
 		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes,'sha256:'||encode(initial_root_digest,'hex') FROM computers c WHERE environment_id=$1 AND id=$2
  AND initial_root_id IS NOT NULL AND image_id IS NOT NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND integrity_fault_at IS NULL AND recovery_save_id IS NULL
+ AND execution_deadline_at>clock_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
  AND (SELECT COALESCE(max(l.epoch),0) FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2)=$3::bigint-1`, env, computerID, epoch).Scan(&cpuMillis, &memoryBytes, &base); err != nil {
 			return err

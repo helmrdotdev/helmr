@@ -31,9 +31,10 @@ type ComputerCaptureRequest struct {
 type ComputerCapture struct {
 	// Request is the exact secret protobuf retained by the guest. Transports carry
 	// these bytes unchanged; rebuilding an envelope would break uncertain retries.
-	Request     []byte
-	SaveID      uuid.UUID
-	WorkPending bool
+	Request       []byte
+	SaveID        uuid.UUID
+	WorkPending   bool
+	ReleaseSource bool
 }
 
 type ComputerMember struct {
@@ -82,6 +83,12 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 				return ErrNotReady
 			}
 			result.WorkPending, err = computerExecutionDemand(ctx, tx, req.EnvironmentID, req.ComputerID)
+			if err == nil && priorState == "ready" && result.WorkPending {
+				// Terminal-member cleanup must not resume unrelated sleeping work.
+				// The published cut survives releasing its optional physical source.
+				err = tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.ComputerID).Scan(&result.WorkPending)
+				result.ReleaseSource = err == nil && !result.WorkPending
+			}
 			return err
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {

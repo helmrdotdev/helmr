@@ -51,6 +51,8 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	result, err := session.ControlComputerExecution(r.Context(), s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key, ExpectedScope: body.ExpectedScope})
 	if err != nil {
 		switch {
+		case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady):
+			writeError(w, conflict(codedError{code: "computer_execution_unavailable", message: "Computer cannot change execution state right now. Review its current status before trying again."}))
 		case errors.Is(err, computer.ErrBusy):
 			writeError(w, conflict(codedError{code: "computer_busy", message: "Computer has active work or an unfinished control request"}))
 		case errors.Is(err, computer.ErrDeleting):

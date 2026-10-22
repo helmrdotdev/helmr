@@ -67,6 +67,13 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 // public caller can supply this installation: worker authentication owns it.
 func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
 	if r.State == "ready" {
+		var runnable bool
+		if err := tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, env, r.Computer).Scan(&runnable); err != nil {
+			return err
+		}
+		if !runnable {
+			return ErrNotReady
+		}
 		if err := computer.RequireExecutionCapacity(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}

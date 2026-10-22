@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
 )
+
+var ErrControlScopeChanged = fmt.Errorf("control scope changed: %w", ErrConflict)
 
 // ExecutionScope binds a human confirmation to the exact members and control
 // generations it displayed. It is an observation, never an authorization grant.

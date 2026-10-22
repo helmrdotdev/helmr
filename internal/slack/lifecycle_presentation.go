@@ -71,10 +71,14 @@ func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConf
 				}
 			}
 			if controlStatus == "failed" {
-				state += ". Could not " + control + ": " + failure + ". View details in Console"
+				state += ". Could not " + control + ". " + lifecycleFailureMessage(failure)
 			}
 		}
-		text = state + ". Suspension: " + policy + ". "
+		suspension := "Automatic hibernation: off. "
+		if policy == "after_turn" {
+			suspension = "May hibernate after a completed Turn. "
+		}
+		text = state + ". " + suspension
 		if idle == nil {
 			text += "Automatic close: off."
 		} else {
@@ -158,4 +162,23 @@ func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConf
 		blocks = append(blocks, map[string]any{"type": "section", "text": plainText("!sleep: confirm Computer hibernation. !wake: resume background execution without a prompt. !close: confirm terminal Session closure. !mute / !unmute: change future thread input. !aside text: keep one message out of Agent input. These commands do not release Stop holds.")})
 	}
 	return text, blocks, nil
+}
+
+func lifecycleFailureMessage(code string) string {
+	switch code {
+	case "capture_refused":
+		return "A consistent snapshot could not be made; review active work and try again"
+	case "new_execution_requested":
+		return "New work cancelled the hibernation request"
+	case "capture_resumed":
+		return "The Computer resumed before hibernation finished"
+	case "execution_deadline_exceeded":
+		return "The operation did not finish in time; review capacity and Computer state in Console"
+	case "computer_deleted":
+		return "The Computer was deleted"
+	case "checkpoint_unavailable":
+		return "The saved execution state is unavailable; view details in Console"
+	default:
+		return "Review the Computer state in Console before trying again"
+	}
 }
