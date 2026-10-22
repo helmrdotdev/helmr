@@ -257,7 +257,9 @@ Prepare `cases/prepared-startup`; its imported runtime fixture uses a 2-vCPU,
 Run with `HELMR_EXPECT_PREPARED=warm`, `cold`, or `zero`, plus
 `HELMR_WORKER_RESOURCE_ID` and `HELMR_ENVIRONMENT_ID` for the exact dedicated
 host and fixture. The key needs Secret management and Computer execution.
-Warm runs wait for a current ready-leaf observation before creating each Computer;
+Warm runs also require `HELMR_EXPECTED_PREPARATION_BUILD_ID` for the exact
+qualified build matching the fixture image, Program and 2-vCPU/2-GiB shape.
+They wait for that build in a current ready-leaf observation before creating each Computer;
 the case requires the Worker journal's actual adoption phase, not readiness alone.
 Zero runs require no optional VM or disk occupancy and no prepared adoption.
 Cold runs require ordinary startup; arrange the intended cold artifact state

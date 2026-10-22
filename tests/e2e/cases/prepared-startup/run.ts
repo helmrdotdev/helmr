@@ -11,8 +11,10 @@ await verify("prepared-startup", async ({ client, marker, cleanup, objects, star
   const mode = process.env.HELMR_EXPECT_PREPARED
   const resource = process.env.HELMR_WORKER_RESOURCE_ID
   const environment = process.env.HELMR_ENVIRONMENT_ID
+  const preparedBuild = process.env.HELMR_EXPECTED_PREPARATION_BUILD_ID
   assert(mode === "warm" || mode === "cold" || mode === "zero", "Select warm, cold or zero")
   assert(resource && environment, "Exact Worker resource and Environment IDs are required")
+  assert(mode !== "warm" || preparedBuild, "Warm runs require the exact preparation build ID")
   const samples: unknown[] = []
   const nonces = new Set<string>()
   let minimumObservation = 0
@@ -26,7 +28,7 @@ await verify("prepared-startup", async ({ client, marker, cleanup, objects, star
       before = rows[0]
       const observedAt = Date.parse(before.resource_observed_at)
       const fresh = observedAt > minimumObservation && Date.now() - observedAt < 60_000
-      const ready = before.ready_leaf_keys?.some((key: any) => key.environment_id === environment)
+      const ready = before.ready_leaf_keys?.some((key: any) => key.environment_id === environment && key.build_id === preparedBuild)
       if (fresh && (mode !== "warm" || ready)) break
       await delay(500, undefined, { signal })
     }
