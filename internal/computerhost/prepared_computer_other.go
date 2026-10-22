@@ -11,9 +11,9 @@ import (
 )
 
 func (p *PreparedMachines) prepareAllocationDevice(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error) {
-	return nil, errors.New("Computer allocation materialization requires Linux")
+	return nil, errors.New("computer allocation materialization requires Linux")
 }
 
 func (p *PreparedMachines) prepareAllocationDeviceFrom(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource, blockformat.RangeSource) (vm.ComputerDevice, error) {
-	return nil, errors.New("Computer allocation materialization requires Linux")
+	return nil, errors.New("computer allocation materialization requires Linux")
 }
