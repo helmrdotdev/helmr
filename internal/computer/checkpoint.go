@@ -68,8 +68,8 @@ func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UU
 	}
 	// Input admitted during capture already owned the source allocation. Transfer
 	// that entitlement to one bounded pending episode as the source becomes optional.
-	if _, err := tx.Exec(ctx, `UPDATE computers c SET execution_pending_since=clock_timestamp(),execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
- WHERE c.environment_id=$1 AND c.id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND c.execution_pending_since IS NULL
+	if _, err := tx.Exec(ctx, `UPDATE computers c SET execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
+ WHERE c.environment_id=$1 AND c.id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND c.execution_deadline_at IS NULL
  AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending') OR EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted'))`, env, checkpoint); err != nil {
 		return err
 	}

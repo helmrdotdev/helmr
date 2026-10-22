@@ -474,7 +474,7 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	if err := session.ValidateComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, observed); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '1 minute',execution_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, base.computer)
+	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, base.computer)
 	if err := session.CommitComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("expired continuation committed: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var pending bool
-	if err := base.pool.QueryRow(t.Context(), `SELECT execution_pending_since IS NOT NULL OR execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, base.computer).Scan(&pending); err != nil || pending {
+	if err := base.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, base.computer).Scan(&pending); err != nil || pending {
 		t.Fatalf("committed source retained preparation deadline: %v %v", pending, err)
 	}
 	if err := session.CompleteComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {

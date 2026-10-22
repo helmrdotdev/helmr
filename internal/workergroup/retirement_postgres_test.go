@@ -273,7 +273,7 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "queued_work" {
 		t.Fatalf("accepted wake did not block scale-in: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Computer)
 	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}

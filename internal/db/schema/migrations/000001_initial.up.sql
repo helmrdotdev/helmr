@@ -990,10 +990,7 @@ CREATE TABLE boot_seed_objects (
 
 CREATE TABLE computers (
     id uuid NOT NULL,
-    execution_pending_since timestamptz,
     execution_deadline_at timestamptz,
-    CHECK ((execution_pending_since IS NULL)=(execution_deadline_at IS NULL)),
-    CHECK (execution_deadline_at>execution_pending_since),
     environment_id uuid NOT NULL REFERENCES environments(id),
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
     unused_since timestamptz,

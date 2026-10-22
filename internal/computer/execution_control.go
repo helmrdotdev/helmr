@@ -94,7 +94,7 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID)
 		return err
 	}
 	var pending, expired bool
-	if err = tx.QueryRow(ctx, `SELECT execution_pending_since IS NOT NULL,COALESCE(execution_deadline_at<=clock_timestamp(),false) FROM computers WHERE environment_id=$1 AND id=$2`, env, id).Scan(&pending, &expired); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT execution_deadline_at IS NOT NULL,COALESCE(execution_deadline_at<=clock_timestamp(),false) FROM computers WHERE environment_id=$1 AND id=$2`, env, id).Scan(&pending, &expired); err != nil {
 		return err
 	}
 	if expired {
@@ -127,7 +127,7 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_pending_since=clock_timestamp(),execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
 		return err
 	}
 	return workergroup.RequireExecutionPlacement(ctx, tx, env, id, before)
@@ -171,8 +171,8 @@ const RunnableExecutionDemandSQL = `(EXISTS(SELECT 1 FROM turns t JOIN sessions 
 // RetireUnusedExecutionAdmission releases an unallocated reservation when its
 // last runnable demand is held or cancelled. The caller owns the Computer lock.
 func RetireUnusedExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE computers c SET execution_pending_since=NULL,execution_deadline_at=NULL
- WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_pending_since IS NOT NULL
+	_, err := tx.Exec(ctx, `UPDATE computers c SET execution_deadline_at=NULL
+ WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at IS NOT NULL
  AND NOT `+RunnableExecutionDemandSQL+`
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready'))`, env, id)
 	return err

@@ -54,6 +54,8 @@ func TestExecutionAdmissionReservesPendingEnvironmentQuotaOnce(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at FROM computers WHERE id=$1`, first).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	// Joining an accepted episode keeps its bound even if the default changes.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET preparation_timeout_ms=preparation_timeout_ms+1000 WHERE id=$1`, f.env)
 	if err := admitCapacityComputer(t.Context(), f, f.env, first); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,7 @@ func TestExecutionAdmissionSerializesLastHostSlotAcrossEnvironments(t *testing.T
 		t.Fatalf("accepted=%d rejected=%d", accepted, rejected)
 	}
 	var claims int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computers WHERE execution_pending_since IS NOT NULL`).Scan(&claims); err != nil || claims != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computers WHERE execution_deadline_at IS NOT NULL`).Scan(&claims); err != nil || claims != 1 {
 		t.Fatalf("claims=%d %v", claims, err)
 	}
 }
@@ -116,7 +118,7 @@ func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE id=$1`, first.SessionID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
 	if err = dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +139,7 @@ func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var current bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT execution_pending_since>clock_timestamp()-interval '30 seconds' FROM computers WHERE id=$1`, id).Scan(&current); err != nil || !current {
+	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at>clock_timestamp() AND execution_deadline_at<=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=computers.environment_id)*interval '1 millisecond' FROM computers WHERE id=$1`, id).Scan(&current); err != nil || !current {
 		t.Fatalf("new episode=%v %v", current, err)
 	}
 }
@@ -151,7 +153,7 @@ func TestExecutionAllocationPreservesEarlierPendingShapePlacement(t *testing.T) 
  INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT worker_pool_id,8,cpu_config_digest FROM worker_pool_cpu_shapes WHERE vcpu_count=1;
  UPDATE worker_hosts SET epoch_cpu_millis=10000,epoch_memory_bytes=5368709120,epoch_guest_ephemeral_disk_bytes=17179869184,per_vm_cpu_millis=8000,per_vm_memory_bytes=8589934592,max_vm_slots=16,max_vm_starts=16,disk_slots_for_real_work=16 WHERE id=$3;
  INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$4::uuid,'resource_id','second','current_service_id',$4::uuid,'epoch_cpu_millis',4000,'epoch_memory_bytes',8589934592))).* FROM worker_hosts h WHERE id=$3;
- UPDATE computers SET cpu_millis=4000,memory_bytes=4294967296,execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$5;
+ UPDATE computers SET cpu_millis=4000,memory_bytes=4294967296,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$5;
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes)
  SELECT environment_id,$6,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,8000,4294967296,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$5`, pgx.QueryExecModeSimpleProtocol, f.env, f.group, f.worker, secondHost, a, b)
 	if err := admitCapacityComputer(t.Context(), f, f.env, a); err != nil {
@@ -190,7 +192,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 		t.Fatal(err)
 	}
 	var pending bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT execution_pending_since IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || pending {
+	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || pending {
 		t.Fatalf("held claim retained: %v %v", pending, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
@@ -206,7 +208,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT execution_pending_since IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || !pending {
+	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || !pending {
 		t.Fatalf("resume missing claim: %v %v", pending, err)
 	}
 }
@@ -232,7 +234,7 @@ func TestExecutionFailedBootPreservesOriginalDeadline(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at FROM computers WHERE id=$1`, id).Scan(&after); err != nil || !before.Equal(after) {
 		t.Fatalf("retry extended deadline: %v %v", after, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
 	if err := admitCapacityComputer(t.Context(), f, f.env, id); !errors.Is(err, computer.ErrExecutionSettling) {
 		t.Fatalf("expired acquiring lease admitted more input: %v", err)
 	}
@@ -272,7 +274,7 @@ func TestExecutionExpiredBootCannotRenewOrReportReady(t *testing.T) {
 	if _, err = a.DeliverLease(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
 	if _, err = computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
 		t.Fatal("expired provisioning lease renewed")
 	}
@@ -300,7 +302,7 @@ func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	var reserved bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT c.execution_pending_since IS NOT NULL FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE s.id=$1`, started.SessionID).Scan(&reserved); err != nil || reserved {
+	if err = f.pool.QueryRow(t.Context(), `SELECT c.execution_deadline_at IS NOT NULL FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE s.id=$1`, started.SessionID).Scan(&reserved); err != nil || reserved {
 		t.Fatalf("held input reserved execution: %v %v", reserved, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
@@ -311,7 +313,7 @@ func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 
 func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
 	f, allocator, id := freshComputerAllocationFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
 	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +348,7 @@ func TestStaleProviderEvidenceDoesNotBlockUnrelatedExistingCapacity(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET per_vm_cpu_millis=4000,capacity_cpu_millis=8000,capacity_memory_bytes=8589934592,capacity_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8 WHERE worker_group_id=$1;
  INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT worker_pool_id,4,cpu_config_digest FROM worker_pool_cpu_shapes WHERE vcpu_count=1;
  UPDATE worker_hosts SET epoch_cpu_millis=3000,epoch_memory_bytes=3221225472,epoch_guest_ephemeral_disk_bytes=3221225472,max_vm_slots=3,max_vm_starts=3,disk_slots_for_real_work=3,per_vm_cpu_millis=4000 WHERE id=$2;
- UPDATE computers SET cpu_millis=4000,execution_pending_since=NULL,execution_deadline_at=NULL WHERE id=$3;
+ UPDATE computers SET cpu_millis=4000,execution_deadline_at=NULL WHERE id=$3;
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes)
  SELECT environment_id,$4,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,1000,memory_bytes,storage_reservation_bytes FROM computers WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.group, f.worker, large, small)
 	sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: f.pool, Worker: f.worker, Group: f.group})
