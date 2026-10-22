@@ -2,7 +2,6 @@ package slack
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
@@ -20,7 +19,7 @@ type StatusClaim struct {
 	TeamID, ChannelID, PeerID           string
 	ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                  int64
-	Epoch, Revision                     int64
+	Revision                            int64
 	Payload                             []byte
 	ExpiresAt                           time.Time
 	AuthorizedAt                        time.Time
@@ -89,11 +88,10 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if err != nil {
 			return err
 		}
-		digest := sha256.Sum256(payload)
 		c := &StatusClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Payload: payload}
-		if err = tx.QueryRow(ctx, `UPDATE slack_threads SET status_confirmation='unknown',inflight_method='agents.sessions.setStatus',inflight_payload=$2,inflight_digest=$3,inflight_revision=$4,inflight_attempt_id=$5,
- claim_epoch=claim_epoch+1,claimed_until=clock_timestamp()+interval '30 seconds'
- WHERE id=$1 RETURNING claim_epoch,claimed_until`, thread, payload, digest[:], revision, c.AttemptID).Scan(&c.Epoch, &c.ExpiresAt); err != nil {
+		if err = tx.QueryRow(ctx, `UPDATE slack_threads SET status_confirmation='unknown',inflight_method='agents.sessions.setStatus',inflight_attempt_id=$2,
+ claimed_until=clock_timestamp()+interval '30 seconds'
+ WHERE id=$1 RETURNING claimed_until`, thread, c.AttemptID).Scan(&c.ExpiresAt); err != nil {
 			return err
 		}
 		claim = c
@@ -145,12 +143,12 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 		if result.Disposition == RateLimited && result.RetryAfter > 0 {
 			retry = result.RetryAfter
 		}
-		tag, err := tx.Exec(ctx, `UPDATE slack_threads SET confirmed_revision=CASE WHEN $4 THEN GREATEST(confirmed_revision,inflight_revision) ELSE confirmed_revision END,
+		tag, err := tx.Exec(ctx, `UPDATE slack_threads SET confirmed_revision=CASE WHEN $4 THEN GREATEST(confirmed_revision,$3) ELSE confirmed_revision END,
  status_confirmation=CASE WHEN $4 THEN 'acknowledged' ELSE 'unknown' END,delivery_error=NULLIF($5,''),
- inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,claimed_until=NULL,
+ inflight_method=NULL,inflight_attempt_id=NULL,claimed_until=NULL,
  stream_status_repair=CASE WHEN $4 THEN false ELSE stream_status_repair END,
  next_attempt_at=clock_timestamp()+$6*interval '1 second',refresh_at=clock_timestamp()+interval '30 seconds'
- WHERE id=$1 AND claim_epoch=$2 AND inflight_attempt_id=$3 AND deleted_at IS NULL`, claim.ThreadID, claim.Epoch, claim.AttemptID, ack, result.Code, retry.Seconds())
+ WHERE id=$1 AND inflight_attempt_id=$2 AND deleted_at IS NULL`, claim.ThreadID, claim.AttemptID, claim.Revision, ack, result.Code, retry.Seconds())
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
@@ -212,10 +210,10 @@ func statusClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim Status
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id
  JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id
- WHERE t.id=$1 AND t.claim_epoch=$2 AND t.inflight_attempt_id=$3 AND t.claimed_until>clock_timestamp() AND t.deleted_at IS NULL
+ WHERE t.id=$1 AND t.inflight_attempt_id=$2 AND t.claimed_until>clock_timestamp() AND t.deleted_at IS NULL
  AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.org_id=e.org_id
  AND NOT EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND opening.delivery_disposed_at IS NOT NULL)
- AND i.id=$4 AND i.authorized_at=$5)`, claim.ThreadID, claim.Epoch, claim.AttemptID, claim.InstallationID, claim.AuthorizedAt).Scan(&allowed)
+ AND i.id=$3 AND i.authorized_at=$4)`, claim.ThreadID, claim.AttemptID, claim.InstallationID, claim.AuthorizedAt).Scan(&allowed)
 	})
 	return allowed, err
 }

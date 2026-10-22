@@ -851,7 +851,6 @@ column slack_thread_sources.projected_control_at timestamp with time zone
 column slack_thread_sources.projected_event_seq bigint not null default 0
 column slack_thread_sources.session_id uuid not null
 column slack_thread_sources.thread_id uuid not null
-column slack_threads.claim_epoch bigint not null default 0
 column slack_threads.claimed_until timestamp with time zone
 column slack_threads.confirmed_revision bigint not null default 0
 column slack_threads.created_at timestamp with time zone not null default clock_timestamp()
@@ -864,10 +863,7 @@ column slack_threads.front_root_session_id uuid not null generated stored front_
 column slack_threads.front_session_id uuid not null
 column slack_threads.id uuid not null
 column slack_threads.inflight_attempt_id uuid
-column slack_threads.inflight_digest bytea
 column slack_threads.inflight_method text
-column slack_threads.inflight_payload bytea
-column slack_threads.inflight_revision bigint
 column slack_threads.input_changed_at timestamp with time zone
 column slack_threads.input_muted boolean not null default false
 column slack_threads.input_unmuted_at timestamp with time zone
@@ -1820,13 +1816,10 @@ constraint slack_thread_sources u UNIQUE (environment_id, session_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, environment_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, id)
 constraint slack_threads c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
-constraint slack_threads c CHECK (claim_epoch >= 0)
 constraint slack_threads c CHECK (confirmed_revision >= 0 AND confirmed_revision <= desired_revision)
 constraint slack_threads c CHECK (desired_revision > 0)
 constraint slack_threads c CHECK (desired_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))
-constraint slack_threads c CHECK (inflight_revision > 0 AND inflight_revision <= desired_revision)
-constraint slack_threads c CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id, claimed_until) = ANY (ARRAY[0, 6]))
-constraint slack_threads c CHECK (octet_length(inflight_digest) = 32)
+constraint slack_threads c CHECK (num_nonnulls(inflight_method, inflight_attempt_id, claimed_until) = ANY (ARRAY[0, 3]))
 constraint slack_threads c CHECK (opening_post_key <> ''::text)
 constraint slack_threads c CHECK (status_confirmation = ANY (ARRAY['unknown'::text, 'acknowledged'::text]))
 constraint slack_threads c CHECK (thread_ts <> ''::text)

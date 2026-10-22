@@ -96,7 +96,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	}
 	f.due(t)
 	refreshed := f.claim(t, "active")
-	if refreshed.Epoch <= idle.Epoch || refreshed.Revision != idle.Revision {
+	if refreshed.AttemptID == idle.AttemptID || refreshed.Revision != idle.Revision {
 		t.Fatal("idle refresh stopped or invented core progress")
 	}
 }
@@ -111,6 +111,12 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($2,$3,$4,'local','attention')`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Environment, uuid.NewV7(), f.Session)
 	f.due(t)
 	current := f.claim(t, "processing")
+	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, old); err != nil || allowed {
+		t.Fatalf("superseded attempt authorized: %v %v", allowed, err)
+	}
+	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, current); err != nil || !allowed {
+		t.Fatalf("current attempt denied: %v %v", allowed, err)
+	}
 	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
@@ -221,4 +227,40 @@ func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 	}
 	f.due(t)
 	f.claim(t, "active")
+}
+
+func TestSlackStatusAcknowledgesOnlyTheClaimedRevision(t *testing.T) {
+	f := newStatusFixture(t)
+	first := f.claim(t, "active")
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	// Recompute the desired state while the original HTTP attempt still owns the lane.
+	if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+		t.Fatalf("overlapping claim: %+v %v", claim, err)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT confirmed_revision=$2 AND desired_revision>$2 AND desired_status='processing' AND inflight_attempt_id IS NULL FROM slack_threads WHERE id=$1`, f.thread, first.Revision).Scan(&exact); err != nil || !exact {
+		t.Fatalf("old success acknowledged newer work: %v %v", exact, err)
+	}
+	f.due(t)
+	next := f.claim(t, "processing")
+	if next.AttemptID == first.AttemptID || next.Revision <= first.Revision {
+		t.Fatal("new state did not get a new attempt", next)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT confirmed_revision=$2 AND inflight_attempt_id=$3 FROM slack_threads WHERE id=$1`, f.thread, first.Revision, next.AttemptID).Scan(&exact); err != nil || !exact {
+		t.Fatalf("duplicate success changed newer attempt: %v %v", exact, err)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, next, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT confirmed_revision=desired_revision AND confirmed_revision=$2 FROM slack_threads WHERE id=$1`, f.thread, next.Revision).Scan(&exact); err != nil || !exact {
+		t.Fatalf("latest state not acknowledged: %v %v", exact, err)
+	}
 }

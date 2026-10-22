@@ -1977,11 +1977,7 @@ CREATE TABLE slack_threads (
     status_confirmation text NOT NULL DEFAULT 'unknown' CHECK (status_confirmation IN ('unknown', 'acknowledged')),
     stream_status_repair boolean NOT NULL DEFAULT false,
     inflight_method text,
-    inflight_payload bytea,
-    inflight_digest bytea CHECK (octet_length(inflight_digest)=32),
-    inflight_revision bigint CHECK (inflight_revision>0 AND inflight_revision<=desired_revision),
     inflight_attempt_id uuid,
-    claim_epoch bigint NOT NULL DEFAULT 0 CHECK (claim_epoch>=0),
     claimed_until timestamptz,
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     refresh_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1994,7 +1990,7 @@ CREATE TABLE slack_threads (
     UNIQUE (org_id, team_id, slack_channel_id, thread_ts),
     UNIQUE (slack_channel_binding_id, opening_post_key),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),
-    CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id, claimed_until) IN (0, 6))
+    CHECK (num_nonnulls(inflight_method, inflight_attempt_id, claimed_until) IN (0, 3))
 );
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
