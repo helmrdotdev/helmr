@@ -325,7 +325,7 @@ func TestSlackSignedStreamEventConfirmsUnknownPublication(t *testing.T) {
 				t.Fatal(response.Code, response.Body.String())
 			}
 			var settled bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT status='posted' AND stream_state='stopped' AND message_ts=$2 FROM slack_posts WHERE id=$1`, post, message.Timestamp).Scan(&settled); err != nil || !settled {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT status='posted' AND stream_status='stopped' AND message_ts=$2 FROM slack_posts WHERE id=$1`, post, message.Timestamp).Scan(&settled); err != nil || !settled {
 				t.Fatal("signed event not applied", err)
 			}
 		})

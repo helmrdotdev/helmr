@@ -442,7 +442,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 		t.Fatal(err)
 	}
 	var started bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='pending' AND stream_state='open' AND message_ts='123.789' AND confirmed_revision=desired_revision FROM slack_posts WHERE id=$1`, first).Scan(&started); err != nil || !started || calls != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='pending' AND stream_status='open' AND message_ts='123.789' AND confirmed_revision=desired_revision FROM slack_posts WHERE id=$1`, first).Scan(&started); err != nil || !started || calls != 1 {
 		t.Fatal("blocked tails displaced ready stream", started, calls, err)
 	}
 }

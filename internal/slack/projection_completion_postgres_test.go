@@ -106,7 +106,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 				if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 64); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM slack_posts WHERE status<>'posted' OR confirmed_revision<>desired_revision OR (presentation_path='stream' AND stream_state<>'stopped'))`).Scan(&settled); err != nil {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM slack_posts WHERE status<>'posted' OR confirmed_revision<>desired_revision OR (presentation_path='stream' AND stream_status<>'stopped'))`).Scan(&settled); err != nil {
 					t.Fatal(err)
 				}
 				if settled {

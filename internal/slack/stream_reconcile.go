@@ -221,7 +221,7 @@ func confirmStreamMessage(ctx context.Context, pool db.TxBeginner, installation,
  WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'suppressed'
  WHEN $3='in_progress' AND (closed_at IS NOT NULL OR desired_revision>inflight_revision) THEN 'pending' ELSE 'posted' END,
  error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN $3='errored' THEN 'stream_errored' WHEN $3='completed' AND desired_revision>inflight_revision AND desired_revision>suppressed_revision THEN 'stream_ended_before_delivery' WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,
- stream_state=CASE WHEN $3='in_progress' THEN 'open' ELSE 'stopped' END,
+ stream_status=CASE WHEN $3='in_progress' THEN 'open' ELSE 'stopped' END,
  closed_at=CASE WHEN $3='in_progress' THEN closed_at ELSE COALESCE(closed_at,clock_timestamp()) END,
  confirmed_revision=inflight_revision,confirmed_stream_text=inflight_stream_text,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),next_attempt_at=clock_timestamp(),
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL

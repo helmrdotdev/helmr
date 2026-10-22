@@ -103,7 +103,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
               <KeyValue label="Authorization">
                 <Show when={data().connection} fallback="Not connected">{(connection) => <StatusBadge resource="slack_connection" status={connection().status} />}</Show>
               </KeyValue>
-              <Show when={data().connection?.socket}>{(health) => <KeyValue label="Event connection">{statusLabel(health().state)}</KeyValue>}</Show>
+              <Show when={data().connection?.socket}>{(health) => <KeyValue label="Event connection">{statusLabel(health().status)}</KeyValue>}</Show>
               <Show when={data().connection?.app_name}>{(name) => <KeyValue label="App">{name()}</KeyValue>}</Show>
               <Show when={data().connection?.workspace_name}>{(name) => <KeyValue label="Workspace">{name()}</KeyValue>}</Show>
               <Show when={data().connection?.app_id}>{(id) => <KeyValue label="App ID"><span class="font-mono">{id()}</span></KeyValue>}</Show>
@@ -270,8 +270,8 @@ function InstalledConnection(props: {
   return (
     <SetupPanel status={props.connection.transport === "socket" && props.connection.status === "connected" ? "Authorized" : statusLabel(props.connection.status)}>
       <Show when={props.connection.status === "configuration_mismatch"}><Notice tone="warning">The deployment’s Slack delivery mode changed. Disconnect this connection and set it up again using the current configuration.</Notice></Show>
-      <Show when={props.connection.socket && props.connection.status === "connected" && props.connection.socket.state !== "connected"}><Notice tone="warning">Slack is authorized, but event delivery {props.connection.socket?.state === "action_required" ? "needs attention" : `is ${statusLabel(props.connection.socket?.state ?? "disconnected").toLowerCase()}`}. {props.connection.socket?.state === "action_required" ? "Check the app-level token and its connections:write scope, or ask the deployment operator to check connectivity." : "The deployment will retry automatically. Ask the deployment operator if this persists."}</Notice></Show>
-      <Show when={props.connection.status === "connected" && (!props.connection.socket || props.connection.socket.state === "connected")}>
+      <Show when={props.connection.socket && props.connection.status === "connected" && props.connection.socket.status !== "connected"}><Notice tone="warning">Slack is authorized, but event delivery {props.connection.socket?.status === "action_required" ? "needs attention" : `is ${statusLabel(props.connection.socket?.status ?? "disconnected").toLowerCase()}`}. {props.connection.socket?.status === "action_required" ? "Check the app-level token and its connections:write scope, or ask the deployment operator to check connectivity." : "The deployment will retry automatically. Ask the deployment operator if this persists."}</Notice></Show>
+      <Show when={props.connection.status === "connected" && (!props.connection.socket || props.connection.socket.status === "connected")}>
         <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a session.<Show when={props.connection.direct_messages_authorized}> With the current app manifest applied, you can also message it directly without a mention. Start a new message for a new session; reply in its thread to continue.</Show></Notice>
       </Show>
       <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>

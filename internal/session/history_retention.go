@@ -22,7 +22,7 @@ const historyReleased = `s.status IN ('closed','cancelled')
  (child.status NOT IN ('closed','cancelled') OR src.projected_event_seq<child.next_event_seq-1 OR
  EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=child.environment_id AND p.session_id=child.id AND p.fenced_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM slack_posts p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND
- (p.status IN ('pending','sending','uncertain') OR (p.inflight_attempt_id IS NOT NULL AND NOT (p.delivery_disposed_at IS NOT NULL AND p.presentation_path='post')) OR p.stream_state IN ('open','uncertain') OR (p.status='posted' AND p.desired_revision<>p.confirmed_revision)))`
+ (p.status IN ('pending','sending','uncertain') OR (p.inflight_attempt_id IS NOT NULL AND NOT (p.delivery_disposed_at IS NOT NULL AND p.presentation_path='post')) OR p.stream_status IN ('open','uncertain') OR (p.status='posted' AND p.desired_revision<>p.confirmed_revision)))`
 
 // RetainHistory locks the Session, establishes its retention clock once its
 // obligations are settled, and expires its content when due. It reports whether

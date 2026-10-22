@@ -337,7 +337,7 @@ test("Socket health is separate from authorization and mode mismatch cannot reau
   let mismatch = false;
   await page.route(`**${endpoint}**`, route => route.fulfill({ json: {
     transport: "socket", connection: { ...connection(mismatch ? "configuration_mismatch" : "connected"), transport: "socket",
-      socket: { state: "action_required", reason: "app_mismatch", last_connected_at: null, last_received_at: null } },
+      socket: { status: "action_required", reason: "app_mismatch", last_connected_at: null, last_received_at: null } },
   } }));
   const panel = await openAgent(page);
   await expect(panel).toContainText("Slack is authorized, but event delivery");

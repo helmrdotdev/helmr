@@ -93,26 +93,26 @@ func (e socketFailure) Error() string { return e.reason }
 
 func (s *SocketSupervisor) runClaim(ctx context.Context, claim socketClaim) {
 	err := s.runConnection(ctx, claim)
-	state, reason, retry := "reconnecting", "connection_failed", time.Duration(1000+rand.IntN(4000))*time.Millisecond
+	status, reason, retry := "reconnecting", "connection_failed", time.Duration(1000+rand.IntN(4000))*time.Millisecond
 	var failure socketFailure
 	if errors.As(err, &failure) {
 		reason = failure.reason
 		if failure.actionRequired {
-			state = "action_required"
+			status = "action_required"
 			retry = 5 * time.Minute
 		}
 	}
 	if ctx.Err() != nil {
-		state, reason, retry = "disconnected", "", 0
+		status, reason, retry = "disconnected", "", 0
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := s.cfg.Credentials.releaseSocket(cleanup, claim, state, reason, retry); err != nil {
+	if err := s.cfg.Credentials.releaseSocket(cleanup, claim, status, reason, retry); err != nil {
 		s.cfg.Log.Warn("Slack socket release unavailable", "registration_id", claim.Registration)
 	}
 	// Never log network errors or close reasons: they can include signed socket URLs.
 	if ctx.Err() == nil {
-		s.cfg.Log.Info("Slack socket disconnected", "registration_id", claim.Registration, "state", state, "reason", reason)
+		s.cfg.Log.Info("Slack socket disconnected", "registration_id", claim.Registration, "status", status, "reason", reason)
 	}
 }
 

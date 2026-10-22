@@ -4,7 +4,7 @@ import { postJson, request } from "./api";
 export type AgentSlackAddress = { projectID: string; environmentID: string; agentName: string };
 export type AgentSlackConnection = {
   transport: "http" | "socket";
-  socket?: { state: "connecting" | "connected" | "reconnecting" | "action_required" | "disconnected"; reason: string | null; last_connected_at: string | null; last_received_at: string | null };
+  socket?: { status: "connecting" | "connected" | "reconnecting" | "action_required" | "disconnected"; reason: string | null; last_connected_at: string | null; last_received_at: string | null };
   id: string; registration_id: string; installation_id: string | null;
   status: "setup_incomplete" | "connected" | "reauthorization_required" | "disconnected" | "configuration_mismatch";
   direct_messages_authorized: boolean; credentials_configured: boolean; client_id: string | null; app_id: string | null;
@@ -66,7 +66,7 @@ export type SlackDeliveryPost = {
   status: string; text: string; payload_expired_at: string | null; created_at: string;
   desired_revision: number; confirmed_revision: number; publication_revision: number;
   method: string | null; attempt_id: string | null; message_ts: string | null;
-  root_known: boolean; opening: boolean; stream_state: string; check_paused_at: string | null;
+  root_known: boolean; opening: boolean; stream_status: string; check_paused_at: string | null;
   disposed_at: string | null; disposed_by: string | null; error: string | null;
 };
 function sessionDeliveryPath(address: import("./sessions").SessionAddress): string {

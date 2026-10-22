@@ -60,7 +60,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 }
 
 type SocketHealth struct {
-	State           string     `json:"state"`
+	Status          string     `json:"status"`
 	Reason          *string    `json:"reason"`
 	LastConnectedAt *time.Time `json:"last_connected_at"`
 	LastReceivedAt  *time.Time `json:"last_received_at"`
@@ -117,20 +117,20 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 			return err
 		}
 		if value.Transport == TransportSocket {
-			health := SocketHealth{State: "disconnected"}
+			health := SocketHealth{Status: "disconnected"}
 			err := tx.QueryRow(ctx, `SELECT
  CASE WHEN sc.credential_revision<>r.credential_revision THEN 'reconnecting'
- WHEN sc.state IN ('connecting','connected') AND sc.expires_at<=clock_timestamp() THEN 'reconnecting'
- ELSE sc.state END,
+ WHEN sc.status IN ('connecting','connected') AND sc.expires_at<=clock_timestamp() THEN 'reconnecting'
+ ELSE sc.status END,
  CASE WHEN sc.credential_revision=r.credential_revision THEN sc.reason ELSE NULL END,
  sc.last_connected_at,sc.last_received_at
  FROM slack_socket_connections sc JOIN slack_app_registrations r ON r.id=sc.app_registration_id
- WHERE sc.app_registration_id=$1 AND sc.installation_id=$2`, value.RegistrationID, value.InstallationID).Scan(&health.State, &health.Reason, &health.LastConnectedAt, &health.LastReceivedAt)
+ WHERE sc.app_registration_id=$1 AND sc.installation_id=$2`, value.RegistrationID, value.InstallationID).Scan(&health.Status, &health.Reason, &health.LastConnectedAt, &health.LastReceivedAt)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 			if value.Status != "connected" {
-				health.State = "disconnected"
+				health.Status = "disconnected"
 				health.Reason = nil
 			}
 			value.Socket = &health

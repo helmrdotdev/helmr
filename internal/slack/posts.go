@@ -22,7 +22,7 @@ import (
 // Keep continuations and work messages ordered. Initial questions/responses follow
 // unpublished work, except when uncertain detail delivery prevents that ordering.
 const blockingPostPredecessor = `EXISTS(SELECT 1 FROM slack_posts prior
- WHERE prior.thread_source_id=p.thread_source_id AND prior.id<>p.id AND prior.delivery_disposed_at IS NULL AND (prior.status IN ('pending','sending','uncertain') OR (prior.presentation_path='stream' AND prior.stream_state='open')) AND
+ WHERE prior.thread_source_id=p.thread_source_id AND prior.id<>p.id AND prior.delivery_disposed_at IS NULL AND (prior.status IN ('pending','sending','uncertain') OR (prior.presentation_path='stream' AND prior.stream_status='open')) AND
  ((prior.post_key=p.post_key AND prior.continuation_ordinal<p.continuation_ordinal)
  OR (p.role='intermediate' AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq)
  OR (p.role IN ('question','response') AND p.message_ts IS NULL AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq AND prior.message_ts IS NULL AND prior.status IN ('pending','sending')
@@ -81,7 +81,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		var stream streamSnapshot
 		var streamText *string
 		if err = tx.QueryRow(ctx, `SELECT role,status,presentation_path,post_key,continuation_ordinal,next_attempt_at<=clock_timestamp(),
- COALESCE(claimed_until<=clock_timestamp(),false),desired_revision,message_ts,payload,inflight_payload,inflight_method,inflight_revision,stream_state,confirmed_stream_text,recipient_team_id,recipient_user_id,closed_at IS NOT NULL,suppressed_revision>=desired_revision,confirmed_revision,inflight_stream_text
+ COALESCE(claimed_until<=clock_timestamp(),false),desired_revision,message_ts,payload,inflight_payload,inflight_method,inflight_revision,stream_status,confirmed_stream_text,recipient_team_id,recipient_user_id,closed_at IS NOT NULL,suppressed_revision>=desired_revision,confirmed_revision,inflight_stream_text
  FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, post).Scan(&role, &state, &path, &publication, &ordinal, &due, &expired, &revision, &message, &body, &frozen, &method, &frozenRevision, &stream.state, &stream.confirmed, &stream.recipientTeam, &stream.recipientUser, &stream.closed, &stream.suppressed, &stream.confirmedRevision, &streamText); err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 				_, err = tx.Exec(ctx, `UPDATE slack_posts SET status='pending',claimed_until=NULL,error='stream_stop_unconfirmed',inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL WHERE id=$1`, post)
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE slack_posts SET status='uncertain',stream_state=CASE WHEN presentation_path='stream' THEN 'uncertain' ELSE stream_state END,claimed_until=NULL,error='worker_outcome_unknown' WHERE id=$1`, post)
+			_, err = tx.Exec(ctx, `UPDATE slack_posts SET status='uncertain',stream_status=CASE WHEN presentation_path='stream' THEN 'uncertain' ELSE stream_status END,claimed_until=NULL,error='worker_outcome_unknown' WHERE id=$1`, post)
 			return err
 		}
 		if state != "pending" && !(path == "stream" && stream.state == "open" && stream.closed && (state == "posted" || state == "suppressed" || state == "failed")) {
@@ -261,7 +261,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN 'failed' WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'suppressed' WHEN presentation_path='stream' AND inflight_method<>'chat.stopStream' AND closed_at IS NOT NULL THEN 'pending' WHEN desired_revision=inflight_revision THEN 'posted' ELSE 'pending' END,
- stream_state=CASE WHEN presentation_path='stream' THEN CASE WHEN inflight_method='chat.stopStream' THEN 'stopped' ELSE 'open' END ELSE stream_state END,
+ stream_status=CASE WHEN presentation_path='stream' THEN CASE WHEN inflight_method='chat.stopStream' THEN 'stopped' ELSE 'open' END ELSE stream_status END,
  confirmed_stream_text=COALESCE(inflight_stream_text,confirmed_stream_text),inflight_stream_text=NULL,
  confirmed_revision=inflight_revision,confirmed_at=clock_timestamp(),message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END
@@ -310,14 +310,14 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		ended := (claim.Method == "chat.appendStream" || claim.Method == "chat.stopStream") && (code == "message_not_in_streaming_state" || code == "stopped_by_user" || code == "message_not_found")
 		if claim.Method == "chat.stopStream" && ended && code != "message_not_found" {
 			_, err := tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN error LIKE 'stream_content_rejected:%' THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,
- stream_state='stopped',claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,
+ stream_status='stopped',claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL WHERE id=$1`, claim.PostID)
 			return err
 		}
 		if claim.Method == "chat.appendStream" && !ended {
 			code = "stream_content_rejected:" + code
 		}
-		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET status='failed',stream_state=CASE WHEN $3 THEN 'stopped' ELSE stream_state END,closed_at=COALESCE(closed_at,clock_timestamp()),claimed_until=NULL,error=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL WHERE id=$1`, claim.PostID, code, ended); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET status='failed',stream_status=CASE WHEN $3 THEN 'stopped' ELSE stream_status END,closed_at=COALESCE(closed_at,clock_timestamp()),claimed_until=NULL,error=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL WHERE id=$1`, claim.PostID, code, ended); err != nil {
 			return err
 		}
 		switch result.Code {
@@ -334,7 +334,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		if code == "" {
 			code = "delivery_outcome_unknown"
 		}
-		_, err := tx.Exec(ctx, `UPDATE slack_posts SET status='uncertain',stream_state=CASE WHEN presentation_path='stream' THEN 'uncertain' ELSE stream_state END,claimed_until=NULL,error=$2 WHERE id=$1`, claim.PostID, code)
+		_, err := tx.Exec(ctx, `UPDATE slack_posts SET status='uncertain',stream_status=CASE WHEN presentation_path='stream' THEN 'uncertain' ELSE stream_status END,claimed_until=NULL,error=$2 WHERE id=$1`, claim.PostID, code)
 		return err
 	}
 }

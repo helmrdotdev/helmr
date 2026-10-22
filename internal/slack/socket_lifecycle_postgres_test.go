@@ -117,7 +117,7 @@ func TestSocketRenewalLossClosesLiveConnection(t *testing.T) {
 	// another input: the renewal loop itself must stop the connection.
 	for {
 		var connected bool
-		if err := f.Pool.QueryRow(ctx, `SELECT state='connected' FROM slack_socket_connections WHERE app_registration_id=$1`, f.registration).Scan(&connected); err != nil {
+		if err := f.Pool.QueryRow(ctx, `SELECT status='connected' FROM slack_socket_connections WHERE app_registration_id=$1`, f.registration).Scan(&connected); err != nil {
 			t.Fatal(err)
 		}
 		if connected {

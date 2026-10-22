@@ -55,9 +55,9 @@ func (s *CredentialStore) acquireSocket(ctx context.Context, replica uuid.UUID) 
 		if !active {
 			return nil
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO slack_socket_connections(app_registration_id,installation_id,claim_id,replica_id,expires_at,credential_revision,state)
+		tag, err := tx.Exec(ctx, `INSERT INTO slack_socket_connections(app_registration_id,installation_id,claim_id,replica_id,expires_at,credential_revision,status)
  VALUES($1,$2,$3,$4,clock_timestamp()+interval '30 seconds',$5,'connecting')
- ON CONFLICT(app_registration_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,claim_id=EXCLUDED.claim_id,replica_id=EXCLUDED.replica_id,expires_at=EXCLUDED.expires_at,credential_revision=EXCLUDED.credential_revision,state='connecting',reason=NULL
+ ON CONFLICT(app_registration_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,claim_id=EXCLUDED.claim_id,replica_id=EXCLUDED.replica_id,expires_at=EXCLUDED.expires_at,credential_revision=EXCLUDED.credential_revision,status='connecting',reason=NULL
  WHERE slack_socket_connections.claim_id IS NULL OR slack_socket_connections.expires_at<=clock_timestamp()`, c.Registration, c.Installation, c.ID, replica, c.Revision)
 		if err != nil {
 			return err
@@ -67,7 +67,7 @@ func (s *CredentialStore) acquireSocket(ctx context.Context, replica uuid.UUID) 
 		}
 		credentials, err := s.openApp(org, c.Registration, c.Revision, ciphertext, nonce)
 		if err != nil {
-			_, err = tx.Exec(ctx, `UPDATE slack_socket_connections SET state='action_required',reason='credential_unavailable',claim_id=NULL,replica_id=NULL,expires_at=NULL,retry_at=clock_timestamp()+interval '5 minutes' WHERE app_registration_id=$1 AND claim_id=$2`, c.Registration, c.ID)
+			_, err = tx.Exec(ctx, `UPDATE slack_socket_connections SET status='action_required',reason='credential_unavailable',claim_id=NULL,replica_id=NULL,expires_at=NULL,retry_at=clock_timestamp()+interval '5 minutes' WHERE app_registration_id=$1 AND claim_id=$2`, c.Registration, c.ID)
 			return err
 		}
 		c.Token = credentials.AppToken
@@ -117,14 +117,14 @@ func (s *CredentialStore) observeSocket(ctx context.Context, c socketClaim, rece
 		if err := lockSocketClaim(ctx, tx, c); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE slack_socket_connections SET state='connected',reason=NULL,last_connected_at=CASE WHEN $3 THEN last_connected_at ELSE clock_timestamp() END,last_received_at=CASE WHEN $3 THEN clock_timestamp() ELSE last_received_at END WHERE app_registration_id=$1 AND claim_id=$2`, c.Registration, c.ID, received)
+		_, err := tx.Exec(ctx, `UPDATE slack_socket_connections SET status='connected',reason=NULL,last_connected_at=CASE WHEN $3 THEN last_connected_at ELSE clock_timestamp() END,last_received_at=CASE WHEN $3 THEN clock_timestamp() ELSE last_received_at END WHERE app_registration_id=$1 AND claim_id=$2`, c.Registration, c.ID, received)
 		return err
 	})
 }
 
-func (s *CredentialStore) releaseSocket(ctx context.Context, c socketClaim, state, reason string, retry time.Duration) error {
+func (s *CredentialStore) releaseSocket(ctx context.Context, c socketClaim, status, reason string, retry time.Duration) error {
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE slack_socket_connections SET claim_id=NULL,replica_id=NULL,expires_at=NULL,state=$4,reason=NULLIF($5,''),retry_at=clock_timestamp()+$6::bigint*interval '1 millisecond' WHERE app_registration_id=$1 AND claim_id=$2 AND credential_revision=$3`, c.Registration, c.ID, c.Revision, state, reason, retry.Milliseconds())
+		_, err := tx.Exec(ctx, `UPDATE slack_socket_connections SET claim_id=NULL,replica_id=NULL,expires_at=NULL,status=$4,reason=NULLIF($5,''),retry_at=clock_timestamp()+$6::bigint*interval '1 millisecond' WHERE app_registration_id=$1 AND claim_id=$2 AND credential_revision=$3`, c.Registration, c.ID, c.Revision, status, reason, retry.Milliseconds())
 		return err
 	})
 }

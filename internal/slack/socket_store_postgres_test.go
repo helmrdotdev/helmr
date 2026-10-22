@@ -2,6 +2,7 @@ package slack
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -131,12 +132,25 @@ func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
-	if err != nil || view == nil || view.Socket == nil || view.Socket.State != "connected" || view.Socket.LastConnectedAt == nil {
+	if err != nil || view == nil || view.Socket == nil || view.Socket.Status != "connected" || view.Socket.LastConnectedAt == nil {
 		t.Fatalf("health unavailable: %+v %v", view, err)
+	}
+	payload, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Socket map[string]json.RawMessage `json:"socket"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response.Socket["status"]) != `"connected"` || response.Socket["state"] != nil {
+		t.Fatalf("unexpected socket JSON contract: %s", payload)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_socket_connections SET expires_at=clock_timestamp()-interval '1 second' WHERE app_registration_id=$1`, f.registration)
 	view, err = GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
-	if err != nil || view.Socket.State != "reconnecting" || view.Status != "connected" {
+	if err != nil || view.Socket.Status != "reconnecting" || view.Status != "connected" {
 		t.Fatalf("lease health confused with authorization: %+v %v", view, err)
 	}
 }

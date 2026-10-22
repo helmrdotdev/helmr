@@ -60,7 +60,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	defer func() {
 		if t.Failed() {
 			var state string
-			err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_object('posts',(SELECT jsonb_agg(jsonb_build_object('role',role,'status',status,'error',error,'attempts',attempt_count,'next',next_attempt_at,'stream',stream_state)) FROM slack_posts),'thread',(SELECT jsonb_agg(jsonb_build_object('status',desired_status,'confirmation',status_confirmation,'error',delivery_error,'repair',stream_status_repair)) FROM slack_threads))::text`).Scan(&state)
+			err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_object('posts',(SELECT jsonb_agg(jsonb_build_object('role',role,'status',status,'error',error,'attempts',attempt_count,'next',next_attempt_at,'stream',stream_status)) FROM slack_posts),'thread',(SELECT jsonb_agg(jsonb_build_object('status',desired_status,'confirmation',status_confirmation,'error',delivery_error,'repair',stream_status_repair)) FROM slack_threads))::text`).Scan(&state)
 			t.Log("pipeline state", state, err)
 		}
 		cancel()

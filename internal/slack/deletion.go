@@ -72,7 +72,7 @@ func (h EventHandler) observeDeletion(ctx context.Context, team, channel, timest
 					return err
 				}
 			}
-			_, err := tx.Exec(ctx, `UPDATE slack_posts p SET status='failed',stream_state=CASE WHEN presentation_path='stream' THEN 'stopped' ELSE stream_state END,error='message_deleted',claimed_until=NULL,closed_at=COALESCE(closed_at,clock_timestamp()),
+			_, err := tx.Exec(ctx, `UPDATE slack_posts p SET status='failed',stream_status=CASE WHEN presentation_path='stream' THEN 'stopped' ELSE stream_status END,error='message_deleted',claimed_until=NULL,closed_at=COALESCE(closed_at,clock_timestamp()),
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL
  FROM slack_thread_sources s WHERE p.thread_source_id=s.id AND s.thread_id=$1 AND p.message_ts=$2`, o.thread, timestamp)
 			if err != nil {

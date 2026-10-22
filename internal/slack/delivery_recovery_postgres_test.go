@@ -259,7 +259,7 @@ func TestSlackDeliveryAbandonedStreamKeepsProofUntilPositiveEvidenceAndStopsWith
 			f.due(t)
 			f.noPostClaim(t, post)
 			var safe bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_state='uncertain' AND inflight_payload=$2 AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&safe); err != nil || !safe {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_status='uncertain' AND inflight_payload=$2 AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&safe); err != nil || !safe {
 				t.Fatal("stream state or proof fabricated", safe, err)
 			}
 			m := observedStream(t, f, post, text, "in_progress")
@@ -279,7 +279,7 @@ func TestSlackDeliveryAbandonedStreamKeepsProofUntilPositiveEvidenceAndStopsWith
 			if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND error='delivery_abandoned' AND stream_state='stopped' AND delivery_disposed_at IS NOT NULL AND inflight_payload IS NULL FROM slack_posts WHERE id=$1`, post).Scan(&safe); err != nil || !safe {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND error='delivery_abandoned' AND stream_status='stopped' AND delivery_disposed_at IS NOT NULL AND inflight_payload IS NULL FROM slack_posts WHERE id=$1`, post).Scan(&safe); err != nil || !safe {
 				t.Fatal("cleanup reopened disposition", safe, err)
 			}
 			views, err := ListSessionDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, 0, 100)
@@ -287,6 +287,9 @@ func TestSlackDeliveryAbandonedStreamKeepsProofUntilPositiveEvidenceAndStopsWith
 				t.Fatal(err)
 			}
 			raw, _ := json.Marshal(views)
+			if !bytes.Contains(raw, []byte(`"stream_status":"stopped"`)) || bytes.Contains(raw, []byte(`"stream_state"`)) {
+				t.Fatalf("unexpected stream JSON contract: %s", raw)
+			}
 			if bytes.Contains(raw, []byte("inflight_payload")) || bytes.Contains(raw, []byte("recipient_user_id")) {
 				t.Fatal("transport details exposed")
 			}

@@ -47,7 +47,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 						if kind == "abandoned-stopped-stream" {
 							state = "stopped"
 						}
-						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_state=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, post, state)
+						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_status=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, post, state)
 					}
 				case "sending", "uncertain":
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status=$2,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$3,claimed_until=CASE WHEN $2='sending' THEN clock_timestamp()+interval '30 seconds' END WHERE id=$1`, post, kind, uuid.NewV7())
@@ -64,7 +64,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 						if kind == "uncertain-stream" {
 							state = "uncertain"
 						}
-						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_state=$2,confirmed_stream_text='retained confirmed text' WHERE id=$1`, post, state)
+						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_status=$2,confirmed_stream_text='retained confirmed text' WHERE id=$1`, post, state)
 					}
 				case "failed", "suppressed":
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status=$2,error='delivery_unavailable' WHERE id=$1`, post, kind)
