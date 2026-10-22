@@ -47,20 +47,20 @@ await verify("prepared-startup", async ({ client, marker, cleanup, objects, star
       secrets: [{ secret: secret.secret, env: { name: "VERIFICATION_SECRET", mode: "raw" } }] }, { signal })
     objects.computer_ids.push(computer.id)
     cleanup(() => deleteComputer(computer, `delete:${marker}:${ordinal}`))
-    const command = await computer.exec({ command: ["sh", "-ceu",
-      'test ! -e /workspace/prepared-agent-init.json; test ! -e /workspace/prepared-private; printf %s "$VALUE" > /workspace/prepared-private'],
-      env: { VALUE: `${marker}:${ordinal}` }, idempotencyKey: `probe:${marker}:${ordinal}` }, { signal })
-    const outcome = await command.wait({ signal })
-    assert.equal(outcome.kind, "exited", "Computer probe failed")
-    assertEqual(outcome.exitCode, 0, "Authored init ran before Session admission or a clone shared writes")
-    const usefulOutputMs = Date.now() - requestAt
     const admission = await startAgent("prepared-startup", { computer,
       input: createHash("sha256").update(value).digest("hex"), idempotencyKey: `session:${marker}:${ordinal}` })
     const result: any = await completedResult(admission.turn)
+    const usefulOutputMs = Date.now() - requestAt
     assertEqual(result.count, 1, "Session initialized with another Session's state")
     assert(typeof result.nonce === "string" && result.nonce.length > 0, "Initialization nonce is missing")
     assert(!nonces.has(result.nonce), "Prepared clones shared authored initialization")
     nonces.add(result.nonce)
+    const command = await computer.exec({ command: ["sh", "-ceu",
+      'test "$(cat /workspace/prepared-private)" = "$VALUE"'],
+      env: { VALUE: result.nonce }, idempotencyKey: `probe:${marker}:${ordinal}` }, { signal })
+    const outcome = await command.wait({ signal })
+    assert.equal(outcome.kind, "exited", "Computer probe failed")
+    assertEqual(outcome.exitCode, 0, "A clone shared another Computer's private writes")
     const path = await hostObservation("computer-path", { computer_id: computer.id })
     const commandPath = path.commands.find((entry: any) => entry.id === command.id)
     assert(commandPath, "Startup Command is missing from the exact Computer")

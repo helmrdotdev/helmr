@@ -264,10 +264,11 @@ Cold runs require ordinary startup; arrange the intended cold artifact state
 through the environment owner before invocation. The driver does not change
 policy or delete caches.
 
-The case creates each secret after the ready observation, checks that no Agent
-initialization file exists before Session admission, and then requires the fresh
-secret in initialization. Two sequential Computers verify distinct initialization
+The case creates each secret after the ready observation, starts a Session as the first workload, and requires the fresh secret in
+initialization. Initialization exclusively creates its entry marker before reading
+secrets, so a prior invocation cannot be silently reused. A Command-only first
+workload has no selected Agent Program and is not eligible for prepared adoption. Two sequential Computers verify distinct initialization
 nonces and private writes while exercising refill between them. Journal phase
-times, observations and request-to-useful-output samples are retained in the
+times, observations and request-to-first-Turn-result samples are retained in the
 normal case result. Use the separate seed-reuse case for concurrent sibling
 deletion isolation and the Session persistence cases for personal continuation.
