@@ -195,7 +195,9 @@ existing app, prove old-grant channel input and queued replies still work.
    API while `always_active` drives the visible indicator. Do not infer uptime.
 3. Open Messages using both an unlinked identity and one already linked through
    a channel. Confirm the description/guidance shows that Helmr records are
-   visible to authorized Environment members before sending work. If these
+   shared with organization members, including viewers, before sending work;
+   owners/admins/developers can continue or control it, and viewers can answer
+   Agent questions. If these
    surfaces do not show the disclosure, stop DM rollout and report the gap.
 4. Send `case:progress marker:dm_01` with no mention. Capture the actual initial
    event's `ts`, `thread_ts` and `channel_type` without credentials. Confirm one

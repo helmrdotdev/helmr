@@ -209,7 +209,7 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 					t.Fatal(err)
 				}
-				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "Environment members") {
+				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "Organization members") {
 					t.Fatal(r.URL, p)
 				}
 				if kind == "api-rejected" {

@@ -10,7 +10,7 @@
       "always_online": true
     },
     "agent_view": {
-      "agent_description": "Conversations create Helmr Sessions visible to authorized Environment members. Send a new message to start; reply in its thread to continue."
+      "agent_description": "DMs create shared Helmr Sessions. Organization members can read them; owners, admins and developers can continue or control work, and viewers can answer questions. New message: new Session. Thread reply: continue."
     },
     "app_home": {
       "home_tab_enabled": false,

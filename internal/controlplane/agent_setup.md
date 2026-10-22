@@ -104,7 +104,9 @@ Ask them to connect Slack there and say "done". If their role cannot connect it,
 ask them to involve the owner/admin; do not change their permissions.
 
 **HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
-visible to authorized Environment members in Helmr. The human can open the app’s
+shared with organization members in Helmr, including viewers. Owners, admins and
+developers can continue or control the work; viewers can answer Agent questions.
+Other authorized input can produce replies in the original Slack DM. The human can open the app’s
 Messages tab and send a new message without a mention, then reply in its thread
 to continue. If linking is requested, link the account and send a new top-level
 message. For channel use, ask the human to `/invite`

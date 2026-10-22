@@ -24,9 +24,11 @@ channel to use it. One-to-one direct messages with the app are also supported;
 mentions are not required there. Group direct messages, shared channels and
 Slack Connect channels are not supported.
 
-DM Sessions use the same Environment access rules as other Sessions. Authorized
-Environment members can inspect their records in Console; a private Slack DM
-does not create a user-private Helmr Session.
+DM Sessions use the same organization roles as other Sessions. Organization
+members, including viewers, can read their input and output in Console. Owners,
+admins and developers can continue or control the work; viewers can answer Agent
+questions. Other authorized input can produce replies in the original Slack DM.
+A private Slack DM does not create a user-private Helmr Session.
 
 Each person who talks to the Agent links their Slack account to their Helmr
 account once. A message from an unlinked person is not accepted: Helmr replies
