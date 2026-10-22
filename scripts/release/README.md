@@ -112,6 +112,10 @@ ancestry. AWS CLI and curl handle preview role assumption and conditional object
 writes. cosign is required in admission as well as publication/completion, since
 already-complete cohorts must pass signature verification. skopeo preserves and
 checks OCI digests; npm publishes the exact package tarballs with provenance.
+Publication waits up to ten minutes for the exact version in anonymous npm
+resolver metadata and matching tarball bytes. Missing versions are observed
+without repeating publication; mismatched bytes or other registry errors fail
+immediately. The independent downloaded consumer check remains required.
 The existing Node archive pin supplies npm, replacing the separate setup-node
 runtime. No executable cache is added to these trusted jobs.
 

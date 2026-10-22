@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from contract import DIGEST, ASSETS, REPOSITORY, ISSUER, canonical, descriptor, digest, read, require, signer, validate, verify_files, write
@@ -126,15 +127,42 @@ def npm_publish(path, package, version, selection):
         metadata = None
     if metadata is not None:
         require(selection['build']['mode'] != 'tag', 'human tag package already exists')
-        with tempfile.TemporaryDirectory() as temporary:
-            remote = Path(temporary) / 'package.tgz'
-            require(metadata['dist']['tarball'].startswith('https://registry.npmjs.org/'), 'foreign npm tarball')
-            with urllib.request.urlopen(metadata['dist']['tarball'], timeout=60) as source, remote.open('wb') as target:
-                import shutil
-                shutil.copyfileobj(source, target)
-            require(descriptor(remote) == descriptor(path), 'existing npm version has different bytes')
-        return
-    run('npm', 'publish', path, '--access', 'public', '--provenance', '--ignore-scripts', '--tag', npm_channel(selection))
+    else:
+        run('npm', 'publish', path, '--access', 'public', '--provenance', '--ignore-scripts', '--tag', npm_channel(selection))
+    # Publication acceptance precedes visibility to npm's dependency resolver.
+    # Observe exact bytes without repeating the irreversible publication.
+    npm_readback(path, package, version)
+
+
+def npm_readback(path, package, version):
+    deadline = time.monotonic() + 600
+    request = urllib.request.Request('https://registry.npmjs.org/' + package,
+        headers={'Accept': 'application/vnd.npm.install-v1+json'})
+    while True:
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'npm package did not become publicly available before the deadline')
+        try:
+            with urllib.request.urlopen(request, timeout=min(60, remaining)) as response:
+                metadata = json.load(response)['versions'].get(version)
+            if metadata is not None:
+                require(metadata['name'] == package and metadata['version'] == version,
+                        'npm package identity differs')
+                with tempfile.TemporaryDirectory() as temporary:
+                    remote = Path(temporary) / 'package.tgz'
+                    require(metadata['dist']['tarball'].startswith('https://registry.npmjs.org/'), 'foreign npm tarball')
+                    remaining = deadline - time.monotonic()
+                    require(remaining > 0, 'npm package did not become publicly available before the deadline')
+                    with urllib.request.urlopen(metadata['dist']['tarball'], timeout=min(60, remaining)) as source, remote.open('wb') as target:
+                        import shutil
+                        shutil.copyfileobj(source, target)
+                    require(descriptor(remote) == descriptor(path), 'existing npm version has different bytes')
+                    require(time.monotonic() < deadline, 'npm package did not become publicly available before the deadline')
+                return
+        except urllib.error.HTTPError as error:
+            require(error.code == 404, f'npm readback failed: HTTP {error.code}')
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'npm package did not become publicly available before the deadline')
+        time.sleep(min(10, remaining))
 
 
 def publish_images(directory, index):

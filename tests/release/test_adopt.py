@@ -134,9 +134,10 @@ class NpmChannels(unittest.TestCase):
             with self.subTest(tag=expected), tempfile.NamedTemporaryFile() as tmp:
                 version = selected['version'][1:] if selected['version'].startswith('v') else selected['version']
                 with patch.object(publish.urllib.request, 'urlopen', side_effect=urllib.error.HTTPError('u', 404, 'm', None, None)), \
-                     patch.object(publish, 'run') as command:
+                     patch.object(publish, 'run') as command, patch.object(publish, 'npm_readback') as readback:
                     publish.npm_publish(Path(tmp.name), '@helmr/sdk', version, selected)
                     self.assertEqual(command.call_args[0][-1], expected)
+                    readback.assert_called_once_with(Path(tmp.name), '@helmr/sdk', version)
 
 
 if __name__ == '__main__':
