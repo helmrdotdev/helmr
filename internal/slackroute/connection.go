@@ -60,7 +60,7 @@ func ReadConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, channe
  JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.agent_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL
  AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL AND i.granted_scopes @> $3::text[]
- AND i.org_id=e.org_id AND r.org_id=e.org_id AND r.app_id=i.app_id`, env, agent, RequiredScopes()).Scan(&c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.AppID, &c.BotUserID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt)
+ AND i.org_id=e.org_id AND r.org_id=e.org_id AND r.app_id=i.app_id`, env, agent, conversationScopes(channel)).Scan(&c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.AppID, &c.BotUserID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrTargetNotPublished
 	}

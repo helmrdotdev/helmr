@@ -7,10 +7,15 @@
   "features": {
     "bot_user": {
       "display_name": "Helmr Dev",
-      "always_online": false
+      "always_online": true
     },
     "agent_view": {
-      "agent_description": "Synthetic conversation verification for Helmr."
+      "agent_description": "DMs create shared Helmr Sessions. Organization members can read them; owners, admins and developers can continue or control work, and viewers can answer questions. New message: new Session. Thread reply: continue."
+    },
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
     }
   },
   "oauth_config": {
@@ -26,7 +31,9 @@
         "groups:read",
         "groups:history",
         "chat:write",
-        "assistant:write"
+        "assistant:write",
+        "im:history",
+        "im:read"
       ]
     }
   },
@@ -42,7 +49,9 @@
         "message.channels",
         "message.groups",
         "app_uninstalled",
-        "tokens_revoked"
+        "tokens_revoked",
+        "message.im",
+        "app_home_opened"
       ]
     },
     "interactivity": {

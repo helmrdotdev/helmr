@@ -10,7 +10,7 @@ import (
 )
 
 func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testing.T) {
-	const expectedScopes = "app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write"
+	const expectedScopes = "app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write,im:history,im:read"
 	origin, _ := url.Parse("https://helmr.example")
 	oauth := OAuthClient{clientID: "client"}
 	authorization, err := url.Parse(oauth.AuthorizationURL("state", "https://helmr.example/auth/slack/callback"))
@@ -27,8 +27,13 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 				Name string `json:"name"`
 			} `json:"display_information"`
 			Features struct {
+				Home struct {
+					Messages bool `json:"messages_tab_enabled"`
+					ReadOnly bool `json:"messages_tab_read_only_enabled"`
+				} `json:"app_home"`
 				Bot struct {
-					Name string `json:"display_name"`
+					Name         string `json:"display_name"`
+					AlwaysOnline bool   `json:"always_online"`
 				} `json:"bot_user"`
 				Agent struct {
 					Description string `json:"agent_description"`
@@ -47,6 +52,14 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 		}
 		if err := json.Unmarshal(AppManifest(origin, registration, name), &manifest); err != nil {
 			t.Fatal(err)
+		}
+		if !manifest.Features.Bot.AlwaysOnline || !manifest.Features.Home.Messages || manifest.Features.Home.ReadOnly || !strings.Contains(manifest.Features.Agent.Description, "Organization members") {
+			t.Fatal("DM disclosure, presence or Messages tab missing")
+		}
+		for _, event := range []string{"message.im", "app_home_opened"} {
+			if !slices.Contains(manifest.Settings.Events.BotEvents, event) {
+				t.Fatal("missing event", event)
+			}
 		}
 		if !slices.Contains(manifest.Settings.Events.BotEvents, "agent_session_stopped") {
 			t.Fatal("native Stop subscription missing")

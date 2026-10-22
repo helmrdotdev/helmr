@@ -20,8 +20,15 @@ saves its credentials and installs it in the workspace from the Console. See
 [Connect Slack](/docs/guides/connect-slack).
 
 The app works in public and private channels. It must already be a member of a
-channel to use it. Direct messages, group direct messages, shared channels and
+channel to use it. One-to-one direct messages with the app are also supported;
+mentions are not required there. Group direct messages, shared channels and
 Slack Connect channels are not supported.
+
+DM Sessions use the same organization roles as other Sessions. Organization
+members, including viewers, can read their input and output in Console. Owners,
+admins and developers can continue or control the work; viewers can answer Agent
+questions. Other authorized input can produce replies in the original Slack DM.
+A private Slack DM does not create a user-private Helmr Session.
 
 Each person who talks to the Agent links their Slack account to their Helmr
 account once. A message from an unlinked person is not accepted: Helmr replies
@@ -35,11 +42,12 @@ spawn typed child work and deliberately summarize its result.
 
 ## Starting a Session
 
-A Session can start in Slack in three ways:
+A Session can start in Slack in these ways:
 
 | From | What happens |
 | --- | --- |
-| A message that mentions the Agent | A new Session starts. The message becomes the root of its thread. |
+| A new top-level DM to the Agent | A new Session starts without a mention. Replies in its thread continue that Session. |
+| A channel message that mentions the Agent | A new Session starts. The message becomes the root of its thread. |
 | `client.sessions.create({ agent: id, input, slack: { channelId } })` or `helmr session create AGENT --slack-channel C0123456789` | Helmr posts "Started *Agent*." in the channel and binds the Session to that message's thread. The input is not posted. |
 | A cron trigger with `slack: { channelId }` | Each fire posts an opening message the same way. See [Triggers](/docs/concepts/triggers#slack-delivery). |
 
@@ -53,13 +61,19 @@ When a Slack-bound Session creates independent work for another Agent through
 [delegation](/docs/concepts/delegation), the new Session also starts in a
 thread of the same channel, linked to the requesting thread. The target Agent
 needs its own Slack connection in the same Slack workspace; otherwise the
-`start` call fails.
+`start` call fails. Independent `start` calls from a DM Session do not forward
+its conversation into another Slack destination. Owned child work can still
+participate in the same Session thread.
 
 ## Input
 
 Mention the Agent to start a conversation or send input in an existing bound
 thread. Helmr removes the leading Agent mention and passes the remaining text as
-a text part. Replies without an Agent mention do not send input.
+a text part. Channel replies without an Agent mention do not send input.
+In a DM, the submitted text is passed through without removing mentions.
+A reply can continue only an accepted Session: an unbound reply waits for its
+root until the five-minute receipt deadline, then asks for a new top-level
+message. Rejected requests are never replayed after linking.
 
 A reply in a Session's thread uses Slack routing: it
 steers the active Turn, or becomes a new queued Turn when none is active. See
@@ -106,7 +120,8 @@ Questions seal the preceding work group. Later output starts below the question;
 completion never regroups explanations already read. A machine result is not
 automatically posted as a human response.
 
-Any linked member of the organization can answer a question from Slack. The
+In a channel, any linked member of the organization can answer a question from Slack.
+In a DM, Slack answers and controls must come from that DM's verified human peer. The
 same question can also be answered through the API or CLI. Each question post
 links to authenticated Console inspection and CLI instructions. If the form is
 too large for Slack, use that complete question view and the CLI. Accepted choices

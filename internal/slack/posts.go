@@ -29,7 +29,7 @@ const blockingPostPredecessor = `EXISTS(SELECT 1 FROM slack_posts prior
  AND NOT EXISTS(SELECT 1 FROM slack_posts unknown_work WHERE unknown_work.thread_source_id=p.thread_source_id AND unknown_work.turn_id=p.turn_id AND unknown_work.role='intermediate' AND unknown_work.seq<p.seq AND unknown_work.status='uncertain' AND unknown_work.delivery_disposed_at IS NULL))))`
 
 type PostClaim struct {
-	TeamID, ChannelID                           string
+	TeamID, ChannelID, PeerID                   string
 	PostID, ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                          int64
 	Method                                      string
@@ -45,9 +45,9 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 	var claim *PostClaim
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation, channel, targetChannel, env, thread uuid.UUID
-		var team, slackChannel string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel)
+		var team, slackChannel, peer string
+		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id,CASE WHEN sender.recipient_team_id=c.team_id THEN COALESCE(sender.recipient_user_id,'') ELSE '' END
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel, &peer)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -180,7 +180,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 			return err
 		}
 		digest := sha256.Sum256(frozen)
-		c := &PostClaim{TeamID: team, ChannelID: slackChannel, PostID: post, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Method: selected, Payload: frozen}
+		c := &PostClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, PostID: post, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Method: selected, Payload: frozen}
 		if err = tx.QueryRow(ctx, `UPDATE slack_posts SET status='sending',attempt_count=attempt_count+1,claim_epoch=claim_epoch+1,
  claimed_until=clock_timestamp()+interval '30 seconds',reconciliation_cursor='',reconciliation_pages=0,reconciliation_paused_at=NULL,inflight_method=$2,inflight_payload=$3,inflight_digest=$4,inflight_revision=$5,inflight_attempt_id=$6,inflight_stream_text=$7,error=CASE WHEN $2='chat.stopStream' THEN error ELSE NULL END
  WHERE id=$1 RETURNING claim_epoch,claimed_until`, post, selected, frozen, digest[:], revision, c.AttemptID, streamText).Scan(&c.Epoch, &c.ExpiresAt); err != nil {
@@ -365,7 +365,7 @@ func ReconcilePost(ctx context.Context, pool db.TxBeginner, client Caller, post 
 	if err != nil || claim == nil {
 		return false, err
 	}
-	if err = client.VerifyChannel(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID); err != nil {
+	if err = client.VerifyConversation(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID, claim.PeerID); err != nil {
 		result := DeliveryResult{Disposition: Rejected, Code: "channel_unavailable"}
 		var failure *channelVerificationFailure
 		if errors.As(err, &failure) {

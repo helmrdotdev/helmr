@@ -8,7 +8,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
@@ -24,7 +23,7 @@ type nativeStopGesture struct {
 // stream timestamp is treated as authority to stop a Session.
 func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvelope) error {
 	e := envelope.Event
-	if envelope.TeamID == "" || envelope.EventID == "" || e.User == "" || e.BotID != "" || e.AppID != "" || !definition.ValidSlackChannelID(e.Channel) || !timestampPattern.MatchString(e.Thread) {
+	if envelope.TeamID == "" || envelope.EventID == "" || e.User == "" || e.BotID != "" || e.AppID != "" || !validConversationID(e.Channel) || !timestampPattern.MatchString(e.Thread) {
 		return errGestureInvalid
 	}
 	occurred, err := slackMessageTime(e.EventTimestamp)
@@ -54,6 +53,7 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 		tag, err := tx.Exec(ctx, `UPDATE slack_requests r SET thread_id=t.id,environment_id=s.environment_id,session_id=s.id,thread_source_id=src.id,observed_authority_generation=s.authority_generation,observed_next_turn_seq=s.next_turn_seq
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN slack_thread_sources src ON src.thread_id=t.id AND src.session_id=s.id
  WHERE r.id=$1 AND r.observed_authority_generation IS NULL AND c.installation_id=$2 AND c.slack_channel_id=$3 AND t.thread_ts=$4 AND t.deleted_at IS NULL
+ AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))
  AND s.created_at<=$5 AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.created_at>$5) AND NOT EXISTS(SELECT 1 FROM session_controls newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.kind<>'interrupt' AND newer.accepted_at>$5)`, receipt.ID, installation, e.Channel, e.Thread, occurred)
 		if err != nil {
 			return err
@@ -78,7 +78,7 @@ func admitNativeStop(ctx context.Context, pool db.TxBeginner, id uuid.UUID) erro
 		var occurred, enabled, authorized, connected time.Time
 		var observed session.ControlObservation
 		err := tx.QueryRow(ctx, `SELECT r.status,r.installation_id,r.environment_id,r.session_id,r.thread_id,r.thread_source_id,r.slack_user_id,r.source_occurred_at,r.observed_authority_generation,r.observed_next_turn_seq,c.id,pub.created_at,i.team_id,i.authorized_at,i.connected_at
- FROM slack_requests r JOIN slack_threads t ON t.id=r.thread_id AND t.front_session_id=r.session_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id AND c.installation_id=r.installation_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_installations i ON i.id=r.installation_id WHERE r.id=$1 AND t.deleted_at IS NULL`, id).Scan(&status, &installation, &env, &front, &thread, &source, &actor, &occurred, &observed.AuthorityGeneration, &observed.NextTurnSequence, &channel, &enabled, &team, &authorized, &connected)
+ FROM slack_requests r JOIN slack_threads t ON t.id=r.thread_id AND t.front_session_id=r.session_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id AND c.installation_id=r.installation_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_installations i ON i.id=r.installation_id WHERE r.id=$1 AND t.deleted_at IS NULL AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))`, id).Scan(&status, &installation, &env, &front, &thread, &source, &actor, &occurred, &observed.AuthorityGeneration, &observed.NextTurnSequence, &channel, &enabled, &team, &authorized, &connected)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return rejectMessage(ctx, tx, id, "target_unavailable")
 		}

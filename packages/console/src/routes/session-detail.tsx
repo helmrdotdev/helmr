@@ -222,9 +222,9 @@ function SessionProperties(props: { session: Session }) {
   return (
     <dl class={ui.propertyBar} aria-label="Session properties">
       <Property label="Agent"><PrimaryLink href={agentHref(props.session.agent)}>{props.session.agent}</PrimaryLink></Property>
-      <Property label="Started from">
+      <Property label={props.session.slack_channel_id ? "Conversation" : "Started from"}>
         <Show when={props.session.slack_channel_id} fallback={<Show when={props.session.key} fallback="CLI or API">{key => <>key <code>{key()}</code></>}</Show>}>
-          {channel => <>Slack · <code>{channel()}</code></>}
+          {channel => <>{channel().startsWith("D") ? "Slack DM" : "Slack channel"} · <code>{channel()}</code></>}
         </Show>
       </Property>
       <Property label="Created"><RelativeTime value={props.session.created_at} /></Property>

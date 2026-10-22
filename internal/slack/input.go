@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/content"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 )
 
 var slackTextEntities = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">")
@@ -15,7 +16,11 @@ func messageInput(message messageGesture, bot string) (json.RawMessage, error) {
 	if message.UnsupportedFiles || len(message.FileIDs) > 0 {
 		return nil, content.ErrUnsupported
 	}
-	raw, _ := json.Marshal([]map[string]string{{"type": "text", "text": slackTextEntities.Replace(stripRoutingMention(message.Text, bot))}})
+	text := message.Text
+	if !slackroute.IsDirectMessage(message.Channel) {
+		text = stripRoutingMention(text, bot)
+	}
+	raw, _ := json.Marshal([]map[string]string{{"type": "text", "text": slackTextEntities.Replace(text)}})
 	return content.Input(raw)
 }
 

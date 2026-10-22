@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -23,6 +25,8 @@ type EventHandler struct {
 	Database            db.TxBeginner
 	AppID               string
 	SigningSecret       []byte
+	Client              *WebClient
+	Log                 *slog.Logger
 }
 
 type eventEnvelope struct {
@@ -37,12 +41,16 @@ type eventEnvelope struct {
 		StreamingState   string           `json:"streaming_state"`
 		Subtype          string           `json:"subtype"`
 		User             string           `json:"user"`
+		UserTeam         string           `json:"user_team"`
+		SourceTeam       string           `json:"source_team"`
 		BotID            string           `json:"bot_id"`
 		AppID            string           `json:"app_id"`
 		BotProfile       json.RawMessage  `json:"bot_profile"`
 		Hidden           bool             `json:"hidden"`
 		Edited           json.RawMessage  `json:"edited"`
 		Channel          string           `json:"channel"`
+		ChannelType      string           `json:"channel_type"`
+		Tab              string           `json:"tab"`
 		Timestamp        string           `json:"ts"`
 		Thread           string           `json:"thread_ts"`
 		Text             string           `json:"text"`
@@ -125,6 +133,9 @@ func (h EventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) error {
 	e := envelope.Event
+	if e.Type == "app_home_opened" {
+		return h.receiveAppHome(ctx, envelope)
+	}
 	if e.Type == "agent_session_stopped" {
 		return h.receiveNativeStop(ctx, envelope)
 	}
@@ -152,7 +163,7 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 	default:
 		return nil
 	}
-	if e.Channel == "" || envelope.TeamID == "" || envelope.EventID == "" {
+	if !validConversationID(e.Channel) || envelope.TeamID == "" || envelope.EventID == "" {
 		return errGestureInvalid
 	}
 	occurred, err := slackMessageTime(e.Timestamp)
@@ -164,6 +175,16 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 	}
 	if occurred.After(time.Now().Add(5 * time.Minute)) {
 		return errGestureInvalid
+	}
+	direct := slackroute.IsDirectMessage(e.Channel)
+	if direct && (e.Type != "message" || e.ChannelType != "im" || e.UserTeam != "" && e.UserTeam != envelope.TeamID || e.SourceTeam != "" && e.SourceTeam != envelope.TeamID) {
+		return nil
+	}
+	if !direct && e.ChannelType == "im" {
+		return nil
+	}
+	if direct && e.Thread == e.Timestamp {
+		e.Thread = ""
 	}
 	return db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		var installation uuid.UUID
@@ -180,10 +201,10 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 		}
 		// Routing syntax, not the Slack event type, decides whether this is work.
 		// Human discussion must not create requests or account-link prompts.
-		if stripRoutingMention(e.Text, bot) == e.Text {
+		if !direct && stripRoutingMention(e.Text, bot) == e.Text {
 			return nil
 		}
-		if e.Type == "message" {
+		if !direct && e.Type == "message" {
 			// Duplicate mention notifications are recognized by normalized source.
 			if e.Thread == "" {
 				return nil

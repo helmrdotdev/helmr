@@ -50,14 +50,18 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 	}
 	var raw []byte
 	var status string
+	var unexpired bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT status,payload FROM slack_requests WHERE id=$1`, id).Scan(&status, &raw)
+		return tx.QueryRow(ctx, `SELECT status,payload,expires_at>clock_timestamp() FROM slack_requests WHERE id=$1`, id).Scan(&status, &raw, &unexpired)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil || status != "received" {
 		return err
+	}
+	if !unexpired {
+		return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, id, "gesture_expired") })
 	}
 	var payload struct {
 		NativeStop bool            `json:"native_stop"`
@@ -67,11 +71,24 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 	if json.Unmarshal(raw, &payload) != nil {
 		err = errGestureInvalid
 	} else if payload.NativeStop && !nonnullJSON(payload.Control) && payload.Timestamp == "" {
-		err = admitNativeStop(ctx, pool, id)
+		var allowed bool
+		allowed, err = verifyDirectControl(ctx, pool, client, id, uuid.Nil())
+		if err == nil && allowed {
+			err = admitNativeStop(ctx, pool, id)
+		}
 	} else if nonnullJSON(payload.Control) == (payload.Timestamp != "") {
 		err = errGestureInvalid
 	} else if nonnullJSON(payload.Control) {
-		err = admitControl(ctx, pool, id)
+		var control controlEnvelope
+		if json.Unmarshal(payload.Control, &control) != nil || !validControl(control) {
+			err = errControlInvalid
+		} else {
+			var allowed bool
+			allowed, err = verifyDirectControl(ctx, pool, client, id, control.Target.Thread)
+			if err == nil && allowed {
+				err = admitControl(ctx, pool, id)
+			}
+		}
 	} else {
 		err = admitMessage(ctx, pool, trust, client, id)
 	}

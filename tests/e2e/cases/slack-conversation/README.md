@@ -181,3 +181,39 @@ by this campaign and disconnect its test publications when authorized. Disconnec
 neither promises remote token revocation nor erases Slack history. Retain the App
 and managed credentials unless its owner authorizes retirement. Remove only owned
 messages when cleanup is authorized. Preserve sanitized evidence before retrying.
+
+## Direct messages and presence
+
+After deployment and app changes have been authorized, qualify both a new app
+and an existing app updated with the generated manifest and reauthorized for
+`im:history` and `im:read`. Preserve token rotation. Before reauthorizing the
+existing app, prove old-grant channel input and queued replies still work.
+
+1. In Slack's create dialog, confirm neither `message.im` nor `app_home_opened`
+   Agent View subscription warning appears. The token-rotation notice may remain.
+2. Verify the app appears online. Slack may still report `presence: away` in its
+   API while `always_active` drives the visible indicator. Do not infer uptime.
+3. Open Messages using both an unlinked identity and one already linked through
+   a channel. Confirm the description/guidance shows that Helmr records are
+   shared with organization members, including viewers, before sending work;
+   owners/admins/developers can continue or control it, and viewers can answer
+   Agent questions. If these
+   surfaces do not show the disclosure, stop DM rollout and report the gap.
+4. Send `case:progress marker:dm_01` with no mention. Capture the actual initial
+   event's `ts`, `thread_ts` and `channel_type` without credentials. Confirm one
+   Session, in-thread output/streaming/status, and no account-link bypass.
+5. Reply without a mention in the accepted thread; then send a separate top-level
+   request. Confirm the former continues its Session and the latter creates a
+   distinct Session. Confirm a repeated event does not duplicate work.
+6. Link the unlinked identity and resend outside the hint's thread. Confirm the
+   rejected first request never executes. Replies to a hint or rejected root
+   must not start a Session; an unbound reply receives guidance after expiry.
+7. Exercise `direct`, `text`, `choice`, and `stop` in the DM, including modal
+   answers, native Stop and a later reply resuming the same conversation. Check
+   actor attribution, closing a Session, and denial after access revocation.
+8. Inspect the same records as an authorized Environment member in Console;
+   there is no new private-Session access model. Recheck channel mentions,
+   token refresh and the existing shared-channel rejection cases.
+
+Local fixtures and mocked API responses do not prove these Slack UI observations.
+Record candidate, app/workspace, granted scopes and rendered evidence explicitly.

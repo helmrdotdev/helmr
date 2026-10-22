@@ -191,7 +191,7 @@ func TestSlackPostRechecksConnectionAndAuthorizationLoss(t *testing.T) {
 
 type callerFunc func(context.Context, uuid.UUID, int64, string, []byte) DeliveryResult
 
-func (f callerFunc) VerifyChannel(context.Context, uuid.UUID, int64, string, string) error {
+func (f callerFunc) VerifyConversation(context.Context, uuid.UUID, int64, string, string, string) error {
 	return nil
 }
 

@@ -53,7 +53,7 @@ var timestampPattern = regexp.MustCompile(`^[0-9]{1,16}\.[0-9]{1,16}$`)
 
 func (c *WebClient) Call(ctx context.Context, installation uuid.UUID, credentialRevision int64, method string, payload []byte) DeliveryResult {
 	switch method {
-	case "chat.postEphemeral", "chat.postMessage", "chat.update", "chat.startStream", "chat.appendStream", "chat.stopStream", "agents.sessions.setStatus", "views.open", "views.push", "views.update":
+	case "assistant.threads.setSuggestedPrompts", "chat.postEphemeral", "chat.postMessage", "chat.update", "chat.startStream", "chat.appendStream", "chat.stopStream", "agents.sessions.setStatus", "views.open", "views.push", "views.update":
 	default:
 		return DeliveryResult{Disposition: Rejected, Code: "unsupported_method"}
 	}

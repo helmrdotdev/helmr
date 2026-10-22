@@ -62,8 +62,11 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 	if p == nil {
 		return nil
 	}
-	if p.Target.EnvironmentID != env || p.Target.AgentID != agent || p.DeploymentID != deployment || !definition.ValidSlackChannelID(p.Target.ChannelID) {
+	if p.Target.EnvironmentID != env || p.Target.AgentID != agent || p.DeploymentID != deployment || !validConversationID(p.Target.ChannelID) {
 		return slackroute.ErrConversationChanged
+	}
+	if slackroute.IsDirectMessage(p.Target.ChannelID) && (caller.Kind != "user" || p.HumanActor == "" || p.HumanThreadTS == "" || p.Source != nil) {
+		return session.ErrDenied
 	}
 	var inputKind string
 	if err := tx.QueryRow(ctx, `SELECT input_kind FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, env, agent, deployment).Scan(&inputKind); err != nil {
@@ -165,6 +168,9 @@ func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, 
 				return err
 			}
 			if source != nil {
+				if slackroute.IsDirectMessage(source.Connection.ChannelID) {
+					return ErrSlackDestinationConflict
+				}
 				channel = source.Connection.ChannelID
 			}
 		}
@@ -270,6 +276,9 @@ func CreateScheduledRoot(ctx context.Context, tx pgx.Tx, env, sessionID, turn, b
 	var connectionID uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT connection_id,slack_channel_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=$2`, env, binding).Scan(&connectionID, &channel); err != nil {
 		return err
+	}
+	if !definition.ValidSlackChannelID(channel) {
+		return slackroute.ErrChannelUnavailable
 	}
 	connection, err := slackroute.ReadConnection(ctx, tx, env, agentID, channel)
 	if err != nil {

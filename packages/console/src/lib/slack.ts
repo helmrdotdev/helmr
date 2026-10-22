@@ -5,7 +5,7 @@ export type AgentSlackAddress = { projectID: string; environmentID: string; agen
 export type AgentSlackConnection = {
   id: string; registration_id: string; installation_id: string | null;
   status: "setup_incomplete" | "connected" | "reauthorization_required" | "disconnected";
-  credentials_configured: boolean; client_id: string | null; app_id: string | null;
+  direct_messages_authorized: boolean; credentials_configured: boolean; client_id: string | null; app_id: string | null;
   team_id: string | null; workspace_name: string | null; app_name: string | null; app_icon_url: string | null;
 };
 type AgentSlackConnectionState = { connection: AgentSlackConnection | null; manifest?: JsonValue; create_app_url?: string };
