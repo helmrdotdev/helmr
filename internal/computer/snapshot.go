@@ -99,7 +99,7 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  CASE WHEN c.deleted_at IS NULL THEN 'available' WHEN l.epoch IS NOT NULL OR c.storage_reservation_bytes IS NOT NULL THEN 'deleting' ELSE 'deleted' END,
  CASE WHEN c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR l.status='lost' THEN 'unavailable'
  WHEN cp.status='restoring' THEN 'restoring' WHEN cp.status='ready' THEN 'parked' WHEN cp.status IN ('capturing','sealed') OR l.status='releasing' THEN 'parking'
- WHEN l.status='active' THEN 'running' WHEN l.status='acquiring' OR c.initial_root_id IS NULL THEN 'starting' ELSE 'cold' END,
+ WHEN l.status='active' THEN 'running' WHEN l.status='acquiring' OR (c.initial_root_id IS NULL AND c.deleted_at IS NULL) THEN 'starting' ELSE 'cold' END,
  CASE WHEN c.integrity_fault_at IS NOT NULL THEN jsonb_build_object('code','computer_recovery_required','message',c.integrity_fault_reason)
  WHEN c.preparation_failed_at IS NOT NULL THEN jsonb_build_object('code','computer_preparation_failed','message','Computer preparation failed')
  WHEN l.status='lost' THEN jsonb_build_object('code','computer_recovery_required','message','Computer execution state is unavailable') END,
