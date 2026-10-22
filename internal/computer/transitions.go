@@ -142,7 +142,7 @@ func ActivateRestoredLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 // CompleteExecutionAdmission ends bounded preparation once execution is ready.
 // The caller holds the Computer lock and has verified its physical lease.
 func CompleteExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$2 AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, id)
+	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=NULL WHERE environment_id=$1 AND id=$2 AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, id)
 	if err != nil {
 		return err
 	}
@@ -174,8 +174,8 @@ func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch i
 		return err
 	}
 	// Recovery of already accepted work starts its own bounded pending interval.
-	if _, err = tx.Exec(ctx, `UPDATE computers c SET execution_pending_since=clock_timestamp(),execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
- WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_pending_since IS NULL
+	if _, err = tx.Exec(ctx, `UPDATE computers c SET execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
+ WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status='ready')
  AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computer); err != nil {
 		return err
@@ -323,7 +323,7 @@ func ConsumeCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID
 // ReconcileCheckpointControls records that the members' controls match the
 // consumed checkpoint and drops its capture request.
 func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, checkpoint)
+	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=NULL WHERE environment_id=$1 AND id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, checkpoint)
 	if err != nil {
 		return err
 	}

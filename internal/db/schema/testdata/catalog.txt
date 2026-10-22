@@ -276,7 +276,6 @@ column computers.deleted_at timestamp with time zone
 column computers.disk_bytes bigint
 column computers.environment_id uuid not null
 column computers.execution_deadline_at timestamp with time zone
-column computers.execution_pending_since timestamp with time zone
 column computers.id uuid not null
 column computers.image_build_id uuid
 column computers.image_id uuid
@@ -1363,13 +1362,11 @@ constraint computer_saves u UNIQUE (environment_id, computer_id, id, published)
 constraint computer_saves u UNIQUE (environment_id, computer_id, seq)
 constraint computer_saves u UNIQUE (environment_id, computer_id, turn_id, id, published)
 constraint computer_saves u UNIQUE (environment_id, turn_id)
-constraint computers c CHECK ((execution_pending_since IS NULL) = (execution_deadline_at IS NULL))
 constraint computers c CHECK ((initial_root_digest IS NOT NULL) = (initial_root_id IS NOT NULL OR initial_payload_retired_at IS NOT NULL))
 constraint computers c CHECK ((integrity_fault_at IS NULL) = (integrity_fault_reason IS NULL))
 constraint computers c CHECK (cpu_millis > 0)
 constraint computers c CHECK (delete_after_unused_ms > 0)
 constraint computers c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
-constraint computers c CHECK (execution_deadline_at > execution_pending_since)
 constraint computers c CHECK (image_build_id IS NULL OR image_spec_id IS NOT NULL)
 constraint computers c CHECK (image_id IS NULL OR image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL)
 constraint computers c CHECK (initial_payload_retired_at IS NULL OR initial_root_id IS NULL AND deleted_at IS NOT NULL)
