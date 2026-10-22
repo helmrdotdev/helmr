@@ -140,6 +140,27 @@ in
           exit 1
         fi
       '';
+  release-build-tools = pkgs.runCommandNoCC "release-build-tools-check" { } ''
+    # Missing runner utilities must not silently weaken artifact validation.
+    export PATH=${lib.makeBinPath toolsets.releaseBuild}
+    for tool in bash git go bun node npm python3 jq make ruby curl file tar gzip \
+      sha256sum awk sed skopeo apko mksquashfs unsquashfs; do
+      command -v "$tool"
+    done
+    go version
+    bun --version
+    docker --version
+    docker buildx version
+    file --version
+    mksquashfs -version
+    for tool in aws cosign gh dockerd cc staticcheck unparam protoc-gen-es; do
+      if command -v "$tool"; then
+        echo "artifact build tools unexpectedly include $tool" >&2
+        exit 1
+      fi
+    done
+    touch "$out"
+  '';
   helmr-package = helmrPackages.helmr;
   helmr-smoke = pkgs.runCommand "helmr-smoke" { } ''
     export HOME="$TMPDIR/home"

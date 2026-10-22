@@ -61,6 +61,10 @@ in
     packages = toolsets.release;
   };
 
+  release-build = pkgs.mkShellNoCC {
+    packages = toolsets.releaseBuild;
+  };
+
   release-consumer = pkgs.mkShellNoCC {
     packages = toolsets.releaseConsumer;
   };

@@ -47,7 +47,7 @@ case "$(uname -s)/$(uname -m)" in
   *) echo 'unsupported native fixture CLI platform' >&2; exit 1 ;;
 esac
 BUNDLE_BUILDER_IMAGE="$builder_endpoint/bundle-builder@$digest" \
-  "$root/scripts/build-cli-binaries.sh" "$work/cli"
+  "$root/scripts/build-cli-binaries.sh" "$work/cli" "$target"
 PYTHONPATH="$root/scripts/release" python3 - "$assets" "$work/cli/helmr-${target/\//-}.tar.gz" "$work/consumer" "$builder_endpoint/bundle-builder@$digest" <<'PY'
 import sys
 from consumer import consumer

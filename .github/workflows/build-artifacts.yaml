@@ -54,7 +54,7 @@ jobs:
           df -h
           free -b
           test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_COMMIT"
-          nix develop ../tools#images -c bash ../tools/scripts/release/build.sh '${{ matrix.part }}' "$RUNNER_TEMP/part"
+          nix develop ../tools#release-build -c bash ../tools/scripts/release/build.sh '${{ matrix.part }}' "$RUNNER_TEMP/part"
           df -h
           du -sb "$RUNNER_TEMP/part"
       - name: Freeze successful component
@@ -104,7 +104,7 @@ jobs:
       - name: Construct CLI from the selected source
         working-directory: source
         run: |
-          nix develop ../tools#images -c bash -euo pipefail <<'SH'
+          nix develop ../tools#release-build -c bash -euo pipefail <<'SH'
           if [ ! -d "$RUNNER_TEMP/part" ]; then
             bash ../tools/scripts/release/build.sh cli "$RUNNER_TEMP/part"
           fi
@@ -149,7 +149,7 @@ jobs:
       - name: Real downloaded CLI and installed SDK with canonical builder
         working-directory: source
         run: |
-          nix develop ../tools#images -c bash -euo pipefail <<'SH'
+          nix develop ../tools#release-build -c bash -euo pipefail <<'SH'
           bun install --frozen-lockfile --ignore-scripts
           RELEASE_SOURCE_ROOT="$PWD" bash ../tools/tests/release/consumer.sh "$RUNNER_TEMP/assets"
           SH
