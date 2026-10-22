@@ -36,26 +36,36 @@ import (
 
 // PreparedMachines supplies immutable artifacts and tracked devices to allocation owners.
 type PreparedMachines struct {
-	CommandLogLimits     *computerv0.CommandLogLimits
-	SessionLogLimits     *agentv1.SessionLogLimits
-	PreparationLogLimits *computerv0.PreparationLogLimits
-	Backend              vm.Backend
-	CAS                  cas.Store
-	ComputerObjects      cas.ImmutableStore
-	CheckpointCipher     *CheckpointEncryptor
-	ComputerRanges       blockformat.RangeSource
-	ObjectCache          *objectcache.Cache
-	ComputerHelper       string
-	ComputerDevices      []string
-	ComputerStagingBytes int64
-	TempDir              string
-	Log                  *slog.Logger
-	Reservations         *reservation.Ledger
-	PlatformStore        cas.Reader
-	RuntimeArchitecture  definition.RuntimeArchitecture
-	VerifierCgroupRoot   string
+	CommandLogLimits        *computerv0.CommandLogLimits
+	SessionLogLimits        *agentv1.SessionLogLimits
+	PreparationLogLimits    *computerv0.PreparationLogLimits
+	Backend                 vm.Backend
+	CAS                     cas.Store
+	ComputerObjects         cas.ImmutableStore
+	CheckpointCipher        *CheckpointEncryptor
+	ComputerRanges          blockformat.RangeSource
+	ObjectCache             *objectcache.Cache
+	ObjectCacheCapacity     int64
+	ComputerHelper          string
+	ComputerDevices         []string
+	ComputerStagingBytes    int64
+	TempDir                 string
+	Log                     *slog.Logger
+	Reservations            *reservation.Ledger
+	PlatformStore           cas.Reader
+	OptionalProgramStore    cas.Reader
+	OptionalPlatformStore   cas.Reader
+	OptionalComputerObjects cas.ImmutableStore
+	OptionalComputerRanges  blockformat.RangeSource
+	PreparationClient       PreparationSourceClient
+	RuntimeArchitecture     definition.RuntimeArchitecture
+	VerifierCgroupRoot      string
+	// HostSlot is the complete host lifecycle footprint, including staging.
+	HostSlot reservation.Vector
+	optional optionalResources
 
 	mu                sync.Mutex
+	captures          captureQueue
 	computerDevices   map[preparedMachineRef]vm.ComputerDevice
 	verifiedRuntimes  map[artifact.RuntimeDescriptor]artifact.RuntimeIndex
 	programDescriptor artifact.ProgramDescriptor
@@ -86,18 +96,18 @@ func (s *programSnapshots) close() error {
 }
 
 func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram) (*programSnapshots, error) {
-	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, nil)
+	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, nil, false)
 }
 
 func (p *PreparedMachines) prepareProgramArtifactsWithBoot(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, boot *computercheckpoint.Program) (*programSnapshots, error) {
-	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, boot)
+	return p.prepareExecutableArtifacts(ctx, tempDir, instanceID, program, false, boot, false)
 }
 
-func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, runtimeOnly bool, boot *computercheckpoint.Program) (*programSnapshots, error) {
+func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempDir, instanceID string, program *workerapi.RuntimeProgram, runtimeOnly bool, boot *computercheckpoint.Program, optional bool) (*programSnapshots, error) {
 	if strings.TrimSpace(program.DeploymentID) == "" {
 		return nil, errors.New("program deployment id is required")
 	}
-	if p.PlatformStore == nil {
+	if p.PlatformStore == nil || (optional && (p.OptionalPlatformStore == nil || p.OptionalProgramStore == nil)) {
 		return nil, errors.New("managed runtime delivery is not configured")
 	}
 	runtimeDescriptor := p.sessionRuntimeDescriptor(program.Runtime)
@@ -122,7 +132,11 @@ func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempD
 		}
 		started := time.Now()
 		var err error
-		images.runtime, err = p.readRuntimeArtifact(stageCtx, tempDir, runtimeDescriptor)
+		if optional {
+			images.runtime, err = localcopy.ReadRuntime(stageCtx, p.OptionalPlatformStore, tempDir, runtimeDescriptor)
+		} else {
+			images.runtime, err = p.readRuntimeArtifact(stageCtx, tempDir, runtimeDescriptor)
+		}
 		p.logInfo("program artifact staged", "verification_id", instanceID, "role", "runtime", "size_bytes", runtimeDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 		return err
 	})
@@ -130,7 +144,11 @@ func (p *PreparedMachines) prepareExecutableArtifacts(ctx context.Context, tempD
 		group.Go(func() error {
 			started := time.Now()
 			var err error
-			images.artifact, err = p.readProgramArtifact(stageCtx, tempDir, programDescriptor)
+			if optional {
+				images.artifact, err = localcopy.ReadProgram(stageCtx, p.OptionalProgramStore, tempDir, programDescriptor)
+			} else {
+				images.artifact, err = p.readProgramArtifact(stageCtx, tempDir, programDescriptor)
+			}
 			p.logInfo("program artifact staged", "verification_id", instanceID, "role", "program", "size_bytes", programDescriptor.SizeBytes, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 			return err
 		})
@@ -276,6 +294,16 @@ func verifyProgramMetadataDigest(
 }
 
 func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, workerEpoch int64) error {
+	if err := p.releaseInstanceResources(computerInstanceID, workerEpoch); err != nil {
+		return err
+	}
+	if p == nil || p.Reservations == nil {
+		return nil
+	}
+	return p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch))
+}
+
+func (p *PreparedMachines) releaseInstanceResources(computerInstanceID string, workerEpoch int64) error {
 	if err := p.releaseComputerDevice(computerInstanceID, workerEpoch); err != nil {
 		return err
 	}
@@ -288,9 +316,6 @@ func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, wo
 				return err
 			}
 		}
-	}
-	if err := p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch)); err != nil {
-		return err
 	}
 	p.mu.Lock()
 	delete(p.computerDevices, preparedMachineRef{id: computerInstanceID, epoch: workerEpoch})

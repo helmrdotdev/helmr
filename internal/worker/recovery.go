@@ -38,9 +38,10 @@ type vmRecoveryOps struct {
 }
 
 type ownerCandidate struct {
-	Owner   vm.Owner
-	Label   string
-	Problem string
+	Owner        vm.Owner
+	AllocationID string
+	Label        string
+	Problem      string
 }
 
 func RecoverLocalVMState(ctx context.Context, workDir string, jailerDir string, ipPath string, reclaimNetwork func(context.Context, vm.Owner) error, reclaimCgroup func(vm.Owner) error) (RecoveryEvidence, error) {
@@ -90,6 +91,7 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 	liveDir := filepath.Join(workDir, "vms", "guest")
 	var candidates []string
 	owners := make(map[string]vm.Owner)
+	allocations := make(map[string]string)
 	var err error
 	if ops.ownerCandidates != nil {
 		owned, ownerErr := ops.ownerCandidates(ctx)
@@ -122,6 +124,9 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 					continue
 				}
 				owners[candidate.Owner.ID] = candidate.Owner
+				if candidate.AllocationID != "" {
+					allocations[candidate.Owner.ID] = candidate.AllocationID
+				}
 			}
 			for id := range owners {
 				candidates = append(candidates, id)
@@ -259,6 +264,16 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 		evidence.Quarantined = append(evidence.Quarantined, id)
 		evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": "+errors.Join(cleanupErrs...).Error())
 	}
+	for i, id := range evidence.Quarantined {
+		if allocation := allocations[id]; allocation != "" {
+			evidence.Quarantined[i] = allocation
+		}
+	}
+	for i, id := range evidence.Reclaimed {
+		if allocation := allocations[id]; allocation != "" {
+			evidence.Reclaimed[i] = allocation
+		}
+	}
 	return evidence, nil
 }
 
@@ -282,6 +297,7 @@ func canonicalVMID(name string) bool {
 }
 
 func ownedVMCandidates(workDir string, jailerDir string) ([]ownerCandidate, error) {
+	state := custody.StateRoot{Base: workDir, Components: []string{"vms", "guest"}}
 	entries, err := custody.ReadDirectory(workDir, "vms", "guest")
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -295,7 +311,7 @@ func ownedVMCandidates(workDir string, jailerDir string) ([]ownerCandidate, erro
 			candidates = append(candidates, ownerCandidate{Label: label, Problem: fmt.Sprintf("state root has non-canonical VM id %q", id)})
 			continue
 		}
-		owner, readErr := (custody.StateRoot{Base: workDir, Components: []string{"vms", "guest"}}).ReadOwner(id)
+		owner, readErr := state.ReadOwner(id)
 		if readErr != nil {
 			candidates = append(candidates, ownerCandidate{Owner: vm.Owner{ID: id}, Label: label, Problem: "read exact VM owner marker: " + readErr.Error()})
 			continue
@@ -305,7 +321,12 @@ func ownedVMCandidates(workDir string, jailerDir string) ([]ownerCandidate, erro
 			continue
 		}
 		owned[id] = owner
-		candidates = append(candidates, ownerCandidate{Owner: owner})
+		adoption, adoptionErr := state.ReadPreparedAdoption(owner)
+		if adoptionErr != nil {
+			candidates = append(candidates, ownerCandidate{Owner: owner, Label: label, Problem: "read prepared adoption: " + adoptionErr.Error()})
+			continue
+		}
+		candidates = append(candidates, ownerCandidate{Owner: owner, AllocationID: adoption.AllocationID})
 	}
 	if strings.TrimSpace(jailerDir) == "" {
 		return candidates, nil

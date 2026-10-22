@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -315,6 +316,7 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	observed, err := db.New(pool).RecordWorkerObservation(ctx, db.RecordWorkerObservationParams{
+		Sequence: workerObservationSequence.Add(1), PolicyRevision: 1, ReadyLeafKeys: []byte("[]"),
 		WorkerHostID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:           pgtype.Int8{Int64: 1, Valid: true},
 		AdmissionPausedReason: pgtype.Text{String: "startup_recovery_leak", Valid: true},
@@ -396,6 +398,7 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 
 func workerObservation(workerID uuid.UUID) db.RecordWorkerObservationParams {
 	return db.RecordWorkerObservationParams{
+		Sequence: workerObservationSequence.Add(1), PolicyRevision: 1, ReadyLeafKeys: []byte("[]"),
 		WorkerHostID:  pgvalue.UUID(workerID),
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:   pgtype.Int8{Int64: 1, Valid: true},
@@ -421,3 +424,5 @@ func (testFenceClock) Wait(ctx context.Context, _ time.Duration) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
+
+var workerObservationSequence atomic.Int64

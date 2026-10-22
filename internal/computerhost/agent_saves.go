@@ -44,6 +44,7 @@ type agentComputerSaves struct {
 	requested           *workerapi.AgentSave
 	discovered          *workerapi.AgentSavePending
 	idle                func(context.Context) error
+	cancelIdle          func()
 	changes             func() disk.VersionChanges
 	wake                <-chan struct{}
 	savedGeneration     uint64
@@ -144,6 +145,8 @@ func (s *agentComputerSaves) run(ctx context.Context) error {
 			if err := s.idle(ctx); err != nil {
 				return err
 			}
+		} else if s.cancelIdle != nil {
+			s.cancelIdle()
 		}
 		// Checkpoint admission retains its one-second visit. A separate bounded
 		// pending-save catch-up repairs missed hints without optional admission or
@@ -249,6 +252,9 @@ func (s *agentComputerSaves) discover(ctx context.Context, retirement *workerapi
 }
 
 func (s *agentComputerSaves) step(ctx context.Context) error {
+	if s.cancelIdle != nil && (s.pending != nil || s.requested != nil || s.maintenance != nil) {
+		s.cancelIdle()
+	}
 	if s.pending == nil {
 		if s.requested == nil {
 			s.phase = "discover"
@@ -266,6 +272,9 @@ func (s *agentComputerSaves) step(ctx context.Context) error {
 			}
 			if err != nil {
 				return err
+			}
+			if s.cancelIdle != nil && (next.Save != nil || !s.accountingDue.IsZero() || s.maintenance != nil) {
+				s.cancelIdle()
 			}
 			if next.Save == nil {
 				return s.maintain(ctx)

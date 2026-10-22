@@ -1,4 +1,4 @@
-package session
+package db
 
 // NoSessionHoldsSQL is true for a Session row s when neither it nor an
 // ancestor holding its subtree has an unreleased hold.

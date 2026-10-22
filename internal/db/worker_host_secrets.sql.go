@@ -39,7 +39,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_pools.status IN ('pending','active','draining')
      FOR UPDATE OF worker_pools
 ), locked_host AS MATERIALIZED (
-    SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+    SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
       FROM worker_hosts
       JOIN locked_pool ON locked_pool.id = worker_hosts.worker_pool_id
                           AND locked_pool.worker_group_id = worker_hosts.worker_group_id
@@ -118,6 +118,17 @@ WITH locked_group AS MATERIALIZED (
            END,
            activated_at = CASE WHEN worker_hosts.current_service_id = $3
                                THEN worker_hosts.activated_at ELSE NULL END,
+           resource_observation_sequence = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.resource_observation_sequence ELSE NULL END,
+           resource_policy_revision = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.resource_policy_revision ELSE NULL END,
+           resource_observed_at = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.resource_observed_at ELSE NULL END,
+           local_optional_cpu_millis = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.local_optional_cpu_millis ELSE NULL END,
+           local_optional_memory_bytes = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.local_optional_memory_bytes ELSE NULL END,
+           optional_disk_bytes = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.optional_disk_bytes ELSE NULL END,
+           local_optional_vm_slots = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.local_optional_vm_slots ELSE NULL END,
+           local_optional_tasks = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.local_optional_tasks ELSE NULL END,
+           optional_reclaim_pending = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.optional_reclaim_pending ELSE NULL END,
+           disk_slots_for_real_work = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.disk_slots_for_real_work ELSE NULL END,
+           ready_leaf_keys = CASE WHEN worker_hosts.current_service_id = $3 THEN worker_hosts.ready_leaf_keys ELSE NULL END,
            observed_at = CASE WHEN worker_hosts.current_service_id = $3
                               THEN worker_hosts.observed_at ELSE NULL END,
 	       admission_paused_reason = CASE WHEN worker_hosts.current_service_id = $3
@@ -125,7 +136,7 @@ WITH locked_group AS MATERIALIZED (
            updated_at = now()
       FROM host_secret
      WHERE worker_hosts.id = host_secret.worker_host_id
-    RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+    RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 )
 SELECT host_secret.id, host_secret.worker_group_id,
        host_secret.worker_host_id, host_secret.key_prefix, host_secret.claim_version,
@@ -542,7 +553,7 @@ WITH enrollment_token AS (
     ON CONFLICT (worker_group_id, name)
     DO UPDATE SET updated_at = worker_pools.updated_at
 	 WHERE worker_pools.status IN ('pending', 'active')
-    RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.status, worker_pools.claim_version, worker_pools.vm_platform_id, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
+    RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.status, worker_pools.claim_version, worker_pools.resource_policy_revision, worker_pools.optional_cpu_millis, worker_pools.optional_memory_bytes, worker_pools.optional_disk_bytes, worker_pools.optional_vm_slots, worker_pools.optional_max_tasks, worker_pools.optional_io_bytes_per_second, worker_pools.local_headroom_slots, worker_pools.vm_platform_id, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
 ), worker AS (
     INSERT INTO worker_hosts (
 	    id, worker_group_id, worker_pool_id, resource_id, status, claim_version
@@ -573,7 +584,7 @@ WITH enrollment_token AS (
            updated_at = now()
      WHERE worker_hosts.status = 'registering'
        AND worker_hosts.worker_pool_id = (SELECT id FROM pool)
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_host_secrets SET revoked_at = now()
       FROM worker WHERE worker_host_secrets.worker_host_id = worker.id

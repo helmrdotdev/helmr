@@ -23,7 +23,10 @@ export interface ComputerCreateRequest {
   readonly idempotencyKey?: string
 }
 
+export type ComputerExecutionWait = Readonly<{ reason: "scheduling" | "environment_limit" | "saving" }>
+
 interface ComputerProperties {
+  readonly executionWait: ComputerExecutionWait | null
   readonly deleteAfterUnused: Retention
   readonly unusedSince: string | null
   readonly id: string
@@ -204,6 +207,7 @@ export function parseComputer(value: unknown): Computer {
     deploymentId: resourceID(input["deployment_id"], "Computer response.deployment_id"),
     status,
     residency: residency as ComputerResidency,
+    executionWait: parseExecutionWait(input["execution_wait"]),
     ...(input["error"] === undefined ? {} : { error: parseComputerError(input["error"]) }),
     secrets: Object.freeze(input["secrets"].map(parseComputerSecret)),
     lastActivityAt: computerTimestamp(input["last_activity_at"], "last_activity_at"),
@@ -248,4 +252,14 @@ function parseComputerError(value: unknown): NonNullable<Computer["error"]> {
     throw new Error("Computer error requires code and message")
   }
   return Object.freeze({ code: input["code"], message: input["message"] })
+}
+
+function parseExecutionWait(value: unknown): ComputerExecutionWait | null {
+  if (value === null) return null
+  const input = computerObject(value, "Computer response.execution_wait")
+  const reason = input["reason"]
+  if (reason !== "scheduling" && reason !== "environment_limit" && reason !== "saving") {
+    throw new Error("Computer response.execution_wait.reason is invalid")
+  }
+  return Object.freeze({ reason })
 }

@@ -197,6 +197,14 @@ func (b *bootSeedCapture) capture(ctx context.Context) (vm.BootSeedArtifact, err
 }
 
 func (c *Connector) restoreBootSeed(ctx context.Context, request vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
+	mode := workloadLaunch
+	if request.Purpose == vm.MaterializePreparationQualification {
+		mode = preparationQualificationLaunch
+	}
+	return c.restoreBootSeedMode(ctx, request, mode)
+}
+
+func (c *Connector) restoreBootSeedMode(ctx context.Context, request vm.MaterializeRequest, mode launchMode) (vm.CheckpointableMachine, error) {
 	seed := request.BootSeed
 	expected, err := c.bootSeedManifest(request)
 	if err != nil {
@@ -239,10 +247,6 @@ func (c *Connector) restoreBootSeed(ctx context.Context, request vm.MaterializeR
 	child.restoreMemory = seed.MemorySource
 	child.seedRestore = true
 	network := snapshotNetworkConfig(c.cfg)
-	mode := workloadLaunch
-	if request.Purpose == vm.MaterializePreparationQualification {
-		mode = preparationQualificationLaunch
-	}
 	transferred = true
 	machine, err := child.start(ctx, mode, request.ID, request.OwnerKind, request.Binding,
 		"", seed.VMState, scratch, &network, request.Topology, request.ReadOnlyDrives, request.RecordPhase, retained)

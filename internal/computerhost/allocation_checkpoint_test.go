@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -217,6 +218,33 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 	}}
 	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: saveStoragePublisher{store}, ComputerRanges: store, TempDir: t.TempDir()}}
 	return o, c, m, cut
+}
+
+func TestComputerCheckpointWaitLeavesSaveOwnerResponsive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first, _, _, _ := checkpointPipelineFixture(t, "", "")
+		permit := first.machines.captures.request()
+		if !permit.take() {
+			t.Fatal("first capture did not acquire")
+		}
+		defer permit.release()
+		second, checkpointClient, _, _ := checkpointPipelineFixture(t, "", "")
+		second.machines = first.machines
+		if err := second.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, func() func() { t.Fatal("waiting capture sealed execution"); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if second.capturePermit == nil || len(checkpointClient.calls) != 0 {
+			t.Fatal("waiting capture lost position or reached control before permit")
+		}
+		saves, saveClient := agentSaveFixture(t, "")
+		saves.cancelIdle = second.cancelCaptureWait
+		if err := saveTestStep(saves, t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(saveClient.requests) == 0 || second.capturePermit != nil || first.machines.captures.active != permit {
+			t.Fatal("pending save stalled behind the other capture")
+		}
+	})
 }
 
 func TestComputerCheckpointPipelineRetainsOneCutThroughPublicationUncertainty(t *testing.T) {

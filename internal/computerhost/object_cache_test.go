@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/objectcache"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -62,6 +63,14 @@ func testPreparedObjectCacheAcrossConsumers(t *testing.T, shared bool) {
 		}
 	}
 	p := &PreparedMachines{CAS: store, PlatformStore: store, ObjectCache: cache, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{rd: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}, programDescriptor: pd, programMetadata: &index}
+	p.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000, MemoryBytes: 1 << 20, HostDiskBytes: 256 << 20, VMSlots: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.ApplyResourcePolicy(workerapi.ResourcePolicy{Revision: 1, Optional: workerapi.OptionalResources{
+		DiskBytes: 128 << 20, MaxTasks: 1, IOBytesPerSecond: 1 << 30,
+	}})
+	resizeTestCache(t, p, cacheFilesystemHeadroom+16384)
 	program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: rd.Digest, SizeBytes: rd.SizeBytes, MediaType: rd.MediaType}, Artifact: workerapi.CASObject{Digest: pd.Digest, SizeBytes: pd.SizeBytes, MediaType: pd.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
 	firstDirectory := t.TempDir()
 	first, err := p.prepareProgramArtifacts(t.Context(), firstDirectory, "first", program)

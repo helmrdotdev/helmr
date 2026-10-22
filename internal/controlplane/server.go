@@ -625,11 +625,13 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
 			r.With(limitRequestBody(4096)).Post("/allocations/list", s.workerListAllocations)
+			r.With(limitRequestBody(4096)).Post("/preparation-sources", s.workerPreparationSource)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/deliver", s.workerDeliverBootSeed)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/start", s.workerBootSeedStart)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/renew", s.workerRenewBootSeed)
 			r.With(limitRequestBody(2<<20)).Post("/allocations/boot-seed/publish", s.workerPublishBootSeed)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/fail", s.workerFailBootSeed)
+			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/reclaim", s.workerReclaimBootSeed)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/stopped", s.workerBootSeedStopped)
 			r.With(limitRequestBody(4096)).Post("/allocations/image-build/deliver", s.workerDeliverPreparationAllocation)
 			r.With(limitRequestBody(4096)).Post("/allocations/image-build/stopped", s.workerPreparationStopped)

@@ -137,6 +137,24 @@ func (s *Server) workerFailBootSeed(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) workerReclaimBootSeed(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.BootSeedExecutor
+	if err := decodeRequestJSON(r, &request); err != nil {
+		s.writeAllocationError(w, err)
+		return
+	}
+	defer clear(request.ChannelCredential)
+	ref, err := bootSeedExecutor(request)
+	if err == nil {
+		err = computer.ReclaimBootSeedBuild(r.Context(), s.tx, workerFromContext(r.Context()), ref)
+	}
+	if err != nil {
+		s.writeAllocationError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) workerBootSeedStopped(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "seed")
 	if err == nil {

@@ -410,6 +410,17 @@ type WorkerHost struct {
 	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
+	ResourceObservationSequence  pgtype.Int8        `json:"resource_observation_sequence"`
+	ResourcePolicyRevision       pgtype.Int8        `json:"resource_policy_revision"`
+	ResourceObservedAt           pgtype.Timestamptz `json:"resource_observed_at"`
+	LocalOptionalCpuMillis       pgtype.Int8        `json:"local_optional_cpu_millis"`
+	LocalOptionalMemoryBytes     pgtype.Int8        `json:"local_optional_memory_bytes"`
+	OptionalDiskBytes            pgtype.Int8        `json:"optional_disk_bytes"`
+	LocalOptionalVmSlots         pgtype.Int4        `json:"local_optional_vm_slots"`
+	LocalOptionalTasks           pgtype.Int4        `json:"local_optional_tasks"`
+	OptionalReclaimPending       pgtype.Bool        `json:"optional_reclaim_pending"`
+	DiskSlotsForRealWork         pgtype.Int4        `json:"disk_slots_for_real_work"`
+	ReadyLeafKeys                []byte             `json:"ready_leaf_keys"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
@@ -428,6 +439,14 @@ type WorkerPool struct {
 	Name                            string             `json:"name"`
 	Status                          string             `json:"status"`
 	ClaimVersion                    int64              `json:"claim_version"`
+	ResourcePolicyRevision          int64              `json:"resource_policy_revision"`
+	OptionalCpuMillis               int64              `json:"optional_cpu_millis"`
+	OptionalMemoryBytes             int64              `json:"optional_memory_bytes"`
+	OptionalDiskBytes               int64              `json:"optional_disk_bytes"`
+	OptionalVmSlots                 int32              `json:"optional_vm_slots"`
+	OptionalMaxTasks                int32              `json:"optional_max_tasks"`
+	OptionalIoBytesPerSecond        int64              `json:"optional_io_bytes_per_second"`
+	LocalHeadroomSlots              int32              `json:"local_headroom_slots"`
 	VMPlatformID                    pgtype.Text        `json:"vm_platform_id"`
 	CapacityCPUMillis               pgtype.Int8        `json:"capacity_cpu_millis"`
 	CapacityMemoryBytes             pgtype.Int8        `json:"capacity_memory_bytes"`

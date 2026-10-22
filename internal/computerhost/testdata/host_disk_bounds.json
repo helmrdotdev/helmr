@@ -3,24 +3,24 @@
     "memory_mib": 1,
     "scratch_mib": 1,
     "staging_mib": 1,
-    "bytes": 68756883690
+    "bytes": 68757932490
   },
   {
     "memory_mib": 2048,
     "scratch_mib": 32768,
     "staging_mib": 65536,
-    "bytes": 246995011526
+    "bytes": 249142757414
   },
   {
     "memory_mib": 4096,
     "scratch_mib": 32768,
     "staging_mib": 65536,
-    "bytes": 253437724614
+    "bytes": 257733216294
   },
   {
     "memory_mib": 1048576,
     "scratch_mib": 1048576,
     "staging_mib": 65536,
-    "bytes": 6734803028418
+    "bytes": 7834448874018
   }
 ]

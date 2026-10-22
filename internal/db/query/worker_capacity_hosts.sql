@@ -83,11 +83,12 @@ WITH target AS MATERIALIZED (
     SELECT worker_hosts.id
       FROM worker_hosts
      WHERE worker_hosts.id = sqlc.arg(worker_host_id)
-       AND worker_hosts.status IN ('registering', 'active', 'draining', 'lost')
+       AND worker_hosts.status IN ('registering', 'active', 'draining', 'termination_ready', 'lost')
      FOR UPDATE
 ), transitioned AS (
     UPDATE worker_hosts
        SET status = 'lost',
+           termination_ready_at = NULL,
            claim_version = worker_hosts.claim_version
                + CASE WHEN worker_hosts.status = 'lost' THEN 0 ELSE 1 END,
            lost_at = COALESCE(worker_hosts.lost_at, now()),

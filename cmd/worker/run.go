@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -169,7 +170,6 @@ func run(log *slog.Logger) error {
 	if err := objectCache.EnableDrives(cfg.JailerUID, cfg.JailerGID, networkConfig.StateDir, cfg.JailerChrootDir); err != nil {
 		log.Info("shared artifact drives unavailable", "error", err)
 	}
-	cacheKey := reservation.Key{Kind: "object-cache", Epoch: 1, ID: "worker"}
 	defer func() {
 		log.Info("worker object cache usage", "stats", objectCache.Snapshot())
 		if err := objectCache.Close(); err != nil {
@@ -286,29 +286,28 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	cacheBytes := max(int64(0), min(int64(4<<30), diskCapacity.HostDiskBytes-perSlotDisk*int64(cfg.WorkerExecutionSlots), availableDisk-perSlotDisk*int64(cfg.WorkerExecutionSlots)))
-	// Retain filesystem overhead headroom outside the rounded payload budget.
-	// Directory and extent metadata are not represented by logical object sizes.
-	const cacheFilesystemHeadroom = int64(64 << 20)
-	if cacheBytes <= cacheFilesystemHeadroom {
-		cacheBytes = 0
-	}
-	cachePayloadBytes := max(int64(0), cacheBytes-cacheFilesystemHeadroom)
-	if cacheBytes > 0 {
-		if _, err := hostReservations.Reserve(cacheKey, reservation.Vector{HostDiskBytes: cacheBytes}); err != nil {
-			return err
-		}
-		if err := objectCache.Enable(cachePayloadBytes); err != nil {
-			return err
-		}
-	}
-	log.Info("worker object cache configured", "reserved_bytes", cacheBytes, "capacity_bytes", cachePayloadBytes)
 	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
+	preparedMachines.PreparationClient = controlPlaneClient
+	optionalHTTP := &http.Client{Transport: preparedMachines.OptionalTransport(http.DefaultTransport.(*http.Transport).Clone())}
+	optionalStore, err := cass3.New(ctx, cfg.CASURI, cass3.WithTempDir(filepath.Join(workDir, "tmp", "cas")), cass3.WithHTTPClient(optionalHTTP))
+	if err != nil {
+		return fmt.Errorf("configure optional artifact transfers: %w", err)
+	}
+	optionalPlatform, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI, cass3.WithTempDir(runtimeScratch), cass3.WithHTTPClient(optionalHTTP))
+	if err != nil {
+		return fmt.Errorf("configure optional runtime transfers: %w", err)
+	}
+	preparedMachines.OptionalProgramStore = optionalStore
+	preparedMachines.OptionalPlatformStore = optionalPlatform
+	preparedMachines.OptionalComputerObjects = optionalStore
+	preparedMachines.OptionalComputerRanges = optionalStore
 	preparedMachines.CommandLogLimits = &computerv0.CommandLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.SessionLogLimits = &agentv1.SessionLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.PreparationLogLimits = &computerv0.PreparationLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.TempDir = filepath.Join(workDir, "tmp")
 	preparedMachines.ComputerObjects = store
 	preparedMachines.ObjectCache = objectCache
+	preparedMachines.ObjectCacheCapacity = cacheBytes
 	preparedMachines.CheckpointCipher = checkpointEncryptor
 	preparedMachines.ComputerRanges = store
 	preparedMachines.ComputerDevices = cfg.ComputerDevices
@@ -318,6 +317,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	preparedMachines.Reservations = hostReservations
+	preparedMachines.HostSlot = reservation.Vector{CPUMillis: vmResources.MilliCPU, MemoryBytes: perSlotMemory, HostDiskBytes: perSlotDisk, VMSlots: 1}
 	preparedMachines.PlatformStore = platformStore
 	preparedMachines.RuntimeArchitecture = runtimeArchitecture
 	preparedMachines.VerifierCgroupRoot = verifierCgroupRoot
@@ -325,9 +325,10 @@ func run(log *slog.Logger) error {
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes: admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:     256,
-		DatapathHealth: connector.DatapathHealth,
+		DiskFloorBytes:        admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:            256,
+		DatapathHealth:        connector.DatapathHealth,
+		OptionalCleanupHealth: preparedMachines.OptionalCleanupHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
@@ -342,7 +343,8 @@ func run(log *slog.Logger) error {
 	}}
 	supervisor, err := worker.New(worker.Config{
 		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs,
-		Background:         []worker.BackgroundSpec{{Name: "allocation discovery", DrainEligible: true, Run: allocations.RunDiscovery}, {Name: "allocation updates", DrainEligible: true, Run: func(ctx context.Context) error { return watchAllocationUpdates(ctx, controlPlaneClient, allocations) }}},
+		Resources:          preparedMachines,
+		Background:         []worker.BackgroundSpec{{Name: "optional resources", DrainEligible: true, Run: preparedMachines.RunOptionalResources}, {Name: "allocation discovery", DrainEligible: true, Run: allocations.RunDiscovery}, {Name: "allocation updates", DrainEligible: true, Run: func(ctx context.Context) error { return watchAllocationUpdates(ctx, controlPlaneClient, allocations) }}},
 		PollEvery:          cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (worker.RecoveryEvidence, error) {

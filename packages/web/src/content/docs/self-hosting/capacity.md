@@ -127,23 +127,116 @@ start a drain unless all of these are true:
 The drain fence and the advisory queued-demand check for `idle_scale_in` are final safety checks. They
 do not make a partial plan or incomplete inventory safe for scale-in.
 
-### Keep ready capacity
+### Bound optional work per Worker
 
-A pool plan request can include `min_spare_slots` (0–1000; omitted means zero).
-A spare slot fits the pool's full per-VM CPU, memory, disk, platform and CPU-shape
-requirements after queued work has been placed. Only fresh, active, unpaused
-Workers count as ready; registering and proposed Workers do not.
+Read or replace a pool's policy at
+`GET /capacity/v1/worker-groups/{group}/pools/{pool}/resource-policy` and
+`PUT /capacity/v1/worker-groups/{group}/pools/{pool}/resource-policy`.
+The replacement requires every field and the revision returned by the read:
 
-`spare_slots_shortfall` reports the remaining ready-slot deficit. The additional
-Worker recommendation includes reserve replenishment within the requested
-headroom. `saturated` means that headroom cannot satisfy the plan. The provider
-owner chooses the reserve policy and ceilings; Helmr owns placement feasibility.
+```json
+{
+  "expected_revision": 1,
+  "optional": {
+    "cpu_millis": 0,
+    "memory_bytes": 0,
+    "disk_bytes": 0,
+    "vm_slots": 0,
+    "max_tasks": 0,
+    "io_bytes_per_second": 0
+  },
+  "local_headroom_slots": 0
+}
+```
 
-Send the same `min_spare_slots` with `idle_scale_in` drains. Under the admission
-lock, Helmr rejects a busy host with `worker_host_busy` or a drain that would
-violate the requested reserve with `spare_capacity_required` (HTTP 409). Concurrent
-drains cannot each count the other's departing capacity. Maintenance drains
-using `replacement` or `capacity_reduction` do not enforce this reserve.
+All limits default to zero. Optional seed generation, prepared Computers and
+cache share these per-Worker ceilings. `local_headroom_slots` keeps full VM shapes
+available to real work by restricting optional admission. It does not request
+additional hosts or guarantee fleet-wide ready capacity. Set a provider minimum
+size when physical standing capacity is required. Replacing policy requires the
+current revision; a stale revision returns HTTP 409. A successful update records
+desired policy, not proof that every Worker has finished reclaiming resources.
+
+Workers charge seed generation, prepared Computers and cache to the same physical reservation
+ledger as real allocations. Cache limits include filesystem overhead. Policy
+reduction cancels optional fills and stops seed attempts through Control Plane;
+open readers, VM processes and files remain charged until their owners release
+them. `reclaiming_workers` can therefore remain nonzero after a policy update.
+An optional transfer rate of zero disables optional uploads and downloads. The
+rate is shared across concurrent requests, multipart transfers and retries.
+
+A prepared Computer is a private, paused VM for an exact qualified image and
+runtime shape. Preparation does not run authored initialization or receive
+Session credentials or a Computer write key. Its source access expires and must
+be renewed; policy changes, stale observations and source invalidation remove
+unused preparation. Every leaf reserves a full lifecycle slot, including local
+RAM ciphertext retained through restoration and subsequent checkpoint capture.
+
+A fresh Computer allocation can atomically take ownership of a matching prepared
+VM and its reservation. Fresh execution authority and bootstrap identity are
+installed before execution. Personal checkpoint restoration keeps its exact
+saved state and does not use a prepared image as a substitute. A miss follows the
+ordinary startup path. Pending real work suppresses refill and reclaims conflicting
+optional resources; failed cleanup retains the charge and prevents reuse until
+physical release is verified. Prepared counts are observations, not execution
+authority or a guarantee of startup latency.
+
+A Worker crash can leave an unclaimed prepared VM's attachment arena behind.
+Startup quarantines retained attachment state and requires operator reconciliation,
+including when no customer Computer was running. Before relocating the exact
+arena, stop the Worker and verify that its processes and VM cgroups are gone and
+its backing devices are exclusively available and idle. Preserve the arena for
+inspection, then restart the Worker. Do not delete attachment markers or treat a
+stale host observation as proof of physical release. Enabling prepared VMs therefore
+requires an operator recovery procedure; automatic recovery of these arenas is
+not provided.
+
+Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
+for that queue leaves normal save processing available, and a zero optional
+policy does not disable required checkpoint publication.
+
+All optional limits default to zero, which disables new artifact-cache fills as
+well as prepared VMs. Repeated starts can therefore fetch artifacts again. To
+fund only the local artifact cache, set nonzero `disk_bytes`, `max_tasks` and
+`io_bytes_per_second` in the optional policy while leaving optional CPU, memory
+and VM slots at zero. The network rate covers optional fetches and uploads;
+copying an already verified local file uses the cache's disk and task allowance.
+Cache fills occur during image preparation and seed construction; ordinary
+Computer starts do not populate the cache. A seed construction task and its cache
+fill each consume a task allowance, so caching alongside seed construction needs
+`max_tasks` of at least 2. Setting task or transfer limits to zero, or retiring
+an in-flight seed after a policy change, prevents new cache work without itself
+evicting resident data that still fits the disk budget and headroom. Real-work
+admission and disk-limit reductions can still reclaim that data.
+
+Each pool plan reports `policy_revision`, `placements.immediate`,
+`placements.after_optional_reclaim`, `optional_occupancy`, `reclaiming_workers`,
+`local_headroom_slots_in_use` and `credited_hosts` (host IDs and Worker epochs).
+Placements count complete compatible VM shapes before queued work is packed.
+Compatible pools can credit the same Worker, so their counts must not be added.
+Missing or stale resource observations make immediate placement and optional
+occupancy `null` and the plan incomplete. Post-reclaim counts remain advisory;
+physical cleanup must finish before a granted allocation starts. Optional backlog
+and occupancy do not create additional-Worker recommendations.
+
+### Retry scale-in safely
+
+Submit `POST /capacity/v1/worker-groups/{group}/pools/{pool}/scale-in` with
+`{"operation_key":"<UUIDv7>"}`. Helmr selects an eligible host and commits its
+drain together with a durable receipt. A retry with the same key returns that
+selection; reusing it for another pool is a conflict. Only one unsettled automatic
+scale-in operation is allowed per group. Hosts occupied only by optional work may
+be selected, but cleanup must still finish before provider termination.
+
+Read `GET /capacity/v1/worker-groups/{group}/scale-in-operations/pending` before
+starting a new operation, including after controller restart. It returns
+`{"operation":null}` or the outstanding receipt. Read a particular key at
+`GET /capacity/v1/worker-groups/{group}/scale-in-operations/{operation_key}`.
+Receipts retain the selected host, provider resource and drain claim. Their phase
+is `draining`, `termination_ready`, `blocked` or `completed`. Terminate only the
+exact resource with a current `termination_ready` receipt and matching inventory;
+a blocked receipt requires reconciliation. Completion follows confirmed physical
+provider absence. Response loss is not permission to select another host.
 
 ### React to capacity changes
 

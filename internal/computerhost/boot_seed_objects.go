@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bootseed"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
@@ -18,10 +19,10 @@ import (
 // publishBootSeed retains encrypted bytes only. The build owner must qualify
 // independent clones before registering this manifest as eligible. Its staging
 // directory remains charged and owned by the caller until this method returns.
-func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string, environmentID, buildID uuid.UUID, artifact vm.BootSeedArtifact, scratchBytes int64) (bootseed.Manifest, error) {
+func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string, environmentID, buildID uuid.UUID, artifact vm.BootSeedArtifact, scratchBytes int64, store cas.ImmutableStore) (bootseed.Manifest, error) {
 	m := bootseed.Manifest{EnvironmentID: environmentID, BuildID: buildID,
 		Config: append([]byte(nil), artifact.Manifest...), MemoryBytes: artifact.MemoryBytes, ScratchBytes: scratchBytes}
-	if p.ComputerObjects == nil || p.CheckpointCipher == nil || environmentID == uuid.Nil() || buildID == uuid.Nil() {
+	if store == nil || p.CheckpointCipher == nil || environmentID == uuid.Nil() || buildID == uuid.Nil() {
 		return m, errors.New("boot seed publication requires build ownership and encrypted storage")
 	}
 	scratchLimit, err := filepack.PackedSizeLimit(scratchBytes, filepack.ScratchRole)
@@ -73,7 +74,7 @@ func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string
 			if err != nil {
 				return err
 			}
-			object, err := p.ComputerObjects.Publish(uploadCtx, *item.object, f)
+			object, err := store.Publish(uploadCtx, *item.object, f)
 			if err == nil {
 				err = cas.RequireExact(object, *item.object)
 			}
@@ -87,11 +88,15 @@ func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string
 // RAM remains demand-readable. The caller retains the source until its VM and
 // pager have stopped, then releases the allocation's staging directory.
 func (p *PreparedMachines) openBootSeed(ctx context.Context, directory string, m bootseed.Manifest, memoryBytes, scratchBytes int64) (*vm.BootSeedRestore, error) {
+	return p.openBootSeedFrom(ctx, directory, m, memoryBytes, scratchBytes, p.ComputerObjects, p.ComputerRanges)
+}
+
+func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory string, m bootseed.Manifest, memoryBytes, scratchBytes int64, objects cas.Reader, ranges blockformat.RangeSource) (*vm.BootSeedRestore, error) {
 	if err := m.Validate(); err != nil {
 		return nil, invalidCheckpoint(err)
 	}
 	if m.MemoryBytes != memoryBytes || m.ScratchBytes != scratchBytes ||
-		p.ComputerObjects == nil || p.ComputerRanges == nil || p.CheckpointCipher == nil {
+		objects == nil || ranges == nil || p.CheckpointCipher == nil {
 		return nil, errors.New("boot seed differs from admitted resources or storage")
 	}
 	scratchLimit, err := filepack.PackedSizeLimit(scratchBytes, filepack.ScratchRole)
@@ -105,14 +110,14 @@ func (p *PreparedMachines) openBootSeed(ctx context.Context, directory string, m
 	stageErrors := make([]error, 3)
 	group.Go(func() (err error) {
 		defer func() { stageErrors[0] = err }()
-		observed, err := p.ComputerObjects.Stat(readCtx, m.Memory.Digest)
+		observed, err := objects.Stat(readCtx, m.Memory.Digest)
 		if err != nil {
 			return checkpointObjectReadError(err)
 		}
 		if err := cas.RequireExact(observed, m.Memory); err != nil {
 			return invalidCheckpoint(err)
 		}
-		memory, err = openCheckpointMemory(readCtx, p.ComputerRanges, p.CheckpointCipher, m.Memory, m.MemoryHeaderDigest, m.Purpose()+"/memory", memoryBytes)
+		memory, err = openCheckpointMemory(readCtx, ranges, p.CheckpointCipher, m.Memory, m.MemoryHeaderDigest, m.Purpose()+"/memory", memoryBytes)
 		return err
 	})
 	for i, item := range []struct {
@@ -123,7 +128,7 @@ func (p *PreparedMachines) openBootSeed(ctx context.Context, directory string, m
 	}{{"vm_state", m.VMState, vm.SnapshotStateLimit, &result.VMState}, {"scratch_disk", m.ScratchDisk, scratchLimit, &result.ScratchDisk}} {
 		group.Go(func() (err error) {
 			defer func() { stageErrors[i+1] = err }()
-			*item.path, err = downloadCheckpointObject(readCtx, p.ComputerObjects, p.CheckpointCipher, directory, m.Purpose(),
+			*item.path, err = downloadCheckpointObject(readCtx, objects, p.CheckpointCipher, directory, m.Purpose(),
 				computercheckpoint.RuntimeObject{Role: item.role, Object: computercheckpoint.Object{Digest: item.object.Digest, SizeBytes: item.object.SizeBytes, MediaType: item.object.MediaType}}, item.limit)
 			return err
 		})

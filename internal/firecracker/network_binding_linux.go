@@ -191,10 +191,7 @@ func (binding *installedNetworkBinding) monitor() {
 			return
 		case <-ticker.C:
 			if err := binding.verify(true); err != nil {
-				fenceErr := binding.fence()
-				if binding.secretProxy != nil {
-					fenceErr = errors.Join(fenceErr, binding.secretProxy.Close())
-				}
+				fenceErr := binding.Deactivate()
 				_ = binding.packet.Invalidate(err)
 				select {
 				case binding.failure <- errors.Join(err, fenceErr):
@@ -421,6 +418,15 @@ func verifyRoutedNamespaceSysctls() error {
 
 func (binding *installedNetworkBinding) Failure() <-chan error {
 	return binding.failure
+}
+
+func (binding *installedNetworkBinding) closeSecretTransport() error {
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.secretProxy != nil {
+		return binding.secretProxy.Close()
+	}
+	return nil
 }
 
 func (binding *installedNetworkBinding) fence() error {

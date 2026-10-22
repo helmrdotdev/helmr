@@ -18,6 +18,7 @@ type AdmissionReason string
 
 const (
 	AdmissionAllowed                  AdmissionReason = ""
+	AdmissionOptionalCleanupFailed    AdmissionReason = "optional_cleanup_failed"
 	AdmissionDiskFloor                AdmissionReason = "disk_floor"
 	AdmissionFileDescriptorPressure   AdmissionReason = "file_descriptor_pressure"
 	AdmissionCgroupUnavailable        AdmissionReason = "cgroup_unavailable"
@@ -62,11 +63,12 @@ type AdmissionEvaluator interface {
 }
 
 type HardAdmissionConfig struct {
-	Probe          HostHealthProbe
-	DiskFloorBytes int64
-	FDHeadroom     uint64
-	DatapathHealth func() error
-	Now            func() time.Time
+	Probe                 HostHealthProbe
+	DiskFloorBytes        int64
+	FDHeadroom            uint64
+	DatapathHealth        func() error
+	OptionalCleanupHealth func() error
+	Now                   func() time.Time
 }
 
 type HardAdmission struct {
@@ -116,12 +118,18 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 	if a.cfg.DatapathHealth != nil {
 		datapathErr = a.cfg.DatapathHealth()
 	}
+	var cleanupErr error
+	if a.cfg.OptionalCleanupHealth != nil {
+		cleanupErr = a.cfg.OptionalCleanupHealth()
+	}
 	decision := AdmissionDecision{Allowed: false, Health: health}
 	switch {
 	case err != nil:
 		decision.Reason = AdmissionProbeFailed
 	case datapathErr != nil:
 		decision.Reason = AdmissionDatapathUnverified
+	case cleanupErr != nil:
+		decision.Reason = AdmissionOptionalCleanupFailed
 	case check.Status != StatusActive && !(check.Status == StatusDraining && check.DrainContinuation):
 		decision.Reason = AdmissionReason(check.Status)
 	case health.AvailableDiskBytes < a.cfg.DiskFloorBytes:
@@ -160,6 +168,10 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 	if datapathErr != nil {
 		reason := string(AdmissionDatapathUnverified)
 		observation.AdmissionPausedReason = reason
+		return observation
+	}
+	if a.cfg.OptionalCleanupHealth != nil && a.cfg.OptionalCleanupHealth() != nil {
+		observation.AdmissionPausedReason = string(AdmissionOptionalCleanupFailed)
 		return observation
 	}
 	if !decision.Allowed && decision.Reason != "" {

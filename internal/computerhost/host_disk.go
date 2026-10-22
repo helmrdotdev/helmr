@@ -11,13 +11,18 @@ import (
 )
 
 // HostDiskPerSlot bounds all files that may coexist for one physical Instance,
-// including a restored machine taking another checkpoint. The host reserve is withheld separately. Immutable publication uploads these
+// including retained prepared RAM ciphertext and a subsequent checkpoint. The
+// host reserve is withheld separately. Immutable publication uploads these
 // files directly; it does not spool another copy.
 func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *CheckpointEncryptor) (int64, error) {
 	if memoryMiB <= 0 || scratchMiB <= 0 || memoryMiB > math.MaxInt64/mebibyte || scratchMiB > math.MaxInt64/mebibyte || computerStagingBytes <= 0 {
 		return 0, errors.New("invalid worker lifecycle disk shape")
 	}
 	memory, scratch := memoryMiB*mebibyte, scratchMiB*mebibyte
+	_, retainedMemory, err := memoryGeometry(memory)
+	if err != nil {
+		return 0, err
+	}
 	capture, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: disk.SeedCapacity, MemoryBytes: memory, ScratchBytes: scratch, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, cipher)
 	if err != nil {
 		return 0, err
@@ -27,7 +32,7 @@ func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *
 		return 0, err
 	}
 	var total int64
-	for _, size := range []int64{scratch, disk.SeedCapacity, computerStagingBytes, 2 * artifact.MaxProgramPhysicalBytes, 2 * artifact.MaxRuntimePhysicalBytes, memory, state, capture.total} {
+	for _, size := range []int64{scratch, disk.SeedCapacity, computerStagingBytes, 2 * artifact.MaxProgramPhysicalBytes, 2 * artifact.MaxRuntimePhysicalBytes, memory, retainedMemory, state, capture.total} {
 		if size > math.MaxInt64-total {
 			return 0, reservation.ErrOverflow
 		}
