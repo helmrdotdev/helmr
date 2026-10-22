@@ -1,3 +1,4 @@
+import { ComputerExecutionControls } from "../features/computers/ComputerExecutionControls";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
@@ -100,6 +101,7 @@ export function ComputerDetail() {
     queryFn: () => getComputer(computerID(), resourceScope()),
     enabled: computerID() !== "" && hasScope(),
     retry: false,
+    refetchInterval: 5_000,
   }));
 
   const notFound = () => !computer.data && isNotFound(computer.error);
@@ -135,6 +137,7 @@ export function ComputerDetail() {
               }
             >
               <div>
+                <Show when={current().id} keyed>{(_id) => <ComputerExecutionControls computer={current()} scope={resourceScope()} onChanged={() => computer.refetch()} />}</Show>
                 <Tabs id="computer-sections" label="Computer sections" items={tabs(current().secrets.length)} selected={tab()} onSelect={setTab} />
                 <TabPanel tabs="computer-sections" value="sessions" selected={tab()}>
                   <ComputerUsage computerID={current().id} scope={resourceScope()} kind="sessions" />

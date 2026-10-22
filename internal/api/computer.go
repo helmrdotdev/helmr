@@ -30,7 +30,18 @@ type ComputerExecutionWait struct {
 	Reason string `json:"reason"`
 }
 
+type ComputerExecutionControl struct {
+	ID         string     `json:"id"`
+	ComputerID string     `json:"computer_id"`
+	Kind       string     `json:"kind"`
+	Status     string     `json:"status"`
+	ErrorCode  *string    `json:"error_code,omitempty"`
+	AcceptedAt time.Time  `json:"accepted_at"`
+	SettledAt  *time.Time `json:"settled_at"`
+}
+
 type ComputerSnapshot struct {
+	ExecutionControl    *ComputerExecutionControl `json:"execution_control"`
 	ExecutionWait       *ComputerExecutionWait    `json:"execution_wait"`
 	DeleteAfterUnusedMs *int64                    `json:"delete_after_unused_ms"`
 	UnusedSince         *time.Time                `json:"unused_since"`
@@ -48,19 +59,20 @@ type ComputerSnapshot struct {
 }
 
 type ComputerListItem struct {
-	ExecutionWait       *ComputerExecutionWait `json:"execution_wait"`
-	DeleteAfterUnusedMs *int64                 `json:"delete_after_unused_ms"`
-	UnusedSince         *time.Time             `json:"unused_since"`
-	Residency           ComputerResidency      `json:"residency"`
-	Error               json.RawMessage        `json:"error,omitempty"`
-	ID                  string                 `json:"id"`
-	Key                 *string                `json:"key,omitempty"`
-	DefinitionID        string                 `json:"template"`
-	DeploymentID        string                 `json:"deployment_id"`
-	Status              ComputerStatus         `json:"status"`
-	LastActivityAt      time.Time              `json:"last_activity_at"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	ExecutionControl    *ComputerExecutionControl `json:"execution_control"`
+	ExecutionWait       *ComputerExecutionWait    `json:"execution_wait"`
+	DeleteAfterUnusedMs *int64                    `json:"delete_after_unused_ms"`
+	UnusedSince         *time.Time                `json:"unused_since"`
+	Residency           ComputerResidency         `json:"residency"`
+	Error               json.RawMessage           `json:"error,omitempty"`
+	ID                  string                    `json:"id"`
+	Key                 *string                   `json:"key,omitempty"`
+	DefinitionID        string                    `json:"template"`
+	DeploymentID        string                    `json:"deployment_id"`
+	Status              ComputerStatus            `json:"status"`
+	LastActivityAt      time.Time                 `json:"last_activity_at"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	UpdatedAt           time.Time                 `json:"updated_at"`
 }
 
 type ListComputersResponse struct {

@@ -135,12 +135,12 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAnswerOpening(w, r, envelope)
 		return
 	}
-	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices") {
+	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices" && !strings.HasPrefix(action.ID, "helmr.lifecycle.")) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	claims, err := decodeControl(h.ControlKey, action.Value, time.Now())
-	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") {
+	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") || (strings.HasPrefix(action.ID, "helmr.lifecycle.") && (!lifecycleAction(claims.Action) || action.ID != "helmr.lifecycle."+claims.Action)) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -176,7 +176,7 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if envelope.User.ID == bot {
 			return errControlInvalid
 		}
-		if claims.Action == "choose" || claims.Action == "submit_choices" {
+		if claims.Action == "choose" || claims.Action == "submit_choices" || lifecycleAction(claims.Action) {
 			root := envelope.Message.ThreadTimestamp
 			if root == "" {
 				root = envelope.Message.Timestamp

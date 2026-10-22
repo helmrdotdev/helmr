@@ -177,6 +177,9 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 		return errors.New("incomplete coherent Computer checkpoint")
 	}
 	p := &checkpointPublication{owner: o, capture: capture, encoded: response.Capture, artifact: artifact, disk: workerapi.AgentSavePublication{Save: workerapi.AgentSave{EnvironmentID: o.identity.EnvironmentID, SaveID: response.SaveID, LeaseEpoch: o.identity.Epoch}, Root: artifact.Computer.Capture.Root(), Evidence: id}}
+	// The immutable cut owns its resources. Publication retries must not hold
+	// the host FIFO and prevent unrelated Computers from taking their cuts.
+	permit.release()
 	return o.publishCheckpointOrContinue(ctx, delivery, request, hold, p)
 }
 
@@ -259,6 +262,20 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 	var publicationErr error
 	go func() { defer close(done); publicationErr = p.publish(publicationCtx) }()
 	defer func() { cancel(); <-done }()
+	completed := (<-chan struct{})(done)
+	retained := false
+	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
+	finishPublished := func() error {
+		if publicationErr != nil {
+			return publicationErr
+		}
+		if err := o.machines.retainCheckpointSource(key); err != nil {
+			return errComputerHibernated
+		}
+		retained = true
+		completed = nil
+		return nil
+	}
 	finishPublication := func(continuationErr error) error {
 		o.machines.logInfo("Computer source continuation unavailable before reservation", "computer_id", o.identity.OwnerID, "error", continuationErr.Error())
 		<-done
@@ -270,12 +287,14 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 	for {
 		wake := o.workWake.snapshot()
 		select {
-		case <-done:
-			if publicationErr != nil {
-				return publicationErr
+		case <-completed:
+			if err := finishPublished(); err != nil {
+				return err
 			}
-			return errComputerHibernated
 		default:
+		}
+		if retained && o.machines.retainedSourceReclaimRequested(key) {
+			return errComputerHibernated
 		}
 		readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 		pending, err := o.client.BeginAgentComputerCapture(readCtx, request)
@@ -296,6 +315,12 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 				var reply *httpclient.Error
 				if publicationErr != nil && !errors.Is(publicationErr, context.Canceled) && !checkpointDurabilityRetryable(publicationErr) && !(errors.As(publicationErr, &reply) && reply.Code == workerapi.AgentComputerNotReady) {
 					return publicationErr
+				}
+				if retained {
+					if err := o.machines.promoteCheckpointSource(key); err != nil {
+						return err
+					}
+					retained = false
 				}
 				if o.saves == nil || o.saves.pending != nil || o.saves.requested != nil || o.saves.capture != nil {
 					return &saveProtocolError{cause: errors.New("checkpoint cut has no exclusive save owner")}
@@ -319,12 +344,11 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 		case <-ctx.Done():
 			timer.Stop()
 			return context.Cause(ctx)
-		case <-done:
+		case <-completed:
 			timer.Stop()
-			if publicationErr != nil {
-				return publicationErr
+			if err := finishPublished(); err != nil {
+				return err
 			}
-			return errComputerHibernated
 		case <-wake:
 			timer.Stop()
 		case <-timer.C:

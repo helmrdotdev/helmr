@@ -153,6 +153,8 @@ type Querier interface {
 	MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error)
 	PruneExpiredCommandResults(ctx context.Context, rowLimit int32) (int64, error)
 	PruneExpiredIdempotencyReceipts(ctx context.Context, rowLimit int32) (int64, error)
+	// One snapshot covers the full inventory. Limit overflow is unavailable evidence.
+	ReadCapacitySupplyIdentity(ctx context.Context, id pgtype.UUID) (ReadCapacitySupplyIdentityRow, error)
 	// Host loss revokes credentials without confirming physical absence.
 	// Allocation owners reconcile logical state; only confirmed stop releases custody.
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)

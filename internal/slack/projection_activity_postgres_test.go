@@ -156,7 +156,7 @@ func TestOwnedActivityBoundsRowsWithoutOpeningPosts(t *testing.T) {
 	}
 	projectAllActivity(t, f)
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1`, f.thread).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1 AND role<>'controls'`, f.thread).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("child alone opened post: %d %v", count, err)
 	}
 	write("Original explanation.")
@@ -171,7 +171,7 @@ func TestOwnedActivityBoundsRowsWithoutOpeningPosts(t *testing.T) {
 	if cards != activityCardsPerPost || !strings.Contains(body.Text, "2 more child tasks in Console") || strings.Contains(body.Text, "PRIVATE") {
 		t.Fatal("unbounded or private child detail", body)
 	}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1`, f.thread).Scan(&count); err != nil || count != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1 AND role<>'controls'`, f.thread).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("extra post: %d %v", count, err)
 	}
 }

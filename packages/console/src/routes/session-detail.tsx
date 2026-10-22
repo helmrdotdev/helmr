@@ -17,6 +17,8 @@ import { useScope } from "../lib/scope";
 import {
   askConsolePath,
   cancelSession,
+  closeSession,
+  getSessionCloseScope,
   getSession,
   watchSession,
   recoveryGapNotice,
@@ -108,6 +110,13 @@ function SessionDetailContent() {
     onCleanup(watchSession(address(), () => { void changed(); }));
   });
   const [receipt, setReceipt] = createSignal<string>();
+  const [closePreview, setClosePreview] = createSignal<{ members: import("../lib/computers").ExecutionScope; key: string }>();
+  const [closeError, setCloseError] = createSignal<string>();
+  const prepareClose = async () => {
+    setCloseError(undefined);
+    try { setClosePreview({ members: await getSessionCloseScope(address()), key: crypto.randomUUID() }); }
+    catch (error) { setCloseError(sessionError(error)); }
+  };
   type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string } | { kind: "resume"; holdID: string };
   const [control, setControl] = createSignal<Control>();
   const controlKeys = new Map<string, string>();
@@ -139,6 +148,7 @@ function SessionDetailContent() {
         actions={
           <Show when={!notFound()}>
             <CopyLinkButton />
+            <Show when={can("sessions.close") && session.data?.status === "open"}><button type="button" class={ui.secondaryButton} onClick={() => void prepareClose()}>Close Session</button></Show>
             <Show when={can("sessions.interrupt") && live()}>
               <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt session</button>
             </Show>
@@ -161,7 +171,7 @@ function SessionDetailContent() {
                 log={log}
                 address={address()}
                 live={live()}
-                liveHint={current().slack_channel_id ? "Send work from the CLI or Slack; close the session from the CLI." : "Send work or close the session from the CLI."}
+                liveHint={current().slack_channel_id ? "Send work from the CLI or Slack." : "Send work from the CLI."}
                 canInterrupt={can("sessions.interrupt")}
                 onInterruptTurn={(turnID) => setControl({ kind: "turn_interrupt", turnID })}
               />
@@ -179,6 +189,15 @@ function SessionDetailContent() {
           )}
         </QueryState>
       </Show>
+      <Show when={closeError()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
+      <Show when={closePreview()} keyed>{target => <ConfirmDialog title="Close Session" confirmLabel="Close Session" tone="danger" onClose={() => setClosePreview(undefined)} onConfirm={async () => {
+        await closeSession(address(), { idempotency_key: target.key, expected_scope: target.members.digest });
+        setReceipt("Close accepted. Accepted work will settle before closure. Wake cannot undo closure; other work may still occupy the Computer.");
+        await refresh();
+      }}>
+        <p>Close this Session{target.members.sessions.length > 1 ? " and its owned Sessions" : ""}? New messages will no longer be accepted. Native background tasks stop when their Session closes. Wake cannot undo this operation.</p>
+        <For each={target.members.sessions}>{id => <div><IDText value={id} mode="link" href={sessionConsolePath(id)} /></div>}</For>
+      </ConfirmDialog>}</Show>
       <Show when={control()} keyed>
         {operation => (
           <ConfirmDialog
@@ -227,6 +246,8 @@ function SessionProperties(props: { session: Session }) {
           {channel => <>{channel().startsWith("D") ? "Slack DM" : "Slack channel"} · <code>{channel()}</code></>}
         </Show>
       </Property>
+      <Property label="Suspension">{props.session.suspension === "after_turn" ? "After a settled Turn" : "Manual"}</Property>
+      <Property label="Automatic close">{props.session.close_after_idle_ms == null ? "Off" : `${props.session.close_after_idle_ms / 86_400_000} days without new user work; background tasks may stop`}</Property>
       <Property label="Created"><RelativeTime value={props.session.created_at} /></Property>
       <Property label="Deployment"><IDText value={props.session.deployment_id} mode="link" href={deploymentHref(props.session.deployment_id)} /></Property>
       <Property label="Computer">

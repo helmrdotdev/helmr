@@ -17,7 +17,7 @@ const TONES = {
   // Only the lifecycle states the console shows; an available Computer shows its
   // residency (ComputerStatus).
   computer: { deleted: "expired", deleting: "expired" },
-  computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", restoring: "waiting", unavailable: "revoked" },
+  computer_residency: { cold: "expired", starting: "waiting", running: "active", parking: "waiting", parked: "expired", restoring: "waiting", unavailable: "revoked" },
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   trigger: { active: "active", errored: "revoked", archived: "expired" },
   deployment: { current: "active", not_current: "expired" },
@@ -37,6 +37,7 @@ const TONES = {
 
 // Labels that read better than the status name.
 const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
+  computer_residency: { parked: "Sleeping", parking: "Hibernating", restoring: "Waking", running: "Awake" },
   agent: { defined: "In current deployment", not_defined: "Not in current deployment" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
 };

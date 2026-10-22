@@ -68,7 +68,7 @@ func (m Manifest) Encode() ([]byte, error) {
 	if err := m.BootProgram.Validate(); err != nil {
 		return nil, ErrInvalidManifest
 	}
-	if m.CheckpointID == uuid.Nil() || m.ComputerID == uuid.Nil() || m.InstanceID == uuid.Nil() || m.LeaseEpoch <= 0 || m.ControlVersion <= 0 || len(m.CaptureDigest) != 32 || len(m.Members) == 0 || int64(len(m.Config)) > vm.SnapshotConfigLimit || !json.Valid(m.Config) || m.Runtime.VMConfigDigest != sha256sum.DigestBytes(m.Config) {
+	if m.CheckpointID == uuid.Nil() || m.ComputerID == uuid.Nil() || m.InstanceID == uuid.Nil() || m.LeaseEpoch <= 0 || m.ControlVersion <= 0 || len(m.CaptureDigest) != 32 || int64(len(m.Config)) > vm.SnapshotConfigLimit || !json.Valid(m.Config) || m.Runtime.VMConfigDigest != sha256sum.DigestBytes(m.Config) {
 		return nil, ErrInvalidManifest
 	}
 	if _, err := m.Disk.Digest(); err != nil {

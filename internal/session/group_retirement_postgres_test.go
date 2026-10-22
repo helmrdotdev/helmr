@@ -160,8 +160,8 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
-		t.Fatal(err)
+	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
+		t.Fatalf("incompatible input admitted: %v", err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
 		t.Fatalf("allocation pass with a foreign Group restore: %v", err)
@@ -174,6 +174,9 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	// must now be discoverable and allocatable; other eligibility cannot hide a
 	// missing Group predicate. Production never rewrites this historical owner.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET worker_host_id=$3 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer, host)
+	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
 		t.Fatalf("allocation pass with a same Group restore: %v", err)
 	}

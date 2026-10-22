@@ -57,7 +57,7 @@ UPDATE worker_hosts
    AND worker_pools.worker_group_id = worker_hosts.worker_group_id
    AND worker_pools.status IN ('active', 'draining')
    AND NOT EXISTS (
-       SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+       SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -199,7 +199,7 @@ WITH target AS (
 )
 UPDATE worker_hosts SET updated_at=now() FROM target
  WHERE worker_hosts.id=target.id AND NOT EXISTS (
- SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -288,7 +288,7 @@ SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, 
                - $1::bigint * interval '1 second'
            AND worker_hosts.admission_paused_reason IS NULL
        ), false)::boolean AS admission_ready,
-       (SELECT count(*)::int FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+       (SELECT count(*)::int FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL

@@ -25,6 +25,10 @@ func (f fixture) captureRequest() session.ComputerCaptureRequest {
 }
 func beginCapture(t *testing.T, f fixture, req session.ComputerCaptureRequest) (session.ComputerCapture, *agentv1.ComputerSessionCapture) {
 	t.Helper()
+	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
+		t.Fatal(err)
+	}
+	t.Helper()
 	result, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
 	if err != nil {
 		t.Fatal(err)

@@ -22,7 +22,7 @@ func ReconcileProjection(ctx context.Context, pool db.TxBeginner, config Project
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT p.id FROM slack_thread_sources p
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
- WHERE p.projected_event_seq<s.next_event_seq-1 OR EXISTS(SELECT 1 FROM session_processes process WHERE process.environment_id=p.environment_id AND process.session_id=p.session_id AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(p.projected_control_at,'-infinity'::timestamptz))
+ WHERE EXISTS(SELECT 1 FROM slack_threads t WHERE t.id=p.thread_id AND t.front_session_id=p.session_id AND t.deleted_at IS NULL AND t.thread_ts IS NOT NULL AND t.next_lifecycle_projection_at<=clock_timestamp()) OR p.projected_event_seq<s.next_event_seq-1 OR EXISTS(SELECT 1 FROM session_processes process WHERE process.environment_id=p.environment_id AND process.session_id=p.session_id AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(p.projected_control_at,'-infinity'::timestamptz))
  ORDER BY (p.projected_event_seq<s.next_event_seq-1) DESC,p.projected_event_seq,p.id LIMIT $1`, limit)
 		if err != nil {
 			return err

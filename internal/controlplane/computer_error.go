@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -24,6 +25,12 @@ func computerError(err error, operation computerOperation) error {
 	var expired idempotency.ExpiredError
 	var idempotencyConflict idempotency.ConflictError
 	switch {
+	case errors.Is(err, workergroup.ErrCapacityUnavailable):
+		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
+	case errors.Is(err, workergroup.ErrCapacityIncompatible):
+		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
+	case errors.Is(err, workergroup.ErrCapacityExhausted):
+		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
 	case errors.As(err, &expired):
 		return gone(expired)
 	case errors.As(err, &input):
@@ -39,6 +46,8 @@ func computerError(err error, operation computerOperation) error {
 		return notFound(codedError{code: "computer_not_found", message: err.Error()})
 	case errors.Is(err, computer.ErrNotDeployed):
 		return notFound(codedError{code: "computer_not_deployed", message: err.Error()})
+	case errors.Is(err, computer.ErrExecutionLimit):
+		return conflict(codedError{code: "environment_execution_limit", message: err.Error()})
 	case errors.Is(err, computer.ErrBusy):
 		return conflict(codedError{code: "computer_busy", message: err.Error(), retryable: true})
 	case errors.Is(err, computer.ErrSecretUnavailable):

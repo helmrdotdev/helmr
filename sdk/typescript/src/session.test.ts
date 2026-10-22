@@ -205,7 +205,7 @@ describe("Session lifecycle client", () => {
         initial_turn: { id: turnId, status: "queued" },
         activity: { process: null },
         parent_session_id: null,
-        close_after_idle_ms: null, idle_since: null,
+        suspension: "manual", close_after_idle_ms: null, idle_since: null,
         deployment_id: holdId,
         computer_id: holdId,
         status: "closing",

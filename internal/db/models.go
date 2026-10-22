@@ -370,16 +370,19 @@ type VMPlatform struct {
 }
 
 type WorkerGroup struct {
-	ID            pgtype.UUID        `json:"id"`
-	TokenID       pgtype.UUID        `json:"token_id"`
-	RegionID      string             `json:"region_id"`
-	Name          string             `json:"name"`
-	Description   string             `json:"description"`
-	Status        string             `json:"status"`
-	ClaimVersion  int64              `json:"claim_version"`
-	PrimaryPoolID pgtype.UUID        `json:"primary_pool_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	CapacityObservedAt        pgtype.Timestamptz `json:"capacity_observed_at"`
+	CapacitySupplyFingerprint pgtype.Text        `json:"capacity_supply_fingerprint"`
+	CapacityPools             []byte             `json:"capacity_pools"`
+	ID                        pgtype.UUID        `json:"id"`
+	TokenID                   pgtype.UUID        `json:"token_id"`
+	RegionID                  string             `json:"region_id"`
+	Name                      string             `json:"name"`
+	Description               string             `json:"description"`
+	Status                    string             `json:"status"`
+	ClaimVersion              int64              `json:"claim_version"`
+	PrimaryPoolID             pgtype.UUID        `json:"primary_pool_id"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerGroupToken struct {

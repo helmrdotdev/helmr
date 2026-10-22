@@ -325,6 +325,10 @@ CREATE TABLE worker_group_tokens (
 );
 
 CREATE TABLE worker_groups (
+    capacity_observed_at timestamptz,
+    capacity_supply_fingerprint text,
+    capacity_pools jsonb,
+    CHECK (num_nonnulls(capacity_observed_at,capacity_supply_fingerprint,capacity_pools) IN (0,3)),
     id uuid PRIMARY KEY,
     token_id uuid NOT NULL UNIQUE,
     region_id text NOT NULL,
@@ -662,6 +666,7 @@ CREATE TABLE agent_definitions (
     input_schema jsonb,
     CHECK ((input_kind='text' AND input_schema IS NULL) OR (input_kind='json' AND input_schema IS NOT NULL AND jsonb_typeof(input_schema)='object')),
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
+    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
     CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
@@ -984,6 +989,10 @@ CREATE TABLE boot_seed_objects (
 );
 
 CREATE TABLE computers (
+    execution_pending_since timestamptz,
+    execution_deadline_at timestamptz,
+    CHECK ((execution_pending_since IS NULL)=(execution_deadline_at IS NULL)),
+    CHECK (execution_deadline_at>execution_pending_since),
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
@@ -1036,6 +1045,29 @@ CREATE TABLE computers (
     FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id),
     CHECK (image_id IS NULL OR (image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
 );
+
+-- Accepted lifecycle operations survive retries independently of physical progress.
+CREATE TABLE computer_controls (
+    environment_id uuid NOT NULL,
+    computer_id uuid NOT NULL,
+    id uuid NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('hibernate','wake')),
+    caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key')),
+    caller_id uuid NOT NULL,
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
+    status text NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted','completed','failed')),
+    checkpoint_id uuid,
+    error_code text,
+    accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    deadline_at timestamptz NOT NULL,
+    settled_at timestamptz,
+    PRIMARY KEY (environment_id,id),
+    FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
+    UNIQUE (environment_id,computer_id,caller_kind,caller_id,kind,idempotency_key),
+    CHECK ((status='accepted')=(settled_at IS NULL)),
+    CHECK ((status='failed')=(error_code IS NOT NULL))
+);
+CREATE UNIQUE INDEX computer_controls_pending ON computer_controls(environment_id,computer_id) WHERE status='accepted';
 
 CREATE INDEX computers_unused_policy ON computers(environment_id, id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
 
@@ -1426,6 +1458,8 @@ CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, enviro
 CREATE TABLE sessions (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
+    suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
     history_eligible_at timestamptz,
@@ -2014,6 +2048,7 @@ CREATE TABLE slack_threads (
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
+    next_lifecycle_projection_at timestamptz DEFAULT clock_timestamp(),
     opening_post_key text CHECK (opening_post_key<>''),
     recipient_team_id text,
     recipient_user_id text,
@@ -2043,6 +2078,8 @@ CREATE TABLE slack_threads (
 );
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
+
+CREATE INDEX slack_threads_lifecycle_due ON slack_threads(next_lifecycle_projection_at,id) WHERE next_lifecycle_projection_at IS NOT NULL AND deleted_at IS NULL;
 
 CREATE INDEX slack_threads_status_due ON slack_threads(next_attempt_at, refresh_at, id);
 
@@ -2075,7 +2112,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute', 'sleep', 'wake', 'close', 'help', 'hibernate', 'confirm_close')),
     message_id uuid,
     observed_authority_generation bigint,
     observed_next_turn_seq bigint,
@@ -2108,7 +2145,7 @@ CREATE TABLE slack_requests (
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
         OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)
-        OR (operation IN ('mute','unmute') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
+        OR (operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -2116,7 +2153,7 @@ CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
 
-CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute'))) AND payload_expired_at IS NULL;
+CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND payload_expired_at IS NULL;
 
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id, request_digest);
 
@@ -2130,7 +2167,7 @@ CREATE TABLE slack_posts (
     seq bigint NOT NULL CHECK (seq>0),
     post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
-    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening')),
+    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening', 'controls')),
     turn_id uuid,
     ask_id uuid,
     request_id uuid,

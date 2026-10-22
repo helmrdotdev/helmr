@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -35,10 +36,13 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			return nil
 		}
 		var gesture controlGesture
-		if json.Unmarshal(raw, &gesture) != nil || !validControl(gesture.Control) || gesture.Control.Target.Installation != installation || (gesture.Control.Action != "answer" && gesture.Control.Action != "choose" && gesture.Control.Action != "submit_choices") {
+		if json.Unmarshal(raw, &gesture) != nil || !validControl(gesture.Control) || gesture.Control.Target.Installation != installation || (!lifecycleAction(gesture.Control.Action) && gesture.Control.Action != "answer" && gesture.Control.Action != "choose" && gesture.Control.Action != "submit_choices") {
 			return errControlInvalid
 		}
 		target := gesture.Control.Target
+		if err := workergroup.LockExecutionSupply(ctx, tx, target.Environment); err != nil {
+			return err
+		}
 		reject := func(code string) error {
 			_, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error=$2 WHERE id=$1 AND status='received'`, id, code)
 			return err
@@ -93,7 +97,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 				return reject("control_source_mismatch")
 			}
 		}
-		if gesture.Control.Action == "answer" && gesture.Control.Actor != actor {
+		if gesture.Control.Actor != "" && gesture.Control.Actor != actor {
 			return reject("control_actor_mismatch")
 		}
 		user, code, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, answering)
@@ -106,6 +110,13 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
 			caller := session.Caller{Kind: "user", ID: user}
+			if lifecycleAction(gesture.Control.Action) {
+				receipt, err := applyLifecycleControl(ctx, coreTx, caller, target, gesture.Control, id)
+				if err != nil {
+					return err
+				}
+				gesture.Receipt = receipt
+			}
 			if answering {
 				var question []byte
 				if err := coreTx.QueryRow(ctx, `SELECT question FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, target.Environment, target.Session, target.Turn, target.Ask).Scan(&question); err != nil {
@@ -155,6 +166,16 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		})
 		if err != nil {
 			switch {
+			case errors.Is(err, computer.ErrBusy):
+				return reject("computer_busy")
+			case errors.Is(err, workergroup.ErrCapacityUnavailable):
+				return reject("execution_capacity_unavailable")
+			case errors.Is(err, workergroup.ErrCapacityIncompatible):
+				return reject("execution_capacity_incompatible")
+			case errors.Is(err, workergroup.ErrCapacityExhausted):
+				return reject("execution_capacity_exhausted")
+			case errors.Is(err, computer.ErrExecutionLimit):
+				return reject("execution_limit")
 			case errors.Is(err, errAdmissionExpired):
 				return reject("gesture_expired")
 			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):

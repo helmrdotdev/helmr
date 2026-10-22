@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -143,6 +144,9 @@ func StartError(err error) error {
 // global order) and checks the caller may start Sessions. Slack route locks
 // (step 3) follow it, then AdmitStart.
 func LockStartCaller(ctx context.Context, tx pgx.Tx, p StartPlan) error {
+	if err := workergroup.LockExecutionSupply(ctx, tx, p.Request.EnvironmentID); err != nil {
+		return err
+	}
 	if p.Caller.Kind == "session" {
 		if err := lockRuntimeHost(ctx, tx, p.Caller); err != nil {
 			return err
@@ -216,7 +220,8 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		var templateKey, inputKind string
 		var duration *int64
 		var never bool
-		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never, &inputKind); err != nil {
+		var suspension string
+		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind,d.suspension FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never, &inputKind, &suspension); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotReady
 			}
@@ -282,6 +287,11 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if err != nil {
 			return err
 		}
+		if computerID != uuid.Nil() {
+			if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, computerID); err != nil {
+				return err
+			}
+		}
 		result.SessionID, result.Created = uuid.NewV7(), true
 		result.CloseAfterIdleMs = lifetime.Resolve(req.CloseAfterIdle, duration, never)
 		if hasInput {
@@ -303,8 +313,8 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				return ErrInvalidInput
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq,suspension)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END,$19 FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID), suspension); err != nil {
 			return err
 		}
 		if err = inheritComputerRecoveryGap(ctx, tx, req.EnvironmentID, result.SessionID, computerID); err != nil {

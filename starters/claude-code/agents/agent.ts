@@ -18,6 +18,8 @@ export const workspace = template({
 export const assistant = agent({
   id: agentName,
   template: workspace,
+  suspension: "manual",
+  closeAfterIdle: "never",
   maxTurnDuration: "15m",
   init({ session, recovery }) {
     return new ClaudeSession({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/claude", sessionId: session.id, model, appendSystemPrompt: introduction, recovery: recovery.kind })

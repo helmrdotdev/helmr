@@ -645,3 +645,97 @@ func TestComputerCheckpointPendingHydrationLeavesSaveOwnerAvailable(t *testing.T
 		t.Fatalf("pager failure hidden: %v", err)
 	}
 }
+
+type blockedCheckpointPublication struct {
+	*checkpointPipelineClient
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *blockedCheckpointPublication) CaptureAgentSave(ctx context.Context, p workerapi.AgentSavePublication) error {
+	close(c.entered)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.release:
+	}
+	return c.checkpointPipelineClient.CaptureAgentSave(ctx, p)
+}
+func TestComputerCheckpointPublicationDoesNotHoldCaptureQueue(t *testing.T) {
+	o, c, m, cut := checkpointPipelineFixture(t, "", "")
+	gate := &blockedCheckpointPublication{checkpointPipelineClient: c, entered: make(chan struct{}), release: make(chan struct{})}
+	o.client = gate
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("publication never entered")
+	}
+	next := o.machines.captures.request()
+	if !next.take() {
+		close(gate.release)
+		<-done
+		t.Fatal("unrelated capture blocked behind upload")
+	}
+	next.release()
+	close(gate.release)
+	if err := <-done; !errors.Is(err, errComputerHibernated) {
+		t.Fatal(err)
+	}
+	if m.snapshots != 1 || o.checkpointCut == nil || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+		t.Fatal("publication lost immutable cut")
+	}
+	o.checkpointCut.Release()
+}
+
+func TestComputerCheckpointRetainsPublishedSourceUntilPolicyReclaims(t *testing.T) {
+	o, _, m, cut := checkpointPipelineFixture(t, "", "")
+	optional, policy, shape := optionalMachines(t)
+	o.machines.Reservations = optional.Reservations
+	o.machines.HostSlot = optional.HostSlot
+	o.machines.ApplyResourcePolicy(policy)
+	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
+	if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+	}()
+	deadline := time.After(3 * time.Second)
+	for len(o.machines.Reservations.Snapshot().Optional) == 0 {
+		select {
+		case err := <-done:
+			t.Fatalf("source stopped before retention: %v", err)
+		case <-deadline:
+			t.Fatal("published source was not retained")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if o.machines.Reservations.Snapshot().Used != shape {
+		t.Fatal("retention released physical charge")
+	}
+	policy.Revision++
+	policy.Optional = workerapi.OptionalResources{}
+	o.machines.ApplyResourcePolicy(policy)
+	o.Wake()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errComputerHibernated) {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("source ignored reclaim")
+	}
+	if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+		t.Fatal("source charge or cut released before joined teardown")
+	}
+	o.checkpointCut.Release()
+}

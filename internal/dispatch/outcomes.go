@@ -10,6 +10,7 @@ import (
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -32,7 +33,7 @@ func hideMissing(err error) error {
 // allocationError reports a missing row or a lock wait that timed out as a
 // retryable outcome.
 func allocationError(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) || db.IsLockNotAvailable(err) {
+	if errors.Is(err, pgx.ErrNoRows) || db.IsLockNotAvailable(err) || errors.Is(err, workergroup.ErrCapacityUnavailable) || errors.Is(err, workergroup.ErrCapacityExhausted) || errors.Is(err, workergroup.ErrCapacityIncompatible) {
 		return ErrNotReady
 	}
 	return err

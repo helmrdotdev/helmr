@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -86,6 +87,9 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 		return ErrInvalidInput
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		var route *uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT slack_channel_binding_id FROM trigger_activations WHERE environment_id=$1 AND id=$2`, env, id).Scan(&route); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -157,6 +161,14 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 						return err
 					}
 					switch {
+					case errors.Is(admissionErr, computer.ErrExecutionLimit):
+						reason = "environment_execution_limit"
+					case errors.Is(admissionErr, workergroup.ErrCapacityIncompatible):
+						reason = "execution_capacity_incompatible"
+					case errors.Is(admissionErr, workergroup.ErrCapacityExhausted):
+						reason = "execution_capacity_exhausted"
+					case errors.Is(admissionErr, workergroup.ErrCapacityUnavailable):
+						reason = "execution_capacity_unavailable"
 					case errors.Is(admissionErr, slackroute.ErrChannelUnavailable):
 						reason = "slack_channel_unavailable"
 					case errors.Is(admissionErr, session.ErrDenied) || errors.Is(admissionErr, computer.ErrDenied):

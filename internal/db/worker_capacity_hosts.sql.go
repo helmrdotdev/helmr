@@ -97,7 +97,7 @@ const getCapacityWorkerHost = `-- name: GetCapacityWorkerHost :one
 SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
        draining_at, drain_reason, termination_ready_at, lost_at,
        created_at, updated_at,
-       (SELECT count(*) FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+       (SELECT count(*) FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -163,7 +163,7 @@ WITH current_instances AS (
            id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
            draining_at, drain_reason, termination_ready_at, lost_at,
            created_at, updated_at,
-       (SELECT count(*) FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+       (SELECT count(*) FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -183,7 +183,7 @@ WITH current_instances AS (
        AND (
            NOT $4::boolean
            OR EXISTS (
-               SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+               SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -282,4 +282,34 @@ func (q *Queries) ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityW
 		return nil, err
 	}
 	return items, nil
+}
+
+const readCapacitySupplyIdentity = `-- name: ReadCapacitySupplyIdentity :one
+WITH pools AS (
+ SELECT id,status,claim_version,sealed_at,vm_platform_id,capacity_cpu_millis,
+ capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,
+ per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots
+ FROM worker_pools WHERE worker_group_id=$1 AND status<>'disabled' ORDER BY id LIMIT 65
+), hosts AS (
+ SELECT DISTINCT ON (resource_id) id,resource_id,worker_pool_id,status,claim_version,current_epoch
+ FROM worker_hosts WHERE worker_group_id=$1 AND status<>'lost' ORDER BY resource_id,created_at DESC,id DESC LIMIT 1001
+)
+SELECT jsonb_build_array(g.id,g.status,g.claim_version,g.primary_pool_id,
+ (SELECT jsonb_agg(to_jsonb(pools) ORDER BY id) FROM pools),
+ (SELECT jsonb_agg(to_jsonb(hosts) ORDER BY resource_id,id) FROM hosts))::text AS identity,
+ ((SELECT count(*) FROM pools)<=64 AND (SELECT count(*) FROM hosts)<=1000)::boolean AS complete
+FROM worker_groups g WHERE g.id=$1
+`
+
+type ReadCapacitySupplyIdentityRow struct {
+	Identity string `json:"identity"`
+	Complete bool   `json:"complete"`
+}
+
+// One snapshot covers the full inventory. Limit overflow is unavailable evidence.
+func (q *Queries) ReadCapacitySupplyIdentity(ctx context.Context, id pgtype.UUID) (ReadCapacitySupplyIdentityRow, error) {
+	row := q.db.QueryRow(ctx, readCapacitySupplyIdentity, id)
+	var i ReadCapacitySupplyIdentityRow
+	err := row.Scan(&i.Identity, &i.Complete)
+	return i, err
 }

@@ -251,6 +251,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			residents = 1
 		}
 		if candidate.resources.CPUMillis > budget.cpu || candidate.resources.MemoryBytes > budget.memory || residents > budget.residents {
+			response.UnplacedItems++
 			continue
 		}
 		consume := func() {
@@ -261,6 +262,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if candidate.reason != "" {
 			reasons[candidate.reason]++
+			response.UnplacedItems++
 			continue
 		}
 		placed := false
@@ -295,6 +297,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			compatiblePoolCount++
 		}
 		if compatiblePoolCount == 0 {
+			response.UnplacedItems++
 			if candidate.restore != nil {
 				reasons[reasonRuntimeCompatibility]++
 			} else if _, exists := planByID[candidate.targetPoolID.Bytes]; !exists {
@@ -352,6 +355,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if !assigned {
 			reasons[reasonProviderSaturated]++
+			response.UnplacedItems++
 		} else {
 			consume()
 		}

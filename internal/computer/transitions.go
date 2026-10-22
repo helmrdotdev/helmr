@@ -3,6 +3,7 @@ package computer
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"time"
 	"uuid"
 
@@ -76,6 +77,14 @@ func FailRevokedImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID)
 
 // InsertLease records a new lease allocation in the acquiring state.
 func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation) error {
+	var expired bool
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(execution_deadline_at<=clock_timestamp(),false) FROM computers WHERE environment_id=$1 AND id=$2`, r.EnvironmentID, r.OwnerID).Scan(&expired); err != nil {
+		return err
+	}
+	if expired {
+		return ErrNotReady
+	}
+
 	_, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,status,
  reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,restored_from_save_id,disk_only_recovery)
  VALUES($1,$2,$3,$4,$5,$6,$7,'acquiring',$8,$9,$10,$11,$12,$13,$14,$15)`, r.EnvironmentID, r.OwnerID, r.Epoch, r.HostID, r.HostEpoch, r.InstanceID, r.CredentialDigest, r.Shape.CPUMillis, r.Shape.MemoryBytes, r.Shape.ScratchBytes, r.Shape.VMPlatformID, r.Shape.VCPUCount, r.Shape.CPUConfigDigest, r.RestoredFrom, r.DiskOnlyRecovery)
@@ -90,7 +99,8 @@ func InsertLease(ctx context.Context, tx pgx.Tx, r ComputerAllocation) error {
 func DeliverLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) (delivered, expires *time.Time, err error) {
 	err = tx.QueryRow(ctx, `UPDATE computer_leases SET delivered_at=COALESCE(delivered_at,clock_timestamp()),expires_at=COALESCE(expires_at,clock_timestamp()+interval '1 minute')
  WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND fenced_at IS NULL
- AND (delivered_at IS NULL OR expires_at>clock_timestamp()) RETURNING delivered_at,expires_at`, env, computer, epoch).Scan(&delivered, &expires)
+ AND (delivered_at IS NULL OR expires_at>clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at<=clock_timestamp()) RETURNING delivered_at,expires_at`, env, computer, epoch).Scan(&delivered, &expires)
 	return delivered, expires, err
 }
 
@@ -98,12 +108,16 @@ func DeliverLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch
 // ready, and reports whether the lease was still live.
 func InitializeLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) (bool, error) {
 	changed, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp())
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND delivered_at IS NOT NULL AND expires_at>clock_timestamp() AND fenced_at IS NULL`, env, computer, epoch)
+ WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND status IN ('acquiring','active') AND delivered_at IS NOT NULL AND expires_at>clock_timestamp() AND fenced_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at<=clock_timestamp())`, env, computer, epoch)
 	if err != nil {
 		return false, err
 	}
 	if changed.RowsAffected() == 0 {
 		return false, nil
+	}
+	if err := completeExecutionAdmission(ctx, tx, env, computer); err != nil {
+		return false, err
 	}
 	return true, notifyComputerChanged(ctx, tx, env, computer)
 }
@@ -111,11 +125,23 @@ func InitializeLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, ep
 // ActivateRestoredLease records the restore target lease as active once the
 // restore has committed.
 func ActivateRestoredLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64) error {
-	_, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch)
+	tag, err := tx.Exec(ctx, `UPDATE computer_leases SET status='active',initialized_at=COALESCE(initialized_at,clock_timestamp()) WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at<=clock_timestamp())`, env, computer, epoch)
 	if err != nil {
 		return err
 	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotReady
+	}
+	if err = completeExecutionAdmission(ctx, tx, env, computer); err != nil {
+		return err
+	}
 	return notifyComputerChanged(ctx, tx, env, computer)
+}
+
+func completeExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$2`, env, id)
+	return err
 }
 
 // MarkLeaseLost ends an unfenced lease whose physical owner is gone; only
@@ -137,6 +163,16 @@ func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch i
 	}
 	_, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch, evidence)
 	if err != nil {
+		return err
+	}
+	// Recovery of already accepted work starts its own bounded pending interval.
+	if _, err = tx.Exec(ctx, `UPDATE computers c SET execution_pending_since=clock_timestamp(),execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
+ WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_pending_since IS NULL
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status='ready')
+ AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computer); err != nil {
+		return err
+	}
+	if err := RetireUnusedExecutionAdmission(ctx, tx, env, computer); err != nil {
 		return err
 	}
 	return dbnotify.Notify(ctx, tx, "dispatch", "capacity", "worker:"+host.String())
@@ -197,6 +233,9 @@ func CreateCheckpoint(ctx context.Context, tx pgx.Tx, c CheckpointStart) error {
 			return err
 		}
 	}
+	if err := BindHibernateCapture(ctx, tx, c.EnvironmentID, c.ComputerID, c.CheckpointID); err != nil {
+		return err
+	}
 	return notifyComputerChanged(ctx, tx, c.EnvironmentID, c.ComputerID)
 }
 
@@ -219,6 +258,9 @@ func CancelUnsealedCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint, s
 	}
 	_, err = tx.Exec(ctx, `UPDATE checkpoints SET status='cancelled',terminal_evidence=$3,capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint, reason)
 	if err != nil {
+		return err
+	}
+	if err := settleHibernateCapture(ctx, tx, env, checkpoint, "capture_refused"); err != nil {
 		return err
 	}
 	return notifySaveChanged(ctx, tx, env, save)
@@ -273,7 +315,21 @@ func ConsumeCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID
 // ReconcileCheckpointControls records that the members' controls match the
 // consumed checkpoint and drops its capture request.
 func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
+	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, checkpoint)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotReady
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint); err != nil {
+		return err
+	}
+	if err := settleHibernateCapture(ctx, tx, env, checkpoint, "capture_resumed"); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND kind='wake' AND status='accepted'`, env, checkpoint)
 	return err
 }
 

@@ -62,25 +62,31 @@ Computer's current state; there is no history of earlier saves to roll back to.
 
 ## Hibernation
 
-When a Computer has no running or queued Turns, no pending Commands and no save
-in progress, Helmr can hibernate it once its Sessions are ready for capture.
-Asynchronous work started by your Agent code, such as active JavaScript timers or open sockets,
-can keep a Session from becoming capture-ready and keep compute running. Unknown
-asynchronous resource types also prevent capture until they are released. Helmr
-does not terminate that work merely to make the Computer idle. Retained native
-child processes and their standard I/O handles can be captured with the Session.
+New Sessions default to `suspension: "manual"`: completing a Turn does not
+permit Helmr to stop native background progress. Choose `suspension: "after_turn"`
+on the Agent to permit suspension after a newly settled Turn, or explicitly
+request `computer.hibernate()` for the whole Computer. Every open Session on a
+shared Computer must permit automatic suspension.
 
-Hibernation captures memory, running processes
-and disk, then releases the worker. There is no separate idle timeout for
-hibernation, and it does not close the Session. A Turn waiting for the answer to a
-[question](/docs/concepts/questions) is still running, so its Computer keeps
-running during the wait.
+Permission is separate from safe capture. Running or runnable queued Turns,
+Commands whose processes have not settled, saves and unfinished control operations
+can prevent capture. JavaScript handle names are not a native-process idleness
+oracle. Hibernate pauses background processes rather than waiting for all of them
+to finish; capture must still preserve coherent VM and disk state. A refused
+capture leaves the source available and reports the operation failure.
 
-New input to any Session on the Computer, or a new Command, restores it. The
-Session resumes exactly where it stopped: processes are still running, memory
-is intact and `init` does not run again. A hibernated Computer reports
-`cold` residency, and `restoring` while it resumes. It can resume on a
-different worker in the same worker group.
+A successful capture publishes encrypted memory, process and disk state before
+physical resources can be reclaimed. The paused source may remain on its Worker
+within the optional resource budget. Retention has no fixed lifetime: pressure,
+policy changes or scale-in can reclaim it, and a later Wake restores durable state.
+Physical resources stay charged until cleanup finishes.
+
+New authorized input or a Command wakes either automatically or explicitly
+hibernated Computers. An explicit `computer.wake()` creates no Turn and does not
+release Stop holds. In `after_turn` mode, it waits for another qualifying Turn
+completion before automatic suspension is armed again. A sleeping Computer
+reports `parked` residency and `restoring` while it resumes. It can resume on a
+different compatible Worker in the same Worker Group.
 
 Hibernation is separate from `closeAfterIdle`, which closes the Session. See
 [Agents](/docs/concepts/agents#session-lifetime-and-turn-limits).

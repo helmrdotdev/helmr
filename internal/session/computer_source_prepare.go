@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -27,7 +28,13 @@ func PrepareComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wo
 	}
 	var result *agentv1.ComputerSessionInstallation
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if _, err := org.LockAdmission(ctx, tx, env); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)

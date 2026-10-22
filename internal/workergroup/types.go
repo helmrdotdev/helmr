@@ -113,22 +113,27 @@ func (t Template) Validate() error {
 }
 
 type PlanRequest struct {
-	Pools []PoolRequest `json:"pools"`
+	ExpectedSupplyFingerprint string        `json:"expected_supply_fingerprint"`
+	ObservedAt                time.Time     `json:"observed_at"`
+	Pools                     []PoolRequest `json:"pools"`
 }
 
 type PoolRequest struct {
+	ActiveWorkers        int64  `json:"active_workers"`
+	RegisteringWorkers   int64  `json:"registering_workers"`
 	PoolID               string `json:"pool_id"`
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
 
 type Group struct {
-	RetainedProfiles *RetainedProfiles `json:"retained_profiles,omitempty"`
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	RegionID         string            `json:"region_id"`
-	Status           WorkerGroupStatus `json:"status"`
-	ClaimVersion     int64             `json:"claim_version"`
-	PrimaryPoolID    string            `json:"primary_pool_id,omitempty"`
+	SupplyFingerprint string            `json:"supply_fingerprint"`
+	RetainedProfiles  *RetainedProfiles `json:"retained_profiles,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	RegionID          string            `json:"region_id"`
+	Status            WorkerGroupStatus `json:"status"`
+	ClaimVersion      int64             `json:"claim_version"`
+	PrimaryPoolID     string            `json:"primary_pool_id,omitempty"`
 }
 
 type PrimarySelectionRequest struct {
@@ -158,6 +163,9 @@ type Incompatibility struct {
 }
 
 type PlanResponse struct {
+	// UnplacedItems includes demand skipped by Environment limits. Admission
+	// requires a complete plan with no unplaced items, including earlier claims.
+	UnplacedItems   int64             `json:"-"`
 	WorkerGroupID   string            `json:"worker_group_id"`
 	WorkerGroupName string            `json:"worker_group_name"`
 	RegionID        string            `json:"region_id"`

@@ -39,9 +39,10 @@ func RenewLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 			return err
 		}
 		// The time predicate runs after the ownership lock, including any lock wait.
-		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=GREATEST(expires_at,clock_timestamp()+interval '1 minute')
+		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=LEAST(GREATEST(expires_at,clock_timestamp()+interval '1 minute'),(SELECT execution_deadline_at FROM computers WHERE environment_id=$1 AND id=$2))
  WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at<=clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
 	})
 	if err != nil {

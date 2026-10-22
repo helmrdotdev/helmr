@@ -90,7 +90,16 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if err = computer.DispatchAvailable(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
 			return err
 		}
-		if len(members) == 0 {
+		var permitted bool
+		if err = tx.QueryRow(ctx, `SELECT
+ EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted')
+ OR (EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
+ AND NOT EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake' AND status='accepted')
+ AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing')
+ AND (s.suspension<>'after_turn' OR NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.seq>s.suspension_after_seq AND t.started_at IS NOT NULL AND t.terminal_at IS NOT NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&permitted); err != nil {
+			return err
+		}
+		if !permitted {
 			return ErrNotReady
 		}
 		for _, m := range members {
@@ -230,10 +239,11 @@ func LockCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, chec
 // only prompt this read; they cannot grant execution or cancel a sealed cut.
 func computerExecutionDemand(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) (bool, error) {
 	var pending bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status='running')
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake' AND status='accepted')
+ OR EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND status='running')
  OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+db.NoSessionHoldsSQL+`)
- OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')
+ OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND (status='pending' OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
  OR EXISTS(SELECT 1 FROM sessions s JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id)))`, env, computerID).Scan(&pending)
 	return pending, err

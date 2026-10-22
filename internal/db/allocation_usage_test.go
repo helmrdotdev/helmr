@@ -7,7 +7,7 @@ import (
 )
 
 func TestAllocationUsageCopiesStayIdentical(t *testing.T) {
-	copies := regexp.MustCompile(`(?s)\((SELECT 'computer'::text kind,environment_id,.*?)\) allocation_usage`)
+	copies := regexp.MustCompile(`(?s)\((SELECT CASE WHEN EXISTS\(SELECT 1 FROM checkpoints cp.*?END::text kind,environment_id,.*?)\) allocation_usage`)
 	for _, name := range []string{"allocation_planning.sql", "worker_capacity_hosts.sql", "worker_drain.sql", "worker_groups.sql", "worker_lifecycle.sql", "worker_startup.sql"} {
 		t.Run(name, func(t *testing.T) {
 			source, err := os.ReadFile("query/" + name)

@@ -34,6 +34,8 @@ type controlEnvelope struct {
 	Nonce           uuid.UUID     `json:"nonce"`
 	Action          string        `json:"action"`
 	Target          controlTarget `json:"target"`
+	Computer        uuid.UUID     `json:"computer,omitempty"`
+	Scope           string        `json:"scope,omitempty"`
 	OptionID        string        `json:"option_id,omitempty"`
 	Actor           string        `json:"actor,omitempty"`
 	ExpiresAt       int64         `json:"expires_at"`
@@ -46,6 +48,10 @@ func validControl(c controlEnvelope) bool {
 		return false
 	}
 	switch c.Action {
+	case "sleep", "wake", "close", "help", "mute", "unmute":
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Scope == ""
+	case "hibernate", "confirm_close":
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && len(c.Scope) == 64 && (c.Action != "hibernate" || c.Computer != uuid.Nil())
 	case "open_answer", "submit_choices":
 		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == "" && c.OptionID == ""
 	case "choose":
@@ -130,7 +136,7 @@ func controlRequestKey(claims controlEnvelope, actor, actionTimestamp string) (s
 		}
 		return "form:" + claims.Nonce.String(), nil
 	}
-	if (claims.Action != "open_answer" && claims.Action != "choose" && claims.Action != "submit_choices") || !timestampPattern.MatchString(actionTimestamp) {
+	if (!lifecycleAction(claims.Action) && claims.Action != "open_answer" && claims.Action != "choose" && claims.Action != "submit_choices") || !timestampPattern.MatchString(actionTimestamp) {
 		return "", errControlInvalid
 	}
 	data, _ := json.Marshal([]string{claims.Nonce.String(), actor, actionTimestamp})

@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "scripts": {
     "test": "bun run test:agent-session",
-    "test:agent-session": "bun build src/agent-output.test.ts src/agent-session.test.ts src/agent-channel.test.ts src/agent-program.test.ts src/definition-index.test.ts src/agent-activity.test.ts src/agent-http.test.ts src/computer-preparation.test.ts src/turn-timing.test.ts --target=node --sourcemap=inline --root src --outdir dist && node --enable-source-maps --test --test-timeout=5000 dist/agent-output.test.js dist/agent-session.test.js dist/agent-channel.test.js dist/agent-program.test.js dist/definition-index.test.js dist/agent-activity.test.js dist/agent-http.test.js dist/computer-preparation.test.js dist/turn-timing.test.js",
+    "test:agent-session": "bun build src/agent-output.test.ts src/agent-session.test.ts src/agent-channel.test.ts src/agent-program.test.ts src/definition-index.test.ts src/agent-http.test.ts src/computer-preparation.test.ts src/turn-timing.test.ts --target=node --sourcemap=inline --root src --outdir dist && node --enable-source-maps --test --test-timeout=5000 dist/agent-output.test.js dist/agent-session.test.js dist/agent-channel.test.js dist/agent-program.test.js dist/definition-index.test.js dist/agent-http.test.js dist/computer-preparation.test.js dist/turn-timing.test.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

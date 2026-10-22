@@ -149,12 +149,27 @@ or `deleted`:
 | --- | --- |
 | `starting` | Its image is being prepared or a machine is being started for it. |
 | `running` | It is running on a worker. |
-| `cold` | It is not running on a worker. A hibernated Computer is `cold`. |
+| `cold` | It is not running and has no ready memory checkpoint. |
+| `parked` | Its durable memory checkpoint is ready; background progress is paused. |
 | `restoring` | It is resuming from hibernation. |
-| `parking` | Its machine is being released. |
+| `parking` | Capture or physical release is in progress. |
 | `unavailable` | It cannot run; `error` carries a code such as `computer_preparation_failed` or `computer_recovery_required`. |
 
+Use `await computer.hibernate()` to request hibernation of the whole Computer,
+or `await computer.wake()` to resume background execution without sending a
+prompt. Both return an accepted-operation receipt; observe `computer.get()` and
+`executionControl` for completion or failure. An optional `idempotencyKey` makes
+retries return the same accepted operation. Hibernate rejects active foreground
+work; it does not cancel work or queue a deferred sleep instruction.
+
+Console provides the same actions and shows the affected Sessions before
+hibernation. A stale confirmation is rejected if that scope changes. Wake does
+not release Session holds, reopen closed Sessions or change Slack mute.
+
 Starting a Session or a Command on a Computer starts or restores it as needed.
+This applies after explicit and automatic hibernation. Rejected wake admission
+preserves the sleeping checkpoint. Failures after an accepted wake require
+observing the operation state; they do not imply rollback.
 See [Durability](/docs/concepts/durability) for what is saved and when.
 
 A Computer is unused when all its Sessions are finished, its Commands have

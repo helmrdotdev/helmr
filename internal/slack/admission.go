@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -173,6 +174,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, p.route.Target.EnvironmentID); err != nil {
+			return err
+		}
 		active, err := slackroute.LockConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
 			return err
@@ -200,6 +204,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		}
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source
+		if lifecycleAction(command) {
+			return admitLifecycleMessage(ctx, tx, id, p, command)
+		}
 		if handled, err := applyThreadInput(ctx, tx, id, p, command); err != nil || handled {
 			return err
 		}
@@ -257,6 +264,14 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				return rejectMessage(ctx, tx, id, "gesture_expired")
 			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return rejectMessage(ctx, tx, id, "permission_denied")
+			case errors.Is(err, workergroup.ErrCapacityUnavailable):
+				return rejectMessage(ctx, tx, id, "execution_capacity_unavailable")
+			case errors.Is(err, workergroup.ErrCapacityIncompatible):
+				return rejectMessage(ctx, tx, id, "execution_capacity_incompatible")
+			case errors.Is(err, workergroup.ErrCapacityExhausted):
+				return rejectMessage(ctx, tx, id, "execution_capacity_exhausted")
+			case errors.Is(err, computer.ErrExecutionLimit):
+				return rejectMessage(ctx, tx, id, "execution_limit")
 			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
 			case (errors.Is(err, session.ErrInvalidInput) || errors.Is(err, computer.ErrInvalidInput)), errors.Is(err, content.ErrUnsupported):

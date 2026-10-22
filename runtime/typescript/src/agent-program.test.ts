@@ -227,22 +227,20 @@ test("checkpoint rejects an active Turn without interrupting its work", async ()
   await f.shutdown()
 })
 
-test("an authored background timer pins compute even without an active Turn", async () => {
+test("a background timer does not prevent settled protocol readiness", async () => {
   let timer: ReturnType<typeof setInterval> | undefined
   const f = fixture({ init: () => { timer = setInterval(() => {}, 1000); return null }, turn: () => null })
   try {
     await f.ready
     const blocked = await f.checkpoint("background")
-    assert.equal(blocked.outcome.case, "error")
-    if (blocked.outcome.case === "error") assert.match(blocked.outcome.value.message, /Timeout/)
+    assert.equal(blocked.outcome.case, "ready")
     clearInterval(timer)
-    // async_hooks destruction follows the event-loop turn that closes a handle.
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.equal((await f.checkpoint("drained")).outcome.case, "ready")
   } finally { clearInterval(timer); await f.shutdown() }
 })
 
-test("interrupted Turn cleanup callbacks pin a held Session until their work ends", async () => {
+test("background timers after joined cancellation permit protocol readiness", async () => {
   const entered = deferred<void>(), stopped = deferred<void>()
   let timer: ReturnType<typeof setInterval> | undefined
   const f = fixture({ turn: async turn => {
@@ -258,8 +256,7 @@ test("interrupted Turn cleanup callbacks pin a held Session until their work end
     await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run", stopTurnId: "turn-1", stopSequence: 1n, stopDeadlineUnixNano: 1n }) })
     assert.equal(value(await pending).status, "interrupted")
     const checkpoint = await f.checkpoint("held")
-    assert.equal(checkpoint.outcome.case, "error")
-    if (checkpoint.outcome.case === "error") assert.match(checkpoint.outcome.value.message, /Timeout/)
+    assert.equal(checkpoint.outcome.case, "ready")
     clearInterval(timer)
     assert.equal((await f.checkpoint("drained")).outcome.case, "ready")
   } finally { clearInterval(timer); await f.shutdown() }

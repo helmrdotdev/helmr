@@ -81,6 +81,9 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 
 func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	f := newRetirementFixture(t)
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+		t.Fatal(err)
+	}
 	cloneRestorePool(t, f)
 	hold, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -135,6 +138,9 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 
 func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	f := newRetirementFixture(t)
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+		t.Fatal(err)
+	}
 	request := f.capture()
 	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
 		t.Fatal(err)

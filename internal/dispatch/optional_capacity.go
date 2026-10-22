@@ -25,7 +25,7 @@ func requireBootSeedCapacity(ctx context.Context, tx pgx.Tx, supply allocationSu
 	}
 	var all, seed allocationCapacity
 	err = tx.QueryRow(ctx, `SELECT COALESCE(sum(reserved_cpu_millis),0),COALESCE(sum(reserved_memory_bytes),0),COALESCE(sum(reserved_scratch_bytes),0),count(*),count(*) FILTER(WHERE starting),
- COALESCE(sum(reserved_cpu_millis) FILTER(WHERE kind='seed'),0),COALESCE(sum(reserved_memory_bytes) FILTER(WHERE kind='seed'),0),count(*) FILTER(WHERE kind='seed')
+ COALESCE(sum(reserved_cpu_millis) FILTER(WHERE kind IN ('seed','retained')),0),COALESCE(sum(reserved_memory_bytes) FILTER(WHERE kind IN ('seed','retained')),0),count(*) FILTER(WHERE kind IN ('seed','retained'))
  FROM (`+db.AllocationUsageSQL+`) usage WHERE worker_host_id=$1`, supply.host).Scan(&all.cpu, &all.memory, &all.scratch, &all.slots, &all.starts, &seed.cpu, &seed.memory, &seed.slots)
 	if err != nil {
 		return 0, err

@@ -188,7 +188,7 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid capacity plan JSON: %w", err))
 		return
 	}
-	response, err := workergroup.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
+	response, err := workergroup.ObserveCapacityPlan(r.Context(), s.tx, workerGroupID, request, time.Now())
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return

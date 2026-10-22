@@ -135,3 +135,56 @@ func (l *Ledger) ResizeOptional(key Key, request, ceiling, headroom Vector) erro
 	l.changed = make(chan struct{})
 	return nil
 }
+
+// RetainOptional demotes an existing physical reservation without releasing any
+// dimension. Publication must already be durable; failure leaves it mandatory.
+func (l *Ledger) RetainOptional(key Key, ceiling, headroom Vector) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	if !nonnegative(ceiling) || !nonnegative(headroom) {
+		return ErrInvalidRequest
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	reserved, ok := l.reservations[key]
+	if !ok {
+		return ErrInvalidKey
+	}
+	if _, ok := l.optional[key]; ok {
+		return ErrDuplicateReservation
+	}
+	total := reserved
+	for _, v := range l.optional {
+		var err error
+		total, err = add(total, v)
+		if err != nil {
+			return err
+		}
+	}
+	protected, err := add(l.used, headroom)
+	if err != nil {
+		return err
+	}
+	if !fits(total, ceiling) || !fits(protected, l.capacity) {
+		return ErrCapacityExceeded
+	}
+	l.optional[key] = reserved
+	close(l.changed)
+	l.changed = make(chan struct{})
+	return nil
+}
+
+// PromoteOptional changes only the reservation class. Control-plane admission
+// must have re-acquired the Environment and Host entitlement before this call.
+func (l *Ledger) PromoteOptional(key Key) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.optional[key]; !ok {
+		return ErrInvalidKey
+	}
+	delete(l.optional, key)
+	close(l.changed)
+	l.changed = make(chan struct{})
+	return nil
+}

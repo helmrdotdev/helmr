@@ -40,6 +40,7 @@ type ExecutionWait struct {
 // Snapshot is the public projection of one Computer. Its JSON encoding is the
 // retained creation receipt for the platform operation.
 type Snapshot struct {
+	ExecutionControl    *ExecutionControl         `json:"execution_control"`
 	ExecutionWait       *ExecutionWait            `json:"execution_wait"`
 	DeleteAfterUnusedMs *int64                    `json:"delete_after_unused_ms"`
 	UnusedSince         *time.Time                `json:"unused_since"`
@@ -58,6 +59,7 @@ type Snapshot struct {
 
 // ListItem is the projection of one Computer in a list.
 type ListItem struct {
+	ExecutionControl    *ExecutionControl
 	ExecutionWait       *ExecutionWait
 	waitCandidate       string
 	waitCPU, waitMemory int64
@@ -96,7 +98,7 @@ type Listing struct {
 const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t WHERE (t.environment_id,t.id)=(c.environment_id,c.origin_template_id)),COALESCE(c.origin_deployment_id::text,''),
  CASE WHEN c.deleted_at IS NULL THEN 'available' WHEN l.epoch IS NOT NULL OR c.storage_reservation_bytes IS NOT NULL THEN 'deleting' ELSE 'deleted' END,
  CASE WHEN c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR l.status='lost' THEN 'unavailable'
- WHEN cp.status='restoring' THEN 'restoring' WHEN l.status='releasing' THEN 'parking'
+ WHEN cp.status='restoring' THEN 'restoring' WHEN cp.status='ready' THEN 'parked' WHEN cp.status IN ('capturing','sealed') OR l.status='releasing' THEN 'parking'
  WHEN l.status='active' THEN 'running' WHEN l.status='acquiring' OR c.initial_root_id IS NULL THEN 'starting' ELSE 'cold' END,
  CASE WHEN c.integrity_fault_at IS NOT NULL THEN jsonb_build_object('code','computer_recovery_required','message',c.integrity_fault_reason)
  WHEN c.preparation_failed_at IS NOT NULL THEN jsonb_build_object('code','computer_preparation_failed','message','Computer preparation failed')
@@ -105,7 +107,8 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  CASE WHEN c.deleted_at IS NOT NULL OR c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL
  OR c.initial_root_id IS NULL OR c.image_id IS NULL OR l.status IN ('lost','acquiring') OR cp.status='restoring'
  OR EXISTS(SELECT 1 FROM (` + db.RevokedComputerSecretsSQL + `) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
- OR NOT (EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
+ OR NOT (EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')
+ OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND ` + db.NoSessionHoldsSQL + `
  AND (EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  OR NOT EXISTS(SELECT 1 FROM computer_leases prior WHERE prior.environment_id=c.environment_id AND prior.computer_id=c.id AND prior.initialized_at IS NOT NULL)))) THEN ''
@@ -115,7 +118,8 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  WHEN l.epoch IS NOT NULL THEN ''
  WHEN c.recovery_save_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_saves saved WHERE saved.environment_id=c.environment_id AND saved.id=c.recovery_save_id AND saved.status='published' AND saved.root_id IS NOT NULL) THEN ''
  ELSE 'scheduling' END,
- COALESCE(source.reserved_cpu_millis,(c.cpu_millis+999)/1000*1000),COALESCE(source.reserved_memory_bytes,c.memory_bytes)
+ COALESCE(source.reserved_cpu_millis,(c.cpu_millis+999)/1000*1000),COALESCE(source.reserved_memory_bytes,c.memory_bytes),
+ (SELECT jsonb_build_object('id',control.id,'computer_id',control.computer_id,'kind',control.kind,'status',control.status,'error_code',control.error_code,'accepted_at',control.accepted_at,'settled_at',control.settled_at) FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id ORDER BY control.accepted_at DESC,control.id DESC LIMIT 1)
  FROM computers c JOIN environments e ON e.id=c.environment_id
  LEFT JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
  LEFT JOIN checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')
@@ -124,7 +128,7 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
 
 func scanComputer(row pgx.Row) (ListItem, error) {
 	var item ListItem
-	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory)
+	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory, &item.ExecutionControl)
 	item.LastActivityAt, item.CreatedAt, item.UpdatedAt = item.LastActivityAt.UTC(), item.CreatedAt.UTC(), item.UpdatedAt.UTC()
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
@@ -163,7 +167,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 	if refs == nil {
 		refs = []secretbinding.Reference{}
 	}
-	return Snapshot{ExecutionWait: item.ExecutionWait, DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
+	return Snapshot{ExecutionControl: item.ExecutionControl, ExecutionWait: item.ExecutionWait, DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
 }
 func FindByKey(ctx context.Context, database db.DBTX, scope Scope, key string) (ListItem, error) {
 	item, err := scanComputer(database.QueryRow(ctx, computerProjection+` AND c.key=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, key))

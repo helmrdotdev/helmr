@@ -146,3 +146,36 @@ func TestOptionalResizeChecksGrowthAndRetainsChargeOnFailure(t *testing.T) {
 		t.Fatalf("shrink accounting: %+v", got)
 	}
 }
+
+func TestRetainedReservationNeverReleasesPhysicalCharge(t *testing.T) {
+	shape := Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 2, VMSlots: 1}
+	l := newTestLedger(t, shape)
+	key := Key{Kind: "instance", ID: "paused", Epoch: 1}
+	if _, err := l.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.RetainOptional(key, shape, shape); !errors.Is(err, ErrCapacityExceeded) {
+		t.Fatalf("borrowed headroom: %v", err)
+	}
+	if len(l.Snapshot().Optional) != 0 || l.Snapshot().Used != shape {
+		t.Fatal("failed retention changed charge")
+	}
+	if err := l.RetainOptional(key, shape, Vector{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.RetainOptional(key, shape, Vector{}); !errors.Is(err, ErrDuplicateReservation) {
+		t.Fatal(err)
+	}
+	if l.Snapshot().Used != shape {
+		t.Fatal("demotion released charge")
+	}
+	if err := l.PromoteOptional(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.PromoteOptional(key); !errors.Is(err, ErrInvalidKey) {
+		t.Fatal(err)
+	}
+	if l.Snapshot().Used != shape || len(l.Snapshot().Optional) != 0 {
+		t.Fatal("promotion changed physical charge")
+	}
+}

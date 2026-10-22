@@ -58,6 +58,12 @@ func commandError(err error, operation commandOperation) error {
 		return publicCommandError(err, operation)
 	}
 	switch {
+	case errors.Is(err, workergroup.ErrCapacityUnavailable):
+		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
+	case errors.Is(err, workergroup.ErrCapacityIncompatible):
+		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
+	case errors.Is(err, workergroup.ErrCapacityExhausted):
+		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		return unauthorized(errors.New("worker authentication is required"))
 	case errors.Is(err, secret.ErrDeliveryUnavailable):
@@ -106,6 +112,8 @@ func publicCommandError(err error, operation commandOperation) error {
 			return conflict(codedError{code: "secret_unavailable", message: err.Error()})
 		case errors.Is(err, computer.ErrNotFound):
 			return notFound(codedError{code: "computer_not_found", message: err.Error()})
+		case errors.Is(err, computer.ErrExecutionLimit):
+			return conflict(codedError{code: "environment_execution_limit", message: err.Error()})
 		case errors.Is(err, computer.ErrBusy):
 			return conflict(codedError{code: "computer_busy", message: err.Error(), retryable: true})
 		case errors.Is(err, computer.ErrRecoveryRequired):
