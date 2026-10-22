@@ -314,7 +314,14 @@ func (o *BootSeedAllocationOwner) stopVM(ctx context.Context) error {
 	o.active = nil
 	return nil
 }
-func (o *BootSeedAllocationOwner) cleanup() error {
+func (o *BootSeedAllocationOwner) cleanup() (resultErr error) {
+	defer func() {
+		o.machines.optional.mu.Lock()
+		defer o.machines.optional.mu.Unlock()
+		if seed := o.machines.optional.seeds[instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)]; seed != nil {
+			seed.cleanupErr = resultErr
+		}
+	}()
 	// All launches have joined before terminal cleanup. The VM owns its links;
 	// source handles must not retain cache pins after a failed cleanup attempt.
 	if err := o.images.close(); err != nil {
@@ -342,7 +349,12 @@ func (o *BootSeedAllocationOwner) cleanup() error {
 	}
 	o.machines.forgetOptionalSeed(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch))
 	if err := o.client.ObserveBootSeedStopped(ctx, o.identity); err != nil {
-		return err
+		var closed *httpclient.Error
+		// Physical cleanup is already complete. A lost acknowledgment may
+		// leave this exact allocation closed or superseded on the next retry.
+		if !errors.As(err, &closed) || closed.Code != workerapi.AllocationClosed {
+			return err
+		}
 	}
 	o.finished.Store(true)
 	return nil

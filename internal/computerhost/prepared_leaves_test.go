@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -60,7 +62,10 @@ func TestPreparedRootJoinsCanceledSourceBeforeReleasingCharge(t *testing.T) {
 	policy.Optional.MaxTasks = 1
 	p.ApplyResourcePolicy(policy)
 	backend := &leafTestBackend{allocationOwnerTestBackend: allocationOwnerTestBackend{t: t}}
-	p.Backend = backend
+	p.Backend, err = vm.NewStartLimiter(backend, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	started, returned := make(chan struct{}), make(chan struct{})
 	p.PreparationClient = leafSourceTestClient{host: uuid.NewV7().String(), fetch: func(ctx context.Context, _ workerapi.PreparationSourceRequest) (workerapi.PreparationSource, error) {
 		close(started)
@@ -197,11 +202,17 @@ func TestPreparedCleanupFailureRetainsChargeAndPolicyEvicts(t *testing.T) {
 		t.Fatal("policy did not cancel leaf")
 	}
 	p.finishPreparedLeaf(leaf)
+	if p.OptionalCleanupHealth() == nil {
+		t.Fatal("cleanup failure did not pause admission")
+	}
 	if p.Reservations.Snapshot().Used != charge || !p.ResourceObservation().ReclaimPending {
 		t.Fatal("failed cleanup advertised capacity")
 	}
 	backend.failCleanup.Store(false)
 	p.finishPreparedLeaf(leaf)
+	if err := p.OptionalCleanupHealth(); err != nil {
+		t.Fatal(err)
+	}
 	if p.Reservations.Snapshot().Used != (reservation.Vector{}) || len(p.optional.leaves) != 0 {
 		t.Fatal("successful cleanup retained leaf")
 	}
@@ -243,4 +254,38 @@ func TestAdoptedAllocationCleanupRemovesBothStagingOwners(t *testing.T) {
 	if len(o.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("cleanup retained real charge")
 	}
+}
+
+func TestPreparedSourceRenewsBeforeLeafIsReadyAndRejectsChangedContent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p, leaf, _, _, _ := readyLeafFixture(t)
+		defer leaf.cancel()
+		leaf.ready = false
+		host := uuid.NewV7().String()
+		original := workerapi.PreparationSource{WorkerHostID: host, WorkerEpoch: 1, EnvironmentID: leaf.key.EnvironmentID, BuildID: leaf.key.BuildID, PolicyRevision: leaf.revision, Manifest: leaf.manifest, Shape: leaf.shape, Source: leaf.source, ExpiresAt: time.Now().Add(120 * time.Second)}
+		leaf.expires = original.ExpiresAt
+		var changed atomic.Bool
+		var calls atomic.Int32
+		p.PreparationClient = leafSourceTestClient{host: host, fetch: func(context.Context, workerapi.PreparationSourceRequest) (workerapi.PreparationSource, error) {
+			calls.Add(1)
+			source := original
+			source.ExpiresAt = time.Now().Add(120 * time.Second)
+			if changed.Load() {
+				source.Source.Disk.VersionID = "changed"
+			}
+			return source, nil
+		}}
+		done := make(chan error, 1)
+		go func() { done <- p.renewPreparedLeaf(leaf, original) }()
+		time.Sleep(181 * time.Second)
+		synctest.Wait()
+		if calls.Load() < 6 || !time.Now().Before(leaf.expires) || leaf.ready {
+			t.Fatalf("unready leaf lost renewal: calls=%d expires=%v", calls.Load(), leaf.expires)
+		}
+		changed.Store(true)
+		time.Sleep(30 * time.Second)
+		if err := <-done; err == nil {
+			t.Fatal("changed content renewed")
+		}
+	})
 }

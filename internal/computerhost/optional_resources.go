@@ -14,8 +14,9 @@ import (
 var errOptionalReclaimed = errors.New("optional resources reclaimed")
 
 type optionalSeed struct {
-	revision int64
-	stop     bool
+	cleanupErr error
+	revision   int64
+	stop       bool
 }
 
 type optionalResources struct {
@@ -198,4 +199,25 @@ func (p *PreparedMachines) CloseOptionalAdmission() {
 		leaf.cancel()
 	}
 	p.optional.mu.Unlock()
+}
+
+// OptionalCleanupHealth fences new placement while failed physical cleanup
+// retains local resources. Ordinary reclaim in progress does not pause admission.
+func (p *PreparedMachines) OptionalCleanupHealth() error {
+	p.optional.mu.Lock()
+	defer p.optional.mu.Unlock()
+	if p.optional.cacheError != nil {
+		return p.optional.cacheError
+	}
+	for _, leaf := range p.optional.leaves {
+		if leaf.cleanupErr != nil {
+			return leaf.cleanupErr
+		}
+	}
+	for _, seed := range p.optional.seeds {
+		if seed.cleanupErr != nil {
+			return seed.cleanupErr
+		}
+	}
+	return nil
 }

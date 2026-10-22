@@ -14,12 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (p *PreparedMachines) buildPreparedLeaf(leaf *preparedLeaf) error {
+func (p *PreparedMachines) buildPreparedLeaf(leaf *preparedLeaf, envelope workerapi.PreparationSource) error {
 	ctx := leaf.ctx
-	envelope, err := p.readPreparationSource(ctx, leaf)
-	if err != nil {
-		return err
-	}
 	defer envelope.Source.Disk.Clear()
 	shape := envelope.Shape
 	if shape.VCPUCount <= 0 || shape.VCPUCount > math.MaxInt32 || shape.CPUMillis != shape.VCPUCount*1000 || shape.MemoryBytes <= 0 || shape.MemoryBytes%mebibyte != 0 || shape.ScratchBytes <= 0 || shape.ScratchBytes%mebibyte != 0 {
@@ -39,9 +35,6 @@ func (p *PreparedMachines) buildPreparedLeaf(leaf *preparedLeaf) error {
 	if required.CPUMillis > p.HostSlot.CPUMillis || required.MemoryBytes > p.HostSlot.MemoryBytes || required.HostDiskBytes > p.HostSlot.HostDiskBytes || required.VMSlots > p.HostSlot.VMSlots {
 		return errors.New("prepared Computer exceeds its reserved full shape")
 	}
-	p.optional.mu.Lock()
-	leaf.expires = envelope.ExpiresAt
-	p.optional.mu.Unlock()
 	leaf.shape, leaf.manifest, leaf.source, leaf.program = shape, envelope.Manifest, envelope.Source, program
 	if len(envelope.Source.Disk.Keys) == 0 {
 		return errors.New("prepared Computer has no image keys")

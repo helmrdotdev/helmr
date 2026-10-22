@@ -325,9 +325,10 @@ func run(log *slog.Logger) error {
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes: admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:     256,
-		DatapathHealth: connector.DatapathHealth,
+		DiskFloorBytes:        admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:            256,
+		DatapathHealth:        connector.DatapathHealth,
+		OptionalCleanupHealth: preparedMachines.OptionalCleanupHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)

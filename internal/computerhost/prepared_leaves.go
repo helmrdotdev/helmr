@@ -35,6 +35,7 @@ type preparedLeaf struct {
 	done                             chan struct{}
 	running, ready, claimed, reclaim bool
 	err                              error
+	cleanupErr                       error
 	shape                            workerapi.AllocationShape
 	manifest                         bootseed.Manifest
 	source                           workerapi.ComputerAllocationSource // Disk keys are cleared after construction.
@@ -151,37 +152,31 @@ func (p *PreparedMachines) readPreparationSource(ctx context.Context, leaf *prep
 func (p *PreparedMachines) runPreparedLeaf(leaf *preparedLeaf) {
 	defer close(leaf.done)
 	started := time.Now()
-	err := p.buildPreparedLeaf(leaf)
+	envelope, err := p.readPreparationSource(leaf.ctx, leaf)
 	if err == nil {
 		p.optional.mu.Lock()
-		if leaf.ctx.Err() == nil && time.Now().Before(leaf.expires) && leaf.revision == p.optional.policy.Revision {
-			leaf.ready = true
-			p.logInfo("prepared Computer ready", "physical_owner_id", leaf.identity.AllocationID, "environment_id", leaf.key.EnvironmentID, "build_id", leaf.key.BuildID, "duration_ms", time.Since(started).Milliseconds())
-		}
+		leaf.expires = envelope.ExpiresAt
 		p.optional.mu.Unlock()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for err == nil {
-			select {
-			case <-leaf.ctx.Done():
-				err = leaf.ctx.Err()
-			case <-ticker.C:
-				var source workerapi.PreparationSource
-				source, err = p.readPreparationSource(leaf.ctx, leaf)
-				if err == nil {
-					if source.Shape != leaf.shape || !reflect.DeepEqual(source.Manifest, leaf.manifest) || source.Source.Disk.Root != leaf.source.Disk.Root || !reflect.DeepEqual(source.Source.ImageConfig, leaf.source.ImageConfig) || !reflect.DeepEqual(source.Source.BootProgram, leaf.source.BootProgram) {
-						err = errors.New("prepared source content changed")
-					} else {
-						p.optional.mu.Lock()
-						if !leaf.claimed {
-							leaf.expires = source.ExpiresAt
-						}
-						p.optional.mu.Unlock()
-					}
-				}
-				source.Source.Disk.Clear()
+		// Renewal owns an immutable source description, independent of build
+		// state. Join it before adoption or cleanup can take physical custody.
+		renewed := make(chan error, 1)
+		go func() {
+			err := p.renewPreparedLeaf(leaf, envelope)
+			leaf.cancel()
+			renewed <- err
+		}()
+		err = p.buildPreparedLeaf(leaf, envelope)
+		if err != nil {
+			leaf.cancel()
+		} else {
+			p.optional.mu.Lock()
+			if leaf.ctx.Err() == nil && time.Now().Before(leaf.expires) && leaf.revision == p.optional.policy.Revision {
+				leaf.ready = true
+				p.logInfo("prepared Computer ready", "physical_owner_id", leaf.identity.AllocationID, "environment_id", leaf.key.EnvironmentID, "build_id", leaf.key.BuildID, "duration_ms", time.Since(started).Milliseconds())
 			}
+			p.optional.mu.Unlock()
 		}
+		err = errors.Join(err, <-renewed)
 	}
 	p.optional.mu.Lock()
 	claimed := leaf.claimed
@@ -199,12 +194,41 @@ func (p *PreparedMachines) runPreparedLeaf(leaf *preparedLeaf) {
 	}
 }
 
+func (p *PreparedMachines) renewPreparedLeaf(leaf *preparedLeaf, original workerapi.PreparationSource) error {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-leaf.ctx.Done():
+			return leaf.ctx.Err()
+		case <-ticker.C:
+			source, err := p.readPreparationSource(leaf.ctx, leaf)
+			if err == nil {
+				if source.Shape != original.Shape || !reflect.DeepEqual(source.Manifest, original.Manifest) || source.Source.Disk.Root != original.Source.Disk.Root || source.Source.Disk.VersionID != original.Source.Disk.VersionID || !reflect.DeepEqual(source.Source.ImageConfig, original.Source.ImageConfig) || !reflect.DeepEqual(source.Source.BootProgram, original.Source.BootProgram) {
+					err = errors.New("prepared source content changed")
+				} else {
+					p.optional.mu.Lock()
+					if !leaf.claimed {
+						leaf.expires = source.ExpiresAt
+					}
+					p.optional.mu.Unlock()
+				}
+			}
+			source.Source.Disk.Clear()
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (p *PreparedMachines) finishPreparedLeaf(leaf *preparedLeaf) {
 	err := p.cleanupPreparedLeaf(leaf)
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()
 	leaf.running = false
 	leaf.err = err
+	leaf.cleanupErr = err
 	if err == nil {
 		delete(p.optional.leaves, leaf.key)
 		if p.optional.preparationBackoff == nil {

@@ -61,3 +61,73 @@ func TestOptionalSeedReclaimWaitsForPressureAcknowledgment(t *testing.T) {
 		}
 	})
 }
+
+type seedStopRetryClient struct {
+	seedRenewalClient
+	stops int
+}
+
+func (c *seedStopRetryClient) ObserveBootSeedStopped(context.Context, workerapi.AllocationIdentity) error {
+	c.stops++
+	if c.stops == 1 {
+		return errors.New("stop committed but response lost")
+	}
+	return &httpclient.Error{Code: workerapi.AllocationClosed}
+}
+func TestBootSeedOwnerFinishesAfterLostStoppedAcknowledgment(t *testing.T) {
+	p, _, shape := optionalMachines(t)
+	p.TempDir = t.TempDir()
+	identity := workerapi.AllocationIdentity{Kind: "seed", AllocationID: "seed", Epoch: 1}
+	key := instanceReservationKey(identity.AllocationID, identity.Epoch)
+	if err := p.reserveOptionalSeed(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	client := &seedStopRetryClient{}
+	owner := &BootSeedAllocationOwner{machines: p, client: client, identity: identity, reserved: true, closing: true}
+	if err := owner.Run(t.Context()); err == nil || owner.Finished() {
+		t.Fatal("lost reply finished owner")
+	}
+	if p.Reservations.Snapshot().Used.VMSlots != 0 {
+		t.Fatal("physical charge retained after cleanup")
+	}
+	if err := owner.Run(t.Context()); err != nil || !owner.Finished() {
+		t.Fatalf("terminal retry: %v, finished=%v", err, owner.Finished())
+	}
+	if client.stops != 2 {
+		t.Fatal(client.stops)
+	}
+}
+
+func TestBootSeedCleanupFailurePausesUntilPhysicalRelease(t *testing.T) {
+	p, _, shape := optionalMachines(t)
+	p.TempDir = t.TempDir()
+	identity := workerapi.AllocationIdentity{Kind: "seed", AllocationID: "seed", Epoch: 1}
+	key := instanceReservationKey(identity.AllocationID, identity.Epoch)
+	if err := p.reserveOptionalSeed(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	backend := &allocationOwnerTestBackend{t: t}
+	backend.failCleanup.Store(true)
+	p.Backend = backend
+	client := &seedStopRetryClient{}
+	owner := &BootSeedAllocationOwner{machines: p, client: client, identity: identity, reserved: true, closing: true, active: &preparationQualification{identity: identity}}
+	if err := p.OptionalCleanupHealth(); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("cleanup succeeded")
+	}
+	if p.OptionalCleanupHealth() == nil || p.Reservations.Snapshot().Used != shape || client.stops != 0 {
+		t.Fatal("failed cleanup released capacity or remained admissible")
+	}
+	backend.failCleanup.Store(false)
+	if err := owner.Run(t.Context()); err == nil {
+		t.Fatal("expected lost stopped reply")
+	}
+	if err := p.OptionalCleanupHealth(); err != nil {
+		t.Fatal(err)
+	}
+	if p.Reservations.Snapshot().Used.VMSlots != 0 {
+		t.Fatal("successful cleanup retained charge")
+	}
+}
