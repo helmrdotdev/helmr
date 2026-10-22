@@ -20,7 +20,7 @@ VALUES($1,$2,$3,$4,$5,
     $6,$7,$8,$9,$10,$11,
     $12,$13,$14,$15,$16,$17,
     statement_timestamp())
-RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt, receipt_pruned_at
+RETURNING id, environment_id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt, receipt_pruned_at
 `
 
 type CreateIdempotencyReceiptParams struct {
@@ -65,8 +65,8 @@ func (q *Queries) CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempo
 	)
 	var i IdempotencyReceipt
 	err := row.Scan(
-		&i.EnvironmentID,
 		&i.ID,
+		&i.EnvironmentID,
 		&i.Operation,
 		&i.SlotHash,
 		&i.RequestFingerprint,
@@ -89,7 +89,7 @@ func (q *Queries) CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempo
 }
 
 const lockIdempotencyReceipt = `-- name: LockIdempotencyReceipt :one
-SELECT k.environment_id, k.id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt, k.receipt_pruned_at,
+SELECT k.id, k.environment_id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt, k.receipt_pruned_at,
     k.accepted_at<=clock_timestamp()-interval '720 hours' AND NOT EXISTS (
         SELECT 1 FROM commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
@@ -114,8 +114,8 @@ func (q *Queries) LockIdempotencyReceipt(ctx context.Context, arg LockIdempotenc
 	row := q.db.QueryRow(ctx, lockIdempotencyReceipt, arg.EnvironmentID, arg.Operation, arg.SlotHash)
 	var i LockIdempotencyReceiptRow
 	err := row.Scan(
-		&i.IdempotencyReceipt.EnvironmentID,
 		&i.IdempotencyReceipt.ID,
+		&i.IdempotencyReceipt.EnvironmentID,
 		&i.IdempotencyReceipt.Operation,
 		&i.IdempotencyReceipt.SlotHash,
 		&i.IdempotencyReceipt.RequestFingerprint,
