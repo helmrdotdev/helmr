@@ -3,6 +3,8 @@ package computerhost
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -135,33 +137,95 @@ func TestOptionalCachePolicyStopsNewFillsBeforeCleanupTick(t *testing.T) {
 }
 
 func TestOptionalCacheZeroTasksAndRateRetainPermittedResidentData(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		p := optionalCacheMachines(t)
-		want := cacheFilesystemHeadroom + 16384
-		resizeTestCache(t, p, want)
-		policy := p.optional.policy
-		policy.Revision++
-		policy.Optional.MaxTasks, policy.Optional.IOBytesPerSecond = 0, 0
-		other := reservation.Key{Kind: "seed", Epoch: 1, ID: "joining"}
-		charge := reservation.Vector{HostDiskBytes: 16 << 20}
-		if _, err := p.Reservations.ReserveOptional(other, charge, optionalCeiling(policy), reservation.Vector{}); err != nil {
-			t.Fatal(err)
-		}
-		p.ApplyResourcePolicy(policy)
-		ctx, cancel := context.WithCancel(t.Context())
-		done := make(chan error, 1)
-		go func() { done <- p.RunOptionalResources(ctx) }()
-		synctest.Wait()
-		for range 3 {
-			time.Sleep(time.Second)
-			synctest.Wait()
-			if got := p.Reservations.Snapshot().Optional[optionalCacheKey()].HostDiskBytes; got != want {
-				t.Fatalf("zero tasks/rate evicted permitted cache: %d", got)
-			}
-		}
-		cancel()
-		<-done
-	})
+	for _, limit := range []string{"revision", "tasks", "rate", "both"} {
+		t.Run(limit, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				p := optionalCacheMachines(t)
+				want := cacheFilesystemHeadroom + 16384
+				resizeTestCache(t, p, want)
+				data := []byte("resident bytes survive optional seed retirement")
+				d := cas.Descriptor{Digest: sha256sum.DigestBytes(data), SizeBytes: int64(len(data)), MediaType: "application/octet-stream"}
+				if ok, err := p.ObjectCache.Seed(t.Context(), "test", d, bytes.NewReader(data)); !ok || err != nil {
+					t.Fatalf("seed cache: %v %v", ok, err)
+				}
+				policy := p.optional.policy
+				policy.Optional.CPUMillis, policy.Optional.MemoryBytes, policy.Optional.VMSlots = 1000, 100, 1
+				policy.Optional.MaxTasks = 2
+				p.ApplyResourcePolicy(policy)
+				seed := instanceReservationKey("joining", 1)
+				charge := reservation.Vector{CPUMillis: 1000, MemoryBytes: 100, HostDiskBytes: 16 << 20, VMSlots: 1}
+				if err := p.reserveOptionalSeed(seed, charge); err != nil {
+					t.Fatal(err)
+				}
+				transfer := make(chan error, 1)
+				go func() {
+					body := &optionalTransferBody{ReadCloser: io.NopCloser(bytes.NewReader(data)), ctx: t.Context(), machines: p}
+					got, err := io.ReadAll(body)
+					if len(got) != 0 {
+						t.Error("revoked transfer read resident source bytes")
+					}
+					transfer <- err
+				}()
+				synctest.Wait()
+				policy.Revision++
+				if limit == "tasks" || limit == "both" {
+					policy.Optional.MaxTasks = 0
+				}
+				if limit == "rate" || limit == "both" {
+					policy.Optional.IOBytesPerSecond = 0
+				}
+				p.ApplyResourcePolicy(policy)
+				if err := <-transfer; !errors.Is(err, errOptionalReclaimed) {
+					t.Fatalf("old transfer survived policy change: %v", err)
+				}
+				if !p.optionalSeedReclaimRequested(seed) {
+					t.Fatal("tracked old seed did not request retirement")
+				}
+				// The owner requests reclaim again while joining its physical cleanup.
+				p.requestOptionalSeedReclaim(seed)
+				if _, finish, allowed := p.beginCacheTask(t.Context()); allowed {
+					finish()
+					t.Fatal("retiring seed admitted a new cache task")
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- p.RunOptionalResources(ctx) }()
+				synctest.Wait()
+				for range 3 {
+					time.Sleep(time.Second)
+					synctest.Wait()
+					snapshot := p.Reservations.Snapshot()
+					if got := snapshot.Optional[optionalCacheKey()].HostDiskBytes; got != want {
+						t.Fatalf("seed retirement changed permitted cache charge: %d", got)
+					}
+					if snapshot.Optional[seed] != charge || !p.ResourceObservation().ReclaimPending {
+						t.Fatal("seed retirement invented physical release")
+					}
+					lease := p.ObjectCache.Lease(t.Context(), "test", d)
+					if lease == nil {
+						t.Fatal("permitted resident data was evicted")
+					}
+					got := make([]byte, len(data))
+					_, err := lease.ReadAt(got, 0)
+					closeErr := lease.Close()
+					if err != nil || closeErr != nil || !bytes.Equal(got, data) {
+						t.Fatalf("retained cache bytes: %q %v %v", got, err, closeErr)
+					}
+				}
+				// Disk removal must still reclaim unpinned bytes during seed cleanup.
+				policy.Revision++
+				policy.Optional.DiskBytes = 0
+				p.ApplyResourcePolicy(policy)
+				time.Sleep(time.Second)
+				synctest.Wait()
+				if got := p.Reservations.Snapshot().Optional[optionalCacheKey()].HostDiskBytes; got != 0 {
+					t.Fatalf("zero disk retained cache: %d", got)
+				}
+				cancel()
+				<-done
+			})
+		})
+	}
 }
 
 func TestRealGrantReclaimsSeedLifecycleDiskBeforeAdmission(t *testing.T) {

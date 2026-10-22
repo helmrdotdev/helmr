@@ -117,7 +117,7 @@ func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
 		p.optional.mu.Lock()
 		policy := p.optional.policy
 		want := int64(0)
-		if policy.Revision > 0 && time.Since(p.optional.confirmed) < 2*workerapi.WorkerObservationInterval && !p.optional.pressure && !p.optional.closed && p.optional.realWaiting == 0 && !time.Now().Before(p.optional.cacheRefillAfter) {
+		if policy.Revision > 0 && time.Since(p.optional.confirmed) < 2*workerapi.WorkerObservationInterval && !p.optional.closed && p.optional.realWaiting == 0 && !time.Now().Before(p.optional.cacheRefillAfter) {
 			want = policy.Optional.DiskBytes
 			if p.Reservations != nil {
 				snapshot := p.Reservations.Snapshot()
@@ -127,7 +127,9 @@ func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
 					}
 				}
 				want = min(want, p.ObjectCacheCapacity)
-				if policy.Optional.MaxTasks == 0 || policy.Optional.IOBytesPerSecond == 0 {
+				// Retiring an optional owner stops growth, but does not itself
+				// invalidate resident data that still fits the physical budget.
+				if p.optional.pressure || policy.Optional.MaxTasks == 0 || policy.Optional.IOBytesPerSecond == 0 {
 					want = min(want, snapshot.Optional[optionalCacheKey()].HostDiskBytes)
 				}
 				headroom, err := p.optionalHeadroom(policy.LocalHeadroomSlots)
