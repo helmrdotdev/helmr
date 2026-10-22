@@ -1,8 +1,8 @@
 resource "terraform_data" "private_contract" {
   lifecycle {
     precondition {
-      condition     = alltrue([for cidr in concat([var.controlplane_vpc_cidr, var.execution_vpc_cidr], tolist(var.company_client_ipv4_cidrs)) : contains(var.worker_network_blocked_ipv4_cidrs, cidr)])
-      error_message = "Guest management isolation requires control-plane, execution and every routed company prefix in worker_network_blocked_ipv4_cidrs before private routing is enabled."
+      condition     = alltrue(flatten([for spec in values(local.worker_generation_specs) : [for cidr in concat([var.controlplane_vpc_cidr, var.execution_vpc_cidr], tolist(var.company_client_ipv4_cidrs)) : contains(spec.generation_inputs.supply.network.blocked_ipv4_cidrs, cidr)]]))
+      error_message = "Guest management isolation requires control-plane, execution and every routed company prefix in every current and retained Worker generation before private routing is enabled."
     }
     precondition {
       condition     = var.controlplane_image_repository_arn != null && can(regex("^[0-9]{12}\\.dkr\\.ecr\\.${var.aws_region}\\.", module.release_artifacts.controlplane_image))

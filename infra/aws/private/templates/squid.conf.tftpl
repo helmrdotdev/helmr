@@ -1,14 +1,14 @@
 # CONNECT only. TLS remains end-to-end between the application and provider.
 http_port 3128
 visible_hostname helmr-platform-exit
-pid_filename /tmp/squid.pid
-coredump_dir /tmp
+pid_filename /var/spool/squid/squid.pid
+coredump_dir /var/spool/squid
 cache_effective_user proxy
 cache_effective_group proxy
 cache deny all
-cache_dir null /tmp
+cache_dir null /var/spool/squid
 cache_log /dev/null
-logformat decisions %ts.%03tu %>a %rm %>Hs %<st
+logformat decisions %ts.%03tu %>a %rm %>Hs %<st %#>rd %>rP
 access_log stdio:/dev/stdout decisions
 shutdown_lifetime 1 seconds
 acl connect method CONNECT

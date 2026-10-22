@@ -19,7 +19,10 @@ regional ECR, the Platform Artifact store, and a compatible Worker AMI. Mirror
 the complete manifest listed in `proxy-image.json` into ECR without changing its
 digest. The reference uses Canonical's pinned Squid 6.14 image; the source tag is
 informational and is never used at runtime. Proxy replacement requires the same
-qualification, including CONNECT/WSS and deny behavior.
+qualification, including CONNECT/WSS and deny behavior. The task uses the image's
+UID-13-owned `/var/spool/squid` volume for its configuration and PID; the declared
+volume path preserves ownership on ECS. Decision logs include only the destination
+host/port, method, status and sizes, never URL paths, query strings or credentials.
 
 The root creates separate platform and execution VPCs, VPC peering, an application
 private DNS zone associated with both, an internal ALB, private tasks/RDS, AWS
@@ -76,6 +79,8 @@ Console distinguishes installation authorization from observed socket health.
 
 `worker_network_blocked_ipv4_cidrs` must explicitly contain the platform VPC,
 execution VPC and every routed company CIDR before the private route is enabled.
+The same check covers every retained Worker generation; retire incompatible
+generations before adding routes rather than changing their immutable settings.
 Workers install those existing guest destination denies before guest traffic is
 forwarded. A source security group alone cannot distinguish a translated guest
 packet from its host. Test host success and guest denial together.

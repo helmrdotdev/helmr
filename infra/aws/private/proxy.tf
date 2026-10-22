@@ -77,13 +77,13 @@ resource "aws_ecs_task_definition" "proxy" {
   volume { name = "scratch" }
   container_definitions = jsonencode([{
     name             = "proxy", image = var.proxy_image, essential = true, user = "13:13", readonlyRootFilesystem = true,
-    entryPoint       = ["/bin/sh", "-ec"], command = ["printf '%s' \"$SQUID_CONFIG\" | base64 -d > /tmp/squid.conf; exec /usr/sbin/squid -N -f /tmp/squid.conf"],
+    entryPoint       = ["/bin/sh", "-ec"], command = [file("${path.module}/templates/proxy-start.sh")],
     environment      = [{ name = "SQUID_CONFIG", value = base64encode(local.proxy_config) }],
-    mountPoints      = [{ sourceVolume = "scratch", containerPath = "/tmp", readOnly = false }],
+    mountPoints      = [{ sourceVolume = "scratch", containerPath = "/var/spool/squid", readOnly = false }],
     portMappings     = [{ containerPort = 3128, protocol = "tcp" }],
     linuxParameters  = { capabilities = { drop = ["ALL"] } },
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.proxy.name, awslogs-region = var.aws_region, awslogs-stream-prefix = "proxy" } },
-    healthCheck      = { command = ["CMD-SHELL", "/usr/sbin/squid -k check -f /tmp/squid.conf"], interval = 30, timeout = 5, retries = 3, startPeriod = 20 }
+    healthCheck      = { command = ["CMD-SHELL", "/usr/sbin/squid -k check -f /var/spool/squid/squid.conf"], interval = 30, timeout = 5, retries = 3, startPeriod = 20 }
   }])
   lifecycle {
     precondition {

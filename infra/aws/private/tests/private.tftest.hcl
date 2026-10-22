@@ -135,3 +135,14 @@ run "http_delivery_rejected" {
   variables { slack_transport = "http" }
   expect_failures = [var.slack_transport]
 }
+
+run "retained_generation_requires_new_company_denies" {
+  command = plan
+  variables {
+    create_worker                     = true
+    company_client_ipv4_cidrs         = ["10.92.0.0/16", "10.93.0.0/16"]
+    worker_network_blocked_ipv4_cidrs = ["10.90.0.0/16", "10.91.0.0/16", "10.92.0.0/16", "10.93.0.0/16", "169.254.0.0/16"]
+    retained_worker_generations       = run.private_baseline.worker_generation_definitions
+  }
+  expect_failures = [terraform_data.private_contract]
+}

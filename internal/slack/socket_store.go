@@ -12,7 +12,7 @@ import (
 
 const socketLeaseDuration = 30 * time.Second
 
-var errSocketClaimLost = errors.New("Slack socket ownership changed")
+var errSocketClaimLost = errors.New("socket ownership changed")
 
 type socketClaim struct {
 	Registration uuid.UUID

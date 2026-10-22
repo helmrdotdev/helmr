@@ -121,3 +121,26 @@ func TestSocketTransientReceiptFailureDoesNotACK(t *testing.T) {
 		t.Fatal("failed receipt persisted", err)
 	}
 }
+
+func TestSocketDiscardLogsOnlyRedactedReason(t *testing.T) {
+	_, store, _ := socketFixture(t)
+	claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
+	if err != nil || claim == nil {
+		t.Fatal(err)
+	}
+	client, peer := socketPair(t)
+	var logs bytes.Buffer
+	supervisor := SocketSupervisor{cfg: SocketConfig{Credentials: store, Log: slog.New(slog.NewTextHandler(&logs, nil))}}
+	raw, _ := json.Marshal(socketEnvelope{Type: "unknown", EnvelopeID: "discard", Payload: json.RawMessage(`{"secret":"payload-sentinel"}`)})
+	if err := supervisor.receiveSocketEnvelope(t.Context(), client, *claim, raw); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, _, err := peer.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "reason=invalid") || strings.Contains(logs.String(), "payload-sentinel") {
+		t.Fatalf("discard log lost its redacted reason: %s", logs.String())
+	}
+}

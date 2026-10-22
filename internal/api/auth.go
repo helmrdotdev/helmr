@@ -1,7 +1,6 @@
 package api
 
 type MeResponse struct {
- SlackTransport string `json:"slack_transport"`
 	UserID               string   `json:"user_id"`
 	DisplayName          string   `json:"display_name"`
 	ProfileImageURL      string   `json:"profile_image_url"`

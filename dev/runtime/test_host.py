@@ -60,6 +60,19 @@ class ProfileTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 host.compile_config(config() | {'app_origin': value})
 
+    def test_platform_connection_policy_reaches_both_services(self):
+        for mode in ['http', 'socket', 'disabled']:
+            with self.subTest(mode=mode):
+                raw = config()
+                raw['control_plane'].update(SLACK_TRANSPORT=mode, OUTBOUND_PROXY_URL='http://proxy.internal:3128')
+                cfg = host.compile_config(raw)
+                for key in ['SLACK_TRANSPORT', 'OUTBOUND_PROXY_URL']:
+                    self.assertEqual(cfg['dispatcher'][key], cfg['control_plane'][key])
+                    self.assertNotIn(key, cfg['worker'])
+        cfg = host.compile_config(config())
+        self.assertNotIn('OUTBOUND_PROXY_URL', cfg['dispatcher'])
+        self.assertNotIn('SLACK_TRANSPORT', cfg['dispatcher'])
+
     def test_sample_diagnostic_policy_reaches_both_services(self):
         raw = json.loads((ROOT / 'dev/runtime/config.example.json').read_text())
         cfg = host.compile_config(raw)

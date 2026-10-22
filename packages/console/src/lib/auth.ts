@@ -7,7 +7,6 @@ export type Me = {
   org_id?: string | null;
   org_name?: string;
   app_origin?: string;
-  slack_transport?: "disabled" | "http" | "socket";
   role?: string | null;
   permissions: string[];
   admin: boolean;

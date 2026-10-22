@@ -155,7 +155,7 @@ func (s *SocketSupervisor) openSocket(ctx context.Context, claim socketClaim) (*
 	if !opened.OK {
 		permanent := false
 		switch opened.Error {
-		case "invalid_auth", "not_authed", "token_revoked", "missing_scope", "not_allowed_token_type", "app_level_token_required":
+		case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope", "not_allowed_token_type", "app_level_token_required":
 			permanent = true
 		}
 		return nil, socketFailure{reason: "api_rejected", actionRequired: permanent}
@@ -269,7 +269,10 @@ func (s *SocketSupervisor) receiveSocketEnvelope(ctx context.Context, conn *webs
 	if envelope.EnvelopeID == "" || len(envelope.EnvelopeID) > 256 {
 		return socketFailure{reason: "protocol_error"}
 	}
-	receiptCtx, cancel := context.WithTimeout(ctx, receiptTimeout)
+	// Reserve the final half-second for the authority observation and ACK,
+	// keeping the complete pre-ACK path within the shared 2.5-second budget.
+	const ackBudget = 500 * time.Millisecond
+	receiptCtx, cancel := context.WithTimeout(ctx, receiptTimeout-ackBudget)
 	defer cancel()
 	db := socketReceiptDB{pool: s.cfg.Credentials.pool, claim: claim}
 	result := receiptResult{disposition: receiptInvalid}
@@ -303,8 +306,20 @@ func (s *SocketSupervisor) receiveSocketEnvelope(ctx context.Context, conn *webs
 	}
 	// This also fences ignored or malformed events, whose handler did not start a
 	// receipt transaction. A lost owner must not keep consuming Slack deliveries.
-	if err := s.cfg.Credentials.observeSocket(receiptCtx, claim, true); err != nil {
+	ackCtx, cancelACK := context.WithTimeout(ctx, ackBudget)
+	defer cancelACK()
+	if err := s.cfg.Credentials.observeSocket(ackCtx, claim, true); err != nil {
 		return err
+	}
+	if result.disposition != receiptAccepted {
+		reason := "invalid"
+		switch result.disposition {
+		case receiptUnauthorized:
+			reason = "unauthorized"
+		case receiptConflict:
+			reason = "conflict"
+		}
+		s.cfg.Log.Info("Slack socket input discarded", "registration_id", claim.Registration, "reason", reason)
 	}
 	ack := struct {
 		EnvelopeID string          `json:"envelope_id"`
@@ -314,7 +329,7 @@ func (s *SocketSupervisor) receiveSocketEnvelope(ctx context.Context, conn *webs
 		ack.Payload = result.payload
 	}
 	body, _ := json.Marshal(ack)
-	if err := conn.Write(receiptCtx, websocket.MessageText, body); err != nil {
+	if err := conn.Write(ackCtx, websocket.MessageText, body); err != nil {
 		return socketFailure{reason: "connection_failed"}
 	}
 	return nil

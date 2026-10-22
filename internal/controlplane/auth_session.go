@@ -23,7 +23,6 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	hasOrg := principal.OrgID != uuid.Nil()
 	response := api.MeResponse{
-		SlackTransport:  "disabled",
 		UserID:          principal.UserID.String(),
 		DisplayName:     account.DisplayName,
 		ProfileImageURL: account.ProfileImageURL,
@@ -32,9 +31,6 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		Permissions:     []string{},
 		ProjectRequired: hasOrg && !account.HasProjects,
 		EmailDelivery:   s.emailConfigured(),
-	}
-	if s.slackConfig != nil {
-		response.SlackTransport = string(s.slackConfig.Credentials.DeliveryTransport())
 	}
 	switch {
 	case hasOrg:
