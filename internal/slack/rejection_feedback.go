@@ -19,7 +19,8 @@ type rejectionFeedback struct {
 	channel, actor, team string
 }
 
-// takeRejectedFeedback disposes terminal rejected input and its private hint
+// takeRejectedFeedback disposes terminal rejected input or accepted input-control
+// feedback and its private hint
 // before external I/O. Identity and digest remain for retry comparison.
 // Feedback is best effort: a crash may lose one, but neither an unknown
 // HTTP outcome nor a duplicate receipt may repeat it. No core owner is invented.
@@ -32,10 +33,10 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		var actor, code, team string
 		var active bool
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,''),i.credential_revision,i.team_id,
+		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,
  i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- WHERE r.status='rejected' AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
+ WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -46,11 +47,12 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		if _, err = tx.Exec(ctx, `UPDATE slack_requests SET payload=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, id); err != nil {
 			return err
 		}
-		if !active || len(raw) == 0 {
+		if !active || len(raw) == 0 || code == "input_ignored" {
 			return nil
 		}
 		var payload struct {
 			Channel string           `json:"channel"`
+			Thread  string           `json:"thread_ts"`
 			Control *controlEnvelope `json:"control"`
 		}
 		if json.Unmarshal(raw, &payload) != nil {
@@ -90,6 +92,13 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		text := "Helmr could not accept that action. Check your access in Console, then try again."
 		var blocks []any
 		switch code {
+		case "mute":
+			text = "Thread input muted. Work already accepted and Agent replies continue. Use !unmute to resume automatic input, or mention the Agent to send just one message."
+		case "unmute":
+			text = "Thread input enabled. Future replies will reach the Agent without a mention. Muted messages will not be replayed."
+		case "command_unbound":
+			text = "Use !mute or !unmute in an existing Agent Session thread."
+
 		case "identity_unlinked":
 			link, err := firstUseURL(config, id, channel)
 			if err != nil {
@@ -132,6 +141,9 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "Helmr could not accept that input. Check the task's supported input in Console, then try again."
 		}
 		body := map[string]any{"channel": channel, "text": text}
+		if (code == "mute" || code == "unmute") && timestampPattern.MatchString(payload.Thread) {
+			body["thread_ts"] = payload.Thread
+		}
 		if direct {
 			body["mrkdwn"] = false
 			body["parse"] = "none"
@@ -157,7 +169,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 	return intent, found, nil
 }
 
-// ReconcileRejectedFeedback consumes terminal receipts including those rejected
+// ReconcileRejectedFeedback consumes terminal receipts and input-control
+// confirmations, including receipts rejected
 // at ingress. The only remote operation is private to the authenticated actor;
 // Channel feedback is ephemeral; DM feedback is an ordinary private message.
 // Both use the same at-most-once attempt policy, not a new delivery queue.

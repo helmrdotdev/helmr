@@ -101,7 +101,7 @@ func TestSlackDirectRejectedRootNeverReplaysAfterLink(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			t.Fatal(err)
 		}
-		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "Environment") {
+		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "Organization members can read them") {
 			t.Fatal(r.URL, p)
 		}
 		return `{"ok":true,"ts":"123.999"}`

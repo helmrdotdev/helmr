@@ -1968,7 +1968,10 @@ CREATE TABLE slack_threads (
     recipient_team_id text,
     recipient_user_id text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    desired_status text NOT NULL DEFAULT 'active' CHECK (desired_status IN ('active', 'processing', 'suspended')),
+    input_muted boolean NOT NULL DEFAULT false,
+    input_changed_at timestamptz,
+    input_unmuted_at timestamptz,
+    desired_status text NOT NULL DEFAULT 'active' CHECK (desired_status IN ('active', 'processing', 'suspended', 'closed')),
     desired_revision bigint NOT NULL DEFAULT 1 CHECK (desired_revision>0),
     confirmed_revision bigint NOT NULL DEFAULT 0 CHECK (confirmed_revision>=0 AND confirmed_revision<=desired_revision),
     status_confirmation text NOT NULL DEFAULT 'unknown' CHECK (status_confirmation IN ('unknown', 'acknowledged')),
@@ -2027,7 +2030,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute')),
     message_id uuid,
     observed_authority_generation bigint,
     observed_next_turn_seq bigint,
@@ -2059,7 +2062,8 @@ CREATE TABLE slack_requests (
     CHECK ((status='accepted' AND ((operation IN ('start', 'enqueue') AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
-        OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
+        OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)
+        OR (operation IN ('mute','unmute') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -2067,7 +2071,7 @@ CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
 
-CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE status='rejected' AND payload_expired_at IS NULL;
+CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute'))) AND payload_expired_at IS NULL;
 
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id, request_digest);
 

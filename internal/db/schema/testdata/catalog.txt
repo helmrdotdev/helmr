@@ -868,6 +868,9 @@ column slack_threads.inflight_digest bytea
 column slack_threads.inflight_method text
 column slack_threads.inflight_payload bytea
 column slack_threads.inflight_revision bigint
+column slack_threads.input_changed_at timestamp with time zone
+column slack_threads.input_muted boolean not null default false
+column slack_threads.input_unmuted_at timestamp with time zone
 column slack_threads.next_attempt_at timestamp with time zone not null default clock_timestamp()
 column slack_threads.opening_post_key text
 column slack_threads.org_id uuid not null
@@ -1790,11 +1793,11 @@ constraint slack_requests c CHECK ((status = 'received'::text) = (finished_at IS
 constraint slack_requests c CHECK (observed_authority_generation IS NULL OR environment_id IS NOT NULL AND observed_authority_generation > 0 AND observed_next_turn_seq > 0)
 constraint slack_requests c CHECK (octet_length(request_digest) = 32)
 constraint slack_requests c CHECK (octet_length(request_key) >= 1 AND octet_length(request_key) <= 1024)
-constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text]))
+constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text, 'mute'::text, 'unmute'::text]))
 constraint slack_requests c CHECK (payload_expired_at IS NULL OR status <> 'received'::text)
 constraint slack_requests c CHECK (slack_user_id <> ''::text)
 constraint slack_requests c CHECK (status <> 'accepted'::text OR user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)
-constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
+constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL OR (operation = ANY (ARRAY['mute'::text, 'unmute'::text])) AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
 constraint slack_requests c CHECK (status = ANY (ARRAY['received'::text, 'accepted'::text, 'rejected'::text]))
 constraint slack_requests f FOREIGN KEY (environment_id, ask_id) REFERENCES turn_asks(environment_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, control_id) REFERENCES session_controls(environment_id, session_id, id)
@@ -1820,7 +1823,7 @@ constraint slack_threads c CHECK ((recipient_team_id IS NULL) = (recipient_user_
 constraint slack_threads c CHECK (claim_epoch >= 0)
 constraint slack_threads c CHECK (confirmed_revision >= 0 AND confirmed_revision <= desired_revision)
 constraint slack_threads c CHECK (desired_revision > 0)
-constraint slack_threads c CHECK (desired_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text]))
+constraint slack_threads c CHECK (desired_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))
 constraint slack_threads c CHECK (inflight_revision > 0 AND inflight_revision <= desired_revision)
 constraint slack_threads c CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id, claimed_until) = ANY (ARRAY[0, 6]))
 constraint slack_threads c CHECK (octet_length(inflight_digest) = 32)
@@ -2080,7 +2083,7 @@ index CREATE INDEX slack_posts_due ON public.slack_posts USING btree (next_attem
 index CREATE INDEX slack_posts_remote_message ON public.slack_posts USING btree (message_ts, thread_source_id) WHERE (message_ts IS NOT NULL)
 index CREATE INDEX slack_posts_turn_delivery ON public.slack_posts USING btree (environment_id, session_id, turn_id, role, seq)
 index CREATE INDEX slack_requests_due ON public.slack_requests USING btree (next_attempt_at, id) WHERE (status = 'received'::text)
-index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE ((status = 'rejected'::text) AND (payload_expired_at IS NULL))
+index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE (((status = 'rejected'::text) OR ((status = 'accepted'::text) AND (operation = ANY (ARRAY['mute'::text, 'unmute'::text])))) AND (payload_expired_at IS NULL))
 index CREATE INDEX slack_requests_gesture ON public.slack_requests USING btree (installation_id, request_digest)
 index CREATE INDEX slack_requests_input_source ON public.slack_requests USING btree (environment_id, turn_id, message_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text])))
 index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, slack_channel_binding_id) WHERE (thread_ts IS NOT NULL)

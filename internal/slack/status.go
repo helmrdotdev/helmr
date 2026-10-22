@@ -119,7 +119,12 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
  (p.status IN ('lost','stopping') OR p.stop_deadline_at IS NOT NULL OR p.control_error IS NOT NULL OR v.status IN ('closed','cancelled') OR
  (EXISTS(SELECT 1 FROM held h WHERE h.id=v.id) AND NOT COALESCE(p.control_kind='suspend' AND p.control_acknowledged_at IS NOT NULL AND p.control_generation=v.authority_generation AND p.control_attachment=p.attachment_sequence,false))))
  OR EXISTS(SELECT 1 FROM turns t JOIN visible v ON t.session_id=v.id WHERE t.environment_id=$2 AND t.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM waiting w WHERE w.id=v.id))
- THEN 'processing' WHEN EXISTS(SELECT 1 FROM waiting) THEN 'suspended' ELSE 'active' END`, thread, env).Scan(&status)
+ THEN 'processing' WHEN EXISTS(SELECT 1 FROM waiting) THEN 'suspended'
+ WHEN EXISTS(SELECT 1 FROM visible) AND NOT EXISTS(SELECT 1 FROM visible WHERE status NOT IN ('closed','cancelled')) THEN
+ CASE WHEN EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_events e ON (e.environment_id,e.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND e.seq>src.projected_event_seq)
+ OR EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_processes process ON (process.environment_id,process.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(src.projected_control_at,'-infinity'::timestamptz))
+ OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=$1 AND post.delivery_disposed_at IS NULL AND (post.status IN ('pending','sending','uncertain') OR post.stream_state IN ('open','uncertain')))
+ THEN 'processing' ELSE 'closed' END ELSE 'active' END`, thread, env).Scan(&status)
 	return status, err
 }
 
