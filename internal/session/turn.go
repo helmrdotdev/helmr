@@ -191,6 +191,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		return result, ErrDenied
 	}
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
+			return err
+		}
 		if caller.Kind == "session" {
 			if err := lockRuntimeHost(ctx, tx, caller); err != nil {
 				return err
@@ -322,6 +325,15 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		}
 		if err = consumeAdmission(ctx, tx, req.EnvironmentID, policy); err != nil {
 			return err
+		}
+		var runnable bool
+		if err = tx.QueryRow(ctx, `SELECT `+db.NoSessionHoldsSQL+` FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&runnable); err != nil {
+			return err
+		}
+		if runnable {
+			if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, o.computer); err != nil {
+				return err
+			}
 		}
 		result.SessionID = req.SessionID
 		result.TurnID = uuid.NewV7()

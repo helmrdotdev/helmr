@@ -141,7 +141,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 
 // apiComputerSnapshot is the public Computer resource of an owner snapshot.
 func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
-	return api.ComputerSnapshot{DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
+	return api.ComputerSnapshot{ExecutionControl: apiComputerExecutionControl(snapshot.ExecutionControl), ExecutionWait: (*api.ComputerExecutionWait)(snapshot.ExecutionWait), DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
 		Residency:      api.ComputerResidency(snapshot.Residency),
 		Error:          snapshot.Error,
 		ID:             snapshot.ID,
@@ -157,7 +157,7 @@ func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
 }
 
 func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
-	return api.ComputerListItem{DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince,
+	return api.ComputerListItem{ExecutionControl: apiComputerExecutionControl(item.ExecutionControl), ExecutionWait: (*api.ComputerExecutionWait)(item.ExecutionWait), DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince,
 		Residency:      api.ComputerResidency(item.Residency),
 		Error:          item.Error,
 		ID:             item.ID,
@@ -202,4 +202,11 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, apiComputerSnapshot(snapshot))
+}
+
+func apiComputerExecutionControl(c *computer.ExecutionControl) *api.ComputerExecutionControl {
+	if c == nil {
+		return nil
+	}
+	return &api.ComputerExecutionControl{ID: c.ID.String(), ComputerID: c.ComputerID.String(), Kind: c.Kind, Status: c.Status, ErrorCode: c.ErrorCode, AcceptedAt: c.AcceptedAt, SettledAt: c.SettledAt}
 }

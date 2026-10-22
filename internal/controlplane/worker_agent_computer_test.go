@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -39,6 +40,9 @@ func agentComputerBytes(t *testing.T, p proto.Message) []byte {
 func beginWorkerAgentCapture(t *testing.T, f sessiontest.Fixture, client *workerclient.Client) (workerapi.AgentComputerCaptureRequest, workerapi.AgentComputerCaptureResponse, *agentv1.ComputerSessionCapture) {
 	t.Helper()
 	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: request.CheckpointID}); err != nil {
+		t.Fatal(err)
+	}
 	response, err := client.BeginAgentComputerCapture(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -493,7 +497,7 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f sessiontest.Fixture, request w
  UPDATE computers SET recovery_save_id=$3 WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='ready',manifest=$9,vm_platform_id=$8,ready_at=clock_timestamp() WHERE id=$10;
  UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1 AND computer_id=$2;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($1,$2,2,$11,1,clock_timestamp()+interval '1 hour',$12,$13,$3,'acquiring',1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),NULL);
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($1,$2,2,$11,1,clock_timestamp()+interval '1 hour',$12,$13,$3,'acquiring',536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),NULL);
  UPDATE computer_leases SET base_root_id=$5,write_key_id=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=2;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, result.SaveID, key, root, pack, locator, platform, manifest, request.CheckpointID, f.Worker, instance, credentialDigest[:])
 	prepare := workerapi.AgentComputerRestoreRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, LeaseEpoch: 2, ChannelCredential: targetCredential}

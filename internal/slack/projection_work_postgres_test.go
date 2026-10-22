@@ -82,7 +82,7 @@ func TestSlackWorkCapIncludesQuestionSeparatedGroups(t *testing.T) {
 		}
 		f.projectAll(t)
 	}
-	rows, err := f.Pool.Query(t.Context(), `SELECT role FROM slack_posts WHERE thread_source_id=$1 ORDER BY seq`, f.participant)
+	rows, err := f.Pool.Query(t.Context(), `SELECT role FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' ORDER BY seq`, f.participant)
 	if err != nil {
 		t.Fatal(err)
 	}

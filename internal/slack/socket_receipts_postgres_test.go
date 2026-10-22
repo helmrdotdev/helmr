@@ -57,10 +57,13 @@ func TestSocketReceiptsCommitBeforeACKAndDeduplicate(t *testing.T) {
 	control.Target.Turn, control.Target.Ask = f.pendingQuestion(t)
 	control.OptionID = "yes"
 	form, _ := url.ParseQuery(string(interactionBody(t, InteractionHandler{ControlKey: key}, control, "human", slackNow())))
-	for _, input := range []struct {
+	lifecycle := f.control("help")
+	lifecycle.ExpiresAt = 0
+	lifecycleForm, _ := url.ParseQuery(string(interactionBody(t, InteractionHandler{ControlKey: key}, lifecycle, "human", slackNow())))
+	for index, input := range []struct {
 		kind    string
 		payload []byte
-	}{{"events_api", event}, {"interactive", []byte(form.Get("payload"))}} {
+	}{{"events_api", event}, {"interactive", []byte(form.Get("payload"))}, {"interactive", []byte(lifecycleForm.Get("payload"))}} {
 		for range 2 {
 			envelope := socketEnvelope{Type: input.kind, EnvelopeID: uuid.NewV7().String(), AcceptsResponse: true, Payload: input.payload}
 			raw, _ := json.Marshal(envelope)
@@ -83,10 +86,7 @@ func TestSocketReceiptsCommitBeforeACKAndDeduplicate(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests WHERE status='received'`).Scan(&count); err != nil {
 				t.Fatal(err)
 			}
-			expected := 1
-			if input.kind == "interactive" {
-				expected = 2
-			}
+			expected := index + 1
 			if count != expected {
 				t.Fatalf("ACK preceded durable deduplicated receipt: %d", count)
 			}

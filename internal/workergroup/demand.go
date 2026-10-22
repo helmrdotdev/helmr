@@ -13,26 +13,16 @@ import (
 func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.UUID) (bool, error) {
 	var present bool
 	err := database.QueryRow(ctx, `SELECT EXISTS(
+ SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
+ JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.id=$1
+ WHERE c.execution_deadline_at>clock_timestamp() AND c.deleted_at IS NULL
+ AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
+ ) OR EXISTS(
  SELECT 1 FROM image_builds preparation
  JOIN environments e ON e.id=preparation.environment_id
  JOIN projects project ON project.id=e.project_id
  JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
  WHERE preparation.status='queued' AND preparation.worker_host_id IS NULL AND preparation.deadline_at>clock_timestamp()
- ) OR EXISTS(
- SELECT 1 FROM boot_seed_builds b
- JOIN images i ON (i.environment_id,i.id)=(b.environment_id,b.image_id)
- JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
- JOIN environments e ON e.id=b.environment_id
- JOIN projects project ON project.id=e.project_id
- JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
- WHERE b.status='queued' AND b.worker_host_id IS NULL AND i.root_id IS NOT NULL AND p.status='succeeded'
- AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
-   SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
-     AND s.status='active' AND s.current_version_id=x.version_id))
- AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))
  ) OR EXISTS(
  SELECT 1 FROM sessions s
  JOIN environments e ON e.id=s.environment_id
@@ -55,7 +45,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
    OR (EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published')
     AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
     AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807)))
-   OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
+   OR (c.execution_deadline_at>clock_timestamp() AND c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
      AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id
        AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))))
  ) OR EXISTS(

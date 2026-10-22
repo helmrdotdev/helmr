@@ -25,6 +25,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
+      - name: Cache Nix tools
+        if: matrix.check == 'go'
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569
+        with:
+          # Reuse tool realizations across source changes; Nix still resolves every input.
+          primary-key: nix-ci-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**', 'bun.lock', 'bunfig.toml', '**/package.json', 'internal/version/runtime-dependencies.json', '.github/actions/setup-nix/action.yaml') }}
       - name: Cache Go compilation and modules
         if: matrix.check == 'go'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25

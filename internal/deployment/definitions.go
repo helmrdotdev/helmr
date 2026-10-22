@@ -293,6 +293,7 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	}
 
 	type agentInput struct {
+		Suspension  string                           `json:"suspension"`
 		Name        string                           `json:"name"`
 		Computer    string                           `json:"computer"`
 		HasInit     bool                             `json:"has_init"`
@@ -322,7 +323,7 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 				}
 				triggers = append(triggers, triggerInput{Agent: d.DeclaredID, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Destination: destination})
 			}
-			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, HasInit: d.Agent.HasInit, InputKind: d.Agent.InputKind, InputSchema: d.Agent.InputSchema, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
+			inputs = append(inputs, agentInput{Suspension: d.Agent.SuspensionPolicy(), Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, HasInit: d.Agent.HasInit, InputKind: d.Agent.InputKind, InputSchema: d.Agent.InputSchema, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
 		}
 	}
 	if len(inputs) == 0 {
@@ -337,9 +338,9 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
  ON CONFLICT(environment_id,key) DO NOTHING`, env, raw); err != nil {
 		return err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,input_kind,input_schema,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
- SELECT $1,a.id,$2,t.id,v.has_init,v.input_kind,v.input_schema,v.max_turn_ms,v.close_idle_ms,v.close_never
- FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,has_init boolean,input_kind text,input_schema jsonb,max_turn_ms bigint,close_idle_ms bigint,close_never boolean)
+	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,input_kind,input_schema,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never,suspension)
+ SELECT $1,a.id,$2,t.id,v.has_init,v.input_kind,v.input_schema,v.max_turn_ms,v.close_idle_ms,v.close_never,v.suspension
+ FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,has_init boolean,input_kind text,input_schema jsonb,max_turn_ms bigint,close_idle_ms bigint,close_never boolean,suspension text)
  JOIN agents a ON a.environment_id=$1 AND a.key=v.name
  JOIN templates t ON t.environment_id=$1 AND t.key=v.computer`, env, deployment, raw)
 	if err != nil {

@@ -103,3 +103,24 @@ func TestSlackAnswerControlRequiresOpeningProvenance(t *testing.T) {
 		t.Fatal("public open control carried a fabricated opener timestamp")
 	}
 }
+
+func TestLifecycleBaseControlPersistsButConfirmationExpires(t *testing.T) {
+	key := []byte("01234567890123456789012345678901")
+	c := controlFixture()
+	c.Action = "help"
+	c.Target.Turn, c.Target.Ask = uuid.Nil(), uuid.Nil()
+	c.ExpiresAt = 0
+	token, err := encodeControl(key, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeControl(key, token, time.Now().AddDate(2, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	c.Action = "confirm_close"
+	c.Actor = "human"
+	c.Scope = strings.Repeat("a", 64)
+	if _, err = encodeControl(key, c); err == nil {
+		t.Fatal("unbounded confirmation accepted")
+	}
+}

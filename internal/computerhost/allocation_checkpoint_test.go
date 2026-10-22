@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -32,8 +33,9 @@ import (
 )
 
 type checkpointPipelineClient struct {
-	stepMu      sync.Mutex
-	workPending atomic.Bool
+	stepMu        sync.Mutex
+	workPending   atomic.Bool
+	releaseSource atomic.Bool
 	AllocatedComputerClient
 	stepErr        error
 	beginNotReady  bool
@@ -78,7 +80,7 @@ func (c *checkpointPipelineClient) BeginAgentComputerCapture(_ context.Context, 
 	if r.CheckpointID != capture.CheckpointId {
 		c.t.Fatal("retry changed capture identity")
 	}
-	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save, WorkPending: c.workPending.Load()}, c.step("begin")
+	return workerapi.AgentComputerCaptureResponse{Capture: c.capture, SaveID: c.save, WorkPending: c.workPending.Load(), ReleaseSource: c.releaseSource.Load()}, c.step("begin")
 }
 func (c *checkpointPipelineClient) SealAgentComputerCapture(context.Context, workerapi.AgentComputerReceiptRequest) error {
 	return c.step("seal")
@@ -217,6 +219,33 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 	}}
 	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: saveStoragePublisher{store}, ComputerRanges: store, TempDir: t.TempDir()}}
 	return o, c, m, cut
+}
+
+func TestComputerCheckpointWaitLeavesSaveOwnerResponsive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first, _, _, _ := checkpointPipelineFixture(t, "", "")
+		permit := first.machines.captures.request()
+		if !permit.take() {
+			t.Fatal("first capture did not acquire")
+		}
+		defer permit.release()
+		second, checkpointClient, _, _ := checkpointPipelineFixture(t, "", "")
+		second.machines = first.machines
+		if err := second.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, func() func() { t.Fatal("waiting capture sealed execution"); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if second.capturePermit == nil || len(checkpointClient.calls) != 0 {
+			t.Fatal("waiting capture lost position or reached control before permit")
+		}
+		saves, saveClient := agentSaveFixture(t, "")
+		saves.cancelIdle = second.cancelCaptureWait
+		if err := saveTestStep(saves, t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(saveClient.requests) == 0 || second.capturePermit != nil || first.machines.captures.active != permit {
+			t.Fatal("pending save stalled behind the other capture")
+		}
+	})
 }
 
 func TestComputerCheckpointPipelineRetainsOneCutThroughPublicationUncertainty(t *testing.T) {
@@ -616,4 +645,143 @@ func TestComputerCheckpointPendingHydrationLeavesSaveOwnerAvailable(t *testing.T
 	if err := o.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{}, nil); !errors.Is(err, m.hydrationErr) {
 		t.Fatalf("pager failure hidden: %v", err)
 	}
+}
+
+type blockedCheckpointPublication struct {
+	*checkpointPipelineClient
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *blockedCheckpointPublication) CaptureAgentSave(ctx context.Context, p workerapi.AgentSavePublication) error {
+	close(c.entered)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.release:
+	}
+	return c.checkpointPipelineClient.CaptureAgentSave(ctx, p)
+}
+func TestComputerCheckpointPublicationDoesNotHoldCaptureQueue(t *testing.T) {
+	o, c, m, cut := checkpointPipelineFixture(t, "", "")
+	gate := &blockedCheckpointPublication{checkpointPipelineClient: c, entered: make(chan struct{}), release: make(chan struct{})}
+	o.client = gate
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("publication never entered")
+	}
+	next := o.machines.captures.request()
+	if !next.take() {
+		close(gate.release)
+		<-done
+		t.Fatal("unrelated capture blocked behind upload")
+	}
+	next.release()
+	close(gate.release)
+	if err := <-done; !errors.Is(err, errComputerHibernated) {
+		t.Fatal(err)
+	}
+	if m.snapshots != 1 || o.checkpointCut == nil || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+		t.Fatal("publication lost immutable cut")
+	}
+	o.checkpointCut.Release()
+}
+
+func TestComputerCheckpointRetainsPublishedSourceUntilPolicyReclaims(t *testing.T) {
+	o, _, m, cut := checkpointPipelineFixture(t, "", "")
+	optional, policy, shape := optionalMachines(t)
+	o.machines.Reservations = optional.Reservations
+	o.machines.HostSlot = optional.HostSlot
+	o.machines.ApplyResourcePolicy(policy)
+	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
+	if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+	}()
+	deadline := time.After(3 * time.Second)
+	for len(o.machines.Reservations.Snapshot().Optional) == 0 {
+		select {
+		case err := <-done:
+			t.Fatalf("source stopped before retention: %v", err)
+		case <-deadline:
+			t.Fatal("published source was not retained")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if o.machines.Reservations.Snapshot().Used != shape {
+		t.Fatal("retention released physical charge")
+	}
+	policy.Revision++
+	policy.Optional = workerapi.OptionalResources{}
+	o.machines.ApplyResourcePolicy(policy)
+	o.Wake()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errComputerHibernated) {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("source ignored reclaim")
+	}
+	if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+		t.Fatal("source charge or cut released before joined teardown")
+	}
+	o.checkpointCut.Release()
+}
+
+func TestComputerCheckpointReleasesClosedSourceWithoutResume(t *testing.T) {
+	o, client, m, cut := checkpointPipelineFixture(t, "", "")
+	optional, policy, shape := optionalMachines(t)
+	o.machines.Reservations = optional.Reservations
+	o.machines.HostSlot = optional.HostSlot
+	o.machines.ApplyResourcePolicy(policy)
+	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
+	if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+	}()
+	deadline := time.After(3 * time.Second)
+	for len(o.machines.Reservations.Snapshot().Optional) == 0 {
+		select {
+		case err := <-done:
+			t.Fatalf("source stopped before retention: %v", err)
+		case <-deadline:
+			t.Fatal("published source was not retained")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if o.machines.Reservations.Snapshot().Used != shape {
+		t.Fatal("retention released physical charge")
+	}
+	client.releaseSource.Store(true)
+	o.Wake()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errComputerHibernated) {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("source ignored reclaim")
+	}
+	if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+		t.Fatal("source charge or cut released before joined teardown")
+	}
+	o.checkpointCut.Release()
 }

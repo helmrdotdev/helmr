@@ -39,7 +39,7 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 		VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("frozen device state")),
 		ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("packed private scratch")),
 		Memory:      file("memory", cas.BootSeedMemoryMediaType, raw)}
-	m, err := p.publishBootSeed(t.Context(), staging, uuid.NewV7(), uuid.NewV7(), artifact, 1<<20)
+	m, err := p.publishBootSeed(t.Context(), staging, uuid.NewV7(), uuid.NewV7(), artifact, 1<<20, p.ComputerObjects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,5 +106,20 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 	}
 	if _, err := openCheckpointMemory(t.Context(), ranges, cipher, m.Memory, m.MemoryHeaderDigest, m.BuildID.String()+"/memory", m.MemoryBytes); err == nil {
 		t.Fatal("seed authenticated as a customer continuation")
+	}
+	p.OptionalComputerObjects = p.ComputerObjects
+	prepared, err := p.openPreparedBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), m.Memory.Digest); err != nil {
+		t.Fatal(err)
+	}
+	clear(got)
+	if _, err := prepared.MemorySource.ReadAt(t.Context(), got, memoryChunkSize); err != nil {
+		t.Fatal("prepared pager retained a remote dependency", err)
+	}
+	if !bytes.Equal(got, raw[memoryChunkSize:memoryChunkSize+4096]) {
+		t.Fatal("local prepared memory differs")
 	}
 }

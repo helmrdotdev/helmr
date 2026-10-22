@@ -23,11 +23,11 @@ WITH transitioned AS (
        AND worker_hosts.current_epoch = $4
        AND worker_hosts.claim_version = $5
        AND worker_hosts.status = 'active'
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
 ), target AS (
-    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.status, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.vm_platform_id, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_vm_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.observed_at, transitioned.admission_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.drain_reason, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
+    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.status, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.vm_platform_id, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_vm_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.resource_observation_sequence, transitioned.resource_policy_revision, transitioned.resource_observed_at, transitioned.local_optional_cpu_millis, transitioned.local_optional_memory_bytes, transitioned.optional_disk_bytes, transitioned.local_optional_vm_slots, transitioned.local_optional_tasks, transitioned.optional_reclaim_pending, transitioned.disk_slots_for_real_work, transitioned.ready_leaf_keys, transitioned.observed_at, transitioned.admission_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.drain_reason, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
     UNION ALL
-    SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+    SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
       FROM worker_hosts
      WHERE worker_hosts.id = $2
        AND worker_hosts.worker_group_id = $3
@@ -44,7 +44,7 @@ WITH transitioned AS (
        AND worker_host_secrets.claim_version < target.claim_version
     RETURNING worker_host_secrets.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.resource_observation_sequence, target.resource_policy_revision, target.resource_observed_at, target.local_optional_cpu_millis, target.local_optional_memory_bytes, target.optional_disk_bytes, target.local_optional_vm_slots, target.local_optional_tasks, target.optional_reclaim_pending, target.disk_slots_for_real_work, target.ready_leaf_keys, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM host_secret_fence) >= 0
 `
@@ -77,6 +77,17 @@ type DrainWorkerHostRow struct {
 	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
+	ResourceObservationSequence  pgtype.Int8        `json:"resource_observation_sequence"`
+	ResourcePolicyRevision       pgtype.Int8        `json:"resource_policy_revision"`
+	ResourceObservedAt           pgtype.Timestamptz `json:"resource_observed_at"`
+	LocalOptionalCpuMillis       pgtype.Int8        `json:"local_optional_cpu_millis"`
+	LocalOptionalMemoryBytes     pgtype.Int8        `json:"local_optional_memory_bytes"`
+	OptionalDiskBytes            pgtype.Int8        `json:"optional_disk_bytes"`
+	LocalOptionalVmSlots         pgtype.Int4        `json:"local_optional_vm_slots"`
+	LocalOptionalTasks           pgtype.Int4        `json:"local_optional_tasks"`
+	OptionalReclaimPending       pgtype.Bool        `json:"optional_reclaim_pending"`
+	DiskSlotsForRealWork         pgtype.Int4        `json:"disk_slots_for_real_work"`
+	ReadyLeafKeys                []byte             `json:"ready_leaf_keys"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
@@ -118,6 +129,17 @@ func (q *Queries) DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams
 		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
+		&i.ResourceObservationSequence,
+		&i.ResourcePolicyRevision,
+		&i.ResourceObservedAt,
+		&i.LocalOptionalCpuMillis,
+		&i.LocalOptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.LocalOptionalVmSlots,
+		&i.LocalOptionalTasks,
+		&i.OptionalReclaimPending,
+		&i.DiskSlotsForRealWork,
+		&i.ReadyLeafKeys,
 		&i.ObservedAt,
 		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
@@ -142,7 +164,7 @@ WITH target AS (
        AND worker_hosts.current_epoch = $3
        AND worker_hosts.claim_version = $4
        AND worker_hosts.status IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
 ), revoked_host_secrets AS (
     UPDATE worker_host_secrets
        SET revoked_at = COALESCE(revoked_at, now())
@@ -151,11 +173,11 @@ WITH target AS (
        AND worker_host_secrets.revoked_at IS NULL
     RETURNING worker_host_secrets.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.resource_observation_sequence, target.resource_policy_revision, target.resource_observed_at, target.local_optional_cpu_millis, target.local_optional_memory_bytes, target.optional_disk_bytes, target.local_optional_vm_slots, target.local_optional_tasks, target.optional_reclaim_pending, target.disk_slots_for_real_work, target.ready_leaf_keys, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
 UNION ALL
-SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
   FROM worker_hosts
  WHERE worker_hosts.id = $1
    AND worker_hosts.worker_group_id = $2
@@ -193,6 +215,17 @@ type FenceWorkerHostRow struct {
 	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
+	ResourceObservationSequence  pgtype.Int8        `json:"resource_observation_sequence"`
+	ResourcePolicyRevision       pgtype.Int8        `json:"resource_policy_revision"`
+	ResourceObservedAt           pgtype.Timestamptz `json:"resource_observed_at"`
+	LocalOptionalCpuMillis       pgtype.Int8        `json:"local_optional_cpu_millis"`
+	LocalOptionalMemoryBytes     pgtype.Int8        `json:"local_optional_memory_bytes"`
+	OptionalDiskBytes            pgtype.Int8        `json:"optional_disk_bytes"`
+	LocalOptionalVmSlots         pgtype.Int4        `json:"local_optional_vm_slots"`
+	LocalOptionalTasks           pgtype.Int4        `json:"local_optional_tasks"`
+	OptionalReclaimPending       pgtype.Bool        `json:"optional_reclaim_pending"`
+	DiskSlotsForRealWork         pgtype.Int4        `json:"disk_slots_for_real_work"`
+	ReadyLeafKeys                []byte             `json:"ready_leaf_keys"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
@@ -233,6 +266,17 @@ func (q *Queries) FenceWorkerHost(ctx context.Context, arg FenceWorkerHostParams
 		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
+		&i.ResourceObservationSequence,
+		&i.ResourcePolicyRevision,
+		&i.ResourceObservedAt,
+		&i.LocalOptionalCpuMillis,
+		&i.LocalOptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.LocalOptionalVmSlots,
+		&i.LocalOptionalTasks,
+		&i.OptionalReclaimPending,
+		&i.DiskSlotsForRealWork,
+		&i.ReadyLeafKeys,
 		&i.ObservedAt,
 		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
@@ -453,7 +497,7 @@ WITH transitioned AS (
                       AND worker_hosts.status IN ('registering', 'active', 'draining')
                )
                AND NOT EXISTS (
-                   SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+                   SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -544,7 +588,7 @@ UPDATE worker_pools AS target
          SELECT 1 FROM worker_hosts h
          WHERE h.worker_group_id=target.worker_group_id AND h.worker_pool_id=target.id
            AND (h.status IN ('registering','active','draining')
-             OR EXISTS (SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+             OR EXISTS (SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -592,7 +636,7 @@ UPDATE worker_pools AS target
                  )
           )
    )
-RETURNING target.id, target.worker_group_id, target.name, target.status, target.claim_version, target.vm_platform_id, target.capacity_cpu_millis, target.capacity_memory_bytes, target.capacity_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.sealed_at, target.created_at, target.updated_at
+RETURNING target.id, target.worker_group_id, target.name, target.status, target.claim_version, target.resource_policy_revision, target.optional_cpu_millis, target.optional_memory_bytes, target.optional_disk_bytes, target.optional_vm_slots, target.optional_max_tasks, target.optional_io_bytes_per_second, target.local_headroom_slots, target.vm_platform_id, target.capacity_cpu_millis, target.capacity_memory_bytes, target.capacity_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.sealed_at, target.created_at, target.updated_at
 `
 
 type TransitionWorkerPoolLifecycleParams struct {
@@ -616,6 +660,14 @@ func (q *Queries) TransitionWorkerPoolLifecycle(ctx context.Context, arg Transit
 		&i.Name,
 		&i.Status,
 		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
 		&i.VMPlatformID,
 		&i.CapacityCPUMillis,
 		&i.CapacityMemoryBytes,

@@ -60,10 +60,12 @@ worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", 
 
 This profile was qualified with sequential smoke workloads; concurrent capture
 and restore on both slots remain a separate runtime qualification. The explicit
-480-GiB disk ceiling leaves 456 GiB after the 8-GiB reserve and 16-GiB cache.
-Each slot now needs just over 216 GiB for its full lifecycle: scratch, Computer
-projection and staging, runtime and deployment bundle files, retained restored memory/state,
-and simultaneous checkpoint intermediates. Both slots fit the configured supply.
+480-GiB disk ceiling leaves 472 GiB after the 8-GiB reserve. Each slot needs
+just over 232 GiB for its full lifecycle: scratch, Computer projection and staging,
+runtime and deployment bundle files, retained restored memory/state and prepared
+RAM ciphertext, and simultaneous checkpoint intermediates. Both slots fit the
+configured supply. Optional cache uses only surplus after all slots are funded,
+up to 4 GiB and within the pool resource policy.
 The Worker also checks fresh available filesystem space before activation; existing
 files can make an otherwise sufficient configured disk fail startup. Keep the
 ceiling below actual filesystem capacity and fund every configured slot.
@@ -77,10 +79,10 @@ The standard profile defaults to a metal worker instance type and nested virtual
 Workers are filesystem-first. Their root EBS volume holds runtime data, staged
 artifacts, and cache. The AWS reference roots require explicit CPU, memory,
 execution-slot, cache and disk capacity when Workers are enabled, including a
-non-null `worker_disk_mib`. The Worker subtracts its reserve and cache from the
-configured ceiling, then requires a complete lifecycle envelope for every slot.
-After local recovery it checks fresh filesystem availability with the same reserve,
-cache and original slot count, including quarantined owners. Unaccounted temporary
+non-null `worker_disk_mib`. The Worker subtracts its reserve from the configured ceiling, then requires a
+complete lifecycle envelope for every slot. Optional cache shares the remaining
+physical ledger. After local recovery it checks fresh filesystem availability
+with the same reserve and original slot count, including quarantined owners. Unaccounted temporary
 files reduce that availability. A shortfall prevents activation and reports the
 required and available bytes and the affected work and temporary directories.
 Stop the Worker and establish file ownership before manually removing residue;

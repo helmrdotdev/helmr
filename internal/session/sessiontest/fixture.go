@@ -2,6 +2,9 @@ package sessiontest
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
 	"testing"
 	"uuid"
@@ -65,12 +68,13 @@ func New(t *testing.T) Fixture {
       INSERT INTO worker_pools(id,worker_group_id,name,status,sealed_at,vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots) VALUES($12,$11,'pool','active',clock_timestamp(),$6,1000,1073741824,1073741824,1000,1073741824,1073741824,1);
       INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) VALUES($12,1,$6);
       INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,epoch_cpu_millis,epoch_memory_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest) VALUES($13,'host',$11,$12,'active',1,$13,clock_timestamp(),clock_timestamp(),1000,1073741824,1000,1073741824,1073741824,$6,1,1,'{}'::jsonb,$6);
-      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($4,$8,1,$13,1,clock_timestamp()+interval '1 hour','active',$8,$14,1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),clock_timestamp());
+      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($4,$8,1,$13,1,clock_timestamp()+interval '1 hour','active',$8,$14,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),clock_timestamp());
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($4,$9,1,$8,1,'ready',1,1,1,'resume',1,clock_timestamp());
     `, pgx.QueryExecModeSimpleProtocol, org, f.User, project, f.Environment, f.Deployment, "sha256:"+strings.Repeat("1", 64), f.Agent, f.Computer, f.Session, token, group, pool, f.Worker, channelDigest[:], initial.key, initial.root.Pack.Digest, initial.root.Pack.SizeBytes, initial.root.Pack.Rank, string(initial.inspection), initial.id, string(initial.locator), initial.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_guest_ephemeral_disk_bytes=1073741824,resource_observation_sequence=1,resource_policy_revision=1,resource_observed_at=clock_timestamp(),local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,disk_slots_for_real_work=1,ready_leaf_keys='[]' WHERE id=$1`, f.Worker)
 	return f
 }
 
@@ -78,7 +82,22 @@ func New(t *testing.T) Fixture {
 // seed profile and resources that admitting a new Computer requires.
 func PrepareAdmission(t *testing.T, f Fixture) {
 	t.Helper()
+	ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+}
+
+// ObserveProvisioning supplies provider headroom for admission tests.
+func ObserveProvisioning(t *testing.T, f Fixture) {
+	t.Helper()
+	// Admission fixtures include a provider observation authorizing bounded
+	// provisioning; physical allocation tests still set their own Host capacity.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2`, f.Worker, f.Group)
+	identity, err := db.New(f.Pool).ReadCapacitySupplyIdentity(t.Context(), pgvalue.UUID(f.Group))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(identity.Identity))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp(),capacity_supply_fingerprint=$2,capacity_pools=(SELECT jsonb_build_array(jsonb_build_object('pool_id',id,'max_additional_workers',1000,'active_workers',1,'registering_workers',0)) FROM worker_pools WHERE worker_group_id=$1) WHERE id=$1`, f.Group, hex.EncodeToString(digest[:]))
 }

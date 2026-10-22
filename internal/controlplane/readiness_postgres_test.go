@@ -107,7 +107,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{}); err != nil {
+				if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources()}); err != nil {
 					t.Fatal(err)
 				}
 				clock := &servingTestClock{now: time.Now()}
@@ -129,7 +129,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				cycle(false, 0)
 				unavailable.Store(true)
 				dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.Worker)
-				if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{}); err == nil {
+				if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources()}); err == nil {
 					t.Fatal("observation unexpectedly succeeded during outage")
 				}
 				// Longer than the old stale-fence deadline, even though Dispatcher can write.
@@ -140,7 +140,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				unavailable.Store(false)
 				for i := range 24 {
 					if survives && i == 12 {
-						if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{}); err != nil {
+						if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{Resources: testWorkerResources()}); err != nil {
 							t.Fatalf("live host could not observe after recovery: %v", err)
 						}
 					}

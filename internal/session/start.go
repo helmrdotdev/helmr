@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -143,6 +144,9 @@ func StartError(err error) error {
 // global order) and checks the caller may start Sessions. Slack route locks
 // (step 3) follow it, then AdmitStart.
 func LockStartCaller(ctx context.Context, tx pgx.Tx, p StartPlan) error {
+	if err := workergroup.LockExecutionSupply(ctx, tx, p.Request.EnvironmentID); err != nil {
+		return err
+	}
 	if p.Caller.Kind == "session" {
 		if err := lockRuntimeHost(ctx, tx, p.Caller); err != nil {
 			return err
@@ -281,6 +285,11 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		}
 		if err != nil {
 			return err
+		}
+		if computerID != uuid.Nil() {
+			if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, computerID); err != nil {
+				return err
+			}
 		}
 		result.SessionID, result.Created = uuid.NewV7(), true
 		result.CloseAfterIdleMs = lifetime.Resolve(req.CloseAfterIdle, duration, never)

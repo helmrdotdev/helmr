@@ -36,6 +36,10 @@ func (c *Client) FailBootSeed(ctx context.Context, request workerapi.BootSeedFai
 	return c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/fail", request, nil)
 }
 
+func (c *Client) ReclaimBootSeed(ctx context.Context, request workerapi.BootSeedExecutor) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/reclaim", request, nil)
+}
+
 func (c *Client) ObserveBootSeedStopped(ctx context.Context, request workerapi.AllocationIdentity) error {
 	return c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/stopped", request, nil)
 }

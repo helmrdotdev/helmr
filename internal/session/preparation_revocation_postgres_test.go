@@ -225,9 +225,7 @@ func TestPreparationImageRevocationDeniesCheckpointProgress(t *testing.T) {
 func TestPreparationImageRevocationDeniesCaptureReplay(t *testing.T) {
 	p := preparationResidentImage(t)
 	req := p.f.captureRequest()
-	if _, err := session.BeginComputerCapture(t.Context(), p.f.pool, *p.f.host(), req); err != nil {
-		t.Fatal(err)
-	}
+	beginCapture(t, p.f.fixture, req)
 	if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}

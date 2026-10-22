@@ -62,6 +62,16 @@ type item struct {
 }
 
 type bin struct {
+	hostID          pgtype.UUID
+	epoch           int64
+	immediateKnown  bool
+	immediate       ResourceVector
+	immediateStarts int64
+	optional        OptionalOccupancy
+	reclaimPending  bool
+	headroom        int32
+	mandatorySlots  int64
+	maxSlots        int32
 	workerGroupID   uuid.UUID
 	workerPoolID    pgtype.UUID
 	resources       ResourceVector
@@ -106,7 +116,6 @@ func CanRestore(requirements RestoreRequirements, pool Pool) bool {
 type poolPlan struct {
 	id       pgtype.UUID
 	max      int32
-	reserve  int32
 	pool     Pool
 	template bin
 	bins     []bin
@@ -118,7 +127,6 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
 	limits := make(map[[16]byte]int32, len(request.Pools))
-	reserves := make(map[[16]byte]int32, len(request.Pools))
 	poolIDs := make([]pgtype.UUID, 0, len(request.Pools))
 	for index, requested := range request.Pools {
 		id, err := ids.Parse(requested.PoolID)
@@ -128,15 +136,11 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		if requested.MaxAdditionalWorkers < 0 || requested.MaxAdditionalWorkers > maximumAdditionalWorkers {
 			return PlanResponse{}, fmt.Errorf("%w: pools[%d].max_additional_workers must be between 0 and %d", ErrInvalidPlanRequest, index, maximumAdditionalWorkers)
 		}
-		if requested.MinSpareSlots < 0 || requested.MinSpareSlots > maximumAdditionalWorkers {
-			return PlanResponse{}, fmt.Errorf("%w: min_spare_slots must be between 0 and %d", ErrInvalidPlanRequest, maximumAdditionalWorkers)
-		}
 		key := [16]byte(id)
 		if _, duplicate := limits[key]; duplicate {
 			return PlanResponse{}, fmt.Errorf("%w: pools[%d].pool_id is duplicated", ErrInvalidPlanRequest, index)
 		}
 		limits[key] = requested.MaxAdditionalWorkers
-		reserves[key] = requested.MinSpareSlots
 		poolIDs = append(poolIDs, pgvalue.UUID(id))
 	}
 	group, err := store.GetWorkerGroup(ctx, pgvalue.UUID(workerGroupID))
@@ -156,7 +160,8 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return PlanResponse{}, fmt.Errorf("%w: every requested pool must be active in the Worker Group", ErrInvalidPlanRequest)
 	}
 	response := PlanResponse{
-		WorkerGroupID: pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
+		PlacementResults: map[string]string{},
+		WorkerGroupID:    pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
 		GroupStatus: WorkerGroupStatus(group.Status),
 		Complete:    true, ComputedAt: now.UTC(), Pools: make([]PoolPlan, 0, len(rows)),
 		UnmatchedDemand: []Incompatibility{},
@@ -168,7 +173,6 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		if err != nil {
 			return PlanResponse{}, fmt.Errorf("load capacity Worker pool: %w", err)
 		}
-		plan.reserve = reserves[row.ID.Bytes]
 		plans = append(plans, plan)
 	}
 	sort.Slice(plans, func(i, j int) bool { return bytes.Compare(plans[i].id.Bytes[:], plans[j].id.Bytes[:]) < 0 })
@@ -197,6 +201,10 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return PlanResponse{}, err
 	}
 	response.Complete = response.Complete && binsComplete
+	observePlacements(plans, bins)
+	for _, plan := range plans {
+		response.Complete = response.Complete && plan.result.Complete
+	}
 	reasons := map[string]int64{}
 	if !binsComplete {
 		for index := range plans {
@@ -244,9 +252,11 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			residents = 1
 		}
 		if candidate.resources.CPUMillis > budget.cpu || candidate.resources.MemoryBytes > budget.memory || residents > budget.residents {
+			response.PlacementResults[candidate.key] = "environment_limit"
 			continue
 		}
 		consume := func() {
+			response.PlacementResults[candidate.key] = ""
 			budget.cpu -= candidate.resources.CPUMillis
 			budget.memory -= candidate.resources.MemoryBytes
 			budget.residents -= residents
@@ -254,6 +264,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if candidate.reason != "" {
 			reasons[candidate.reason]++
+			response.PlacementResults[candidate.key] = candidate.reason
 			continue
 		}
 		placed := false
@@ -289,10 +300,13 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if compatiblePoolCount == 0 {
 			if candidate.restore != nil {
+				response.PlacementResults[candidate.key] = reasonRuntimeCompatibility
 				reasons[reasonRuntimeCompatibility]++
 			} else if _, exists := planByID[candidate.targetPoolID.Bytes]; !exists {
+				response.PlacementResults[candidate.key] = reasonProviderPool
 				reasons[reasonProviderPool]++
 			} else {
+				response.PlacementResults[candidate.key] = reasonPerInstanceResources
 				reasons[reasonPerInstanceResources]++
 			}
 			continue
@@ -344,13 +358,11 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			break
 		}
 		if !assigned {
+			response.PlacementResults[candidate.key] = reasonProviderSaturated
 			reasons[reasonProviderSaturated]++
 		} else {
 			consume()
 		}
-	}
-	for index := range plans {
-		planSpareSlots(&plans[index], bins)
 	}
 	keys := make([]string, 0, len(reasons))
 	for reason := range reasons {
@@ -361,7 +373,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		response.UnmatchedDemand = append(response.UnmatchedDemand, Incompatibility{Reason: reason, Count: reasons[reason]})
 	}
 	for index := range plans {
-		plans[index].result.Complete = response.Complete
+		plans[index].result.Complete = plans[index].result.Complete && response.Complete
 		response.Pools = append(response.Pools, plans[index].result)
 	}
 	return response, nil
@@ -407,6 +419,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		template: template,
 		result: PoolPlan{
 			PoolID: uuid.UUID(row.ID.Bytes).String(), PoolName: row.Name,
+			PolicyRevision: row.ResourcePolicyRevision, CreditedHosts: []CreditedHost{}, OptionalOccupancy: &OptionalOccupancy{}, Placements: PlacementObservation{Immediate: new(int64)},
 			RegisteringWorkers: row.RegisteringWorkers, ActiveWorkers: row.ActiveWorkers,
 			Complete: true,
 		},
@@ -488,6 +501,12 @@ func currentBins(ctx context.Context, store PlanStore, workerGroupID uuid.UUID) 
 
 func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 	result := bin{
+		hostID: row.WorkerHostID, epoch: row.WorkerEpoch.Int64,
+		immediateKnown:  row.ResourceObservationCurrent,
+		immediate:       ResourceVector{CPUMillis: row.ImmediateCpuMillis, MemoryBytes: row.ImmediateMemoryBytes, GuestEphemeralDiskBytes: row.ImmediateGuestDiskBytes, VMSlots: row.ImmediateVmSlots},
+		immediateStarts: row.ImmediateStarts,
+		optional:        OptionalOccupancy{CPUMillis: row.OptionalCpuMillis, MemoryBytes: row.OptionalMemoryBytes, DiskBytes: row.OptionalDiskBytes.Int64, VMSlots: row.OptionalVmSlots, Tasks: row.OptionalTasks},
+		reclaimPending:  row.OptionalReclaimPending.Bool, headroom: row.LocalHeadroomSlots, mandatorySlots: row.MandatorySlots, maxSlots: row.MaxVMSlots,
 		workerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID),
 		workerPoolID:  row.WorkerPoolID,
 		resources: ResourceVector{

@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,6 +26,15 @@ type Device struct {
 	done       chan struct{}
 	serveErr   error
 	closed     bool
+}
+
+func (d *Device) AdoptPrepared(ctx context.Context, root VersionRoot, activeKey string, keys map[string][]byte, source blockformat.RangeSource) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return os.ErrClosed
+	}
+	return d.disk.AdoptPrepared(ctx, root, activeKey, keys, source)
 }
 
 // AttachDevice transfers disk ownership even on failure: a non-nil result must

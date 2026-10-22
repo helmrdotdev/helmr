@@ -110,6 +110,31 @@ delayed unmentioned messages from before the unmute are also ignored. Already
 accepted work, outgoing replies, question answers and the native Stop button are
 unaffected. Other Session input surfaces are unaffected.
 
+### Computer and Session controls
+
+The thread's control card shows the Computer state and effective close policy.
+Use its Hibernate/Wake button or More to recover the other actions. Commands are
+also available in an existing Session thread:
+
+| Message | Effect |
+| --- | --- |
+| `!sleep` | Show confirmation for hibernating the entire Computer. |
+| `!wake` | Request background execution without sending a prompt. |
+| `!close` | Show confirmation for closing this Session and its owned Sessions. |
+| `!help` | Show policies, scope and controls. |
+
+These are whole-message commands, with the same quote/code exclusions as mute.
+Sleep and Close show affected members privately and recheck scope at confirmation.
+Active foreground work prevents Hibernate; use native Stop deliberately or wait.
+Close is terminal and does not promise to free a Computer occupied by other work.
+An accepted operation is distinct from completed hibernation, waking or closure.
+
+A new authorized work message wakes a sleeping Computer. `!aside`, `!help`,
+`!mute` and `!unmute` do not wake it. Muted threads still accept deliberate Agent
+mentions as work and remain muted afterward. Wake does not release Stop holds.
+Sleeping is a physical state, so Slack conversation status can remain active.
+Closed Sessions reject further input; start a new thread for new work.
+
 These controls do not erase Slack history. Application code independently reading
 Slack history can still see these posts and chooses what context to use. Helmr
 does not automatically exclude messages directed at teammates or short replies

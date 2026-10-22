@@ -17,6 +17,7 @@ type SessionView struct {
 	AgentDefinitionID    string
 	TemplateDefinitionID string
 	Activity             SessionActivityView
+	Suspension           string
 	CloseAfterIdleMs     *int64
 	IdleSince            *time.Time
 	ID                   uuid.UUID
@@ -161,12 +162,12 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
    UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=sessions.environment_id
   ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Kind',h.kind,'RecoveryGap',h.recovery_gap || jsonb_build_object('holdId',h.id,'computerId',h.recovery_computer_id,'leaseEpoch',h.recovery_lease_epoch),'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
   FROM session_holds h JOIN ancestors a ON a.id=h.session_id
-  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since,` + sessionActivityColumn
+  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
 
 func scanSession(row pgx.Row) (SessionView, error) {
 	var v SessionView
 	var holds, activity []byte
-	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.CloseAfterIdleMs, &v.IdleSince, &activity)
+	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.Suspension, &v.CloseAfterIdleMs, &v.IdleSince, &activity)
 	if err == nil {
 		err = json.Unmarshal(holds, &v.Holds)
 	}

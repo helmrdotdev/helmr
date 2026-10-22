@@ -83,12 +83,18 @@ Validate application-specific input in the handler.
 
 | Option | Effect |
 | --- | --- |
+| `suspension` | `"manual"` (default) keeps background execution after Turns. `"after_turn"` permits suspension after a newly settled Turn, once all Computer members and capture checks allow it. |
 | `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
 | `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. |
 
 A Session is idle only when it has no queued or running Turns, pending
 questions, in-flight messages, holds, open child Sessions or unfinished disk
 saves. A Session creation request can set its own `closeAfterIdle` for a new Session.
+Internal saves and retries do not restart the idle clock. Native starters explicitly use
+`suspension: "manual"` and `closeAfterIdle: "never"`. Other Agents retain the
+seven-day close default. Suspension policy is copied from the deployed Agent when
+the Session is created; later deployments do not change existing Sessions.
+
 Closing on idle uses the normal [close](/docs/concepts/sessions#controls)
 lifecycle.
 

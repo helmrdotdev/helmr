@@ -102,6 +102,7 @@ RETURNING worker_groups.*;
 SELECT worker_pools.id,
        worker_pools.worker_group_id,
        worker_pools.name,
+       worker_pools.resource_policy_revision,
        worker_pools.vm_platform_id,
        worker_pools.capacity_cpu_millis,
        worker_pools.capacity_memory_bytes,
@@ -269,7 +270,17 @@ WITH live_workers AS (
            worker_hosts.admission_paused_reason,
            worker_hosts.epoch_cpu_millis,
            worker_hosts.epoch_memory_bytes,
-           worker_hosts.epoch_guest_ephemeral_disk_bytes
+           worker_hosts.epoch_guest_ephemeral_disk_bytes,
+           worker_pools.local_headroom_slots,
+           worker_hosts.optional_disk_bytes,
+           worker_hosts.optional_reclaim_pending,
+           worker_hosts.disk_slots_for_real_work,
+           worker_hosts.local_optional_cpu_millis,
+           worker_hosts.local_optional_memory_bytes,
+           worker_hosts.local_optional_vm_slots,
+           worker_hosts.local_optional_tasks,
+           COALESCE(worker_hosts.resource_observed_at>=clock_timestamp()-sqlc.arg(observation_freshness_seconds)::bigint*interval '1 second'
+             AND worker_hosts.resource_policy_revision=worker_pools.resource_policy_revision,false)::boolean AS resource_observation_current
       FROM worker_groups
       JOIN worker_hosts
         ON worker_hosts.worker_group_id = worker_groups.id
@@ -288,12 +299,17 @@ WITH live_workers AS (
      LIMIT sqlc.arg(row_limit)
 ), usage AS (
  SELECT h.worker_host_id,
-   COALESCE(sum(allocation_usage.reserved_cpu_millis),0)::bigint cpu_millis,
-   COALESCE(sum(allocation_usage.reserved_memory_bytes),0)::bigint memory_bytes,
-   COALESCE(sum(allocation_usage.reserved_scratch_bytes),0)::bigint guest_ephemeral_disk_bytes,
-   count(allocation_usage.worker_host_id)::bigint vm_slots,
-   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting)::bigint instance_starts
- FROM live_workers h LEFT JOIN (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+   COALESCE(sum(allocation_usage.reserved_cpu_millis) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint cpu_millis,
+   COALESCE(sum(allocation_usage.reserved_memory_bytes) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint memory_bytes,
+   COALESCE(sum(allocation_usage.reserved_scratch_bytes) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint guest_ephemeral_disk_bytes,
+   count(allocation_usage.worker_host_id) FILTER (WHERE kind NOT IN ('seed','retained'))::bigint vm_slots,
+   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting AND kind NOT IN ('seed','retained'))::bigint instance_starts,
+   COALESCE(sum(reserved_cpu_millis) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_cpu,
+   COALESCE(sum(reserved_memory_bytes) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_memory,
+   COALESCE(sum(reserved_scratch_bytes) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_scratch,
+   count(*) FILTER (WHERE kind IN ('seed','retained'))::bigint seed_slots,
+   count(*) FILTER (WHERE kind IN ('seed','retained') AND starting)::bigint seed_starts
+ FROM live_workers h LEFT JOIN (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -315,6 +331,19 @@ SELECT live_workers.worker_group_id,
        live_workers.worker_host_id,
        live_workers.worker_epoch,
        live_workers.vm_platform_id,
+       live_workers.resource_observation_current,
+       live_workers.optional_disk_bytes,live_workers.optional_reclaim_pending,
+       live_workers.local_headroom_slots,live_workers.max_vm_slots,
+       usage.vm_slots AS mandatory_slots,
+       (usage.seed_cpu+COALESCE(live_workers.local_optional_cpu_millis,0))::bigint optional_cpu_millis,
+       (usage.seed_memory+COALESCE(live_workers.local_optional_memory_bytes,0))::bigint optional_memory_bytes,
+       (usage.seed_slots+COALESCE(live_workers.local_optional_vm_slots,0))::bigint optional_vm_slots,
+       (usage.seed_slots+COALESCE(live_workers.local_optional_tasks,0))::bigint optional_tasks,
+       GREATEST(live_workers.epoch_cpu_millis-usage.cpu_millis-usage.seed_cpu-COALESCE(live_workers.local_optional_cpu_millis,0),0)::bigint immediate_cpu_millis,
+       GREATEST(live_workers.epoch_memory_bytes-usage.memory_bytes-usage.seed_memory-COALESCE(live_workers.local_optional_memory_bytes,0),0)::bigint immediate_memory_bytes,
+       GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes-usage.guest_ephemeral_disk_bytes-usage.seed_scratch-COALESCE(live_workers.local_optional_vm_slots,0)*live_workers.per_vm_guest_ephemeral_disk_bytes,0)::bigint immediate_guest_disk_bytes,
+       GREATEST(LEAST(live_workers.max_vm_slots-usage.vm_slots-usage.seed_slots-COALESCE(live_workers.local_optional_vm_slots,0),COALESCE(live_workers.disk_slots_for_real_work,0)-usage.vm_slots),0)::bigint immediate_vm_slots,
+       GREATEST(live_workers.max_vm_starts-usage.instance_starts-usage.seed_starts,0)::bigint immediate_starts,
        live_workers.per_vm_cpu_millis,
        live_workers.per_vm_memory_bytes,
        live_workers.per_vm_guest_ephemeral_disk_bytes,
@@ -338,12 +367,36 @@ SELECT live_workers.worker_group_id,
  JOIN usage USING (worker_host_id)
  ORDER BY live_workers.worker_host_id;
 -- name: RecordWorkerObservation :one
+WITH eligible AS MATERIALIZED (
+ SELECT * FROM worker_hosts
+ WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
+ AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+ FOR UPDATE
+), updated AS (
 UPDATE worker_hosts
-   SET observed_at = transaction_timestamp(),
-       admission_paused_reason = sqlc.narg(admission_paused_reason),
-       updated_at = now()
- WHERE worker_hosts.id = sqlc.arg(worker_host_id)
-   AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_hosts.status IN ('active', 'draining')
-RETURNING worker_hosts.*;
+   SET observed_at=clock_timestamp(), admission_paused_reason=sqlc.narg(admission_paused_reason),
+       resource_observation_sequence=sqlc.arg(sequence)::bigint,
+       resource_policy_revision=sqlc.arg(policy_revision)::bigint,
+       resource_observed_at=clock_timestamp(),
+       local_optional_cpu_millis=sqlc.arg(local_cpu_millis)::bigint,
+       local_optional_memory_bytes=sqlc.arg(local_memory_bytes)::bigint,
+       local_optional_vm_slots=sqlc.arg(local_vm_slots)::integer,
+       local_optional_tasks=sqlc.arg(local_tasks)::integer,
+       optional_disk_bytes=sqlc.arg(optional_disk_bytes)::bigint,
+       disk_slots_for_real_work=sqlc.arg(disk_slots_for_real_work)::integer,
+       optional_reclaim_pending=sqlc.arg(reclaim_pending)::boolean,
+       ready_leaf_keys=sqlc.arg(ready_leaf_keys)::jsonb,
+       updated_at=clock_timestamp()
+ WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
+   AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+   AND EXISTS(SELECT 1 FROM eligible)
+   AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<sqlc.arg(sequence))
+ RETURNING worker_hosts.*
+)
+SELECT * FROM updated
+UNION ALL
+SELECT * FROM eligible WHERE NOT EXISTS(SELECT 1 FROM updated);
+
+-- name: GetWorkerPool :one
+SELECT * FROM worker_pools
+ WHERE worker_group_id=sqlc.arg(worker_group_id) AND id=sqlc.arg(worker_pool_id);

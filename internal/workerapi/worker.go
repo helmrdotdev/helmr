@@ -64,7 +64,8 @@ type StartupRecoveryRequest struct {
 }
 
 type Observation struct {
-	AdmissionPausedReason string `json:"admission_paused_reason,omitempty"`
+	Resources             ResourceObservation `json:"resources"`
+	AdmissionPausedReason string              `json:"admission_paused_reason,omitempty"`
 }
 
 type Capabilities struct {
@@ -90,11 +91,13 @@ type CPUEnvironment struct {
 }
 
 type StatusResponse struct {
-	WorkerHostID    string    `json:"worker_host_id"`
-	WorkerGroupID   string    `json:"worker_group_id"`
-	Status          Status    `json:"status"`
-	ActiveInstances int32     `json:"active_instances"`
-	Readiness       Readiness `json:"readiness"`
+	PreparationKeys []ReadyLeafKey `json:"preparation_keys"`
+	ResourcePolicy  ResourcePolicy `json:"resource_policy"`
+	WorkerHostID    string         `json:"worker_host_id"`
+	WorkerGroupID   string         `json:"worker_group_id"`
+	Status          Status         `json:"status"`
+	ActiveInstances int32          `json:"active_instances"`
+	Readiness       Readiness      `json:"readiness"`
 }
 
 type Readiness struct {
@@ -134,4 +137,43 @@ type CASObject struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes"`
 	MediaType string `json:"media_type"`
+}
+
+// ResourcePolicy is applied independently by each Worker. All limits are ceilings;
+// zero prohibits consumption, including optional transfer at a zero rate.
+type ResourcePolicy struct {
+	Revision           int64             `json:"revision"`
+	Optional           OptionalResources `json:"optional"`
+	LocalHeadroomSlots int32             `json:"local_headroom_slots"`
+}
+
+type OptionalResources struct {
+	CPUMillis        int64 `json:"cpu_millis"`
+	MemoryBytes      int64 `json:"memory_bytes"`
+	DiskBytes        int64 `json:"disk_bytes"`
+	VMSlots          int32 `json:"vm_slots"`
+	MaxTasks         int32 `json:"max_tasks"`
+	IOBytesPerSecond int64 `json:"io_bytes_per_second"`
+}
+
+type LocalOptionalResources struct {
+	CPUMillis   int64 `json:"cpu_millis"`
+	MemoryBytes int64 `json:"memory_bytes"`
+	VMSlots     int32 `json:"vm_slots"`
+	Tasks       int32 `json:"tasks"`
+}
+
+type ReadyLeafKey struct {
+	EnvironmentID string `json:"environment_id"`
+	BuildID       string `json:"build_id"`
+}
+
+type ResourceObservation struct {
+	Sequence             int64                  `json:"sequence"`
+	PolicyRevision       int64                  `json:"policy_revision"`
+	LocalOptional        LocalOptionalResources `json:"local_optional"`
+	OptionalDiskBytes    int64                  `json:"optional_disk_bytes"`
+	DiskSlotsForRealWork int32                  `json:"disk_slots_for_real_work"`
+	ReclaimPending       bool                   `json:"reclaim_pending"`
+	ReadyLeafKeys        []ReadyLeafKey         `json:"ready_leaf_keys"`
 }

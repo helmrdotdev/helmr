@@ -92,7 +92,7 @@ test("readers see unknown roots and retained stream evidence without recovery au
   const second = { ...initial(), id: "00000000-0000-7000-8000-000000000796", sequence: 2, stream_status: "uncertain", method: "chat.startStream", status: "failed", disposed_at: now, disposed_by: "manager", text: "Stream evidence still retained" };
   const { writes } = await fixture(page, "viewer", [first, second]);
   await expect(page.getByText("Later messages remain blocked", { exact: false })).toBeVisible();
-  await expect(page.getByText("Send work from the CLI or Slack; close the session from the CLI.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Send work from the CLI or Slack.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Load more delivery issues" }).click();
   await page.getByRole("button", { name: /message 2/ }).click();
   await expect(page.getByText("Slack stream termination remains unconfirmed.", { exact: false })).toBeVisible();

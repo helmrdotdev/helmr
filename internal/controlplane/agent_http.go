@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 	"uuid"
 
@@ -202,7 +203,7 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey, ExpectedScope: request.ExpectedScope,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -276,6 +277,16 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 	var invalidScope environmentScopeReferenceError
 	var notInterruptible session.TurnNotInterruptibleError
 	switch {
+	case errors.Is(err, computer.ErrExecutionSettling):
+		writeError(w, conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true}))
+	case errors.Is(err, workergroup.ErrCapacityUnavailable):
+		writeError(w, unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true}))
+	case errors.Is(err, workergroup.ErrCapacityIncompatible):
+		writeError(w, conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()}))
+	case errors.Is(err, workergroup.ErrCapacityExhausted):
+		writeError(w, conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()}))
+	case errors.Is(err, computer.ErrExecutionLimit):
+		writeError(w, conflict(codedError{code: "environment_execution_limit", message: err.Error()}))
 	case errors.As(err, &notInterruptible):
 		writeError(w, conflict(notInterruptible))
 	case errors.Is(err, session.ErrMessageClosed):
@@ -314,6 +325,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))
+	case errors.Is(err, session.ErrControlScopeChanged):
+		writeError(w, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady), errors.Is(err, session.ErrTerminal), errors.Is(err, computer.ErrTerminal):

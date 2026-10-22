@@ -23,7 +23,11 @@ export interface ComputerCreateRequest {
   readonly idempotencyKey?: string
 }
 
+export type ComputerExecutionWait = Readonly<{ reason: "scheduling" | "environment_limit" | "saving" }>
+
 interface ComputerProperties {
+  readonly executionControl: ComputerExecutionReceipt | null
+  readonly executionWait: ComputerExecutionWait | null
   readonly deleteAfterUnused: Retention
   readonly unusedSince: string | null
   readonly id: string
@@ -60,7 +64,24 @@ export interface ComputerDeleteReceipt {
   readonly computerId: string
 }
 
+export interface ComputerExecutionRequest {
+  readonly idempotencyKey?: string
+}
+
+/** An accepted request is complete only when status is completed. */
+export interface ComputerExecutionReceipt {
+  readonly id: string
+  readonly computerId: string
+  readonly kind: "hibernate" | "wake"
+  readonly status: "accepted" | "completed" | "failed"
+  readonly errorCode?: string
+  readonly acceptedAt: string
+  readonly settledAt: string | null
+}
+
 export interface ComputerRef {
+  hibernate(request?: ComputerExecutionRequest, options?: RequestOptions): Promise<ComputerExecutionReceipt>
+  wake(request?: ComputerExecutionRequest, options?: RequestOptions): Promise<ComputerExecutionReceipt>
   update(request: Readonly<{ deleteAfterUnused: Retention }>, options?: RequestOptions): Promise<Computer>
   exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<import("./command").CommandRef>
   readonly id: string
@@ -204,6 +225,8 @@ export function parseComputer(value: unknown): Computer {
     deploymentId: resourceID(input["deployment_id"], "Computer response.deployment_id"),
     status,
     residency: residency as ComputerResidency,
+    executionWait: parseExecutionWait(input["execution_wait"]),
+    executionControl: input["execution_control"] == null ? null : parseComputerExecutionReceipt(input["execution_control"]),
     ...(input["error"] === undefined ? {} : { error: parseComputerError(input["error"]) }),
     secrets: Object.freeze(input["secrets"].map(parseComputerSecret)),
     lastActivityAt: computerTimestamp(input["last_activity_at"], "last_activity_at"),
@@ -248,4 +271,31 @@ function parseComputerError(value: unknown): NonNullable<Computer["error"]> {
     throw new Error("Computer error requires code and message")
   }
   return Object.freeze({ code: input["code"], message: input["message"] })
+}
+
+function parseExecutionWait(value: unknown): ComputerExecutionWait | null {
+  if (value === null) return null
+  const input = computerObject(value, "Computer response.execution_wait")
+  const reason = input["reason"]
+  if (reason !== "scheduling" && reason !== "environment_limit" && reason !== "saving") {
+    throw new Error("Computer response.execution_wait.reason is invalid")
+  }
+  return Object.freeze({ reason })
+}
+
+export function parseComputerExecutionReceipt(value: unknown): ComputerExecutionReceipt {
+  const input = computerObject(value, "Computer execution receipt")
+  const kind = input["kind"]
+  const status = input["status"]
+  if (kind !== "hibernate" && kind !== "wake") throw new Error("Invalid Computer execution kind")
+  if (status !== "accepted" && status !== "completed" && status !== "failed") throw new Error("Invalid Computer execution status")
+  const code = input["error_code"]
+  if (code !== undefined && typeof code !== "string") throw new Error("Invalid Computer execution error code")
+  return Object.freeze({
+    id: resourceID(input["id"], "Computer execution ID"),
+    computerId: resourceID(input["computer_id"], "Computer ID"), kind, status,
+    ...(code === undefined ? {} : { errorCode: code }),
+    acceptedAt: timestampString(input["accepted_at"], "Computer execution accepted_at"),
+    settledAt: input["settled_at"] === null ? null : timestampString(input["settled_at"], "Computer execution settled_at"),
+  })
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,8 +26,8 @@ type CancelReceipt struct {
 // and a terminal one is unchanged. A repeated request replays the first
 // receipt without changing the Command, also after its result was pruned.
 // In one transaction Cancel reads the Command in its scope, acquires the
-// idempotency claim and then updates the Command; it takes no Computer or
-// Instance lock.
+// Computer lock before the idempotency claim and Command update, so cancelling
+// the last unallocated demand releases its execution reservation atomically.
 func Cancel(ctx context.Context, txb db.TxBeginner, ref Ref) (CancelReceipt, error) {
 	var receipt CancelReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
@@ -45,7 +46,11 @@ func Cancel(ctx context.Context, txb db.TxBeginner, ref Ref) (CancelReceipt, err
 
 func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 	q := db.New(tx)
-	if _, err := q.GetCommand(ctx, ref.params()); err != nil {
+	c, err := q.GetCommand(ctx, ref.params())
+	if err != nil {
+		return CancelReceipt{}, err
+	}
+	if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, c.ComputerID); err != nil {
 		return CancelReceipt{}, err
 	}
 	request, err := idempotency.NewCommandCancelRequest(ref.EnvironmentID, ref.CommandID)
@@ -81,6 +86,9 @@ func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 		return idempotency.Completion{Target: idempotency.Target{CommandID: ref.CommandID}, Receipt: body}, nil
 	})
 	if err != nil {
+		return CancelReceipt{}, err
+	}
+	if err := computer.RetireUnusedExecutionAdmission(ctx, tx, ref.EnvironmentID, pgvalue.MustUUIDValue(c.ComputerID)); err != nil {
 		return CancelReceipt{}, err
 	}
 	return result, nil

@@ -15,6 +15,11 @@ const base = image("helmr-runtime-smoke")
     "sh",
     "-ceu",
     [
+      // The slim image has no system CA bundle. Bootstrap HTTPS package fetches
+      // with Node's shipped trust roots before installing the system bundle.
+      "install -d /etc/ssl/certs",
+      `node -e 'require("node:fs").writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\\n") + "\\n")'`,
+      "sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources",
       "apt-get update",
       "apt-get install -y --no-install-recommends ca-certificates git jq ripgrep",
       "rm -rf /var/lib/apt/lists/*",

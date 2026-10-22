@@ -437,6 +437,9 @@ func TestCommandCaptureWaitsForPhysicalReconciliation(t *testing.T) {
 	if err := Reconcile(t.Context(), f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "reconciled"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); err != nil {
 		t.Fatalf("reconciled capture: %v", err)
 	}
@@ -471,6 +474,7 @@ func TestCommandClaimRacesCaptureUnderComputerLock(t *testing.T) {
 
 func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	f := commandFixture(t)
+	sessiontest.ObserveProvisioning(t, f.Fixture)
 	store, secretID := commandSecrets(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2`, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed='{"profile":"linux-amd64-ext4-v1"}' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)

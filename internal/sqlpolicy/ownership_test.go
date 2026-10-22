@@ -55,7 +55,7 @@ var tableOwners = map[string]string{
 	"disk_encryption_keys": "internal/computer", "disk_roots": "internal/computer", "images": "internal/computer",
 	"computer_leases": "internal/computer", "disk_object_edges": "internal/computer", "disk_object_keys": "internal/computer",
 	"disk_object_pins": "internal/computer", "disk_objects": "internal/computer", "image_builds": "internal/computer", "boot_seed_builds": "internal/computer", "boot_seed_objects": "internal/computer",
-	"computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
+	"computer_controls": "internal/computer", "computer_saves": "internal/computer", "secret_bindings": "internal/computer", "computers": "internal/computer",
 	"secret_exposures": "internal/computer",
 	// Sessions and Turns
 	"trigger_occurrences": "internal/agent", "session_controls": "internal/session",
@@ -76,8 +76,9 @@ var tableOwners = map[string]string{
 	// worker supply
 	"vm_platforms": "internal/workergroup", "worker_group_tokens": "internal/workergroup", "worker_groups": "internal/workergroup",
 	"worker_host_secrets": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
-	"worker_pools":      "internal/workergroup",
-	"schema_migrations": "cmd/internal/dev-controlplane",
+	"worker_scale_in_operations": "internal/workergroup",
+	"worker_pools":               "internal/workergroup",
+	"schema_migrations":          "cmd/internal/dev-controlplane",
 }
 
 // queryFileOwners maps each sqlc query file to the owner whose writes it

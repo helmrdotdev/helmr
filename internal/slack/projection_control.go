@@ -16,12 +16,16 @@ func projectControlState(ctx context.Context, tx pgx.Tx, o projectionOwner, auth
 	if err := projectActivity(ctx, tx, o, authorized); err != nil {
 		return false, err
 	}
+	lifecycle, err := projectLifecycleCard(ctx, tx, o)
+	if err != nil {
+		return false, err
+	}
 	notice, err := projectStopNotices(ctx, tx, o, authorized)
 	if err != nil {
 		return false, err
 	}
 	advanced, err := slackroute.AdvanceControlProjection(ctx, tx, o.participant, o.environment, o.session)
-	return notice || advanced, err
+	return lifecycle || notice || advanced, err
 }
 
 func projectStopNotices(ctx context.Context, tx pgx.Tx, o projectionOwner, authorized time.Time) (bool, error) {

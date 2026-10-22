@@ -100,19 +100,19 @@ func ReconcileImageBuildRevocation(ctx context.Context, pool db.TxBeginner, env,
 }
 
 type stoppedImageBuild struct {
-	env, spec, id, instance uuid.UUID
-	hostEpoch               int64
-	seed                    bool
+	env, spec, id, instance, host uuid.UUID
+	hostEpoch, executorEpoch      int64
+	seed                          bool
 }
 
 // Private build qualification VMs have fresh physical identities. If recovery
 // retains any unknown VM, it cannot prove all children of a private build absent.
 // Provider-confirmed host absence supplies an empty quarantine set.
 func hostImageBuilds(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedImageBuild, error) {
-	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch,false AS seed FROM image_builds
+	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_host_id,worker_epoch,executor_epoch,false AS seed FROM image_builds
   WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND cardinality($3::uuid[])=0
   UNION ALL
-  SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch,true FROM boot_seed_builds
+  SELECT environment_id,image_spec_id,id,allocation_id,worker_host_id,worker_epoch,executor_epoch,true FROM boot_seed_builds
   WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND cardinality($3::uuid[])=0
   ORDER BY environment_id,image_spec_id,id`, host, beforeEpoch, quarantined)
 	if err != nil {
@@ -120,7 +120,7 @@ func hostImageBuilds(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (stoppedImageBuild, error) {
 		var p stoppedImageBuild
-		err := row.Scan(&p.env, &p.spec, &p.id, &p.instance, &p.hostEpoch, &p.seed)
+		err := row.Scan(&p.env, &p.spec, &p.id, &p.instance, &p.host, &p.hostEpoch, &p.executorEpoch, &p.seed)
 		return p, err
 	})
 }
@@ -183,7 +183,7 @@ func observeRecoveredHostImageBuilds(ctx context.Context, database db.TxDB, host
 
 func recordBuildStopped(ctx context.Context, tx pgx.Tx, build stoppedImageBuild, evidence string) error {
 	if build.seed {
-		return computer.RecordBootSeedStopped(ctx, tx, build.env, build.id, evidence)
+		return computer.RecordBootSeedStopped(ctx, tx, computer.Allocation{EnvironmentID: build.env, OwnerID: build.id, InstanceID: build.instance, HostID: build.host, HostEpoch: build.hostEpoch, Epoch: build.executorEpoch}, evidence)
 	}
 	return computer.RecordImageBuildStopped(ctx, tx, build.env, build.id, evidence)
 }
@@ -246,8 +246,10 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
   SELECT environment_id,id,'attempt' FROM image_builds WHERE status IN ('queued','running') AND deadline_at<=statement_timestamp()
   UNION
   SELECT b.environment_id,b.id,'seed' FROM boot_seed_builds b LEFT JOIN worker_hosts h ON h.id=b.worker_host_id
+ LEFT JOIN worker_pools optional_pool ON optional_pool.id=h.worker_pool_id LEFT JOIN worker_groups optional_group ON optional_group.id=h.worker_group_id
    WHERE b.status='running' AND (b.deadline_at<=statement_timestamp() OR b.executor_expires_at<=statement_timestamp()
-     OR h.current_epoch IS DISTINCT FROM b.worker_epoch OR h.status NOT IN ('active','draining'))
+     OR h.current_epoch IS DISTINCT FROM b.worker_epoch OR h.status<>'active'
+ OR optional_pool.status<>'active' OR optional_group.status<>'active' OR b.resource_policy_revision IS DISTINCT FROM optional_pool.resource_policy_revision)
   UNION
   SELECT environment_id,id,'attempt' FROM image_builds WHERE status='running' AND executor_expires_at<=statement_timestamp()
   UNION
@@ -341,6 +343,9 @@ func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, com
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		if _, err := computer.PinAdmissionImage(ctx, tx, env, computerID); err == nil {
 			return nil
 		} else if !errors.Is(err, computer.ErrNotReady) {

@@ -5,7 +5,6 @@ import { normalizeQuestion, type Question, type NormalizedQuestion, type AnswerF
 import { AgentOutputWriter } from "./agent-output"
 import { OperationError } from "./agent-channel"
 import { ContentError, normalizeContent, normalizeInput, normalizeInvocation, type Content, type HumanContent } from "../../../sdk/typescript/src/content"
-import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { AgentContext, OutputReceipt, InitContext, Message, MessageSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
@@ -124,13 +123,11 @@ export class SessionRuntime {
   private readonly context: InitContext
   private readonly driver: SessionDriver
   private readonly failureConvergenceMs: number
-  private readonly activity: SessionActivity | undefined
   private readonly onTiming: ((timing: TurnTiming) => void) | undefined
-  constructor(definition: LoadedAgentDefinition, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
+  constructor(definition: LoadedAgentDefinition, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
     this.definition = definition
     this.context = context
     this.driver = driver
-    this.activity = limits.activity
     this.onTiming = limits.onTiming
     if (!Number.isFinite(limits.failureConvergenceMs) || limits.failureConvergenceMs <= 0) throw new Error("Failure convergence bound must be positive")
     this.failureConvergenceMs = limits.failureConvergenceMs
@@ -145,9 +142,7 @@ export class SessionRuntime {
   initialize(): Promise<AgentContext<unknown>> {
     return this.setup ??= (async () => {
       try {
-        const action = () => this.definition.init?.(this.context)
-        const setup = () => this.activity ? this.activity.authored(action) : action()
-        return { ...this.context, initResult: await setup() }
+        return { ...this.context, initResult: await this.definition.init?.(this.context) }
       }
       catch (error) { this.held = true; this.reconstructRequired = true; return this.recordFailureHold("setup_failed", error) }
     })()
@@ -189,7 +184,7 @@ export class SessionRuntime {
     const scope: OutputScope = { execution, live: true }
     const admitted = structuredClone(message)
     const admittedSource = structuredClone(source)
-    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.outputScope.run(scope, () => execution.messageHandler!({ id: messageId, content: admitted, source: admittedSource }))) }).then(() => {}).finally(() => { scope.live = false })
+    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.outputScope.run(scope, () => execution.messageHandler!({ id: messageId, content: admitted, source: admittedSource })) }).then(() => {}).finally(() => { scope.live = false })
     execution.messages.set(messageId, { fingerprint: identity, promise: callback })
     execution.callback = callback
     void callback.finally(() => { if (execution.callback === callback) execution.callback = undefined }).catch(() => {})
@@ -214,7 +209,7 @@ export class SessionRuntime {
       return
     }
     if (execution.phase === "processing") execution.phase = "draining"
-    this.abort(execution.abort, reason)
+    execution.abort.abort(reason)
     await execution.promise
     if (this.reconstructRequired) throw new Error("Session requires reconstruction")
   }
@@ -268,15 +263,15 @@ export class SessionRuntime {
       execution.signal.throwIfAborted()
       execution.handler = Promise.resolve().then(async () => {
         execution.signal.throwIfAborted()
-        const input = await this.invoke(() => validate(this.definition.inputSchema, execution.request.input, "input_invalid", execution.signal))
+        const input = await validate(this.definition.inputSchema, execution.request.input, "input_invalid", execution.signal)
         if (!this.definition.inputSchema) {
           try { normalizeInput(input) }
           catch { throw new ValidationFailure("input_invalid", [{ message: "Conversation input requires text parts" }]) }
         }
         execution.signal.throwIfAborted()
-        const returned = await this.invoke(() => this.definition.turn(this.turn(execution, input), context))
+        const returned = await this.definition.turn(this.turn(execution, input), context)
         execution.handlerReturnedAt = performance.now()
-        const parsed = await this.invoke(() => validate(this.definition.resultSchema, returned, "result_invalid", execution.signal))
+        const parsed = await validate(this.definition.resultSchema, returned, "result_invalid", execution.signal)
         return validatedResult(parsed)
       })
       result = await aborted(execution.handler, execution.signal)
@@ -300,7 +295,7 @@ export class SessionRuntime {
     } catch (error) {
       let interrupted = execution.signal.aborted
       execution.phase = "draining"
-      this.abort(execution.abort, error)
+      execution.abort.abort(error)
       let convergenceExpired = false
       try {
         await bounded((async () => {
@@ -344,7 +339,7 @@ export class SessionRuntime {
         ? await this.driver.fail(execution.request.id, { ...execution.failure })
         : await this.driver.finalize(execution.request.id, structuredClone(execution.result!))
       if (execution.phase === "finalizing" && (execution.signal.aborted || outcome.status === "interrupted" || outcome.status === "cancelled")) {
-        this.abort(execution.abort, new Error("Turn interrupted during finalization"))
+        execution.abort.abort(new Error("Turn interrupted during finalization"))
         try { await bounded(this.joinCancellation(execution), this.failureConvergenceMs) }
         catch (error) {
           this.held = true
@@ -378,7 +373,7 @@ export class SessionRuntime {
   }
   private startCancellation(execution: Execution): void {
     for (const hook of execution.cancellation) {
-      hook.pending ??= Promise.resolve().then(() => this.invoke(() => hook.callback(execution.signal.reason))).catch(error => {
+      hook.pending ??= Promise.resolve().then(() => hook.callback(execution.signal.reason)).catch(error => {
         // A rejected cleanup cannot establish safe reuse. Observe it immediately
         // while other hooks and the handler continue to drain.
         execution.cancellationFailure ??= error instanceof Error ? error : new Error(String(error))
@@ -394,14 +389,6 @@ export class SessionRuntime {
       await Promise.all(pending.map(hook => hook.pending))
     } while (joined !== execution.cancellation.length)
     execution.cancellationClosed = true
-  }
-  private abort(controller: AbortController, reason: unknown): void {
-    const action = () => controller.abort(reason)
-    if (this.activity) this.activity.authored(action)
-    else action()
-  }
-  private invoke<T>(action: () => T): T {
-    return this.activity ? this.activity.authored(action) : action()
   }
   private async recordFailureHold(reason: string, original: unknown): Promise<never> {
     await this.recordHold(reason, original)

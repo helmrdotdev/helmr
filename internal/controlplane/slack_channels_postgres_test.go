@@ -34,6 +34,7 @@ func (slackHTTPTestCredentials) BotToken(context.Context, uuid.UUID, int64) (str
 
 func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	f := sessiontest.New(t)
+	sessiontest.ObserveProvisioning(t, f)
 	installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	channel := "C1"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;

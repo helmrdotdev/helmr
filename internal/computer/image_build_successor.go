@@ -3,6 +3,7 @@ package computer
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"time"
 	"uuid"
 
@@ -38,6 +39,9 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		var locked uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err

@@ -12,6 +12,13 @@ import (
 )
 
 func (p *PreparedMachines) seedObject(ctx context.Context, namespace string, d cas.Descriptor, file *os.File) {
+	ctx, finish, allowed := p.beginCacheTask(ctx)
+	if !allowed {
+		return
+	}
+	defer finish()
+	// The file is already verified and local. Copying it consumes the cache's
+	// disk and task allowance, not the optional network fetch/upload budget.
 	started := time.Now()
 	seeded, err := p.ObjectCache.Seed(ctx, namespace, d, io.NewSectionReader(file, 0, d.SizeBytes))
 	if seeded || err != nil {

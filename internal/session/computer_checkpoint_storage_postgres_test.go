@@ -17,8 +17,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/jackc/pgx/v5"
 )
 
 type checkpointStorageFixture struct {
@@ -39,9 +41,15 @@ func checkpointStorageForFixture(t *testing.T, f fixture) checkpointStorageFixtu
 }
 
 func checkpointStorageForSaveFixture(t *testing.T, s *saveStorageFixture) checkpointStorageFixture {
+	return checkpointStorageWithMembers(t, s, true)
+}
+
+func checkpointStorageWithMembers(t *testing.T, s *saveStorageFixture, members bool) checkpointStorageFixture {
 	t.Helper()
 	f := s.f
-	f.peer(t)
+	if members {
+		f.peer(t)
+	}
 	req := f.captureRequest()
 	capture, p := beginCapture(t, f, req)
 	if err := session.RecordComputerSealed(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, &agentv1.ComputerSessionReceipt{CheckpointId: req.CheckpointID.String(), DesiredVersion: p.DesiredVersion, Frozen: true}); err != nil {
@@ -309,6 +317,9 @@ func TestCheckpointRuntimeReadyCannotReplayAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
+	if _, err := session.ControlComputerExecution(ctx, f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
@@ -429,5 +440,78 @@ func TestCheckpointRuntimeRechecksLeaseAfterCASWriteWait(t *testing.T) {
 	var ready bool
 	if err = f.f.pool.QueryRow(ctx, `SELECT ready_at IS NOT NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&ready); err != nil || ready {
 		t.Fatalf("ready=%v: %v", ready, err)
+	}
+}
+
+func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
+	base := newFixture(t)
+	dbtest.MustExec(t, t.Context(), base.pool, `DELETE FROM session_processes WHERE environment_id=$1; DELETE FROM sessions WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, base.env)
+	f := checkpointStorageWithMembers(t, newSaveStorageFixture(t, base), false)
+	if len(f.manifest.Members) != 0 {
+		t.Fatal("standalone checkpoint acquired Sessions")
+	}
+	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	f.upload(t)
+	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.checkpoints.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ControlComputerExecution(t.Context(), base.pool, base.caller(), base.executionRequest("wake", "standalone-wake")); err != nil {
+		t.Fatal(err)
+	}
+	observed := &agentv1.ComputerSessionReceipt{CheckpointId: f.manifest.CheckpointID.String(), DesiredVersion: f.manifest.ControlVersion, Frozen: true}
+	p, err := session.PrepareComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, f.manifest.CheckpointID, 1, sessiontest.ChannelCredential, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Grants) != 0 {
+		t.Fatal("standalone continuation acquired Session grants")
+	}
+	if err := session.ValidateComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, observed); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, base.computer)
+	if err := session.CommitComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); !errors.Is(err, computer.ErrNotReady) {
+		t.Fatalf("expired continuation committed: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, base.computer)
+	if err := session.CommitComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); err != nil {
+		t.Fatal(err)
+	}
+	var pending bool
+	if err := base.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, base.computer).Scan(&pending); err != nil || pending {
+		t.Fatalf("committed source retained preparation deadline: %v %v", pending, err)
+	}
+	if err := session.CompleteComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHibernateReceiptWaitsForOwnedPublication(t *testing.T) {
+	f := newCheckpointStorageFixture(t)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_controls SET deadline_at=clock_timestamp()-interval '1 minute' WHERE computer_id=$1`, f.f.computer)
+	if err := computer.ReconcileExecutionControls(t.Context(), f.f.pool); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.f.pool.QueryRow(t.Context(), `SELECT status FROM computer_controls WHERE computer_id=$1`, f.f.computer).Scan(&state); err != nil || state != "accepted" {
+		t.Fatalf("active publication receipt=%s: %v", state, err)
+	}
+	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	f.upload(t)
+	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.checkpoints.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.f.pool.QueryRow(t.Context(), `SELECT status FROM computer_controls WHERE computer_id=$1`, f.f.computer).Scan(&state); err != nil || state != "completed" {
+		t.Fatalf("published receipt=%s: %v", state, err)
 	}
 }

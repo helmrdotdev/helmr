@@ -16,19 +16,6 @@ WITH RECURSIVE held AS (
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
  WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.status='revoked')
  UNION ALL
- SELECT b.environment_id,b.id,'seed',b.cpu_millis,b.memory_bytes,
- NULL::uuid,''::text,0::integer,''::text,0::bigint,0::bigint,0::bigint
- FROM boot_seed_builds b
- JOIN images i ON (i.environment_id,i.id)=(b.environment_id,b.image_id)
- JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
- WHERE b.status='queued' AND b.worker_host_id IS NULL AND i.root_id IS NOT NULL AND p.status='succeeded'
- AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
-   SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
-     AND s.status='active' AND s.current_version_id=x.version_id))
- AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id)) UNION ALL
  SELECT c.environment_id,c.id,'computer',c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
  COALESCE(source.vm_vcpu_count,0),COALESCE(source.cpu_config_digest,''),COALESCE(source.reserved_cpu_millis,0),
  COALESCE(source.reserved_memory_bytes,0),COALESCE(source.reserved_scratch_bytes,0)
@@ -36,8 +23,9 @@ WITH RECURSIVE held AS (
  LEFT JOIN checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('ready','restoring')
  LEFT JOIN computer_leases source ON source.environment_id=cp.environment_id AND source.computer_id=cp.computer_id AND source.epoch=cp.source_lease_epoch
  LEFT JOIN worker_hosts h ON h.id=source.worker_host_id
- WHERE NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=c.environment_id AND live.computer_id=c.id AND live.fenced_at IS NULL) AND (
+ WHERE NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=c.environment_id AND live.computer_id=c.id AND live.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints retained WHERE retained.environment_id=live.environment_id AND retained.computer_id=live.computer_id AND retained.source_lease_epoch=live.epoch AND retained.status='ready')) AND (
  c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
+ AND (c.execution_deadline_at IS NULL OR c.execution_deadline_at>statement_timestamp())
  AND NOT EXISTS(SELECT 1 FROM (SELECT c.environment_id,c.id AS computer_id,x.secret_id
     FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
     JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id)
@@ -51,11 +39,12 @@ WITH RECURSIVE held AS (
     SELECT c.environment_id,c.computer_id,x.secret_id FROM secret_exposures x
     JOIN commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked') revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
- AND ((cp.id IS NOT NULL) OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published') OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
+ AND (c.execution_deadline_at>statement_timestamp() OR (cp.id IS NOT NULL) OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published') OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
   AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)))
- AND (EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
+ AND (c.execution_deadline_at>statement_timestamp() OR EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')
+ OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing')
-  AND (cp.id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued'))
+  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )
@@ -65,7 +54,7 @@ SELECT d.*, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
 FROM demand d JOIN environments e ON e.id=d.environment_id
 JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=sqlc.arg(region_id)
 CROSS JOIN LATERAL (
- SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -78,12 +67,9 @@ CROSS JOIN LATERAL (
  SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE environment_id=e.id
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE environment_id=e.id AND kind NOT IN ('seed','retained')
 ) usage
-WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE (d.cpu_millis+999)/1000*1000 END
- AND e.max_memory_bytes-usage.memory >= CASE WHEN d.required_memory_bytes>0 THEN d.required_memory_bytes ELSE d.memory_bytes END
- AND (d.kind IN ('preparation','seed') OR e.max_resident_computers-usage.residents>=1)
- AND EXISTS (
+WHERE (EXISTS (
   SELECT 1 FROM worker_groups target_group
   JOIN worker_pools pool ON pool.worker_group_id=target_group.id AND pool.status='active'
   JOIN worker_pool_cpu_shapes shape ON shape.worker_pool_id=pool.id
@@ -98,13 +84,13 @@ WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.req
     AND pool.per_vm_cpu_millis>=(d.cpu_millis+999)/1000*1000
     AND pool.per_vm_memory_bytes>=d.memory_bytes
    END
- )
+ ) OR (d.kind='computer' AND EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=d.environment_id AND c.id=d.owner_id AND c.execution_deadline_at>statement_timestamp())))
 ORDER BY d.environment_id,d.kind,d.owner_id LIMIT sqlc.arg(row_limit);
 
 -- name: ListAllocationPlanningChargedPools :many
 -- Physical reservations retain their pools independently of the queued demand budget.
 SELECT DISTINCT h.worker_pool_id FROM worker_hosts h
-WHERE h.worker_group_id=sqlc.arg(worker_group_id) AND EXISTS(SELECT 1 FROM (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+WHERE h.worker_group_id=sqlc.arg(worker_group_id) AND EXISTS(SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -117,4 +103,4 @@ WHERE h.worker_group_id=sqlc.arg(worker_group_id) AND EXISTS(SELECT 1 FROM (SELE
  SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  started_at IS NULL
- FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id);
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id AND kind NOT IN ('seed','retained'));

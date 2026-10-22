@@ -1,4 +1,5 @@
 DROP TABLE IF EXISTS slack_work_items;
+DROP TABLE IF EXISTS computer_controls;
 DROP TABLE IF EXISTS audit_events;
 -- Drop the owned table set together to resolve internal foreign-key cycles.
 DROP TABLE IF EXISTS
@@ -55,6 +56,7 @@ DROP TABLE IF EXISTS
     deployment_objects,
     deployments,
     worker_host_secrets,
+    worker_scale_in_operations,
     worker_hosts,
     worker_pool_cpu_shapes,
     worker_pools,

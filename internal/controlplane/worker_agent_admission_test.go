@@ -21,6 +21,7 @@ import (
 func runtimeAdmissionOrigin(t *testing.T) (sessiontest.Fixture, session.Admission, session.Execution) {
 	t.Helper()
 	f := sessiontest.New(t)
+	sessiontest.ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE computers SET image_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)

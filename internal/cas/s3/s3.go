@@ -56,12 +56,13 @@ type s3Presigner interface {
 }
 
 type Store struct {
-	client    s3Client
-	bucket    string
-	prefix    string
-	tempDir   string
-	sharded   bool
-	presigner s3Presigner
+	client     s3Client
+	bucket     string
+	prefix     string
+	tempDir    string
+	sharded    bool
+	presigner  s3Presigner
+	httpClient aws.HTTPClient
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
@@ -72,6 +73,11 @@ type ImmutableStore struct {
 }
 
 type Option func(*Store)
+
+// WithHTTPClient supplies transport-level transfer control for this store.
+func WithHTTPClient(client aws.HTTPClient) Option {
+	return func(store *Store) { store.httpClient = client }
+}
 
 var quarantineOwnerPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
@@ -99,21 +105,21 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	store := &Store{bucket: uri.Host, prefix: strings.Trim(uri.Path, "/")}
+	for _, opt := range opts {
+		opt(store)
+	}
 	client := awss3.NewFromConfig(cfg, func(options *awss3.Options) {
+		if store.httpClient != nil {
+			options.HTTPClient = store.httpClient
+		}
 		if endpoint := uri.Query().Get("endpoint"); endpoint != "" {
 			options.BaseEndpoint = aws.String(endpoint)
 			options.UsePathStyle = true
 		}
 	})
-	store := &Store{
-		client:    client,
-		presigner: newQuarantinePresigner(client),
-		bucket:    uri.Host,
-		prefix:    strings.Trim(uri.Path, "/"),
-	}
-	for _, opt := range opts {
-		opt(store)
-	}
+	store.client = client
+	store.presigner = newQuarantinePresigner(client)
 	return store, nil
 }
 

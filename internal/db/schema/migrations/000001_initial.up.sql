@@ -326,6 +326,10 @@ CREATE TABLE worker_group_tokens (
 
 CREATE TABLE worker_groups (
     id uuid PRIMARY KEY,
+    capacity_observed_at timestamptz,
+    capacity_supply_fingerprint text,
+    capacity_pools jsonb,
+    CHECK (num_nonnulls(capacity_observed_at,capacity_supply_fingerprint,capacity_pools) IN (0,3)),
     token_id uuid NOT NULL UNIQUE,
     region_id text NOT NULL,
     name text NOT NULL CHECK (btrim(name) <> ''),
@@ -366,6 +370,14 @@ CREATE TABLE worker_pools (
     status text NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'active', 'draining', 'disabled')),
     claim_version bigint NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+    resource_policy_revision bigint NOT NULL DEFAULT 1 CHECK (resource_policy_revision > 0),
+    optional_cpu_millis bigint NOT NULL DEFAULT 0 CHECK (optional_cpu_millis >= 0 AND optional_cpu_millis <= 9007199254740991),
+    optional_memory_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_memory_bytes >= 0 AND optional_memory_bytes <= 9007199254740991),
+    optional_disk_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_disk_bytes >= 0 AND optional_disk_bytes <= 9007199254740991),
+    optional_vm_slots integer NOT NULL DEFAULT 0 CHECK (optional_vm_slots >= 0 AND optional_vm_slots <= 9007199254740991),
+    optional_max_tasks integer NOT NULL DEFAULT 0 CHECK (optional_max_tasks >= 0 AND optional_max_tasks <= 9007199254740991),
+    optional_io_bytes_per_second bigint NOT NULL DEFAULT 0 CHECK (optional_io_bytes_per_second >= 0 AND optional_io_bytes_per_second <= 9007199254740991),
+    local_headroom_slots integer NOT NULL DEFAULT 0 CHECK (local_headroom_slots >= 0 AND local_headroom_slots <= 9007199254740991),
     vm_platform_id text,
     capacity_cpu_millis bigint CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_millis > 0),
     capacity_memory_bytes bigint CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0),
@@ -402,6 +414,13 @@ CREATE TABLE worker_pools (
         AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL
         AND max_vm_slots IS NOT NULL)
         ),
+    CONSTRAINT worker_pools_resource_policy_check CHECK (
+        (sealed_at IS NULL AND optional_cpu_millis=0 AND optional_memory_bytes=0
+         AND optional_disk_bytes=0 AND optional_vm_slots=0 AND optional_max_tasks=0
+         AND optional_io_bytes_per_second=0 AND local_headroom_slots=0)
+        OR (sealed_at IS NOT NULL AND optional_cpu_millis<=capacity_cpu_millis
+         AND optional_memory_bytes<=capacity_memory_bytes AND optional_vm_slots<=max_vm_slots
+         AND local_headroom_slots<=max_vm_slots)),
     CONSTRAINT worker_pools_cpu_capacity_check CHECK (sealed_at IS NULL OR per_vm_cpu_millis <= capacity_cpu_millis),
     CONSTRAINT worker_pools_memory_capacity_check CHECK (sealed_at IS NULL OR per_vm_memory_bytes <= capacity_memory_bytes),
     CONSTRAINT worker_pools_disk_capacity_check CHECK (sealed_at IS NULL OR per_vm_guest_ephemeral_disk_bytes <= capacity_guest_ephemeral_disk_bytes),
@@ -441,6 +460,17 @@ CREATE TABLE worker_hosts (
     max_vm_starts integer NOT NULL DEFAULT 0 CHECK (max_vm_starts >= 0),
     cpu_environment jsonb,
     cpu_environment_digest text CHECK (cpu_environment_digest IS NULL OR cpu_environment_digest ~ '^sha256:[0-9a-f]{64}$'),
+    resource_observation_sequence bigint CHECK (resource_observation_sequence > 0),
+    resource_policy_revision bigint CHECK (resource_policy_revision > 0),
+    resource_observed_at timestamptz,
+    local_optional_cpu_millis bigint CHECK (local_optional_cpu_millis >= 0),
+    local_optional_memory_bytes bigint CHECK (local_optional_memory_bytes >= 0),
+    optional_disk_bytes bigint CHECK (optional_disk_bytes >= 0),
+    local_optional_vm_slots integer CHECK (local_optional_vm_slots >= 0),
+    local_optional_tasks integer CHECK (local_optional_tasks >= 0),
+    optional_reclaim_pending boolean,
+    disk_slots_for_real_work integer CHECK (disk_slots_for_real_work >= 0),
+    ready_leaf_keys jsonb,
     observed_at timestamptz,
     admission_paused_reason text,
     epoch_started_at timestamptz,
@@ -455,6 +485,11 @@ CREATE TABLE worker_hosts (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, worker_group_id),
+    CONSTRAINT worker_hosts_resource_observation_check CHECK (
+        num_nonnulls(resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys) IN (0, 11)),
+    CONSTRAINT worker_hosts_ready_leaf_keys_check CHECK (
+        ready_leaf_keys IS NULL OR CASE WHEN jsonb_typeof(ready_leaf_keys)='array'
+        THEN jsonb_array_length(ready_leaf_keys)<=32 ELSE false END),
     CONSTRAINT worker_hosts_resource_id_length_check CHECK (octet_length(resource_id) <= 512),
     CONSTRAINT worker_hosts_epoch_identity_check CHECK (
         (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL)
@@ -499,6 +534,23 @@ CREATE INDEX worker_hosts_resource ON worker_hosts(worker_group_id, resource_id)
 
 CREATE INDEX worker_hosts_active_dispatch_idx ON worker_hosts (worker_group_id, id) WHERE status = 'active';
 
+CREATE TABLE worker_scale_in_operations (
+    worker_group_id uuid NOT NULL,
+    operation_key uuid NOT NULL,
+    worker_pool_id uuid NOT NULL,
+    worker_host_id uuid NOT NULL,
+    drain_claim_version bigint NOT NULL CHECK (drain_claim_version > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at timestamptz,
+    PRIMARY KEY (worker_group_id, operation_key),
+    FOREIGN KEY (worker_group_id, worker_pool_id)
+        REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (worker_host_id, worker_group_id)
+        REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX worker_scale_in_operations_one_pending
+    ON worker_scale_in_operations(worker_group_id) WHERE completed_at IS NULL;
+
 CREATE TABLE worker_host_secrets (
     id uuid PRIMARY KEY,
     worker_group_id uuid NOT NULL,
@@ -518,8 +570,8 @@ CREATE TABLE worker_host_secrets (
 CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON worker_host_secrets (worker_host_id) WHERE revoked_at IS NULL;
 
 CREATE TABLE deployments (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     bundle_digest text NOT NULL CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (environment_id, id),
@@ -547,8 +599,8 @@ CREATE INDEX deployment_objects_cas ON deployment_objects(org_id, digest);
 -- Preparation input identity is immutable. Scheduling policy is derived from
 -- promoted definitions and never changes the input specification.
 CREATE TABLE image_specs (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     spec_digest text NOT NULL CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'),
     spec jsonb NOT NULL CHECK (jsonb_typeof(spec) = 'object'),
     seed jsonb NOT NULL CHECK (jsonb_typeof(seed) = 'object'),
@@ -565,8 +617,8 @@ CREATE INDEX image_specs_due ON image_specs(next_refresh_at) WHERE next_refresh_
 CREATE INDEX image_specs_refresh ON image_specs(environment_id, id) WHERE refresh_every_ms IS NOT NULL;
 
 CREATE TABLE templates (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, key)
@@ -597,8 +649,8 @@ CREATE INDEX template_definitions_deployment ON template_definitions(environment
 CREATE INDEX template_definitions_image_spec ON template_definitions(environment_id, image_spec_id);
 
 CREATE TABLE agents (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, key)
@@ -614,6 +666,7 @@ CREATE TABLE agent_definitions (
     input_schema jsonb,
     CHECK ((input_kind='text' AND input_schema IS NULL) OR (input_kind='json' AND input_schema IS NOT NULL AND jsonb_typeof(input_schema)='object')),
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
+    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
     CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
@@ -654,8 +707,8 @@ CREATE TABLE disk_encryption_keys (
 
 -- Logical outcome never substitutes for proof that a preparation writer stopped.
 CREATE TABLE image_builds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     successor_of uuid,
     idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
@@ -670,7 +723,7 @@ CREATE TABLE image_builds (
     executor_expires_at timestamptz,
     delivered_at timestamptz,
     started_at timestamptz,
-    reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED,
     reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
     vm_platform_id text REFERENCES vm_platforms(id),
@@ -730,8 +783,8 @@ CREATE TABLE image_builds (
         OR (worker_host_id IS NOT NULL AND executor_epoch>0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)),
     CHECK ((delivered_at IS NULL)=(executor_expires_at IS NULL)),
     CHECK (started_at IS NULL OR delivered_at IS NOT NULL),
-    CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
-        OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000)),
+    CHECK ((worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
+        OR (worker_host_id IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL)),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
     CHECK (status<>'queued' OR worker_host_id IS NULL),
     CHECK (fenced_at IS NULL OR status IN ('succeeded', 'failed')),
@@ -844,8 +897,8 @@ CREATE TABLE disk_roots (
 );
 
 CREATE TABLE images (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     image_build_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq>0),
@@ -865,8 +918,8 @@ CREATE TABLE images (
 -- Derived launch work owns its private executors independently of authored
 -- preparation. Missing or failed launch artifacts do not block image readiness.
 CREATE TABLE boot_seed_builds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     image_id uuid,
@@ -879,12 +932,14 @@ CREATE TABLE boot_seed_builds (
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
     allocation_id uuid UNIQUE,
+    resource_policy_revision bigint CHECK (resource_policy_revision>0),
+    retry_after timestamptz,
     executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch>=0),
     channel_credential_digest bytea CHECK (octet_length(channel_credential_digest)=32),
     delivered_at timestamptz,
     started_at timestamptz,
     executor_expires_at timestamptz,
-    reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED,
     reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
     vm_platform_id text REFERENCES vm_platforms(id),
@@ -911,10 +966,10 @@ CREATE TABLE boot_seed_builds (
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
     CHECK ((status='succeeded')=(manifest IS NOT NULL AND qualification_evidence IS NOT NULL)),
     CHECK (manifest IS NULL OR octet_length(manifest)<=1048576),
-    CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND executor_epoch=0 AND channel_credential_digest IS NULL AND deadline_at IS NULL)
-        OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch=1 AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
-    CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
-        OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000 AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
+    CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND resource_policy_revision IS NULL AND channel_credential_digest IS NULL AND deadline_at IS NULL)
+        OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch>0 AND resource_policy_revision IS NOT NULL AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
+    CHECK ((worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
+        OR (worker_host_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
 );
 
 CREATE INDEX boot_seed_builds_host ON boot_seed_builds(worker_host_id,worker_epoch) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
@@ -934,8 +989,9 @@ CREATE TABLE boot_seed_objects (
 );
 
 CREATE TABLE computers (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    execution_deadline_at timestamptz,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
     unused_since timestamptz,
     key text CHECK (key IS NULL OR octet_length(key) BETWEEN 1 AND 512),
@@ -986,6 +1042,29 @@ CREATE TABLE computers (
     FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id),
     CHECK (image_id IS NULL OR (image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
 );
+
+-- Accepted lifecycle operations survive retries independently of physical progress.
+CREATE TABLE computer_controls (
+    id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    computer_id uuid NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('hibernate','wake')),
+    caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key')),
+    caller_id uuid NOT NULL,
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
+    status text NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted','completed','failed')),
+    checkpoint_id uuid,
+    error_code text,
+    accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    deadline_at timestamptz NOT NULL,
+    settled_at timestamptz,
+    PRIMARY KEY (environment_id,id),
+    FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
+    UNIQUE (environment_id,computer_id,caller_kind,caller_id,kind,idempotency_key),
+    CHECK ((status='accepted')=(settled_at IS NULL)),
+    CHECK ((status='failed')=(error_code IS NOT NULL))
+);
+CREATE UNIQUE INDEX computer_controls_pending ON computer_controls(environment_id,computer_id) WHERE status='accepted';
 
 CREATE INDEX computers_unused_policy ON computers(environment_id, id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
 
@@ -1042,7 +1121,7 @@ CREATE TABLE computer_leases (
     storage_pressure_since timestamptz,
     delivered_at timestamptz,
     initialized_at timestamptz,
-    reserved_cpu_millis bigint NOT NULL CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED NOT NULL,
     reserved_memory_bytes bigint NOT NULL CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint NOT NULL CHECK (reserved_scratch_bytes>0),
     vm_platform_id text NOT NULL REFERENCES vm_platforms(id),
@@ -1064,7 +1143,6 @@ CREATE TABLE computer_leases (
     FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id),
     CHECK (boot_seed_failed_at IS NULL OR boot_seed_build_id IS NOT NULL),
     CHECK ((delivered_at IS NULL)=(expires_at IS NULL)),
-    CHECK (reserved_cpu_millis=vm_vcpu_count::bigint*1000),
     CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL),
     CHECK (status<>'active' OR initialized_at IS NOT NULL),
     CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL)),
@@ -1086,8 +1164,8 @@ CREATE INDEX computer_leases_host_unfenced ON computer_leases(worker_host_id, wo
 
 -- Ordinary commands are pinned to one Computer lease when execution is admitted.
 CREATE TABLE commands (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     computer_lease_epoch bigint CHECK (computer_lease_epoch>0),
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'starting', 'running', 'stopping', 'exited', 'failed', 'cancelled', 'timed_out', 'lost')),
@@ -1169,8 +1247,8 @@ CREATE INDEX commands_unreconciled ON commands(environment_id, computer_id, comp
 -- Scoped platform mutation identity survives response expiry. Domain mutation and
 -- target binding commit together; an unfinished acquisition is never durable work.
 CREATE TABLE idempotency_receipts (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'template.refresh', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
     slot_hash bytea NOT NULL CHECK (octet_length(slot_hash)=32),
     request_fingerprint bytea NOT NULL CHECK (octet_length(request_fingerprint)=32),
@@ -1308,8 +1386,8 @@ CREATE TABLE slack_socket_connections (
 );
 
 CREATE TABLE slack_connections (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL UNIQUE,
+    environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     slack_app_registration_id uuid NOT NULL REFERENCES slack_app_registrations(id),
     slack_installation_id uuid,
@@ -1371,8 +1449,8 @@ CREATE TABLE agent_triggers (
 -- The interval during which one promotion's declaration fires, with its cursor
 -- and the Slack channel binding pinned at promotion.
 CREATE TABLE trigger_activations (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     trigger_key text NOT NULL,
@@ -1393,8 +1471,9 @@ CREATE UNIQUE INDEX trigger_activations_current ON trigger_activations(environme
 CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, environment_id, id) WHERE active_until IS NULL OR next_fire_at<active_until;
 
 CREATE TABLE sessions (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
     history_eligible_at timestamptz,
@@ -1532,8 +1611,8 @@ CREATE UNIQUE INDEX secret_exposures_command ON secret_exposures(environment_id,
 CREATE INDEX secret_exposures_secret ON secret_exposures(environment_id, secret_id);
 
 CREATE TABLE turns (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
@@ -1627,8 +1706,8 @@ CREATE INDEX trigger_occurrences_activation ON trigger_occurrences(environment_i
 CREATE INDEX trigger_occurrences_turn ON trigger_occurrences(environment_id, session_id, turn_id);
 
 CREATE TABLE session_holds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     scope text NOT NULL CHECK (scope IN ('local', 'subtree')),
     reason text NOT NULL CHECK (octet_length(reason) <= 4096),
@@ -1660,8 +1739,8 @@ CREATE UNIQUE INDEX session_holds_one_storage_pressure ON session_holds(environm
 CREATE INDEX session_holds_active ON session_holds(environment_id, session_id) WHERE released_at IS NULL;
 
 CREATE TABLE session_controls (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     kind text NOT NULL CHECK (kind IN ('interrupt', 'turn_interrupt', 'resume', 'close', 'cancel')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user', 'api_key', 'session')),
@@ -1684,8 +1763,8 @@ CREATE TABLE session_controls (
 CREATE UNIQUE INDEX session_controls_interrupt_hold ON session_controls(environment_id, hold_id) WHERE kind='interrupt';
 
 CREATE TABLE computer_saves (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     computer_lease_epoch bigint NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
@@ -1742,8 +1821,8 @@ CREATE TABLE disk_object_pins (
 CREATE INDEX disk_object_pins_digest ON disk_object_pins(environment_id, digest);
 
 CREATE TABLE checkpoints (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     source_lease_epoch bigint NOT NULL,
     control_version bigint NOT NULL CHECK (control_version > 0),
@@ -1829,10 +1908,10 @@ CREATE TABLE session_events (
 CREATE INDEX session_events_expired_floor ON session_events(environment_id, session_id, seq) WHERE payload_expired_at IS NOT NULL;
 
 CREATE TABLE turn_asks (
+    id uuid NOT NULL,
     environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     turn_id uuid NOT NULL,
-    id uuid NOT NULL,
     process_epoch bigint NOT NULL,
     created_event_seq bigint NOT NULL,
     question_digest bytea NOT NULL CHECK (octet_length(question_digest)=32),
@@ -1863,8 +1942,8 @@ CREATE TABLE turn_asks (
 CREATE INDEX turn_asks_pending ON turn_asks(environment_id, session_id, turn_id) WHERE status='pending';
 
 CREATE TABLE turn_messages (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     turn_id uuid NOT NULL,
     process_epoch bigint NOT NULL,
@@ -1983,6 +2062,7 @@ CREATE TABLE slack_threads (
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
+    projected_lifecycle_state jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
     recipient_team_id text,
     recipient_user_id text,
@@ -2012,6 +2092,7 @@ CREATE TABLE slack_threads (
 );
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
+
 
 CREATE INDEX slack_threads_status_due ON slack_threads(next_attempt_at, refresh_at, id);
 
@@ -2044,7 +2125,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute', 'sleep', 'wake', 'close', 'help', 'hibernate', 'confirm_close')),
     message_id uuid,
     observed_authority_generation bigint,
     observed_next_turn_seq bigint,
@@ -2077,7 +2158,7 @@ CREATE TABLE slack_requests (
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
         OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)
-        OR (operation IN ('mute','unmute') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
+        OR (operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -2085,7 +2166,7 @@ CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
 
-CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute'))) AND payload_expired_at IS NULL;
+CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND payload_expired_at IS NULL;
 
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id, request_digest);
 
@@ -2099,7 +2180,7 @@ CREATE TABLE slack_posts (
     seq bigint NOT NULL CHECK (seq>0),
     post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
-    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening')),
+    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening', 'controls')),
     turn_id uuid,
     ask_id uuid,
     request_id uuid,

@@ -14,7 +14,7 @@ export const workspace = template({
 })
 
 export const assistant = agent({
-  id: agentName, template: workspace, maxTurnDuration: "15m",
+  id: agentName, template: workspace, suspension: "manual", closeAfterIdle: "never", maxTurnDuration: "15m",
   init({ session, recovery }) {
     return PiSession.open({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/pi", sessionId: session.id, model, introduction, recovery: recovery.kind })
   },

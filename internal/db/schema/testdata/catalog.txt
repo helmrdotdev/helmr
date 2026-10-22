@@ -7,6 +7,7 @@ column agent_definitions.has_init boolean not null
 column agent_definitions.input_kind text not null default 'text'::text
 column agent_definitions.input_schema jsonb
 column agent_definitions.max_turn_duration_ms bigint
+column agent_definitions.suspension text not null default 'manual'::text
 column agent_definitions.template_id uuid not null
 column agent_triggers.agent_id uuid not null
 column agent_triggers.cron text not null
@@ -79,9 +80,11 @@ column boot_seed_builds.manifest bytea
 column boot_seed_builds.memory_bytes bigint not null
 column boot_seed_builds.payload_retired_at timestamp with time zone
 column boot_seed_builds.qualification_evidence text
-column boot_seed_builds.reserved_cpu_millis bigint
+column boot_seed_builds.reserved_cpu_millis bigint generated stored ((vm_vcpu_count)::bigint * 1000)
 column boot_seed_builds.reserved_memory_bytes bigint
 column boot_seed_builds.reserved_scratch_bytes bigint
+column boot_seed_builds.resource_policy_revision bigint
+column boot_seed_builds.retry_after timestamp with time zone
 column boot_seed_builds.started_at timestamp with time zone
 column boot_seed_builds.status text not null
 column boot_seed_builds.vm_platform_id text
@@ -193,6 +196,19 @@ column commands.terminal_at timestamp with time zone
 column commands.terminal_reason_code text
 column commands.timeout_ms bigint not null
 column commands.updated_at timestamp with time zone not null default clock_timestamp()
+column computer_controls.accepted_at timestamp with time zone not null default clock_timestamp()
+column computer_controls.caller_id uuid not null
+column computer_controls.caller_kind text not null
+column computer_controls.checkpoint_id uuid
+column computer_controls.computer_id uuid not null
+column computer_controls.deadline_at timestamp with time zone not null
+column computer_controls.environment_id uuid not null
+column computer_controls.error_code text
+column computer_controls.id uuid not null
+column computer_controls.idempotency_key text not null
+column computer_controls.kind text not null
+column computer_controls.settled_at timestamp with time zone
+column computer_controls.status text not null default 'accepted'::text
 column computer_leases.allocation_id uuid not null
 column computer_leases.base_root_id uuid
 column computer_leases.boot_seed_build_id uuid
@@ -209,7 +225,7 @@ column computer_leases.expires_at timestamp with time zone
 column computer_leases.fence_evidence text
 column computer_leases.fenced_at timestamp with time zone
 column computer_leases.initialized_at timestamp with time zone
-column computer_leases.reserved_cpu_millis bigint not null
+column computer_leases.reserved_cpu_millis bigint not null generated stored ((vm_vcpu_count)::bigint * 1000)
 column computer_leases.reserved_memory_bytes bigint not null
 column computer_leases.reserved_scratch_bytes bigint not null
 column computer_leases.restored_from_save_id uuid
@@ -259,6 +275,7 @@ column computers.delete_after_unused_ms bigint
 column computers.deleted_at timestamp with time zone
 column computers.disk_bytes bigint
 column computers.environment_id uuid not null
+column computers.execution_deadline_at timestamp with time zone
 column computers.id uuid not null
 column computers.image_build_id uuid
 column computers.image_id uuid
@@ -466,7 +483,7 @@ column image_builds.proxy_ca_certificate bytea
 column image_builds.proxy_ca_not_after timestamp with time zone
 column image_builds.proxy_ca_private_key_ciphertext bytea
 column image_builds.proxy_ca_private_key_nonce bytea
-column image_builds.reserved_cpu_millis bigint
+column image_builds.reserved_cpu_millis bigint generated stored ((vm_vcpu_count)::bigint * 1000)
 column image_builds.reserved_memory_bytes bigint
 column image_builds.reserved_scratch_bytes bigint
 column image_builds.started_at timestamp with time zone
@@ -709,6 +726,7 @@ column sessions.parent_session_id uuid
 column sessions.requester_session_id uuid
 column sessions.root_session_id uuid not null
 column sessions.status text not null default 'open'::text
+column sessions.suspension_after_seq bigint not null default 0
 column slack_app_registrations.app_icon_url text
 column slack_app_registrations.app_id text
 column slack_app_registrations.app_name text
@@ -881,6 +899,7 @@ column slack_threads.last_acknowledged_status text
 column slack_threads.next_attempt_at timestamp with time zone not null default clock_timestamp()
 column slack_threads.opening_post_key text
 column slack_threads.org_id uuid not null
+column slack_threads.projected_lifecycle_state jsonb
 column slack_threads.recipient_team_id text
 column slack_threads.recipient_user_id text
 column slack_threads.refresh_at timestamp with time zone not null default clock_timestamp()
@@ -1031,6 +1050,9 @@ column worker_group_tokens.id uuid not null
 column worker_group_tokens.last_used_at timestamp with time zone
 column worker_group_tokens.token_hash bytea not null
 column worker_group_tokens.updated_at timestamp with time zone not null default now()
+column worker_groups.capacity_observed_at timestamp with time zone
+column worker_groups.capacity_pools jsonb
+column worker_groups.capacity_supply_fingerprint text
 column worker_groups.claim_version bigint not null default 1
 column worker_groups.created_at timestamp with time zone not null default now()
 column worker_groups.description text not null default ''::text
@@ -1059,6 +1081,7 @@ column worker_hosts.cpu_environment_digest text
 column worker_hosts.created_at timestamp with time zone not null default now()
 column worker_hosts.current_epoch bigint
 column worker_hosts.current_service_id uuid
+column worker_hosts.disk_slots_for_real_work integer
 column worker_hosts.drain_reason text
 column worker_hosts.draining_at timestamp with time zone
 column worker_hosts.epoch_cpu_millis bigint not null default 0
@@ -1066,14 +1089,24 @@ column worker_hosts.epoch_guest_ephemeral_disk_bytes bigint not null default 0
 column worker_hosts.epoch_memory_bytes bigint not null default 0
 column worker_hosts.epoch_started_at timestamp with time zone
 column worker_hosts.id uuid not null
+column worker_hosts.local_optional_cpu_millis bigint
+column worker_hosts.local_optional_memory_bytes bigint
+column worker_hosts.local_optional_tasks integer
+column worker_hosts.local_optional_vm_slots integer
 column worker_hosts.lost_at timestamp with time zone
 column worker_hosts.max_vm_slots integer not null default 0
 column worker_hosts.max_vm_starts integer not null default 0
 column worker_hosts.observed_at timestamp with time zone
+column worker_hosts.optional_disk_bytes bigint
+column worker_hosts.optional_reclaim_pending boolean
 column worker_hosts.per_vm_cpu_millis bigint not null default 0
 column worker_hosts.per_vm_guest_ephemeral_disk_bytes bigint not null default 0
 column worker_hosts.per_vm_memory_bytes bigint not null default 0
+column worker_hosts.ready_leaf_keys jsonb
 column worker_hosts.resource_id text not null
+column worker_hosts.resource_observation_sequence bigint
+column worker_hosts.resource_observed_at timestamp with time zone
+column worker_hosts.resource_policy_revision bigint
 column worker_hosts.status text not null default 'registering'::text
 column worker_hosts.termination_ready_at timestamp with time zone
 column worker_hosts.updated_at timestamp with time zone not null default now()
@@ -1089,21 +1122,37 @@ column worker_pools.capacity_memory_bytes bigint
 column worker_pools.claim_version bigint not null default 1
 column worker_pools.created_at timestamp with time zone not null default now()
 column worker_pools.id uuid not null
+column worker_pools.local_headroom_slots integer not null default 0
 column worker_pools.max_vm_slots integer
 column worker_pools.name text not null
+column worker_pools.optional_cpu_millis bigint not null default 0
+column worker_pools.optional_disk_bytes bigint not null default 0
+column worker_pools.optional_io_bytes_per_second bigint not null default 0
+column worker_pools.optional_max_tasks integer not null default 0
+column worker_pools.optional_memory_bytes bigint not null default 0
+column worker_pools.optional_vm_slots integer not null default 0
 column worker_pools.per_vm_cpu_millis bigint
 column worker_pools.per_vm_guest_ephemeral_disk_bytes bigint
 column worker_pools.per_vm_memory_bytes bigint
+column worker_pools.resource_policy_revision bigint not null default 1
 column worker_pools.sealed_at timestamp with time zone
 column worker_pools.status text not null default 'pending'::text
 column worker_pools.updated_at timestamp with time zone not null default now()
 column worker_pools.vm_platform_id text
 column worker_pools.worker_group_id uuid not null
+column worker_scale_in_operations.completed_at timestamp with time zone
+column worker_scale_in_operations.created_at timestamp with time zone not null default clock_timestamp()
+column worker_scale_in_operations.drain_claim_version bigint not null
+column worker_scale_in_operations.operation_key uuid not null
+column worker_scale_in_operations.worker_group_id uuid not null
+column worker_scale_in_operations.worker_host_id uuid not null
+column worker_scale_in_operations.worker_pool_id uuid not null
 constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
 constraint agent_definitions c CHECK (close_after_idle_ms > 0)
 constraint agent_definitions c CHECK (input_kind = 'text'::text AND input_schema IS NULL OR input_kind = 'json'::text AND input_schema IS NOT NULL AND jsonb_typeof(input_schema) = 'object'::text)
 constraint agent_definitions c CHECK (input_kind = ANY (ARRAY['text'::text, 'json'::text]))
 constraint agent_definitions c CHECK (max_turn_duration_ms > 0)
+constraint agent_definitions c CHECK (suspension = ANY (ARRAY['manual'::text, 'after_turn'::text]))
 constraint agent_definitions f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, template_id, deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
@@ -1156,17 +1205,17 @@ constraint boot_seed_builds c CHECK (manifest IS NULL OR octet_length(manifest) 
 constraint boot_seed_builds c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
 constraint boot_seed_builds c CHECK (octet_length(channel_credential_digest) = 32)
 constraint boot_seed_builds c CHECK (octet_length(qualification_evidence) >= 1 AND octet_length(qualification_evidence) <= 4096)
-constraint boot_seed_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint boot_seed_builds c CHECK (reserved_memory_bytes > 0)
 constraint boot_seed_builds c CHECK (reserved_scratch_bytes > 0)
+constraint boot_seed_builds c CHECK (resource_policy_revision > 0)
 constraint boot_seed_builds c CHECK (started_at IS NULL OR delivered_at IS NOT NULL)
 constraint boot_seed_builds c CHECK (status <> 'running'::text OR worker_host_id IS NOT NULL)
 constraint boot_seed_builds c CHECK (status <> 'waiting'::text OR image_id IS NULL)
 constraint boot_seed_builds c CHECK (status = ANY (ARRAY['waiting'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))
 constraint boot_seed_builds c CHECK (vm_vcpu_count > 0)
 constraint boot_seed_builds c CHECK (worker_epoch > 0)
-constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis = (vm_vcpu_count::bigint * 1000) AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes = memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL)
-constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND executor_epoch = 0 AND channel_credential_digest IS NULL AND deadline_at IS NULL OR worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch = 1 AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)
+constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes = memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL)
+constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND resource_policy_revision IS NULL AND channel_credential_digest IS NULL AND deadline_at IS NULL OR worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch > 0 AND resource_policy_revision IS NOT NULL AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)
 constraint boot_seed_builds f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint boot_seed_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
 constraint boot_seed_builds f FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id)
@@ -1263,6 +1312,15 @@ constraint commands f FOREIGN KEY (environment_id, computer_id) REFERENCES compu
 constraint commands f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint commands p PRIMARY KEY (environment_id, id)
 constraint commands u UNIQUE (environment_id, computer_id, id)
+constraint computer_controls c CHECK ((status = 'accepted'::text) = (settled_at IS NULL))
+constraint computer_controls c CHECK ((status = 'failed'::text) = (error_code IS NOT NULL))
+constraint computer_controls c CHECK (caller_kind = ANY (ARRAY['user'::text, 'api_key'::text]))
+constraint computer_controls c CHECK (kind = ANY (ARRAY['hibernate'::text, 'wake'::text]))
+constraint computer_controls c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
+constraint computer_controls c CHECK (status = ANY (ARRAY['accepted'::text, 'completed'::text, 'failed'::text]))
+constraint computer_controls f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
+constraint computer_controls p PRIMARY KEY (environment_id, id)
+constraint computer_controls u UNIQUE (environment_id, computer_id, caller_kind, caller_id, kind, idempotency_key)
 constraint computer_leases c CHECK ((base_root_id IS NULL) = (write_key_id IS NULL))
 constraint computer_leases c CHECK ((delivered_at IS NULL) = (expires_at IS NULL))
 constraint computer_leases c CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL))
@@ -1273,8 +1331,6 @@ constraint computer_leases c CHECK (disk_released_at IS NULL OR fenced_at IS NOT
 constraint computer_leases c CHECK (epoch > 0)
 constraint computer_leases c CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL)
 constraint computer_leases c CHECK (octet_length(channel_credential_digest) = 32)
-constraint computer_leases c CHECK (reserved_cpu_millis = (vm_vcpu_count::bigint * 1000))
-constraint computer_leases c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint computer_leases c CHECK (reserved_memory_bytes > 0)
 constraint computer_leases c CHECK (reserved_scratch_bytes > 0)
 constraint computer_leases c CHECK (save_retirement_seq > 0)
@@ -1478,7 +1534,6 @@ constraint image_builds c CHECK (octet_length(capture_evidence) >= 1 AND octet_l
 constraint image_builds c CHECK (octet_length(channel_credential_digest) = 32)
 constraint image_builds c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint image_builds c CHECK (proxy_ca_certificate IS NULL OR status = 'running'::text AND octet_length(proxy_ca_certificate) >= 1 AND octet_length(proxy_ca_certificate) <= 16384 AND octet_length(proxy_ca_private_key_nonce) = 12 AND octet_length(proxy_ca_private_key_ciphertext) > 0)
-constraint image_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint image_builds c CHECK (reserved_memory_bytes > 0)
 constraint image_builds c CHECK (reserved_scratch_bytes > 0)
 constraint image_builds c CHECK (started_at IS NULL OR delivered_at IS NOT NULL)
@@ -1500,7 +1555,7 @@ constraint image_builds c CHECK (successor_of IS NULL OR successor_of <> id)
 constraint image_builds c CHECK (vm_vcpu_count > 0)
 constraint image_builds c CHECK (worker_epoch > 0)
 constraint image_builds c CHECK (worker_host_id IS NULL AND executor_epoch = 0 AND worker_epoch IS NULL AND allocation_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL OR worker_host_id IS NOT NULL AND executor_epoch > 0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)
-constraint image_builds c CHECK (worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis = (vm_vcpu_count::bigint * 1000))
+constraint image_builds c CHECK (worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL)
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id)
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id, write_key_required) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id, available)
 constraint image_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
@@ -1682,6 +1737,7 @@ constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS N
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
 constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text, 'cancelled'::text]))
+constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint sessions f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, id, creation_turn_id) REFERENCES turns(environment_id, session_id, id) DEFERRABLE INITIALLY DEFERRED
@@ -1773,7 +1829,7 @@ constraint slack_posts c CHECK (presentation_path = ANY (ARRAY['post'::text, 'st
 constraint slack_posts c CHECK (reconciliation_pages >= 0)
 constraint slack_posts c CHECK (role <> 'opening'::text OR source_start_seq IS NULL AND continuation_ordinal = 0 AND presentation_path = 'post'::text)
 constraint slack_posts c CHECK (role = 'opening'::text OR source_thread_id IS NULL)
-constraint slack_posts c CHECK (role = ANY (ARRAY['intermediate'::text, 'question'::text, 'response'::text, 'lifecycle'::text, 'request_feedback'::text, 'opening'::text]))
+constraint slack_posts c CHECK (role = ANY (ARRAY['intermediate'::text, 'question'::text, 'response'::text, 'lifecycle'::text, 'request_feedback'::text, 'opening'::text, 'controls'::text]))
 constraint slack_posts c CHECK (seq > 0)
 constraint slack_posts c CHECK (source_end_offset >= 0)
 constraint slack_posts c CHECK (source_end_seq >= source_start_seq)
@@ -1801,11 +1857,11 @@ constraint slack_requests c CHECK ((status = 'received'::text) = (finished_at IS
 constraint slack_requests c CHECK (observed_authority_generation IS NULL OR environment_id IS NOT NULL AND observed_authority_generation > 0 AND observed_next_turn_seq > 0)
 constraint slack_requests c CHECK (octet_length(request_digest) = 32)
 constraint slack_requests c CHECK (octet_length(request_key) >= 1 AND octet_length(request_key) <= 1024)
-constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text, 'mute'::text, 'unmute'::text]))
+constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text, 'mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text]))
 constraint slack_requests c CHECK (payload_expired_at IS NULL OR status <> 'received'::text)
 constraint slack_requests c CHECK (slack_user_id <> ''::text)
 constraint slack_requests c CHECK (status <> 'accepted'::text OR user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)
-constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL OR (operation = ANY (ARRAY['mute'::text, 'unmute'::text])) AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
+constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL OR (operation = ANY (ARRAY['mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text])) AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
 constraint slack_requests c CHECK (status = ANY (ARRAY['received'::text, 'accepted'::text, 'rejected'::text]))
 constraint slack_requests f FOREIGN KEY (environment_id, ask_id) REFERENCES turn_asks(environment_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, control_id) REFERENCES session_controls(environment_id, session_id, id)
@@ -1969,6 +2025,7 @@ constraint worker_group_tokens p PRIMARY KEY (id)
 constraint worker_group_tokens u UNIQUE (token_hash)
 constraint worker_groups c CHECK (btrim(name) <> ''::text)
 constraint worker_groups c CHECK (claim_version > 0)
+constraint worker_groups c CHECK (num_nonnulls(capacity_observed_at, capacity_supply_fingerprint, capacity_pools) = ANY (ARRAY[0, 3]))
 constraint worker_groups c CHECK (status = ANY (ARRAY['active'::text, 'paused'::text, 'draining'::text, 'disabled'::text]))
 constraint worker_groups f FOREIGN KEY (id, primary_pool_id) REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT
 constraint worker_groups f FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE RESTRICT
@@ -1994,16 +2051,30 @@ constraint worker_hosts c CHECK (claim_version > 0)
 constraint worker_hosts c CHECK (cpu_environment_digest IS NULL OR cpu_environment_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint worker_hosts c CHECK (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL OR current_epoch IS NOT NULL AND current_service_id IS NOT NULL AND epoch_started_at IS NOT NULL)
 constraint worker_hosts c CHECK (current_epoch IS NULL OR current_epoch > 0)
+constraint worker_hosts c CHECK (disk_slots_for_real_work >= 0)
 constraint worker_hosts c CHECK (drain_reason = ANY (ARRAY['replacement'::text, 'capacity_reduction'::text, 'idle_scale_in'::text, 'shutdown'::text, 'admin'::text, 'incompatible_worker'::text]))
 constraint worker_hosts c CHECK (epoch_cpu_millis >= 0)
 constraint worker_hosts c CHECK (epoch_guest_ephemeral_disk_bytes >= 0)
 constraint worker_hosts c CHECK (epoch_memory_bytes >= 0)
+constraint worker_hosts c CHECK (local_optional_cpu_millis >= 0)
+constraint worker_hosts c CHECK (local_optional_memory_bytes >= 0)
+constraint worker_hosts c CHECK (local_optional_tasks >= 0)
+constraint worker_hosts c CHECK (local_optional_vm_slots >= 0)
 constraint worker_hosts c CHECK (max_vm_slots >= 0)
 constraint worker_hosts c CHECK (max_vm_starts >= 0)
+constraint worker_hosts c CHECK (num_nonnulls(resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys) = ANY (ARRAY[0, 11]))
 constraint worker_hosts c CHECK (octet_length(resource_id) <= 512)
+constraint worker_hosts c CHECK (optional_disk_bytes >= 0)
 constraint worker_hosts c CHECK (per_vm_cpu_millis >= 0)
 constraint worker_hosts c CHECK (per_vm_guest_ephemeral_disk_bytes >= 0)
 constraint worker_hosts c CHECK (per_vm_memory_bytes >= 0)
+constraint worker_hosts c CHECK (ready_leaf_keys IS NULL OR
+CASE
+    WHEN jsonb_typeof(ready_leaf_keys) = 'array'::text THEN jsonb_array_length(ready_leaf_keys) <= 32
+    ELSE false
+END)
+constraint worker_hosts c CHECK (resource_observation_sequence > 0)
+constraint worker_hosts c CHECK (resource_policy_revision > 0)
 constraint worker_hosts c CHECK (status <> 'active'::text OR activated_at IS NOT NULL AND epoch_cpu_millis > 0 AND epoch_memory_bytes > 0 AND per_vm_cpu_millis > 0 AND per_vm_memory_bytes > 0 AND per_vm_guest_ephemeral_disk_bytes > 0)
 constraint worker_hosts c CHECK (status <> 'active'::text OR cpu_environment IS NOT NULL AND jsonb_typeof(cpu_environment) = 'object'::text AND pg_column_size(cpu_environment) <= 4096 AND cpu_environment_digest IS NOT NULL)
 constraint worker_hosts c CHECK (status <> 'active'::text OR vm_platform_id IS NOT NULL AND max_vm_slots > 0 AND max_vm_starts > 0)
@@ -2022,10 +2093,19 @@ constraint worker_pools c CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_mil
 constraint worker_pools c CHECK (capacity_guest_ephemeral_disk_bytes IS NULL OR capacity_guest_ephemeral_disk_bytes > 0)
 constraint worker_pools c CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0)
 constraint worker_pools c CHECK (claim_version > 0)
+constraint worker_pools c CHECK (local_headroom_slots >= 0 AND local_headroom_slots <= '9007199254740991'::bigint)
 constraint worker_pools c CHECK (max_vm_slots IS NULL OR max_vm_slots >= 0)
+constraint worker_pools c CHECK (optional_cpu_millis >= 0 AND optional_cpu_millis <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_disk_bytes >= 0 AND optional_disk_bytes <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_io_bytes_per_second >= 0 AND optional_io_bytes_per_second <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_max_tasks >= 0 AND optional_max_tasks <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_memory_bytes >= 0 AND optional_memory_bytes <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_vm_slots >= 0 AND optional_vm_slots <= '9007199254740991'::bigint)
 constraint worker_pools c CHECK (per_vm_cpu_millis IS NULL OR per_vm_cpu_millis > 0)
 constraint worker_pools c CHECK (per_vm_guest_ephemeral_disk_bytes IS NULL OR per_vm_guest_ephemeral_disk_bytes > 0)
 constraint worker_pools c CHECK (per_vm_memory_bytes IS NULL OR per_vm_memory_bytes > 0)
+constraint worker_pools c CHECK (resource_policy_revision > 0)
+constraint worker_pools c CHECK (sealed_at IS NULL AND optional_cpu_millis = 0 AND optional_memory_bytes = 0 AND optional_disk_bytes = 0 AND optional_vm_slots = 0 AND optional_max_tasks = 0 AND optional_io_bytes_per_second = 0 AND local_headroom_slots = 0 OR sealed_at IS NOT NULL AND optional_cpu_millis <= capacity_cpu_millis AND optional_memory_bytes <= capacity_memory_bytes AND optional_vm_slots <= max_vm_slots AND local_headroom_slots <= max_vm_slots)
 constraint worker_pools c CHECK (sealed_at IS NULL OR max_vm_slots > 0)
 constraint worker_pools c CHECK (sealed_at IS NULL OR per_vm_cpu_millis <= capacity_cpu_millis)
 constraint worker_pools c CHECK (sealed_at IS NULL OR per_vm_guest_ephemeral_disk_bytes <= capacity_guest_ephemeral_disk_bytes)
@@ -2036,6 +2116,10 @@ constraint worker_pools f FOREIGN KEY (worker_group_id) REFERENCES worker_groups
 constraint worker_pools p PRIMARY KEY (id)
 constraint worker_pools u UNIQUE (worker_group_id, id)
 constraint worker_pools u UNIQUE (worker_group_id, name)
+constraint worker_scale_in_operations c CHECK (drain_claim_version > 0)
+constraint worker_scale_in_operations f FOREIGN KEY (worker_group_id, worker_pool_id) REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT
+constraint worker_scale_in_operations f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
+constraint worker_scale_in_operations p PRIMARY KEY (worker_group_id, operation_key)
 enum magic_link_purpose (login,invite_accept)
 enum org_member_role (owner,admin,developer,viewer)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
@@ -2095,7 +2179,7 @@ index CREATE INDEX slack_posts_due ON public.slack_posts USING btree (next_attem
 index CREATE INDEX slack_posts_remote_message ON public.slack_posts USING btree (message_ts, thread_source_id) WHERE (message_ts IS NOT NULL)
 index CREATE INDEX slack_posts_turn_delivery ON public.slack_posts USING btree (environment_id, session_id, turn_id, role, seq)
 index CREATE INDEX slack_requests_due ON public.slack_requests USING btree (next_attempt_at, id) WHERE (status = 'received'::text)
-index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE (((status = 'rejected'::text) OR ((status = 'accepted'::text) AND (operation = ANY (ARRAY['mute'::text, 'unmute'::text])))) AND (payload_expired_at IS NULL))
+index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE (((status = 'rejected'::text) OR ((status = 'accepted'::text) AND (operation = ANY (ARRAY['mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text])))) AND (payload_expired_at IS NULL))
 index CREATE INDEX slack_requests_gesture ON public.slack_requests USING btree (installation_id, request_digest)
 index CREATE INDEX slack_requests_input_source ON public.slack_requests USING btree (environment_id, turn_id, message_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text])))
 index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, slack_channel_binding_id) WHERE (thread_ts IS NOT NULL)
@@ -2117,6 +2201,7 @@ index CREATE INDEX worker_hosts_resource ON public.worker_hosts USING btree (wor
 index CREATE INDEX worker_pools_active_dispatch_idx ON public.worker_pools USING btree (worker_group_id, id) WHERE (status = 'active'::text)
 index CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON public.api_keys USING btree (org_id, project_id, environment_id, name) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX checkpoints_one_pending ON public.checkpoints USING btree (environment_id, computer_id) WHERE (status = ANY (ARRAY['capturing'::text, 'sealed'::text, 'ready'::text, 'restoring'::text, 'aborting'::text]))
+index CREATE UNIQUE INDEX computer_controls_pending ON public.computer_controls USING btree (environment_id, computer_id) WHERE (status = 'accepted'::text)
 index CREATE UNIQUE INDEX computer_leases_one_writer ON public.computer_leases USING btree (environment_id, computer_id) WHERE (fenced_at IS NULL)
 index CREATE UNIQUE INDEX computers_key ON public.computers USING btree (environment_id, key) WHERE (key IS NOT NULL)
 index CREATE UNIQUE INDEX diagnostic_chunks_identity ON public.diagnostic_chunks USING btree (environment_id, source_kind, source_id, producer_epoch, stream, sequence)
@@ -2144,3 +2229,4 @@ index CREATE UNIQUE INDEX users_primary_email_lower_idx ON public.users USING bt
 index CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx ON public.worker_groups USING btree (region_id) WHERE (status = ANY (ARRAY['active'::text, 'paused'::text]))
 index CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON public.worker_host_secrets USING btree (worker_host_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX worker_hosts_live_resource ON public.worker_hosts USING btree (worker_group_id, resource_id) WHERE (status = ANY (ARRAY['registering'::text, 'active'::text, 'draining'::text]))
+index CREATE UNIQUE INDEX worker_scale_in_operations_one_pending ON public.worker_scale_in_operations USING btree (worker_group_id) WHERE (completed_at IS NULL)

@@ -31,3 +31,23 @@ test("Computer usage distinguishes occupancy from lifecycle state and rejects th
   expect(() => parseComputerUsage({ commands: [] }, "sessions")).toThrow("collection")
   expect(() => parseComputerUsage({ members: [] }, "sessions")).toThrow("collection")
 })
+
+for (const kind of ["hibernate", "wake"] as const) {
+  test(`Computer ${kind} returns acceptance and preserves idempotency`, async () => {
+    const signal = new AbortController().signal
+    const computer = createClientComputerRef(id, {
+      async request(method, path, options) {
+        expect(method).toBe("POST")
+        expect(path).toBe(`/v1/computers/${id}/${kind}`)
+        expect(options?.signal).toBe(signal)
+        expect(options?.body).toEqual({ idempotency_key: "same-operation" })
+        return { id, computer_id: id, kind, status: "accepted", accepted_at: "2026-10-22T00:00:00Z", settled_at: null }
+      },
+    })
+    const receipt = await computer[kind]({ idempotencyKey: "same-operation" }, { signal })
+    expect(receipt.status).toBe("accepted")
+    expect(receipt.settledAt).toBeNull()
+    expect(receipt.computerId).toBe(id)
+    expect(Object.isFrozen(receipt)).toBe(true)
+  })
+}

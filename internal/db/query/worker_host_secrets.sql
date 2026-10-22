@@ -107,6 +107,17 @@ WITH locked_group AS MATERIALIZED (
            END,
            activated_at = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
                                THEN worker_hosts.activated_at ELSE NULL END,
+           resource_observation_sequence = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.resource_observation_sequence ELSE NULL END,
+           resource_policy_revision = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.resource_policy_revision ELSE NULL END,
+           resource_observed_at = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.resource_observed_at ELSE NULL END,
+           local_optional_cpu_millis = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.local_optional_cpu_millis ELSE NULL END,
+           local_optional_memory_bytes = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.local_optional_memory_bytes ELSE NULL END,
+           optional_disk_bytes = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.optional_disk_bytes ELSE NULL END,
+           local_optional_vm_slots = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.local_optional_vm_slots ELSE NULL END,
+           local_optional_tasks = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.local_optional_tasks ELSE NULL END,
+           optional_reclaim_pending = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.optional_reclaim_pending ELSE NULL END,
+           disk_slots_for_real_work = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.disk_slots_for_real_work ELSE NULL END,
+           ready_leaf_keys = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id) THEN worker_hosts.ready_leaf_keys ELSE NULL END,
            observed_at = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
                               THEN worker_hosts.observed_at ELSE NULL END,
 	       admission_paused_reason = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)

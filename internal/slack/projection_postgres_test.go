@@ -50,7 +50,7 @@ func (f statusFixture) projectAll(t *testing.T) {
 func (f statusFixture) firstPost(t *testing.T) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_posts WHERE thread_source_id=$1 ORDER BY seq LIMIT 1`, f.participant).Scan(&id); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' ORDER BY seq LIMIT 1`, f.participant).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -90,14 +90,14 @@ func TestSlackProjectionAuthorizationCutoffDoesNotReintroduceCumulativeBytes(t *
 			}
 			var body []byte
 			var count int
-			if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE thread_source_id=$1 AND id<>$2`, f.participant, old).Scan(&body); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' AND id<>$2`, f.participant, old).Scan(&body); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Contains(body, []byte("new-window")) || bytes.Contains(body, []byte("SUPPRESSED")) || bytes.Contains(body, []byte("visible-prefix")) {
 				t.Fatalf("cross-window body: %s", body)
 			}
 			f.projectAll(t)
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_source_id=$1`, f.participant).Scan(&count); err != nil || count != 2 {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls'`, f.participant).Scan(&count); err != nil || count != 2 {
 				t.Fatal("replayed intents", count, err)
 			}
 		})
@@ -112,7 +112,7 @@ func TestSlackProjectionUsesInstallationIdentityAcrossContinuations(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agents SET key='second' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Agent)
 	write(strings.Repeat("😀", 4000))
 	f.projectAll(t)
-	rows, err := f.Pool.Query(t.Context(), `SELECT payload,continuation_ordinal FROM slack_posts WHERE thread_source_id=$1 ORDER BY seq`, f.participant)
+	rows, err := f.Pool.Query(t.Context(), `SELECT payload,continuation_ordinal FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' ORDER BY seq`, f.participant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestSlackProjectionWorkerResumesOrderedCursorWithoutDuplicateIntents(t *tes
 	}
 	var count int
 	var cursor, next int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT p.projected_event_seq,s.next_event_seq,(SELECT count(*) FROM slack_posts WHERE thread_source_id=p.id) FROM slack_thread_sources p JOIN sessions s ON s.id=p.session_id WHERE p.id=$1`, f.participant).Scan(&cursor, &next, &count); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT p.projected_event_seq,s.next_event_seq,(SELECT count(*) FROM slack_posts WHERE thread_source_id=p.id AND role<>'controls') FROM slack_thread_sources p JOIN sessions s ON s.id=p.session_id WHERE p.id=$1`, f.participant).Scan(&cursor, &next, &count); err != nil {
 		t.Fatal(err)
 	}
 	if cursor != next-1 || count != 1 {
@@ -166,7 +166,7 @@ func TestSlackProjectionWorkerResumesOrderedCursorWithoutDuplicateIntents(t *tes
 	write(" three")
 	f.projectAll(t)
 	var body []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE thread_source_id=$1`, f.participant).Scan(&body); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls'`, f.participant).Scan(&body); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(body, []byte("one two three")) {

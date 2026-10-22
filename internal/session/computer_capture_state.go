@@ -53,9 +53,13 @@ func LockCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) (Cap
 		return r, err
 	}
 	if len(ids) == 0 {
-		return r, ErrNotReady
+		// Standalone Computers have no Session ownership roots, but still need
+		// the Computer fence before locking their checkpoint.
+		err = tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, r.Computer).Scan(&r.Computer)
+	} else {
+		_, err = lockSessions(ctx, tx, env, ids)
 	}
-	if _, err = lockSessions(ctx, tx, env, ids); err != nil {
+	if err != nil {
 		return r, err
 	}
 	err = tx.QueryRow(ctx, `SELECT source_lease_epoch,target_lease_epoch,control_version,disk_save_id,status,capture_expires_at,controls_reconciled_at IS NOT NULL FROM checkpoints WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, checkpoint).Scan(&r.SourceEpoch, &r.TargetEpoch, &r.Version, &r.Save, &r.State, &r.Expires, &r.ControlsReconciled)

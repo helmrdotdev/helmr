@@ -212,3 +212,32 @@ func TestCheckpointKeyMismatchSurvivesHealthReevaluation(t *testing.T) {
 		t.Fatal("reinitialized worker retained previous key fault")
 	}
 }
+
+func TestHardAdmissionPausesPlacementUntilOptionalCleanupRecovers(t *testing.T) {
+	var cleanupErr error
+	a, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(time.Now())}, DiskFloorBytes: 1, FDHeadroom: 1,
+		OptionalCleanupHealth: func() error { return cleanupErr },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := AdmissionCheck{Status: StatusActive}
+	if !a.Evaluate(t.Context(), check).Allowed {
+		t.Fatal("healthy host blocked")
+	}
+	cleanupErr = errors.New("device still attached")
+	if got := a.Observation(); got.AdmissionPausedReason != string(AdmissionOptionalCleanupFailed) {
+		t.Fatal(got)
+	}
+	if got := a.Evaluate(t.Context(), check); got.Allowed || got.Reason != AdmissionOptionalCleanupFailed {
+		t.Fatal(got)
+	}
+	cleanupErr = nil
+	if !a.Evaluate(t.Context(), check).Allowed {
+		t.Fatal("recovered host blocked")
+	}
+	if got := a.Observation(); got.AdmissionPausedReason != "" {
+		t.Fatal(got)
+	}
+}

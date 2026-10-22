@@ -57,6 +57,7 @@ export interface Session {
   readonly agent: string
   readonly template: string
   readonly activity: SessionActivity
+  readonly suspension: "manual" | "after_turn"
   readonly closeAfterIdle: Retention
   readonly idleSince: string | null
   readonly id: string

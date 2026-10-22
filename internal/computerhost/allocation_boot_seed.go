@@ -30,6 +30,7 @@ type AllocatedBootSeedClient interface {
 	RenewBootSeed(context.Context, workerapi.BootSeedExecutor) (workerapi.PreparationRenewal, error)
 	PublishBootSeed(context.Context, workerapi.BootSeedPublication) error
 	FailBootSeed(context.Context, workerapi.BootSeedFailure) error
+	ReclaimBootSeed(context.Context, workerapi.BootSeedExecutor) error
 	ObserveBootSeedStopped(context.Context, workerapi.AllocationIdentity) error
 }
 
@@ -53,7 +54,7 @@ type BootSeedAllocationOwner struct {
 }
 
 func NewBootSeedAllocationOwner(machines *PreparedMachines, client AllocatedBootSeedClient, identity workerapi.AllocationIdentity, hostEpoch int64, admitStart func(context.Context) error) (*BootSeedAllocationOwner, error) {
-	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.ComputerRanges == nil || machines.CheckpointCipher == nil || machines.Reservations == nil || !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "seed" || identity.Epoch <= 0 || hostEpoch <= 0 {
+	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.ComputerRanges == nil || machines.OptionalProgramStore == nil || machines.OptionalPlatformStore == nil || machines.OptionalComputerObjects == nil || machines.OptionalComputerRanges == nil || machines.CheckpointCipher == nil || machines.Reservations == nil || !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "seed" || identity.Epoch <= 0 || hostEpoch <= 0 {
 		return nil, errors.New("boot seed requires physical backend, encrypted stores and capacity")
 	}
 	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID} {
@@ -96,6 +97,13 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	var jobs sync.WaitGroup
 	defer func() {
+		if errors.Is(resultErr, errOptionalReclaimed) || (resultErr != nil && o.machines.optionalSeedReclaimRequested(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch))) {
+			// Local transfer fencing is not a permanent generation failure. The
+			// renewing owner obtains the same durable pressure-stop authority as
+			// admission rejection before publishing a terminal outcome.
+			o.machines.requestOptionalSeedReclaim(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch))
+			<-ctx.Done()
+		}
 		cancel(context.Canceled)
 		jobs.Wait()
 		if o.closing {
@@ -136,9 +144,16 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		}
 		capacity.HostDiskBytes += extra
 	}
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity, &o.workWake); err != nil {
-		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			o.closing = true
+	if err := o.admitStart(ctx); err != nil {
+		return err
+	}
+	o.closing = true
+	if err := o.machines.reserveOptionalSeed(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity); err != nil {
+		if errors.Is(err, reservation.ErrCapacityExceeded) {
+			// Keep renewing the delivered attempt until control has authorized its
+			// pressure stop. No physical optional work has started.
+			<-ctx.Done()
+			return context.Cause(ctx)
 		}
 		return err
 	}
@@ -148,7 +163,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
-	o.images, err = o.machines.prepareProgramArtifacts(ctx, directory, o.identity.AllocationID, source.BootProgram)
+	o.images, err = o.machines.prepareExecutableArtifacts(ctx, directory, o.identity.AllocationID, source.BootProgram, false, nil, true)
 	if err != nil {
 		return err
 	}
@@ -184,7 +199,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	}
 	env, _ := uuid.Parse(o.identity.EnvironmentID)
 	build, _ := uuid.Parse(o.identity.OwnerID)
-	manifest, err := o.machines.publishBootSeed(ctx, retained, env, build, artifact, shape.ScratchBytes)
+	manifest, err := o.machines.publishBootSeed(ctx, retained, env, build, artifact, shape.ScratchBytes, o.machines.OptionalComputerObjects)
 	if err != nil {
 		return err
 	}
@@ -207,7 +222,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		if err := os.Mkdir(stage, 0700); err != nil {
 			return err
 		}
-		request.BootSeed, err = o.machines.openBootSeed(ctx, stage, manifest, shape.MemoryBytes, shape.ScratchBytes)
+		request.BootSeed, err = o.machines.openBootSeedFrom(ctx, stage, manifest, shape.MemoryBytes, shape.ScratchBytes, o.machines.OptionalComputerObjects, o.machines.OptionalComputerRanges)
 		if err != nil {
 			return err
 		}
@@ -266,7 +281,7 @@ func (o *BootSeedAllocationOwner) prepareVM(ctx context.Context, source workerap
 	}
 	source.Disk.Keys = append(append([]workerapi.ComputerKeyMaterial(nil), source.Disk.Keys...), key)
 	source.Disk.WriteKeyID = key.ID
-	device, err := o.machines.prepareAllocationDevice(ctx, identity, source)
+	device, err := o.machines.prepareAllocationDeviceFrom(ctx, identity, source, o.machines.OptionalComputerRanges)
 	if err != nil {
 		return vm.MaterializeRequest{}, err
 	}
@@ -299,7 +314,14 @@ func (o *BootSeedAllocationOwner) stopVM(ctx context.Context) error {
 	o.active = nil
 	return nil
 }
-func (o *BootSeedAllocationOwner) cleanup() error {
+func (o *BootSeedAllocationOwner) cleanup() (resultErr error) {
+	defer func() {
+		o.machines.optional.mu.Lock()
+		defer o.machines.optional.mu.Unlock()
+		if seed := o.machines.optional.seeds[instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)]; seed != nil {
+			seed.cleanupErr = resultErr
+		}
+	}()
 	// All launches have joined before terminal cleanup. The VM owns its links;
 	// source handles must not retain cache pins after a failed cleanup attempt.
 	if err := o.images.close(); err != nil {
@@ -325,8 +347,14 @@ func (o *BootSeedAllocationOwner) cleanup() error {
 		}
 		o.reserved = false
 	}
+	o.machines.forgetOptionalSeed(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch))
 	if err := o.client.ObserveBootSeedStopped(ctx, o.identity); err != nil {
-		return err
+		var closed *httpclient.Error
+		// Physical cleanup is already complete. A lost acknowledgment may
+		// leave this exact allocation closed or superseded on the next retry.
+		if !errors.As(err, &closed) || closed.Code != workerapi.AllocationClosed {
+			return err
+		}
 	}
 	o.finished.Store(true)
 	return nil
@@ -343,6 +371,14 @@ func (o *BootSeedAllocationOwner) renew(ctx context.Context, cancel context.Canc
 			return
 		}
 		callCtx, stop := context.WithDeadline(ctx, minTime(expires, time.Now().Add(5*time.Second)))
+		if o.machines.optionalSeedReclaimRequested(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)) {
+			err := o.client.ReclaimBootSeed(callCtx, o.executor)
+			if err == nil {
+				stop()
+				cancel(errOptionalReclaimed)
+				return
+			}
+		}
 		result, err := o.client.RenewBootSeed(callCtx, o.executor)
 		stop()
 		if err == nil {

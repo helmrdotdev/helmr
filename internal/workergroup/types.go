@@ -113,24 +113,27 @@ func (t Template) Validate() error {
 }
 
 type PlanRequest struct {
-	Pools []PoolRequest `json:"pools"`
+	ExpectedSupplyFingerprint string        `json:"expected_supply_fingerprint"`
+	ObservedAt                time.Time     `json:"observed_at"`
+	Pools                     []PoolRequest `json:"pools"`
 }
 
 type PoolRequest struct {
-	// MinSpareSlots reserves room for this pool template's full per-VM shape.
-	MinSpareSlots        int32  `json:"min_spare_slots"`
+	ActiveWorkers        int64  `json:"active_workers"`
+	RegisteringWorkers   int64  `json:"registering_workers"`
 	PoolID               string `json:"pool_id"`
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
 
 type Group struct {
-	RetainedProfiles *RetainedProfiles `json:"retained_profiles,omitempty"`
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	RegionID         string            `json:"region_id"`
-	Status           WorkerGroupStatus `json:"status"`
-	ClaimVersion     int64             `json:"claim_version"`
-	PrimaryPoolID    string            `json:"primary_pool_id,omitempty"`
+	SupplyFingerprint string            `json:"supply_fingerprint"`
+	RetainedProfiles  *RetainedProfiles `json:"retained_profiles,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	RegionID          string            `json:"region_id"`
+	Status            WorkerGroupStatus `json:"status"`
+	ClaimVersion      int64             `json:"claim_version"`
+	PrimaryPoolID     string            `json:"primary_pool_id,omitempty"`
 }
 
 type PrimarySelectionRequest struct {
@@ -160,27 +163,53 @@ type Incompatibility struct {
 }
 
 type PlanResponse struct {
-	WorkerGroupID   string            `json:"worker_group_id"`
-	WorkerGroupName string            `json:"worker_group_name"`
-	RegionID        string            `json:"region_id"`
-	GroupStatus     WorkerGroupStatus `json:"group_status"`
-	Pools           []PoolPlan        `json:"pools"`
-	UnmatchedDemand []Incompatibility `json:"unmatched_demand"`
-	Complete        bool              `json:"complete"`
-	ComputedAt      time.Time         `json:"computed_at"`
+	// PlacementResults keeps internal demand identity for transactional admission.
+	// An empty reason means placed; non-empty reasons identify unplaced demand.
+	PlacementResults map[string]string `json:"-"`
+	WorkerGroupID    string            `json:"worker_group_id"`
+	WorkerGroupName  string            `json:"worker_group_name"`
+	RegionID         string            `json:"region_id"`
+	GroupStatus      WorkerGroupStatus `json:"group_status"`
+	Pools            []PoolPlan        `json:"pools"`
+	UnmatchedDemand  []Incompatibility `json:"unmatched_demand"`
+	Complete         bool              `json:"complete"`
+	ComputedAt       time.Time         `json:"computed_at"`
+}
+
+type PlacementObservation struct {
+	Immediate            *int64 `json:"immediate"`
+	AfterOptionalReclaim int64  `json:"after_optional_reclaim"`
+}
+
+type OptionalOccupancy struct {
+	CPUMillis   int64 `json:"cpu_millis"`
+	MemoryBytes int64 `json:"memory_bytes"`
+	DiskBytes   int64 `json:"disk_bytes"`
+	VMSlots     int64 `json:"vm_slots"`
+	Tasks       int64 `json:"tasks"`
+}
+
+type CreditedHost struct {
+	WorkerHostID string `json:"worker_host_id"`
+	WorkerEpoch  int64  `json:"worker_epoch"`
 }
 
 type PoolPlan struct {
-	SpareSlotsShortfall          int32  `json:"spare_slots_shortfall"`
-	PoolID                       string `json:"pool_id"`
-	PoolName                     string `json:"pool_name"`
-	RecommendedAdditionalWorkers int32  `json:"recommended_additional_workers"`
-	CompatibleQueuedItems        int64  `json:"compatible_queued_items"`
-	RegisteringWorkers           int64  `json:"registering_workers"`
-	ActiveWorkers                int64  `json:"active_workers"`
-	Complete                     bool   `json:"complete"`
-	Saturated                    bool   `json:"saturated"`
-	ScaleInBlocked               bool   `json:"scale_in_blocked"`
+	PolicyRevision               int64                `json:"policy_revision"`
+	Placements                   PlacementObservation `json:"placements"`
+	OptionalOccupancy            *OptionalOccupancy   `json:"optional_occupancy"`
+	ReclaimingWorkers            int64                `json:"reclaiming_workers"`
+	LocalHeadroomSlotsInUse      int64                `json:"local_headroom_slots_in_use"`
+	CreditedHosts                []CreditedHost       `json:"credited_hosts"`
+	PoolID                       string               `json:"pool_id"`
+	PoolName                     string               `json:"pool_name"`
+	RecommendedAdditionalWorkers int32                `json:"recommended_additional_workers"`
+	CompatibleQueuedItems        int64                `json:"compatible_queued_items"`
+	RegisteringWorkers           int64                `json:"registering_workers"`
+	ActiveWorkers                int64                `json:"active_workers"`
+	Complete                     bool                 `json:"complete"`
+	Saturated                    bool                 `json:"saturated"`
+	ScaleInBlocked               bool                 `json:"scale_in_blocked"`
 }
 
 // HostDrainBlockers counts outstanding runtime ownership; zero counts do not
@@ -220,7 +249,6 @@ const (
 )
 
 type DrainWorkerHostRequest struct {
-	MinSpareSlots        int32       `json:"min_spare_slots"`
 	ExpectedEpoch        int64       `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 	Reason               DrainReason `json:"reason"`

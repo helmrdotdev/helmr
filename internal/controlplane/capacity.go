@@ -69,6 +69,11 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 				Put("/worker-groups/{workerGroupID}/primary-pool", s.capacitySelectWorkerGroupPrimaryPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
 				Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
+			r.Get("/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy", s.capacityGetResourcePolicy)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).Put("/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy", s.capacityPutResourcePolicy)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).Post("/worker-groups/{workerGroupID}/pools/{workerPoolID}/scale-in", s.capacityScaleIn)
+			r.Get("/worker-groups/{workerGroupID}/scale-in-operations/pending", s.capacityPendingScaleIn)
+			r.Get("/worker-groups/{workerGroupID}/scale-in-operations/{operationKey}", s.capacityGetScaleIn)
 			r.Get("/worker-hosts", s.capacityListWorkerHosts)
 			r.Get("/worker-hosts/{workerHostID}", s.capacityGetWorkerHost)
 			r.Post("/worker-hosts/{workerHostID}/lost", s.capacityConfirmWorkerHostProviderAbsent)
@@ -183,7 +188,7 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid capacity plan JSON: %w", err))
 		return
 	}
-	response, err := workergroup.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
+	response, err := workergroup.ObserveCapacityPlan(r.Context(), s.tx, workerGroupID, request, time.Now())
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return

@@ -25,6 +25,10 @@ func (f fixture) captureRequest() session.ComputerCaptureRequest {
 }
 func beginCapture(t *testing.T, f fixture, req session.ComputerCaptureRequest) (session.ComputerCapture, *agentv1.ComputerSessionCapture) {
 	t.Helper()
+	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
+		t.Fatal(err)
+	}
+	t.Helper()
 	result, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -235,8 +239,8 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 func TestComputerCaptureRejectsStaleProcessLease(t *testing.T) {
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source closed'`)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
-  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE epoch=1`, uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+  SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour','active',$1,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE epoch=1`, uuid.NewV7())
 	req := f.captureRequest()
 	req.LeaseEpoch = 2
 	if result, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), req); !errors.Is(err, session.ErrNotReady) || len(result.Request) != 0 {
@@ -315,8 +319,8 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 	save := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `
  INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
- INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
- SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$3,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
+ INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
+ SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$3,channel_credential_digest,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT environment_id,$4,agent_id,deployment_id,$2,$4,0 FROM sessions WHERE id=$5;
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
@@ -362,5 +366,33 @@ func TestComputerCaptureObservesDemandAndRefusesNewSeal(t *testing.T) {
 	var state string
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE environment_id=$1 AND id=$2`, f.env, request.CheckpointID).Scan(&state); err != nil || state != "capturing" {
 		t.Fatalf("rejected seal changed state: %q %v", state, err)
+	}
+}
+
+func TestPublishedCaptureCloseReleasesSourceWithoutWakingPeer(t *testing.T) {
+	f := newFixture(t)
+	peer := f.peer(t)
+	request := f.captureRequest()
+	_, capture := beginCapture(t, f, request)
+	// Certified publication, retaining both physical processes on the source.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE computer_id=$2 AND epoch=1),ready_at=clock_timestamp() WHERE id=$1`, request.CheckpointID, f.computer)
+	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close-sleeping")); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), request)
+	if err != nil || observed.WorkPending || !observed.ReleaseSource {
+		t.Fatalf("terminal cleanup woke shared Computer: %+v %v", observed, err)
+	}
+	var preserved bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND s.status='open' AND d.suspension='manual' AND c.execution_deadline_at IS NULL FROM checkpoints cp JOIN computers c ON (c.environment_id,c.id)=(cp.environment_id,cp.computer_id) JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) WHERE cp.id=$1 AND s.id=$2`, request.CheckpointID, peer.session).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("peer checkpoint or sleep changed: %v %v", preserved, err)
+	}
+	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, request.CheckpointID, 1, sessiontest.ChannelCredential, &agentv1.ComputerSessionReceipt{CheckpointId: request.CheckpointID.String(), DesiredVersion: capture.DesiredVersion}); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("cleanup-only continuation admitted: %v", err)
+	}
+	peer.enqueue(t, "real-work")
+	observed, err = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), request)
+	if err != nil || !observed.WorkPending || observed.ReleaseSource {
+		t.Fatalf("real input did not wake: %+v %v", observed, err)
 	}
 }

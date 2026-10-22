@@ -78,6 +78,9 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 				}
 				return dbnotify.Notify(ctx, tx, "slack_delivery")
 			}
+			if _, err = tx.Exec(ctx, `UPDATE slack_threads t SET projected_lifecycle_state=`+lifecycleStateSQL+` FROM sessions s WHERE t.id=$1 AND s.environment_id=$2 AND s.id=t.front_session_id`, o.thread, o.environment); err != nil {
+				return err
+			}
 			// Inactive sources still dispose observed control state so they cannot
 			// occupy discovery batches forever or replay it after reauthorization.
 			progressed, err = slackroute.AdvanceControlProjection(ctx, tx, o.participant, o.environment, o.session)

@@ -70,8 +70,8 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			}
 			if state == "restoring" {
 				// Target allocation is fenced too: the source-owned checkpoint must protect the Group on its own.
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
- SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
+ SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
  UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
@@ -160,8 +160,8 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
-		t.Fatal(err)
+	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
+		t.Fatalf("incompatible input admitted: %v", err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
 		t.Fatalf("allocation pass with a foreign Group restore: %v", err)
@@ -174,6 +174,9 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	// must now be discoverable and allocatable; other eligibility cannot hide a
 	// missing Group predicate. Production never rewrites this historical owner.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET worker_host_id=$3 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer, host)
+	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
 		t.Fatalf("allocation pass with a same Group restore: %v", err)
 	}

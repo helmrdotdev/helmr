@@ -14,7 +14,7 @@ export const workspace = template({
 })
 
 export const assistant = agent({
-  id: agentName, template: workspace, maxTurnDuration: "15m",
+  id: agentName, template: workspace, suspension: "manual", closeAfterIdle: "never", maxTurnDuration: "15m",
   init({ session, recovery }) {
     return OpenCodeSession.open({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/opencode", sessionId: session.id, model, introduction, recovery: recovery.kind,
       native: { config: { content: JSON.stringify({ agents: { title: { model: smallModel } } }) } },

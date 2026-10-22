@@ -130,11 +130,11 @@ func (h InteractionHandler) receiveInteractionPayload(parent context.Context, bo
 	if action.Type == "button" && action.ID == "helmr.open_answer" {
 		return h.receiveAnswerOpening(ctx, envelope)
 	}
-	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices") {
+	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices" && !strings.HasPrefix(action.ID, "helmr.lifecycle.")) {
 		return receiptResult{disposition: receiptAccepted}
 	}
 	claims, err := decodeControl(h.ControlKey, action.Value, time.Now())
-	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") {
+	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") || (strings.HasPrefix(action.ID, "helmr.lifecycle.") && (!lifecycleAction(claims.Action) || action.ID != "helmr.lifecycle."+claims.Action)) {
 		return receiptResult{disposition: receiptInvalid}
 	}
 	key, err := controlRequestKey(claims, envelope.User.ID, action.Timestamp)
@@ -146,7 +146,7 @@ func (h InteractionHandler) receiveInteractionPayload(parent context.Context, bo
 		return receiptResult{disposition: receiptInvalid}
 	}
 	expires := occurred.Add(5 * time.Minute)
-	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); tokenExpiry.Before(expires) {
+	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); claims.ExpiresAt != 0 && tokenExpiry.Before(expires) {
 		expires = tokenExpiry
 	}
 	gesture := controlGesture{Control: claims}
@@ -167,7 +167,7 @@ func (h InteractionHandler) receiveInteractionPayload(parent context.Context, bo
 		if envelope.User.ID == bot {
 			return errControlInvalid
 		}
-		if claims.Action == "choose" || claims.Action == "submit_choices" {
+		if claims.Action == "choose" || claims.Action == "submit_choices" || lifecycleAction(claims.Action) {
 			root := envelope.Message.ThreadTimestamp
 			if root == "" {
 				root = envelope.Message.Timestamp

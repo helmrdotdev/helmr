@@ -41,6 +41,11 @@ func ResolveGroup(ctx context.Context, q db.Querier, regionID string, name strin
 	if err != nil {
 		return Group{}, err
 	}
+	fingerprint, err := SupplyFingerprint(ctx, q, pgvalue.MustUUIDValue(group.ID))
+	if err != nil {
+		return Group{}, err
+	}
+	result.SupplyFingerprint = fingerprint
 	profiles, err := retainedProfiles(ctx, q, group.ID, pgtype.UUID{})
 	result.RetainedProfiles = &profiles
 	return result, err
@@ -136,9 +141,6 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
 		return WorkerHost{}, invalidInput("expected_epoch and expected_claim_version must be positive")
 	}
-	if request.MinSpareSlots < 0 || request.MinSpareSlots > maximumAdditionalWorkers {
-		return WorkerHost{}, invalidInput("min_spare_slots must be between 0 and 1000")
-	}
 	switch request.Reason {
 	case DrainReasonReplacement, DrainReasonCapacityReduction, DrainReasonIdleScaleIn:
 	default:
@@ -184,11 +186,6 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, actor audit.Actor, hostID
 		}
 		if err != nil {
 			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
-		}
-		if request.Reason == DrainReasonIdleScaleIn {
-			if err := checkSpareCapacity(ctx, tx, pgvalue.MustUUIDValue(host.WorkerGroupID), pgvalue.MustUUIDValue(host.WorkerPoolID), request.MinSpareSlots); err != nil {
-				return err
-			}
 		}
 		if locked.Host.Status == db.WorkerHostStatusActive {
 			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
@@ -244,6 +241,20 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, actor audit.Actor
 	}
 	if err != nil {
 		return ConfirmedProviderAbsence{}, fmt.Errorf("confirm worker host %s provider absence: %w", hostID, err)
+	}
+	rows, err := tx.Query(ctx, `UPDATE worker_scale_in_operations SET completed_at=clock_timestamp()
+ WHERE worker_host_id=$1 AND completed_at IS NULL RETURNING operation_key`, hostID)
+	if err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
+	keys, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
+	for _, key := range keys {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_scale_in.completed", TargetKind: "worker_scale_in_operation", TargetID: key}); err != nil {
+			return ConfirmedProviderAbsence{}, err
+		}
 	}
 	if changed {
 		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {

@@ -11,7 +11,10 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,6 +30,7 @@ type SessionControlRequest struct {
 	TurnID         uuid.UUID
 	Kind           string
 	IdempotencyKey string
+	ExpectedScope  string
 	HoldID         uuid.UUID
 	Reason         string
 	// Observed binds delayed control delivery to the execution generation it saw.
@@ -51,7 +55,7 @@ type SessionControlReceipt struct {
 // ownership root. Retried acceptance never repeats its lifecycle transition.
 func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
-	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
+	if (req.ExpectedScope != "" && req.Kind != "close") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		len(req.Reason) > 4096 || !utf8.ValidString(req.Reason) || strings.ContainsRune(req.Reason, 0) || caller.ID == uuid.Nil() ||
 		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
 		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
@@ -65,12 +69,18 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		Reason          string
 		Observed        *ControlObservation
 		InterruptQueued bool
-	}{req.HoldID, req.Reason, req.Observed, req.InterruptQueued})
+		ExpectedScope   string `json:",omitempty"`
+	}{req.HoldID, req.Reason, req.Observed, req.InterruptQueued, req.ExpectedScope})
 	digest, err := digestJSON(payload)
 	if err != nil {
 		return result, err
 	}
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if req.Kind == "resume" {
+			if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
+				return err
+			}
+		}
 		if caller.Kind == "session" {
 			if caller.Execution.EnvironmentID != req.EnvironmentID || caller.Execution.SessionID != caller.ID {
 				return ErrDenied
@@ -87,6 +97,9 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if err := requireOwnedTarget(ctx, tx, req.EnvironmentID, caller.ID, req.SessionID); err != nil {
 				return err
 			}
+		}
+		if _, err := org.LockAdmission(ctx, tx, req.EnvironmentID); err != nil {
+			return err
 		}
 		var ids []uuid.UUID
 		var locked map[uuid.UUID]owners
@@ -134,6 +147,15 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			// authority above is deliberately narrower than input authority.
 			if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
 				return err
+			}
+		}
+		if req.ExpectedScope != "" {
+			scope, err := ReadSessionCloseScope(ctx, tx, req.EnvironmentID, req.SessionID)
+			if err != nil {
+				return err
+			}
+			if scope.Digest != req.ExpectedScope {
+				return ErrControlScopeChanged
 			}
 		}
 		if req.Observed != nil {
@@ -184,6 +206,13 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		case "resume":
+			for _, o := range locked {
+				if o.computer != uuid.Nil() {
+					if err = computer.RetireUnusedExecutionAdmission(ctx, tx, req.EnvironmentID, o.computer); err != nil {
+						return err
+					}
+				}
+			}
 			var issuer, scope, holdKind string
 			var issuerID *uuid.UUID
 			if err = tx.QueryRow(ctx, `SELECT issuer_kind,issuer_id,scope,kind FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, req.HoldID).Scan(&issuer, &issuerID, &scope, &holdKind); err != nil {
@@ -245,6 +274,29 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 			if err = drainClosingSessions(ctx, tx, req.EnvironmentID, ids); err != nil {
+				return err
+			}
+		}
+		// All control-tree Computers are locked. Resume only requests capacity for
+		// work actually released by this operation; overlapping holds remain effective.
+		seen := map[uuid.UUID]bool{}
+		for _, sessionID := range ids {
+			id := locked[sessionID].computer
+			if id == uuid.Nil() || seen[id] {
+				continue
+			}
+			seen[id] = true
+			if req.Kind == "resume" {
+				var runnable bool
+				if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE s.environment_id=$1 AND s.id=ANY($2) AND s.computer_id=$3 AND t.status='queued' AND `+db.NoSessionHoldsSQL+`)`, req.EnvironmentID, ids, id).Scan(&runnable); err != nil {
+					return err
+				}
+				if runnable {
+					if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, id); err != nil {
+						return err
+					}
+				}
+			} else if err = computer.RetireUnusedExecutionAdmission(ctx, tx, req.EnvironmentID, id); err != nil {
 				return err
 			}
 		}

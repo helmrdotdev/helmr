@@ -66,8 +66,8 @@ if 'HELMR_PUBLIC_CONSUMER' not in verify or 'consumer(root' not in verify:
 if 'nix develop .#images -c' in text:
     sys.exit('release workflow must not realize the source build shell')
 build = Path(sys.argv[2], ".github/workflows/build-artifacts.yaml").read_text()
-if not re.search(r'nix develop [^\n]+#images["\x27]? -c', build):
-    sys.exit('actual artifact construction must retain the full images shell')
+if not re.search(r'nix develop [^\n]+#release-build["\x27]? -c', build):
+    sys.exit('artifact construction must use the dedicated release build shell')
 
 verify_builder = 'python3 tools/scripts/release/contract.py bundle-builder --verify "$image"'
 export_builder = "printf 'BUNDLE_BUILDER_IMAGE=%s"

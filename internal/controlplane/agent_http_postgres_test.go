@@ -27,6 +27,7 @@ import (
 
 func TestAgentHTTPAdmission(t *testing.T) {
 	f := sessiontest.New(t)
+	sessiontest.ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;

@@ -6,6 +6,7 @@ import { z } from "zod"
 import { verificationComputer } from "../agent/agent"
 
 export const verificationSession = agent({
+  suspension: "after_turn",
   id: "verification-session", template: verificationComputer, maxTurnDuration: "10m",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {

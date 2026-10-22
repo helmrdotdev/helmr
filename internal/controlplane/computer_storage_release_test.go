@@ -23,6 +23,7 @@ import (
 func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope) {
 	t.Helper()
 	f := sessiontest.New(t)
+	sessiontest.ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;

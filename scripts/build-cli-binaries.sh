@@ -5,11 +5,22 @@ root=${RELEASE_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pw
 [[ "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$BUNDLE_BUILDER_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]
 output=${1:?output directory required}
+shift
+targets=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64)
+if [ "$#" -gt 0 ]; then
+  targets=("$@")
+fi
+for target in "${targets[@]}"; do
+  case "$target" in
+    linux/amd64|linux/arm64|darwin/amd64|darwin/arm64) ;;
+    *) printf 'unsupported CLI target: %s\n' "$target" >&2; exit 2 ;;
+  esac
+done
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
 cd "$root"
 bun scripts/build-platform-entries.ts all
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+for target in "${targets[@]}"; do
   os=${target%/*} arch=${target#*/}
   stage=$(mktemp -d)
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \

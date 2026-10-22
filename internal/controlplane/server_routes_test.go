@@ -71,6 +71,7 @@ GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
 GET /api/projects/{project}/environments/{environment}/computers
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/commands
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}/execution-scope
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/sessions
 GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
@@ -80,6 +81,7 @@ GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/close-scope
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/events
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns
@@ -102,6 +104,9 @@ GET /capacity/v1/deployment
 GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
+GET /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
+GET /capacity/v1/worker-groups/{workerGroupID}/scale-in-operations/pending
+GET /capacity/v1/worker-groups/{workerGroupID}/scale-in-operations/{operationKey}
 GET /capacity/v1/worker-hosts
 GET /capacity/v1/worker-hosts/{workerHostID}
 GET /healthz
@@ -113,6 +118,7 @@ GET /v1/commands/{commandID}/logs
 GET /v1/computers
 GET /v1/computers/{computerID}
 GET /v1/computers/{computerID}/commands
+GET /v1/computers/{computerID}/execution-scope
 GET /v1/computers/{computerID}/sessions
 GET /v1/deployments
 GET /v1/deployments/current
@@ -122,6 +128,7 @@ GET /v1/secrets
 GET /v1/secrets/{secret}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
+GET /v1/sessions/{sessionID}/close-scope
 GET /v1/sessions/{sessionID}/events
 GET /v1/sessions/{sessionID}/turns
 GET /v1/sessions/{sessionID}/turns/{turnID}
@@ -174,6 +181,8 @@ POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
 POST /api/projects/{project}/environments/{environment}/computers
 POST /api/projects/{project}/environments/{environment}/computers/{computerID}/exec
+POST /api/projects/{project}/environments/{environment}/computers/{computerID}/hibernate
+POST /api/projects/{project}/environments/{environment}/computers/{computerID}/wake
 POST /api/projects/{project}/environments/{environment}/deployment-bundles/finalize
 POST /api/projects/{project}/environments/{environment}/deployment-bundles/upload-plan
 POST /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/promote
@@ -199,6 +208,7 @@ POST /api/slack/user-links/verify
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-groups/{workerGroupID}/pools
 POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable
+POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/scale-in
 POST /capacity/v1/worker-hosts/{workerHostID}/drain
 POST /capacity/v1/worker-hosts/{workerHostID}/lost
 POST /integrations/slack/apps/{registrationID}/events
@@ -206,6 +216,8 @@ POST /integrations/slack/apps/{registrationID}/interactions
 POST /v1/commands/{commandID}/cancel
 POST /v1/computers
 POST /v1/computers/{computerID}/exec
+POST /v1/computers/{computerID}/hibernate
+POST /v1/computers/{computerID}/wake
 POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote
@@ -243,6 +255,7 @@ POST /worker/v1/agent-computers/stopped
 POST /worker/v1/allocations/boot-seed/deliver
 POST /worker/v1/allocations/boot-seed/fail
 POST /worker/v1/allocations/boot-seed/publish
+POST /worker/v1/allocations/boot-seed/reclaim
 POST /worker/v1/allocations/boot-seed/renew
 POST /worker/v1/allocations/boot-seed/start
 POST /worker/v1/allocations/boot-seed/stopped
@@ -282,6 +295,7 @@ POST /worker/v1/instance/drain/complete
 POST /worker/v1/instance/fence
 POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
+POST /worker/v1/preparation-sources
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
 POST /worker/v1/sessions/attachment
@@ -300,6 +314,7 @@ POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
+PUT /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {

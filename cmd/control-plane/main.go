@@ -287,6 +287,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
+		{name: "Computer execution admissions", run: func(ctx context.Context) error { return dispatch.RunExecutionAdmissions(ctx, pool, log) }},
+		{name: "Computer execution controls", run: func(ctx context.Context) error { return computer.RunExecutionControls(ctx, pool, log) }},
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
 		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) }},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},

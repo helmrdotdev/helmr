@@ -22,6 +22,7 @@ export interface AgentManifest {
   readonly hasInit: boolean
   readonly inputKind: "text" | "json"
   readonly inputSchema?: InputSchemaDiscovery
+  readonly suspension?: "manual" | "after_turn"
   readonly closeAfterIdleMs?: number
   readonly closeAfterIdleNever?: boolean
   readonly maxTurnDurationMs?: number
@@ -113,8 +114,10 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         }
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
+      if (definition.suspension !== undefined && definition.suspension !== "manual" && definition.suspension !== "after_turn") throw new Error("Agent suspension must be manual or after_turn")
       return { kind: "agent", declaredId: definition.id, manifest: {
         ...describeInput(definition.inputSchema, definition.id),
+        suspension: definition.suspension ?? "manual",
         templateDefinitionId: definition.template.id, hasInit: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
@@ -153,7 +156,7 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
     const value = item.value as Partial<Definition> | undefined
     if (!value || (value.kind !== "agent" && value.kind !== "template")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "suspension", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
       if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.template?.kind !== "template") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
       add(value.template, item, true)

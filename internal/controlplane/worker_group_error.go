@@ -14,7 +14,17 @@ import (
 func workerGroupError(err error) error {
 	var input workergroup.InputError
 	var conflicting workergroup.ConflictError
+	var policyConflict workergroup.PolicyRevisionConflict
+	var scaleInConflict workergroup.ScaleInConflict
 	switch {
+	case errors.Is(err, workergroup.ErrCapacityUnavailable):
+		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
+	case errors.Is(err, workergroup.ErrCapacityIncompatible):
+		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
+	case errors.Is(err, workergroup.ErrCapacityExhausted):
+		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
+	case errors.As(err, &policyConflict), errors.As(err, &scaleInConflict):
+		return conflict(err)
 	case errors.Is(err, workergroup.ErrStaleClaims), errors.Is(err, workergroup.ErrUnauthenticated):
 		return unauthorized(errors.New("worker authentication is required"))
 	case errors.Is(err, workergroup.ErrInvalidEnrollmentToken):
@@ -25,7 +35,7 @@ func workerGroupError(err error) error {
 		return forbidden(err)
 	case errors.As(err, &input), errors.Is(err, workergroup.ErrInvalidPlanRequest):
 		return badRequest(err)
-	case errors.Is(err, workergroup.ErrGroupNotFound),
+	case errors.Is(err, workergroup.ErrScaleInOperationNotFound), errors.Is(err, workergroup.ErrGroupNotFound),
 		errors.Is(err, workergroup.ErrPoolNotFound),
 		errors.Is(err, workergroup.ErrHostNotFound):
 		return notFound(err)
@@ -33,8 +43,6 @@ func workerGroupError(err error) error {
 		return conflict(codedError{code: "insufficient_ready_hosts", message: err.Error()})
 	case errors.Is(err, workergroup.ErrHostBusy):
 		return conflict(codedError{code: "worker_host_busy", message: err.Error()})
-	case errors.Is(err, workergroup.ErrSpareCapacity):
-		return conflict(codedError{code: "spare_capacity_required", message: workergroup.ErrSpareCapacity.Error()})
 	case errors.Is(err, workergroup.ErrQueuedDemand):
 		return conflict(codedError{code: "queued_demand_present", message: workergroup.ErrQueuedDemand.Error()})
 	case errors.As(err, &conflicting):
