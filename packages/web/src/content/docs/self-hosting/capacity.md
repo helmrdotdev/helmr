@@ -157,6 +157,18 @@ size when physical standing capacity is required. Replacing policy requires the
 current revision; a stale revision returns HTTP 409. A successful update records
 desired policy, not proof that every Worker has finished reclaiming resources.
 
+Workers charge seed generation and cache storage to the same physical reservation
+ledger as real allocations. Cache limits include filesystem overhead. Policy
+reduction cancels optional fills and stops seed attempts through Control Plane;
+open readers, VM processes and files remain charged until their owners release
+them. `reclaiming_workers` can therefore remain nonzero after a policy update.
+An optional transfer rate of zero disables optional uploads and downloads. The
+rate is shared across concurrent requests, multipart transfers and retries.
+
+Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
+for that queue leaves normal save processing available, and a zero optional
+policy does not disable required checkpoint publication.
+
 Each pool plan reports `policy_revision`, `placements.immediate`,
 `placements.after_optional_reclaim`, `optional_occupancy`, `reclaiming_workers`,
 `local_headroom_slots_in_use` and `credited_hosts` (host IDs and Worker epochs).

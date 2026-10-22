@@ -162,7 +162,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		}
 		capacity.HostDiskBytes += bytes
 	}
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity, &o.workWake); err != nil {
+	if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity, &o.workWake); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}

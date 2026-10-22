@@ -240,6 +240,7 @@ POST /worker/v1/agent-computers/stopped
 POST /worker/v1/allocations/boot-seed/deliver
 POST /worker/v1/allocations/boot-seed/fail
 POST /worker/v1/allocations/boot-seed/publish
+POST /worker/v1/allocations/boot-seed/reclaim
 POST /worker/v1/allocations/boot-seed/renew
 POST /worker/v1/allocations/boot-seed/start
 POST /worker/v1/allocations/boot-seed/stopped

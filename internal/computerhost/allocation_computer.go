@@ -59,6 +59,7 @@ type ComputerAllocationOwner struct {
 	bootProgram              *computercheckpoint.Program
 	saves                    *agentComputerSaves
 	saveWake                 chan struct{}
+	capturePermit            *capturePermit
 	workWake                 allocationWake
 	checkpoint               *computercheckpoint.Manifest
 	restoreMemory            *checkpointMemorySource
@@ -200,7 +201,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		request.HostDiskBytes += extra
 	}
 
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
+	if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}
@@ -392,7 +393,8 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		}
 	}
 	o.saves = &agentComputerSaves{client: o.client, objects: o.machines.ComputerObjects, identity: o.identity, machine: live, changes: device.Changes, pinCommitted: device.PinCommitted, wake: o.saveWake,
-		idle: func(ctx context.Context) error { return o.captureIdle(ctx, delivery, suspend) }}
+		cancelIdle: o.cancelCaptureWait,
+		idle:       func(ctx context.Context) error { return o.captureIdle(ctx, delivery, suspend) }}
 	// This loop serializes disk and VM cuts; returning joins attachment and lease
 	// jobs in the parent defer before physical cleanup releases capture retention.
 	err = o.saves.run(ctx)
@@ -446,6 +448,7 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (o *ComputerAllocationOwner) cleanup() error {
+	o.cancelCaptureWait()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var closeErr error

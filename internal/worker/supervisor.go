@@ -55,6 +55,12 @@ type BackgroundSpec struct {
 	Run           func(context.Context) error
 }
 
+type ResourceControl interface {
+	ApplyResourcePolicy(workerapi.ResourcePolicy)
+	ResourceObservation() workerapi.ResourceObservation
+	CloseOptionalAdmission()
+}
+
 type Config struct {
 	ControlPlane         ControlPlane
 	Capabilities         workerapi.Capabilities
@@ -70,6 +76,7 @@ type Config struct {
 	Observation          func(Status, Snapshot, RecoveryEvidence) workerapi.Observation
 	AdmissionEvaluator   AdmissionEvaluator
 	Log                  *slog.Logger
+	Resources            ResourceControl
 }
 
 type Status string
@@ -215,6 +222,12 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("activated worker returned status %s", status.Status)
 	}
 	s.resourcePolicy.Store(&status.ResourcePolicy)
+	if s.cfg.Resources != nil {
+		s.cfg.Resources.ApplyResourcePolicy(status.ResourcePolicy)
+		if status.Status == workerapi.StatusDraining {
+			s.cfg.Resources.CloseOptionalAdmission()
+		}
+	}
 	s.recovery = evidence
 	if status.Status == workerapi.StatusActive {
 		s.state.Store(StatusActive)
@@ -615,15 +628,25 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
 	observationCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
 	defer cancel()
-	observation.Resources.Sequence = s.resourceSequence.Add(1)
-	if policy := s.resourcePolicy.Load(); policy != nil {
-		observation.Resources.PolicyRevision = policy.Revision
+	if s.cfg.Resources != nil {
+		observation.Resources = s.cfg.Resources.ResourceObservation()
+	} else {
+		if policy := s.resourcePolicy.Load(); policy != nil {
+			observation.Resources.PolicyRevision = policy.Revision
+		}
+		observation.Resources.ReadyLeafKeys = []workerapi.ReadyLeafKey{}
+		observation.Resources.DiskSlotsForRealWork = s.cfg.Capabilities.ExecutionSlotsAvailable
 	}
-	observation.Resources.ReadyLeafKeys = []workerapi.ReadyLeafKey{}
-	observation.Resources.DiskSlotsForRealWork = s.cfg.Capabilities.ExecutionSlotsAvailable
+	observation.Resources.Sequence = s.resourceSequence.Add(1)
 	status, err := s.cfg.ControlPlane.ObserveWorker(observationCtx, observation)
 	if err == nil {
 		s.resourcePolicy.Store(&status.ResourcePolicy)
+		if s.cfg.Resources != nil {
+			s.cfg.Resources.ApplyResourcePolicy(status.ResourcePolicy)
+			if status.Status == workerapi.StatusDraining {
+				s.cfg.Resources.CloseOptionalAdmission()
+			}
+		}
 	}
 	return status, err
 }

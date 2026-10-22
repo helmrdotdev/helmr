@@ -52,7 +52,7 @@ type Cache struct {
 	limit, used int64
 	clock       uint64
 	entries     map[key]*entry
-	pending     map[key]bool
+	pending     map[key]context.CancelFunc
 	closed      bool
 	stats       Stats
 	driveGID    int
@@ -82,7 +82,7 @@ func Open(directory string, limit int64) (*Cache, error) {
 	if err := os.Mkdir(objects, 0700); err != nil {
 		return nil, err
 	}
-	c := &Cache{directory: objects, limit: limit, entries: make(map[key]*entry), pending: make(map[key]bool)}
+	c := &Cache{directory: objects, limit: limit, entries: make(map[key]*entry), pending: make(map[key]context.CancelFunc)}
 	c.cond = sync.NewCond(&c.mu)
 	return c, nil
 }
@@ -128,7 +128,7 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 		c.stats.Evictions++
 	}
 	// One large artifact must not replace most of the reusable working set.
-	if c.closed || c.pending[k] || c.entries[k] != nil || charge > c.limit/4 {
+	if c.closed || c.pending[k] != nil || c.entries[k] != nil || charge > c.limit/4 {
 		c.mu.Unlock()
 		return false, nil
 	}
@@ -155,7 +155,9 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 	drive := c.drives && (namespace == "program" || namespace == "runtime")
 	gid := c.driveGID
 	c.used += charge
-	c.pending[k] = true
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c.pending[k] = cancel
 	c.mu.Unlock()
 	var path string
 	keep := false
@@ -206,7 +208,7 @@ func (c *Cache) Seed(ctx context.Context, namespace string, d cas.Descriptor, so
 		return false, err
 	}
 	c.mu.Lock()
-	if !c.closed {
+	if !c.closed && c.used <= c.limit && ctx.Err() == nil {
 		c.clock++
 		c.entries[k] = &entry{descriptor: d, path: path, charge: charge, used: c.clock}
 		keep = true
@@ -233,7 +235,7 @@ func (c *Cache) descriptor(namespace, digest string) (cas.Descriptor, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[key{namespace, digest}]
-	if c.closed || e == nil || e.invalid {
+	if c.closed || c.limit == 0 || e == nil || e.invalid {
 		return cas.Descriptor{}, false
 	}
 	return e.descriptor, true
@@ -246,7 +248,7 @@ func (c *Cache) open(namespace, digest string) (*reader, cas.Descriptor, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[key{namespace, digest}]
-	if c.closed || e == nil || e.invalid {
+	if c.closed || c.limit == 0 || e == nil || e.invalid {
 		c.stats.Misses++
 		return nil, cas.Descriptor{}, false
 	}
@@ -288,6 +290,9 @@ func (c *Cache) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
+	for _, cancel := range c.pending {
+		cancel()
+	}
 	for {
 		pins := 0
 		for _, e := range c.entries {

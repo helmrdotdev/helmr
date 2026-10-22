@@ -71,7 +71,7 @@ func (c *Cache) Borrow(ctx context.Context, namespace string, expected cas.Descr
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e := c.entries[key{namespace, expected.Digest}]
-	if c.closed || !c.drives || (namespace != "program" && namespace != "runtime") || e == nil || e.invalid || e.descriptor != expected {
+	if c.closed || c.limit == 0 || !c.drives || (namespace != "program" && namespace != "runtime") || e == nil || e.invalid || e.descriptor != expected {
 		return nil
 	}
 	e.pins++

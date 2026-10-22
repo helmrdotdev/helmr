@@ -58,6 +58,27 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 		return err
 	}
 	if !ready {
+		o.cancelCaptureWait()
+		busy = true
+		return nil
+	}
+	if o.capturePermit == nil {
+		o.capturePermit = o.machines.captures.request()
+	}
+	if !o.capturePermit.take() {
+		busy = true
+		return nil
+	}
+	permit := o.capturePermit
+	o.capturePermit = nil
+	defer permit.release()
+	// Waiting does not seal dispatch. Recheck guest qualification now, and let
+	// BeginAgentComputerCapture recheck durable work eligibility atomically.
+	ready, err = o.machine.CheckpointReady()
+	if err != nil {
+		return err
+	}
+	if !ready {
 		busy = true
 		return nil
 	}
@@ -157,6 +178,11 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	}
 	p := &checkpointPublication{owner: o, capture: capture, encoded: response.Capture, artifact: artifact, disk: workerapi.AgentSavePublication{Save: workerapi.AgentSave{EnvironmentID: o.identity.EnvironmentID, SaveID: response.SaveID, LeaseEpoch: o.identity.Epoch}, Root: artifact.Computer.Capture.Root(), Evidence: id}}
 	return o.publishCheckpointOrContinue(ctx, delivery, request, hold, p)
+}
+
+func (o *ComputerAllocationOwner) cancelCaptureWait() {
+	o.capturePermit.release()
+	o.capturePermit = nil
 }
 
 type checkpointPublication struct {
