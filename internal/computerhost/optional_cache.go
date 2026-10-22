@@ -3,6 +3,7 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/reservation"
@@ -69,21 +70,54 @@ func (p *PreparedMachines) resizeOptionalCacheLocked(want int64) error {
 	return nil
 }
 
+// reserveOptionalWithCacheLocked preserves reusable artifacts when the new VM
+// already fits. Under disk pressure, shrink only the cache's required deficit;
+// retained reader pins still prevent admission until physical release.
+func (p *PreparedMachines) reserveOptionalWithCacheLocked(key reservation.Key, request, headroom reservation.Vector) (bool, error) {
+	ceiling := optionalCeiling(p.optional.policy)
+	created, err := p.Reservations.ReserveOptional(key, request, ceiling, headroom)
+	if !errors.Is(err, reservation.ErrCapacityExceeded) {
+		return created, err
+	}
+	snapshot := p.Reservations.Snapshot()
+	old := snapshot.Optional[optionalCacheKey()].HostDiskBytes
+	var optionalDisk int64
+	for _, charge := range snapshot.Optional {
+		optionalDisk += charge.HostDiskBytes
+	}
+	want := max(int64(0), min(old,
+		ceiling.HostDiskBytes-optionalDisk+old-request.HostDiskBytes,
+		snapshot.Capacity.HostDiskBytes-snapshot.Used.HostDiskBytes+old-headroom.HostDiskBytes-request.HostDiskBytes))
+	if want >= old {
+		return created, err
+	}
+	p.optional.cacheRefillAfter = time.Now().Add(30 * time.Second)
+	p.optional.cacheError = p.resizeOptionalCacheLocked(want)
+	if p.optional.cacheError != nil {
+		return false, p.optional.cacheError
+	}
+	return p.Reservations.ReserveOptional(key, request, ceiling, headroom)
+}
+
 // RunOptionalResources is owned and joined by the Worker supervisor. Cache
 // changes are local and disposable; failures retain charges and are observed.
 func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
+	var jobs sync.WaitGroup
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	defer func() {
+		p.CloseOptionalAdmission()
+		jobs.Wait()
 		p.optional.mu.Lock()
 		p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 		p.optional.mu.Unlock()
 	}()
 	for {
+		p.reconcilePreparedLeaves(ctx, &jobs)
 		p.optional.mu.Lock()
 		policy := p.optional.policy
 		want := int64(0)
-		if policy.Revision > 0 && time.Since(p.optional.confirmed) < 2*workerapi.WorkerObservationInterval && !p.optional.pressure && !p.optional.closed && p.optional.realWaiting == 0 && !time.Now().Before(p.optional.cacheRefillAfter) {
+		if policy.Revision > 0 && time.Since(p.optional.confirmed) < 2*workerapi.WorkerObservationInterval && !p.optional.closed && p.optional.realWaiting == 0 && !time.Now().Before(p.optional.cacheRefillAfter) {
 			want = policy.Optional.DiskBytes
 			if p.Reservations != nil {
 				snapshot := p.Reservations.Snapshot()
@@ -93,7 +127,9 @@ func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
 					}
 				}
 				want = min(want, p.ObjectCacheCapacity)
-				if policy.Optional.MaxTasks == 0 || policy.Optional.IOBytesPerSecond == 0 {
+				// Retiring an optional owner stops growth, but does not itself
+				// invalidate resident data that still fits the physical budget.
+				if p.optional.pressure || policy.Optional.MaxTasks == 0 || policy.Optional.IOBytesPerSecond == 0 {
 					want = min(want, snapshot.Optional[optionalCacheKey()].HostDiskBytes)
 				}
 				headroom, err := p.optionalHeadroom(policy.LocalHeadroomSlots)
@@ -118,7 +154,7 @@ func (p *PreparedMachines) beginCacheTask(ctx context.Context) (context.Context,
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()
 	policy := p.optional.policy
-	if p.ObjectCache == nil || p.ObjectCache.Snapshot().CapacityBytes == 0 || policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || int32(len(p.optional.cacheTasks)+len(p.optional.seeds)) >= policy.Optional.MaxTasks || policy.Optional.IOBytesPerSecond <= 0 {
+	if p.ObjectCache == nil || p.ObjectCache.Snapshot().CapacityBytes == 0 || policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || int32(len(p.optional.cacheTasks)+len(p.optional.seeds)+p.leafTasksLocked()) >= policy.Optional.MaxTasks || policy.Optional.IOBytesPerSecond <= 0 {
 		return nil, nil, false
 	}
 	if !p.optionalUsageFitsLocked() {
@@ -172,6 +208,11 @@ func (p *PreparedMachines) waitRealAllocationCapacity(ctx context.Context, admit
 			p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 			remaining := p.Reservations.Snapshot()
 			if request.CPUMillis > remaining.Capacity.CPUMillis-remaining.Used.CPUMillis || request.MemoryBytes > remaining.Capacity.MemoryBytes-remaining.Used.MemoryBytes || request.HostDiskBytes > remaining.Capacity.HostDiskBytes-remaining.Used.HostDiskBytes || request.VMSlots > remaining.Capacity.VMSlots-remaining.Used.VMSlots {
+				for _, leaf := range p.optional.leaves {
+					leaf.reclaim = true
+					leaf.ready = false
+					leaf.cancel()
+				}
 				for _, seed := range p.optional.seeds {
 					seed.stop = true
 					p.optional.pressure = true

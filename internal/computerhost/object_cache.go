@@ -17,12 +17,8 @@ func (p *PreparedMachines) seedObject(ctx context.Context, namespace string, d c
 		return
 	}
 	defer finish()
-	// These callers own required startup/publication work. Opportunistic local
-	// copies may consume only immediately available transfer budget; they never
-	// wait behind optional pacing or another fill.
-	if !p.tryOptionalTransfer(ctx, d.SizeBytes) {
-		return
-	}
+	// The file is already verified and local. Copying it consumes the cache's
+	// disk and task allowance, not the optional network fetch/upload budget.
 	started := time.Now()
 	seeded, err := p.ObjectCache.Seed(ctx, namespace, d, io.NewSectionReader(file, 0, d.SizeBytes))
 	if seeded || err != nil {

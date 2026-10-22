@@ -159,6 +159,7 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	if err := publisher.Publish(t.Context(), *f.host(), delivery.Executor, manifest, changed); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("publication replay changed proof: %v", err)
 	}
+	checkPreparationSourceAuthorization(t, p, id)
 	// Selection must bind the admitted Program, root and physical shape; an
 	// incompatible artifact is optional and leaves ordinary boot available.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers c SET image_id=i.id,initial_root_id=i.root_id,initial_root_digest=decode(substring($4::text from 8),'hex')

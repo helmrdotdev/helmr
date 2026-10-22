@@ -7,6 +7,13 @@ current_hosts AS (
 )
 SELECT COALESCE(jsonb_agg(jsonb_build_object(
  'id', h.id, 'worker_group_id', h.worker_group_id, 'resource_id', h.resource_id, 'status', h.status,
+ 'resource_observed_at', h.resource_observed_at,
+ 'resource_policy_revision', h.resource_policy_revision,
+ 'ready_leaf_keys', h.ready_leaf_keys,
+ 'local_optional_vm_slots', h.local_optional_vm_slots,
+ 'local_optional_tasks', h.local_optional_tasks,
+ 'optional_disk_bytes', h.optional_disk_bytes,
+ 'optional_reclaim_pending', h.optional_reclaim_pending,
  'current_epoch', h.current_epoch, 'vm_platform_id', h.vm_platform_id,
  'observed_epoch', extract(epoch FROM h.observed_at),
  'termination_ready_at', h.termination_ready_at, 'lost_at', h.lost_at,

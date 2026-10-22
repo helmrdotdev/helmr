@@ -287,6 +287,7 @@ func run(log *slog.Logger) error {
 	}
 	cacheBytes := max(int64(0), min(int64(4<<30), diskCapacity.HostDiskBytes-perSlotDisk*int64(cfg.WorkerExecutionSlots), availableDisk-perSlotDisk*int64(cfg.WorkerExecutionSlots)))
 	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
+	preparedMachines.PreparationClient = controlPlaneClient
 	optionalHTTP := &http.Client{Transport: preparedMachines.OptionalTransport(http.DefaultTransport.(*http.Transport).Clone())}
 	optionalStore, err := cass3.New(ctx, cfg.CASURI, cass3.WithTempDir(filepath.Join(workDir, "tmp", "cas")), cass3.WithHTTPClient(optionalHTTP))
 	if err != nil {
@@ -324,9 +325,10 @@ func run(log *slog.Logger) error {
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes: admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:     256,
-		DatapathHealth: connector.DatapathHealth,
+		DiskFloorBytes:        admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:            256,
+		DatapathHealth:        connector.DatapathHealth,
+		OptionalCleanupHealth: preparedMachines.OptionalCleanupHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)

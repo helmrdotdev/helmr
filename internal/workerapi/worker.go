@@ -91,6 +91,7 @@ type CPUEnvironment struct {
 }
 
 type StatusResponse struct {
+	PreparationKeys []ReadyLeafKey `json:"preparation_keys"`
 	ResourcePolicy  ResourcePolicy `json:"resource_policy"`
 	WorkerHostID    string         `json:"worker_host_id"`
 	WorkerGroupID   string         `json:"worker_group_id"`

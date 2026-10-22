@@ -39,27 +39,6 @@ type optionalTransferBody struct {
 	machines *PreparedMachines
 }
 
-// tryOptionalTransfer allows a bounded local-copy burst, at most a tenth of a
-// second of the configured rate. Larger copies and an occupied budget decline
-// immediately so required work never waits on optional cache population.
-func (p *PreparedMachines) tryOptionalTransfer(ctx context.Context, bytes int64) bool {
-	if ctx.Err() != nil || bytes <= 0 {
-		return false
-	}
-	p.optional.mu.Lock()
-	defer p.optional.mu.Unlock()
-	rate := p.optional.policy.Optional.IOBytesPerSecond
-	now := time.Now()
-	if p.optional.closed || p.optional.policy.Revision <= 0 || now.Sub(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || rate <= 0 || bytes > rate/10 || p.optional.transferNext.After(now) {
-		return false
-	}
-	// Divide before multiplication to keep JSON-safe byte limits from
-	// overflowing duration arithmetic; the admitted duration is <=100ms.
-	duration := time.Duration(float64(bytes) / float64(rate) * float64(time.Second))
-	p.optional.transferNext = now.Add(max(time.Nanosecond, duration))
-	return true
-}
-
 func (b *optionalTransferBody) Read(buffer []byte) (int, error) {
 	if len(buffer) == 0 {
 		return 0, nil

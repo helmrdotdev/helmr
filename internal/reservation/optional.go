@@ -1,5 +1,38 @@
 package reservation
 
+// AdoptOptional transfers an existing physical charge to a real allocation.
+// Excess reservation remains charged until its owner proves physical release.
+// There is no intermediate free slot and a source can be adopted only once.
+func (l *Ledger) AdoptOptional(from, to Key, required Vector) error {
+	if err := validateKey(from); err != nil {
+		return err
+	}
+	if err := validateKey(to); err != nil {
+		return err
+	}
+	if err := validateRequest(required); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	reserved, ok := l.optional[from]
+	if !ok {
+		return ErrInvalidKey
+	}
+	if _, exists := l.reservations[to]; exists {
+		return ErrDuplicateReservation
+	}
+	if !fits(required, reserved) {
+		return ErrCapacityExceeded
+	}
+	delete(l.optional, from)
+	delete(l.reservations, from)
+	l.reservations[to] = reserved
+	close(l.changed)
+	l.changed = make(chan struct{})
+	return nil
+}
+
 // ReserveOptional applies the combined optional ceiling and unborrowable local
 // headroom atomically with ordinary reservations. Policy owners serialize policy
 // changes with this call. Lowering a ceiling does not release existing physical

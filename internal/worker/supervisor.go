@@ -57,6 +57,7 @@ type BackgroundSpec struct {
 
 type ResourceControl interface {
 	ApplyResourcePolicy(workerapi.ResourcePolicy)
+	ApplyPreparationKeys([]workerapi.ReadyLeafKey)
 	ResourceObservation() workerapi.ResourceObservation
 	CloseOptionalAdmission()
 }
@@ -224,6 +225,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	s.resourcePolicy.Store(&status.ResourcePolicy)
 	if s.cfg.Resources != nil {
 		s.cfg.Resources.ApplyResourcePolicy(status.ResourcePolicy)
+		s.cfg.Resources.ApplyPreparationKeys(status.PreparationKeys)
 		if status.Status == workerapi.StatusDraining {
 			s.cfg.Resources.CloseOptionalAdmission()
 		}
@@ -643,6 +645,7 @@ func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Obse
 		s.resourcePolicy.Store(&status.ResourcePolicy)
 		if s.cfg.Resources != nil {
 			s.cfg.Resources.ApplyResourcePolicy(status.ResourcePolicy)
+			s.cfg.Resources.ApplyPreparationKeys(status.PreparationKeys)
 			if status.Status == workerapi.StatusDraining {
 				s.cfg.Resources.CloseOptionalAdmission()
 			}

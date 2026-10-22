@@ -203,3 +203,24 @@ func TestBootSeedOrdinaryRecoveryDoesNotDependOnExpiryOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestBootSeedAdmissionWaitsForWorkerLocalTaskOccupancy(t *testing.T) {
+	p, a, id := bootSeedFixture(t)
+	f := p.f
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts h SET
+ resource_observation_sequence=1,resource_policy_revision=p.resource_policy_revision,resource_observed_at=clock_timestamp(),
+ local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=p.optional_max_tasks,
+ optional_reclaim_pending=false,disk_slots_for_real_work=h.max_vm_slots,ready_leaf_keys='[]'::jsonb
+ FROM worker_pools p WHERE h.id=$1 AND p.id=h.worker_pool_id`, f.worker)
+	if _, err := a.AllocateBootSeed(t.Context(), f.env, id, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
+		t.Fatalf("occupied local tasks admitted seed: %v", err)
+	}
+	var epoch int64
+	if err := f.pool.QueryRow(t.Context(), `SELECT executor_epoch FROM boot_seed_builds WHERE environment_id=$1 AND id=$2`, f.env, id).Scan(&epoch); err != nil || epoch != 0 {
+		t.Fatalf("rejected admission consumed attempt: epoch=%d err=%v", epoch, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET local_optional_tasks=0,resource_observed_at=clock_timestamp() WHERE id=$1`, f.worker)
+	if _, err := a.AllocateBootSeed(t.Context(), f.env, id, f.worker); err != nil {
+		t.Fatal(err)
+	}
+}

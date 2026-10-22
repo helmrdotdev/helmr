@@ -47,6 +47,21 @@ func (l *StartLimiter) PrepareBootSeed(ctx context.Context, request MaterializeR
 	return l.backend.PrepareBootSeed(ctx, request)
 }
 
+// PrepareComputer shares the startup permit with real allocations and seeds.
+func (l *StartLimiter) PrepareComputer(ctx context.Context, request MaterializeRequest) (PreparedComputer, error) {
+	backend, ok := l.backend.(PreparedComputerBackend)
+	if !ok {
+		return nil, errors.New("VM backend does not support prepared Computers")
+	}
+	select {
+	case l.permits <- struct{}{}:
+		defer func() { <-l.permits }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return backend.PrepareComputer(ctx, request)
+}
+
 func (l *StartLimiter) BootSeedMatches(request MaterializeRequest, manifest []byte) (bool, error) {
 	return l.backend.BootSeedMatches(request, manifest)
 }

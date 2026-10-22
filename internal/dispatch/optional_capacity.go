@@ -9,14 +9,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// CP bounds assigned seed reservations. Local leaves and cache share the same
-// physical allowance at the Worker, which joins conflicts before starting a seed.
+// CP bounds assigned seeds together with observed local construction tasks.
+// The Worker rechecks the shared budget before physical admission.
 func requireBootSeedCapacity(ctx context.Context, tx pgx.Tx, supply allocationSupply, shape computer.AllocationShape) (int64, error) {
-	var revision, cpu, memory, slots, tasks, disk, rate, headroom, perCPU, perMemory, perScratch int64
+	var revision, cpu, memory, slots, tasks, disk, rate, headroom, perCPU, perMemory, perScratch, localTasks int64
 	err := tx.QueryRow(ctx, `SELECT p.resource_policy_revision,p.optional_cpu_millis,p.optional_memory_bytes,p.optional_vm_slots,
  p.optional_max_tasks,p.optional_disk_bytes,p.optional_io_bytes_per_second,p.local_headroom_slots,
- p.per_vm_cpu_millis,p.per_vm_memory_bytes,p.per_vm_guest_ephemeral_disk_bytes
- FROM worker_pools p JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$1 AND p.status='active'`, supply.host).Scan(&revision, &cpu, &memory, &slots, &tasks, &disk, &rate, &headroom, &perCPU, &perMemory, &perScratch)
+ p.per_vm_cpu_millis,p.per_vm_memory_bytes,p.per_vm_guest_ephemeral_disk_bytes,COALESCE(h.local_optional_tasks,0)
+ FROM worker_pools p JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$1 AND p.status='active'`, supply.host).Scan(&revision, &cpu, &memory, &slots, &tasks, &disk, &rate, &headroom, &perCPU, &perMemory, &perScratch, &localTasks)
 	if err != nil {
 		return 0, err
 	}
@@ -31,7 +31,7 @@ func requireBootSeedCapacity(ctx context.Context, tx pgx.Tx, supply allocationSu
 		return 0, err
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }
-	if !fits(seed.cpu, shape.CPUMillis, cpu) || !fits(seed.memory, shape.MemoryBytes, memory) || !fits(seed.slots, 1, slots) || !fits(seed.slots, 1, tasks) ||
+	if !fits(seed.cpu, shape.CPUMillis, cpu) || !fits(seed.memory, shape.MemoryBytes, memory) || !fits(seed.slots, 1, slots) || !fits(seed.slots+localTasks, 1, tasks) ||
 		!fits(all.cpu, shape.CPUMillis, capacityAfterHeadroom(supply.capacity.cpu, perCPU, headroom)) || !fits(all.memory, shape.MemoryBytes, capacityAfterHeadroom(supply.capacity.memory, perMemory, headroom)) ||
 		!fits(all.scratch, shape.ScratchBytes, capacityAfterHeadroom(supply.capacity.scratch, perScratch, headroom)) || !fits(all.slots, 1, supply.capacity.slots-headroom) || !fits(all.starts, 1, supply.capacity.starts) {
 		return 0, ErrNotReady

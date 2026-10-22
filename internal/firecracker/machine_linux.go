@@ -163,8 +163,8 @@ func (s *guestMachine) Close(ctx context.Context) error {
 	s.mu.Unlock()
 	// Protected connections must terminate even if waiting for a disk operation
 	// or discarding its checkpoint fails. Disk cleanup still owns the barrier.
-	if s.networkBinding != nil && s.networkBinding.secretProxy != nil {
-		_ = s.networkBinding.secretProxy.Close()
+	if s.networkBinding != nil {
+		_ = s.networkBinding.closeSecretTransport()
 	}
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {

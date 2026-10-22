@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -28,6 +29,29 @@ type RestoringBackend interface {
 
 type MaterializingBackend interface {
 	Materialize(context.Context, MaterializeRequest) (CheckpointableMachine, error)
+}
+
+// PreparedComputerBackend restores a private full-shape Computer at the
+// pre-mount gate. Its caller owns the source, device and physical reservation
+// until the machine is adopted or physical cleanup completes.
+type PreparedComputerBackend interface {
+	PrepareComputer(context.Context, MaterializeRequest) (PreparedComputer, error)
+}
+
+type PreparedComputer interface {
+	// Adopt records logical custody, installs the granted disk writer and
+	// releases the gate. It is single-assignment, including failed attempts.
+	Adopt(context.Context, PreparedAdoption) (CheckpointableMachine, error)
+	Close(context.Context) error
+}
+
+type PreparedAdoption struct {
+	Binding    WorkloadBinding
+	ComputerID string
+	Root       disk.VersionRoot
+	WriteKeyID string
+	Keys       map[string][]byte
+	Source     blockformat.RangeSource
 }
 
 type Cleaner interface {

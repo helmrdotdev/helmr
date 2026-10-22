@@ -14,8 +14,9 @@ import (
 var errOptionalReclaimed = errors.New("optional resources reclaimed")
 
 type optionalSeed struct {
-	revision int64
-	stop     bool
+	cleanupErr error
+	revision   int64
+	stop       bool
 }
 
 type optionalResources struct {
@@ -31,6 +32,10 @@ type optionalResources struct {
 	cacheError          error
 	realWaiting         int
 	closed              bool
+	leaves              map[workerapi.ReadyLeafKey]*preparedLeaf
+	preparationKeys     []workerapi.ReadyLeafKey
+	preparationNext     int
+	preparationBackoff  map[workerapi.ReadyLeafKey]time.Time
 }
 
 // ApplyResourcePolicy acknowledges an authenticated policy observation. Holding
@@ -68,8 +73,6 @@ func (p *PreparedMachines) reserveOptionalSeed(key reservation.Key, request rese
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()
 	policy := p.optional.policy
-	p.optional.cacheRefillAfter = time.Now().Add(30 * time.Second)
-	p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 	if p.optional.seeds == nil {
 		p.optional.seeds = make(map[reservation.Key]*optionalSeed)
 	}
@@ -78,7 +81,7 @@ func (p *PreparedMachines) reserveOptionalSeed(key reservation.Key, request rese
 	}
 	seed := &optionalSeed{revision: policy.Revision}
 	defer func() { p.optional.seeds[key] = seed }()
-	if policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || p.optional.cacheError != nil || policy.Optional.MaxTasks <= int32(len(p.optional.seeds))+int32(len(p.optional.cacheTasks)) || policy.Optional.IOBytesPerSecond <= 0 {
+	if policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || p.optional.cacheError != nil || policy.Optional.MaxTasks <= int32(len(p.optional.seeds)+len(p.optional.cacheTasks)+p.leafTasksLocked()) || policy.Optional.IOBytesPerSecond <= 0 {
 		seed.stop = true
 		p.optional.pressure = true
 		return reservation.ErrCapacityExceeded
@@ -87,7 +90,7 @@ func (p *PreparedMachines) reserveOptionalSeed(key reservation.Key, request rese
 	if err != nil {
 		return err
 	}
-	created, err := p.Reservations.ReserveOptional(key, request, optionalCeiling(policy), headroom)
+	created, err := p.reserveOptionalWithCacheLocked(key, request, headroom)
 	if err != nil {
 		seed.stop = true
 		p.optional.pressure = true
@@ -139,6 +142,13 @@ func (p *PreparedMachines) requestOptionalSeedReclaim(key reservation.Key) {
 // Transfer failures can surface later as guest I/O errors, after freshness has
 // recovered. Retain the stop decision independently of those error paths.
 func (p *PreparedMachines) fenceOptionalTransfersLocked(revision int64) {
+	for _, leaf := range p.optional.leaves {
+		if leaf.revision == revision {
+			leaf.reclaim = true
+			leaf.ready = false
+			leaf.cancel()
+		}
+	}
 	for _, seed := range p.optional.seeds {
 		if seed.revision == revision {
 			seed.stop = true
@@ -155,8 +165,22 @@ func (p *PreparedMachines) ResourceObservation() workerapi.ResourceObservation {
 		return result
 	}
 	snapshot := p.Reservations.Snapshot()
-	for _, v := range snapshot.Optional {
+	for key, v := range snapshot.Optional {
 		result.OptionalDiskBytes += v.HostDiskBytes
+		if key.Kind == "prepared-computer" {
+			result.LocalOptional.CPUMillis += v.CPUMillis
+			result.LocalOptional.MemoryBytes += v.MemoryBytes
+			result.LocalOptional.VMSlots += int32(v.VMSlots)
+		}
+	}
+	result.LocalOptional.Tasks += int32(p.leafTasksLocked())
+	for _, leaf := range p.optional.leaves {
+		if leaf.reclaim || leaf.err != nil {
+			result.ReclaimPending = true
+		}
+		if leaf.ready && !leaf.reclaim && leaf.ctx.Err() == nil && time.Now().Before(leaf.expires) && len(result.ReadyLeafKeys) < 32 {
+			result.ReadyLeafKeys = append(result.ReadyLeafKeys, leaf.key)
+		}
 	}
 	if p.HostSlot.HostDiskBytes > 0 {
 		result.DiskSlotsForRealWork = int32(min(int64(math.MaxInt32), snapshot.Capacity.VMSlots, max(int64(0), snapshot.Capacity.HostDiskBytes-result.OptionalDiskBytes)/p.HostSlot.HostDiskBytes))
@@ -169,5 +193,29 @@ type optionalCacheTask struct{ cancel context.CancelFunc }
 func (p *PreparedMachines) CloseOptionalAdmission() {
 	p.optional.mu.Lock()
 	p.optional.closed = true
+	for _, leaf := range p.optional.leaves {
+		leaf.cancel()
+	}
 	p.optional.mu.Unlock()
+}
+
+// OptionalCleanupHealth fences new placement while failed physical cleanup
+// retains local resources. Ordinary reclaim in progress does not pause admission.
+func (p *PreparedMachines) OptionalCleanupHealth() error {
+	p.optional.mu.Lock()
+	defer p.optional.mu.Unlock()
+	if p.optional.cacheError != nil {
+		return p.optional.cacheError
+	}
+	for _, leaf := range p.optional.leaves {
+		if leaf.cleanupErr != nil {
+			return leaf.cleanupErr
+		}
+	}
+	for _, seed := range p.optional.seeds {
+		if seed.cleanupErr != nil {
+			return seed.cleanupErr
+		}
+	}
+	return nil
 }
