@@ -80,8 +80,10 @@ func TestReadyReplyCustody(t *testing.T) {
 			}
 			owned := a.owned
 			if tc.invalid {
-				if a.Release(t.Context()) == nil || a.Release(t.Context()) == nil || a.released {
-					t.Fatal("invalid descriptor response did not quarantine transport")
+				for range 2 {
+					if a.Release(t.Context()) == nil || a.released {
+						t.Fatal("invalid descriptor response did not quarantine transport")
+					}
 				}
 			} else {
 				if a.ready != (tc.rights == 1) {
@@ -276,8 +278,10 @@ func TestClaimEOFBeforeJSONStaysQuarantined(t *testing.T) {
 	if _, err := a.call(t.Context(), request{Op: "ready"}); err == nil {
 		t.Fatal("claim accepted missing reply")
 	}
-	if a.Release(t.Context()) == nil || a.Release(t.Context()) == nil || a.released {
-		t.Fatal("helper EOF did not quarantine attachment")
+	for range 2 {
+		if a.Release(t.Context()) == nil || a.released {
+			t.Fatal("helper EOF did not quarantine attachment")
+		}
 	}
 	if err := <-result; err != nil {
 		t.Fatal(err)
