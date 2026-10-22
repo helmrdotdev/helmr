@@ -35,7 +35,7 @@ func deliveryCandidates(ctx context.Context, pool db.TxBeginner, limit int) ([]d
  (p.presentation_path='stream' AND p.stream_state='open' AND p.closed_at IS NOT NULL AND p.status IN ('posted','suppressed','failed') AND p.next_attempt_at<=clock_timestamp()))
  AND (p.status<>'pending' OR r.revoked_at IS NOT NULL OR i.disconnected_at IS NOT NULL OR i.authorization_lost_at IS NOT NULL OR i.org_id<>e.org_id OR NOT `+blockingPostPredecessor+`)
  UNION ALL
- SELECT id,'status',next_attempt_at,CASE WHEN desired_revision<>confirmed_revision OR status_confirmation='unknown' THEN refresh_at-interval '30 seconds' ELSE refresh_at END,2 FROM slack_threads WHERE thread_ts IS NOT NULL AND deleted_at IS NULL AND next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp())
+ SELECT id,'status',next_attempt_at,CASE WHEN desired_status IS DISTINCT FROM last_acknowledged_status OR status_confirmation='unknown' THEN refresh_at-interval '30 seconds' ELSE refresh_at END,2 FROM slack_threads WHERE thread_ts IS NOT NULL AND deleted_at IS NULL AND next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp())
  ), ranked AS (SELECT id,kind,due,service_age,priority,row_number() OVER (PARTITION BY priority ORDER BY due,id) AS position FROM candidates),
  shortlist AS (SELECT * FROM ranked ORDER BY position,priority,due,id,kind LIMIT $1)
  SELECT id,kind FROM shortlist ORDER BY LEAST(priority,2),service_age,due,id,kind`, limit)

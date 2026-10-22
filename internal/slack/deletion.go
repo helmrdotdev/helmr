@@ -52,7 +52,7 @@ func (h EventHandler) observeDeletion(ctx context.Context, team, channel, timest
 			}
 			if root {
 				if _, err := tx.Exec(ctx, `UPDATE slack_threads SET deleted_at=COALESCE(deleted_at,clock_timestamp()),delivery_error='root_deleted',status_confirmation='unknown',stream_status_repair=false,
- inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,claimed_until=NULL WHERE id=$1`, o.thread); err != nil {
+ inflight_method=NULL,inflight_attempt_id=NULL,claimed_until=NULL WHERE id=$1`, o.thread); err != nil {
 					return err
 				}
 				// Keep issued evidence while disposing every newer unsent revision.

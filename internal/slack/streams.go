@@ -2,7 +2,6 @@ package slack
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
@@ -98,14 +97,14 @@ func statusAffectingStream(method string) bool {
 // can expire normally. Proven-unsent calls cancel their own repair obligation.
 // Independent questions/posts remain outside this status lane.
 func finishStreamLane(ctx context.Context, tx pgx.Tx, claim PostClaim, result DeliveryResult) error {
-	if claim.StatusEpoch == 0 {
+	if !claim.OwnsStatus {
 		return nil
 	}
 	repair := result.Disposition != NotIssued && result.Disposition != RateLimited && result.Disposition != Rejected
-	_, err := tx.Exec(ctx, `UPDATE slack_threads SET status_confirmation='unknown',stream_status_repair=$4,
- inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,claimed_until=NULL,
- next_attempt_at=clock_timestamp(),refresh_at=clock_timestamp(),delivery_error=CASE WHEN $4 THEN 'stream_status_unconfirmed' ELSE NULL END
- WHERE id=$1 AND claim_epoch=$2 AND inflight_attempt_id=$3`, claim.ThreadID, claim.StatusEpoch, claim.AttemptID, repair)
+	_, err := tx.Exec(ctx, `UPDATE slack_threads SET status_confirmation='unknown',stream_status_repair=$3,
+ inflight_method=NULL,inflight_attempt_id=NULL,claimed_until=NULL,
+ next_attempt_at=clock_timestamp(),refresh_at=clock_timestamp(),delivery_error=CASE WHEN $3 THEN 'stream_status_unconfirmed' ELSE NULL END
+ WHERE id=$1 AND inflight_attempt_id=$2`, claim.ThreadID, claim.AttemptID, repair)
 	return err
 }
 
@@ -114,14 +113,13 @@ func claimStreamLane(ctx context.Context, tx pgx.Tx, claim *PostClaim, environme
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256(claim.Payload)
-	err = tx.QueryRow(ctx, `UPDATE slack_threads SET desired_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,desired_status=$2,
- status_confirmation='unknown',stream_status_repair=true,inflight_method=$3,inflight_payload=$4,inflight_digest=$5,
- inflight_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,inflight_attempt_id=$6,
- claim_epoch=claim_epoch+1,claimed_until=$7 WHERE id=$1 RETURNING claim_epoch`, claim.ThreadID, status, claim.Method, claim.Payload, digest[:], claim.AttemptID, claim.ExpiresAt).Scan(&claim.StatusEpoch)
+	_, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2,
+ status_confirmation='unknown',stream_status_repair=true,inflight_method=$3,inflight_attempt_id=$4,
+ claimed_until=$5 WHERE id=$1`, claim.ThreadID, status, claim.Method, claim.AttemptID, claim.ExpiresAt)
 	if err != nil {
 		return err
 	}
+	claim.OwnsStatus = true
 	return dbnotify.Notify(ctx, tx, "slack_delivery")
 }
 

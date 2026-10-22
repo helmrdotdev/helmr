@@ -103,7 +103,7 @@ func TestSlackDeliveryWorkerRefreshesStatusAndPreservesRetryDelay(t *testing.T) 
 		t.Fatalf("status: %d %v", n, err)
 	}
 	var confirmed bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status_confirmation='acknowledged' AND confirmed_revision=desired_revision FROM slack_threads WHERE id=$1`, f.thread).Scan(&confirmed); err != nil || !confirmed {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status_confirmation='acknowledged' AND last_acknowledged_status=desired_status FROM slack_threads WHERE id=$1`, f.thread).Scan(&confirmed); err != nil || !confirmed {
 		t.Fatalf("status not confirmed: %v %v", confirmed, err)
 	}
 	post := f.post(t, 1, "content", "lifecycle", nil)
@@ -186,7 +186,7 @@ func TestSlackDeliveryWorkerFairBatchDoesNotStarveQuestionBehindIdleStatus(t *te
  SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'123.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;
- UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.Session, f.channel, f.Environment)
+ UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',last_acknowledged_status='active',refresh_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.Session, f.channel, f.Environment)
 	// These idle status rows remain discoverable for core-state changes, but must
 	// not occupy every slot ahead of answerable work.
 	f.due(t)
@@ -323,7 +323,7 @@ func TestSlackDeliveryWorkerWaitingContentPrecedesPeriodicRefreshPopulation(t *t
  SELECT s.id,$3,s.id,$2,c.org_id,c.team_id,c.slack_channel_id,'456.'||i.n::text,s.id::text FROM added_sessions s JOIN ids i ON i.id=s.id CROSS JOIN slack_channel_bindings c WHERE c.id=$2 RETURNING id)
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
  SELECT id,id,$3,id FROM added_threads;
- UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',confirmed_revision=desired_revision,refresh_at=clock_timestamp()-interval '1 minute';
+ UPDATE slack_threads SET status_confirmation='acknowledged',desired_status='active',last_acknowledged_status='active',refresh_at=clock_timestamp()-interval '1 minute';
  UPDATE slack_posts SET created_at=clock_timestamp()-interval '2 minutes' WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.Session, f.channel, f.Environment, post)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
@@ -350,7 +350,7 @@ func TestSlackDeliveryWorkerAgeOrderingPreservesStreamRepair(t *testing.T) {
 	post := f.streamPost(t, 1, "visible")
 	next := f.streamPost(t, 2, "later")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id IN ($1,$2);
- UPDATE slack_threads SET status_confirmation='acknowledged',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, post, next, f.thread)
+ UPDATE slack_threads SET status_confirmation='acknowledged',last_acknowledged_status=desired_status,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, post, next, f.thread)
 	var methods []string
 	client := deliveryTestClient(func(r *http.Request) string {
 		methods = append(methods, r.URL.Path)
@@ -415,7 +415,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 		t.Fatal(err)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='posted' FROM slack_posts WHERE id=$1) AND (SELECT status_confirmation='acknowledged' AND desired_status='processing' AND confirmed_revision=desired_revision FROM slack_threads WHERE id=$2)`, post, f.thread).Scan(&exact); err != nil || !exact || calls != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='posted' FROM slack_posts WHERE id=$1) AND (SELECT status_confirmation='acknowledged' AND desired_status='processing' AND last_acknowledged_status=desired_status FROM slack_threads WHERE id=$2)`, post, f.thread).Scan(&exact); err != nil || !exact || calls != 1 {
 		t.Fatal("changed status freshness", exact, calls, err)
 	}
 }
@@ -426,7 +426,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id=$1;
  INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,continuation_ordinal,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,next_attempt_at)
  SELECT gen_random_uuid(),environment_id,session_id,thread_id,thread_source_id,seq+n,post_key,n,role,turn_id,payload,payload_digest,presentation_path,recipient_team_id,recipient_user_id,closed_at,clock_timestamp()-interval '1 hour' FROM slack_posts CROSS JOIN generate_series(1,17) n WHERE id=$1;
- UPDATE slack_threads SET status_confirmation='acknowledged',confirmed_revision=desired_revision,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, f.thread)
+ UPDATE slack_threads SET status_confirmation='acknowledged',last_acknowledged_status=desired_status,refresh_at=clock_timestamp()+interval '1 hour' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, f.thread)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string {
 		if r.URL.Path == "/api/agents.sessions.setStatus" {

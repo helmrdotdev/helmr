@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	}
 	f.due(t)
 	working := f.claim(t, "processing")
-	if working.Revision <= active.Revision {
+	if working.Status == active.Status {
 		t.Fatal("work did not revise aggregate")
 	}
 	if err := FinishStatus(t.Context(), f.Pool, working, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -82,7 +83,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp() WHERE id=$1`, queued.TurnID)
 	f.due(t)
 	still := f.claim(t, "suspended")
-	if still.Revision <= suspended.Revision {
+	if still.Status == suspended.Status {
 		t.Fatal("ending active work did not reveal held attention")
 	}
 	if err := FinishStatus(t.Context(), f.Pool, still, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -96,7 +97,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	}
 	f.due(t)
 	refreshed := f.claim(t, "active")
-	if refreshed.Epoch <= idle.Epoch || refreshed.Revision != idle.Revision {
+	if refreshed.AttemptID == idle.AttemptID || refreshed.Status != idle.Status {
 		t.Fatal("idle refresh stopped or invented core progress")
 	}
 }
@@ -111,11 +112,17 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($2,$3,$4,'local','attention')`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Environment, uuid.NewV7(), f.Session)
 	f.due(t)
 	current := f.claim(t, "processing")
+	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, old); err != nil || allowed {
+		t.Fatalf("superseded attempt authorized: %v %v", allowed, err)
+	}
+	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, current); err != nil || !allowed {
+		t.Fatalf("current attempt denied: %v %v", allowed, err)
+	}
 	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id=$2 AND confirmed_revision=0 AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread, current.AttemptID).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id=$2 AND last_acknowledged_status IS NULL AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread, current.AttemptID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("stale finish changed lane: %v %v", exact, err)
 	}
 	if err := FinishStatus(t.Context(), f.Pool, current, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
@@ -132,7 +139,7 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 	// No new core event is necessary to repair a delayed older remote effect.
 	f.due(t)
 	refresh := f.claim(t, "processing")
-	if refresh.Revision != repair.Revision {
+	if refresh.Status != repair.Status {
 		t.Fatal("refresh depended on a new event")
 	}
 }
@@ -221,4 +228,141 @@ func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 	}
 	f.due(t)
 	f.claim(t, "active")
+}
+
+func TestSlackStatusAcknowledgesOnlyTheClaimedValue(t *testing.T) {
+	f := newStatusFixture(t)
+	first := f.claim(t, "active")
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	// Recompute the desired state while the original HTTP attempt still owns the lane.
+	if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+		t.Fatalf("overlapping claim: %+v %v", claim, err)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status=$2 AND desired_status='processing' AND inflight_attempt_id IS NULL FROM slack_threads WHERE id=$1`, f.thread, first.Status).Scan(&exact); err != nil || !exact {
+		t.Fatalf("old success acknowledged newer work: %v %v", exact, err)
+	}
+	f.due(t)
+	next := f.claim(t, "processing")
+	if next.AttemptID == first.AttemptID || next.Status == first.Status {
+		t.Fatal("new state did not get a new attempt", next)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status=$2 AND inflight_attempt_id=$3 FROM slack_threads WHERE id=$1`, f.thread, first.Status, next.AttemptID).Scan(&exact); err != nil || !exact {
+		t.Fatalf("duplicate success changed newer attempt: %v %v", exact, err)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, next, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status=desired_status AND last_acknowledged_status=$2 FROM slack_threads WHERE id=$1`, f.thread, next.Status).Scan(&exact); err != nil || !exact {
+		t.Fatalf("latest state not acknowledged: %v %v", exact, err)
+	}
+}
+
+func TestSlackStatusCoalescesReturnToAcknowledgedValue(t *testing.T) {
+	for _, inFlight := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-send", true: "during-send"}[inFlight], func(t *testing.T) {
+			f := newStatusFixture(t)
+			first := f.claim(t, "active")
+			if !inFlight {
+				if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+					t.Fatal(err)
+				}
+				// Defer sending without deferring observation of authoritative state.
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
+			}
+			turn, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "brief-work", Input: json.RawMessage(`[]`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+				t.Fatalf("deferred processing claim: %+v %v", claim, err)
+			}
+			var desired string
+			if err := f.Pool.QueryRow(t.Context(), `SELECT desired_status FROM slack_threads WHERE id=$1`, f.thread).Scan(&desired); err != nil || desired != "processing" {
+				t.Fatalf("intermediate state not observed: %s %v", desired, err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp() WHERE id=$1`, turn.TurnID)
+			if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+				t.Fatalf("deferred active claim: %+v %v", claim, err)
+			}
+			if inFlight {
+				if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_delivery_limits SET next_status_at=clock_timestamp() WHERE installation_id=$1;
+ UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread)
+			if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+				t.Fatalf("equal acknowledged state resent: %+v %v", claim, err)
+			}
+			// The equal state no longer takes the dirty-status lead over waiting content.
+			post := f.post(t, 1, "waiting-content", "lifecycle", nil)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET created_at=(SELECT refresh_at-interval '15 seconds' FROM slack_threads WHERE id=$2) WHERE id=$1`, post, f.thread)
+			candidates, err := deliveryCandidates(t.Context(), f.Pool, 4)
+			if err != nil || len(candidates) != 2 || candidates[0].id != post || candidates[1].id != f.thread {
+				t.Fatalf("coalesced status displaced content or lost discovery: %+v %v", candidates, err)
+			}
+			f.due(t)
+			f.claim(t, "active")
+		})
+	}
+}
+
+func TestSlackStatusAcceptsExpiredUnreplacedCompletion(t *testing.T) {
+	f := newStatusFixture(t)
+	claim := f.claim(t, "active")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1`, f.thread)
+	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	var acknowledged bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status='active' AND status_confirmation='acknowledged' AND inflight_attempt_id IS NULL FROM slack_threads WHERE id=$1`, f.thread).Scan(&acknowledged); err != nil || !acknowledged {
+		t.Fatalf("unreplaced completion discarded: %v %v", acknowledged, err)
+	}
+}
+
+func TestSlackStatusPeriodicAssertionRepairsLateRemoteWrite(t *testing.T) {
+	f := newStatusFixture(t)
+	old := f.claim(t, "active")
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "current-work", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	// Recover after the original sender disappeared with an unresolved request.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1`, f.thread)
+	f.due(t)
+	remote := ""
+	calls := 0
+	client := callerFunc(func(_ context.Context, _ uuid.UUID, _ int64, method string, payload []byte) DeliveryResult {
+		var request map[string]string
+		if err := json.Unmarshal(payload, &request); err != nil || method != "agents.sessions.setStatus" {
+			t.Fatalf("status request %s %s: %v", method, payload, err)
+		}
+		remote = request["status"]
+		calls++
+		return DeliveryResult{Disposition: Acknowledged}
+	})
+	if sent, err := ReconcileStatus(t.Context(), f.Pool, client, f.thread); err != nil || !sent || remote != "processing" {
+		t.Fatalf("recovery assertion: %v %s %v", sent, remote, err)
+	}
+	// Slack may apply an obsolete request even after its local owner was replaced.
+	remote = old.Status
+	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	var current bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status='processing' AND desired_status='processing' AND status_confirmation='acknowledged' FROM slack_threads WHERE id=$1`, f.thread).Scan(&current); err != nil || !current {
+		t.Fatalf("obsolete response changed local confirmation: %v %v", current, err)
+	}
+	f.due(t)
+	if sent, err := ReconcileStatus(t.Context(), f.Pool, client, f.thread); err != nil || !sent || remote != "processing" || calls != 2 {
+		t.Fatalf("same-value refresh failed to repair remote: %v %s calls=%d %v", sent, remote, calls, err)
+	}
 }

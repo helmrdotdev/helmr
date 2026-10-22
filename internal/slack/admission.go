@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 	"uuid"
 
@@ -24,6 +25,7 @@ type messageAdmission struct {
 	route                   slackroute.StartRoute
 	message                 messageGesture
 	root, actor             string
+	occurred                time.Time
 	user                    uuid.UUID
 	thread, session, source uuid.UUID
 }
@@ -47,6 +49,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return nil, errGestureInvalid
 	}
 	p.actor = actor
+	p.occurred = occurred
 	p.root = p.message.Thread
 	if p.root == "" {
 		p.root = p.message.Timestamp
@@ -113,6 +116,9 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 			// They never turn an unlinked/rejected historical root into new work.
 			return nil, nil
 		}
+		if threadInputCommand(p.message.Text, p.route.Target.BotUserID) != "" {
+			return reject("command_unbound")
+		}
 		err = tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND current_deployment_id IS NOT NULL`, env).Scan(&p.route.DeploymentID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reject("agent_unavailable")
@@ -152,7 +158,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 			return nil
 		}
 	}
-	input, err := messageInput(p.message, p.route.Target.BotUserID)
+	command := threadInputCommand(p.message.Text, p.route.Target.BotUserID)
+	var input json.RawMessage
+	if command == "" || p.message.UnsupportedFiles || len(p.message.FileIDs) > 0 {
+		input, err = messageInput(p.message, p.route.Target.BotUserID)
+	}
 	if err != nil {
 		return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 			code := "content_invalid"
@@ -190,6 +200,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		}
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source
+		if handled, err := applyThreadInput(ctx, tx, id, p, command); err != nil || handled {
+			return err
+		}
 		var receipt session.SendReceipt
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
@@ -268,4 +281,47 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message)
 		return err
 	})
+}
+
+// applyThreadInput runs under the same root admission lock as conversational
+// input. Controls do not enter the work/resume path. The source-time cutoff
+// prevents delayed muted messages from becoming work after an unmute.
+func applyThreadInput(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAdmission, command string) (bool, error) {
+	if command == "aside" {
+		return true, rejectMessage(ctx, tx, id, "input_ignored")
+	}
+	if p.thread == uuid.Nil() {
+		return false, nil
+	}
+	var muted, accepting bool
+	var changed, unmuted *time.Time
+	if err := tx.QueryRow(ctx, `SELECT t.input_muted,t.input_changed_at,t.input_unmuted_at,s.status='open' FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) WHERE t.id=$1`, p.thread).Scan(&muted, &changed, &unmuted, &accepting); err != nil {
+		return true, err
+	}
+	if command == "" {
+		unmentioned := stripRoutingMention(p.message.Text, p.route.Target.BotUserID) == p.message.Text
+		bareMention := strings.TrimSpace(stripRoutingMention(p.message.Text, p.route.Target.BotUserID)) == ""
+		if accepting && (unmentioned || bareMention) && (muted || unmuted != nil && !p.occurred.After(*unmuted)) {
+			return true, rejectMessage(ctx, tx, id, "input_ignored")
+		}
+		return false, nil
+	}
+	var open, unexpired bool
+	if err := tx.QueryRow(ctx, `SELECT s.status='open',r.expires_at>clock_timestamp() FROM sessions s JOIN slack_requests r ON r.id=$3 WHERE s.environment_id=$1 AND s.id=$2 FOR SHARE OF s`, p.route.Target.EnvironmentID, p.session, id).Scan(&open, &unexpired); err != nil {
+		return true, err
+	}
+	if !open {
+		return true, rejectMessage(ctx, tx, id, "session_unavailable")
+	}
+	if !unexpired {
+		return true, rejectMessage(ctx, tx, id, "gesture_expired")
+	}
+	if changed != nil && !p.occurred.After(*changed) {
+		return true, rejectMessage(ctx, tx, id, "stale_gesture")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE slack_threads SET input_muted=$2,input_changed_at=$3,input_unmuted_at=CASE WHEN input_muted AND NOT $2 THEN $3 ELSE input_unmuted_at END WHERE id=$1`, p.thread, command == "mute", p.occurred); err != nil {
+		return true, err
+	}
+	_, err := tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$7 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, command)
+	return true, err
 }

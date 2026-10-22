@@ -7,7 +7,7 @@ description: How Slack threads map to Sessions, how input and output flow, and w
 
 An Agent can work in Slack. One Slack thread is one
 [Session](/docs/concepts/sessions): people mention the Agent to start work,
-mention it in thread replies to add input, and answer the Agent's
+reply in its accepted thread to add input, and answer the Agent's
 [questions](/docs/concepts/questions) there. The Agent's output and responses
 appear in the same thread. Your Agent code does not change; Helmr converts
 between Slack messages and Turns.
@@ -35,7 +35,9 @@ account once. A message from an unlinked person is not accepted: Helmr replies
 with a message only that person can see, containing a link to connect the
 account. After linking, they send the message again; nothing is replayed.
 Linked members with the owner, admin or developer role can request work.
-Viewers can answer questions but not request work.
+Viewers can answer questions but not request work. These checks also apply to
+unmentioned replies in an accepted Session thread: an unlinked person receives
+the linking notice, and a Viewer receives a private permission notice.
 
 Structured-input Agents require a conversational front for Slack. The front can
 spawn typed child work and deliberately summarize its result.
@@ -67,13 +69,14 @@ participate in the same Session thread.
 
 ## Input
 
-Mention the Agent to start a conversation or send input in an existing bound
-thread. Helmr removes the leading Agent mention and passes the remaining text as
-a text part. Channel replies without an Agent mention do not send input.
-In a DM, the submitted text is passed through without removing mentions.
-A reply can continue only an accepted Session: an unbound reply waits for its
-root until the five-minute receipt deadline, then asks for a new top-level
-message. Rejected requests are never replayed after linking.
+Mention the Agent to start a conversation in a channel. Once the Agent has shown
+its status or replied in the accepted thread, human replies continue that Session
+without another mention. Unmentioned messages elsewhere in the channel do not
+start work. Helmr removes routing mentions and passes the remaining text as a
+text part. In a DM, no mention is needed and submitted text keeps its mentions.
+An unbound DM reply waits for its root until the five-minute receipt deadline,
+then asks for a new top-level message. Rejected requests are never replayed after
+linking.
 
 A reply in a Session's thread uses Slack routing: it
 steers the active Turn, or becomes a new queued Turn when none is active. See
@@ -83,6 +86,34 @@ delivered, Helmr posts a notice in the thread.
 Helmr ignores message edits and messages from bots, and rejects messages with
 file attachments. A message that Helmr cannot accept within five minutes of
 when it was sent is rejected and must be sent again.
+
+### Explicit input controls
+
+Use these in the Session thread, optionally after the Agent's mention:
+
+| Message | Effect |
+| --- | --- |
+| `!aside your comment` | Exclude this message from automatic Agent input. |
+| `!mute` | Stop automatic conversational input from this thread. |
+| `!unmute` | Accept future conversational input again. |
+
+`!mute` and `!unmute` must be the whole message. Quoted commands and commands
+inside code are ordinary text. Wait for the command confirmation before relying
+on the changed state. A command does not start a Session, create Agent work or
+release a Stop hold. Only linked Owners, Admins and Developers can change input
+state; a DM also retains its original peer boundary.
+
+While muted, an explicit Agent mention with work submits only that message and
+leaves the thread muted. A bare mention is not work. `!aside` wins even if the
+message also mentions the Agent. Muted messages are not replayed after unmuting;
+delayed unmentioned messages from before the unmute are also ignored. Already
+accepted work, outgoing replies, question answers and the native Stop button are
+unaffected. Other Session input surfaces are unaffected.
+
+These controls do not erase Slack history. Application code independently reading
+Slack history can still see these posts and chooses what context to use. Helmr
+does not automatically exclude messages directed at teammates or short replies
+such as “thanks”.
 
 Turns started from Slack have `turn.source.kind` set to `"user"`, because they
 run as the linked Helmr user, and carry the Slack coordinates in
@@ -141,8 +172,7 @@ work. It settles queued work too, so old requests do not replay on resume.
 Processing remains visible while cessation is unconfirmed. The cessation notice
 appears only after the owned work has stopped.
 
-A later authorized human message mentioning the front Agent in the same bound
-thread releases only holds
+A later accepted human message in the same bound thread releases only holds
 created by native Slack Stop and admits new work. Other administrative holds
 remain. A message arriving before cessation waits for that confirmation before
 execution can resume. Repeated Stop gestures for the same execution reuse the
@@ -150,7 +180,17 @@ existing native Stop hold.
 
 Native status follows execution facts: active work or uncertain cessation stays
 processing, while a genuine hold or input wait with no active work is suspended.
-A question does not make other owned work appear stopped.
+A question does not make other owned work appear stopped. Once all Sessions
+contributing to the thread have ended and their stopping and Slack delivery
+obligations have settled, Slack receives the `closed` status. This applies to
+CLI/API closure, cancellation and automatic idle closure alike. Completing one
+Turn does not close the conversation. Unrelated Sessions sharing the Computer do
+not prevent the thread from closing.
+
+A closed Session cannot accept more work. Further input receives guidance to
+start a new thread (or a new top-level DM); it does not silently create another
+Session in the old thread. Slack's list archive is separate from Helmr closure,
+Computer retention and Session history expiry.
 
 When a question is the only pending work, Slack does not show native Stop. To
 interrupt that waiting Turn, use `helmr session turn interrupt TURN_ID --session

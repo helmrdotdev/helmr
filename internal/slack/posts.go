@@ -29,11 +29,12 @@ const blockingPostPredecessor = `EXISTS(SELECT 1 FROM slack_posts prior
  AND NOT EXISTS(SELECT 1 FROM slack_posts unknown_work WHERE unknown_work.thread_source_id=p.thread_source_id AND unknown_work.turn_id=p.turn_id AND unknown_work.role='intermediate' AND unknown_work.seq<p.seq AND unknown_work.status='uncertain' AND unknown_work.delivery_disposed_at IS NULL))))`
 
 type PostClaim struct {
+	OwnsStatus                                  bool
 	TeamID, ChannelID, PeerID                   string
 	PostID, ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                          int64
 	Method                                      string
-	Epoch, Revision, StatusEpoch                int64
+	Epoch, Revision                             int64
 	Payload                                     []byte
 	ExpiresAt, AuthorizedAt                     time.Time
 }

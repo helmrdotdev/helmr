@@ -1968,17 +1968,15 @@ CREATE TABLE slack_threads (
     recipient_team_id text,
     recipient_user_id text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    desired_status text NOT NULL DEFAULT 'active' CHECK (desired_status IN ('active', 'processing', 'suspended')),
-    desired_revision bigint NOT NULL DEFAULT 1 CHECK (desired_revision>0),
-    confirmed_revision bigint NOT NULL DEFAULT 0 CHECK (confirmed_revision>=0 AND confirmed_revision<=desired_revision),
+    input_muted boolean NOT NULL DEFAULT false,
+    input_changed_at timestamptz,
+    input_unmuted_at timestamptz,
+    desired_status text NOT NULL DEFAULT 'active' CHECK (desired_status IN ('active', 'processing', 'suspended', 'closed')),
+    last_acknowledged_status text CHECK (last_acknowledged_status IN ('active', 'processing', 'suspended', 'closed')),
     status_confirmation text NOT NULL DEFAULT 'unknown' CHECK (status_confirmation IN ('unknown', 'acknowledged')),
     stream_status_repair boolean NOT NULL DEFAULT false,
     inflight_method text,
-    inflight_payload bytea,
-    inflight_digest bytea CHECK (octet_length(inflight_digest)=32),
-    inflight_revision bigint CHECK (inflight_revision>0 AND inflight_revision<=desired_revision),
     inflight_attempt_id uuid,
-    claim_epoch bigint NOT NULL DEFAULT 0 CHECK (claim_epoch>=0),
     claimed_until timestamptz,
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     refresh_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1991,7 +1989,7 @@ CREATE TABLE slack_threads (
     UNIQUE (org_id, team_id, slack_channel_id, thread_ts),
     UNIQUE (slack_channel_binding_id, opening_post_key),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),
-    CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id, claimed_until) IN (0, 6))
+    CHECK (num_nonnulls(inflight_method, inflight_attempt_id, claimed_until) IN (0, 3))
 );
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
@@ -2027,7 +2025,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute')),
     message_id uuid,
     observed_authority_generation bigint,
     observed_next_turn_seq bigint,
@@ -2059,7 +2057,8 @@ CREATE TABLE slack_requests (
     CHECK ((status='accepted' AND ((operation IN ('start', 'enqueue') AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
-        OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
+        OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)
+        OR (operation IN ('mute','unmute') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -2067,7 +2066,7 @@ CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
 
-CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE status='rejected' AND payload_expired_at IS NULL;
+CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute'))) AND payload_expired_at IS NULL;
 
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id, request_digest);
 

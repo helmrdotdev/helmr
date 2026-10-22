@@ -58,7 +58,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	post := f.streamPost(t, 1, "first")
 	peer := f.streamPost(t, 2, "peer")
 	first := f.postClaim(t, post)
-	if first.Method != "chat.startStream" || first.StatusEpoch == 0 {
+	if first.Method != "chat.startStream" || !first.OwnsStatus {
 		t.Fatal("stream did not own status", first)
 	}
 	if bytes.Index(first.Payload, []byte(`"type":"markdown_text"`)) > bytes.Index(first.Payload, []byte(`"type":"blocks"`)) {
@@ -89,7 +89,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	f.reviseStream(t, post, "first second")
 	f.due(t)
 	appendClaim := f.postClaim(t, post)
-	if appendClaim.Method != "chat.appendStream" || appendClaim.StatusEpoch != 0 || bytes.Contains(appendClaim.Payload, []byte("first")) || !bytes.Contains(appendClaim.Payload, []byte(" second")) {
+	if appendClaim.Method != "chat.appendStream" || appendClaim.OwnsStatus || bytes.Contains(appendClaim.Payload, []byte("first")) || !bytes.Contains(appendClaim.Payload, []byte(" second")) {
 		t.Fatal("append resent prefix", string(appendClaim.Payload))
 	}
 	if err := FinishPost(t.Context(), f.Pool, appendClaim, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -98,7 +98,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id=$1`, post)
 	f.due(t)
 	stop := f.postClaim(t, post)
-	if stop.Method != "chat.stopStream" || stop.StatusEpoch == 0 || !bytes.Contains(stop.Payload, []byte(`"session_status":"suspended"`)) || bytes.Contains(stop.Payload, []byte("chunks")) {
+	if stop.Method != "chat.stopStream" || !stop.OwnsStatus || !bytes.Contains(stop.Payload, []byte(`"session_status":"suspended"`)) || bytes.Contains(stop.Payload, []byte("chunks")) {
 		t.Fatal("incorrect stop", string(stop.Payload))
 	}
 	if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -441,7 +441,7 @@ func TestSlackDeletedRootConvergesKnownStreamsWithContentFreeStop(t *testing.T) 
 	}
 }
 
-func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) {
+func TestSlackCrashedStreamReconciliationReleasesOnlyItsStatusClaim(t *testing.T) {
 	for _, newer := range []bool{false, true} {
 		name := "own_lane"
 		if newer {
@@ -473,8 +473,8 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 				}
 				return
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_payload IS NULL AND inflight_attempt_id IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
-				t.Fatal("confirmed crash left content copy or lost repair", safe, err)
+			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND claimed_until IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
+				t.Fatal("confirmed crash retained claim or lost repair", safe, err)
 			}
 			if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
 				t.Fatal(err)
@@ -509,7 +509,7 @@ func TestSlackCrashedStreamReconciliationReleasesExactContentCopy(t *testing.T) 
 			if !expired {
 				t.Fatal("retention failed to expire released owner")
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT p.payload IS NULL AND p.payload_expired_at IS NOT NULL AND p.confirmed_stream_text='' AND t.inflight_payload IS NULL FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id JOIN slack_threads t ON t.id=s.thread_id WHERE p.id=$1`, post).Scan(&safe); err != nil || !safe {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT p.payload IS NULL AND p.payload_expired_at IS NOT NULL AND p.confirmed_stream_text='' FROM slack_posts p WHERE p.id=$1`, post).Scan(&safe); err != nil || !safe {
 				t.Fatal("expired stream left a content copy", safe, err)
 			}
 		})
@@ -546,5 +546,30 @@ func TestStreamContextPositionPreservesExactContentProof(t *testing.T) {
 		if sameStreamContent(post, body, "first second", raw) {
 			t.Fatal("ambiguous or extra content accepted", string(raw))
 		}
+	}
+}
+
+func TestSlackLateStreamCompletionPreservesNewerStatusAttempt(t *testing.T) {
+	f := newStatusFixture(t)
+	post := f.streamPost(t, 1, "late stream reply")
+	stream := f.postClaim(t, post)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1;
+ UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, post, f.thread)
+	f.due(t)
+	status := f.claim(t, "active")
+	// The old content HTTP completes before content reconciliation observes expiry.
+	// It may settle its post, but must leave the newer status HTTP claim intact.
+	if err := FinishPost(t.Context(), f.Pool, stream, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+		t.Fatal(err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT p.status='posted' AND t.inflight_attempt_id=$3 AND t.inflight_method='agents.sessions.setStatus' AND t.status_confirmation='unknown' AND t.stream_status_repair FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id WHERE p.id=$1 AND t.id=$2`, post, f.thread, status.AttemptID).Scan(&exact); err != nil || !exact {
+		t.Fatalf("late stream completion changed newer status attempt: %v %v", exact, err)
+	}
+	if err := FinishStatus(t.Context(), f.Pool, status, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND status_confirmation='acknowledged' AND NOT stream_status_repair FROM slack_threads WHERE id=$1`, f.thread).Scan(&exact); err != nil || !exact {
+		t.Fatalf("current status did not settle repair: %v %v", exact, err)
 	}
 }

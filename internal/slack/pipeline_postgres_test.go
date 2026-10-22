@@ -89,7 +89,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 			}
 		}
 	}
-	wait("admission and native processing status", `SELECT EXISTS(SELECT 1 FROM slack_requests r JOIN slack_threads t ON t.id=r.thread_id WHERE r.id=$1 AND r.status='accepted' AND t.desired_status='processing' AND t.status_confirmation='acknowledged' AND t.confirmed_revision=t.desired_revision) AND NOT EXISTS(SELECT 1 FROM slack_posts WHERE request_id=$1)`, receipt)
+	wait("admission and native processing status", `SELECT EXISTS(SELECT 1 FROM slack_requests r JOIN slack_threads t ON t.id=r.thread_id WHERE r.id=$1 AND r.status='accepted' AND t.desired_status='processing' AND t.status_confirmation='acknowledged' AND t.last_acknowledged_status=t.desired_status) AND NOT EXISTS(SELECT 1 FROM slack_posts WHERE request_id=$1)`, receipt)
 	var turn uuid.UUID
 	if err := f.Pool.QueryRow(ctx, `SELECT turn_id FROM slack_requests WHERE id=$1`, receipt).Scan(&turn); err != nil {
 		t.Fatal(err)

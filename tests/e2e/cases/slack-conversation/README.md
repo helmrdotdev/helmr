@@ -55,8 +55,10 @@ Agent Apps.
 
 Mention Alpha's installed bot followed directly by
 `case:progress marker:unique_01`. Markers contain 1–64 ASCII letters, digits,
-underscores or hyphens. Mention the front Agent again in thread replies to continue its conversation.
-Unmentioned human discussion does not admit work.
+underscores or hyphens. After native status or an Agent response appears, continue
+in that thread without a mention. Use `!aside` for human-only discussion or
+`!mute` to pause automatic input. Unmentioned posts outside accepted threads do
+not admit work.
 For Console/API admission, initial input is a text-part array:
 
 ```json
@@ -82,7 +84,7 @@ those openings separately from a human-authored Slack root.
 | `empty` | Stage an empty response. Observe the documented explicit-empty response presentation on successful settlement. |
 | `silent` | Return only a private result. Observe settlement without leaking that result. |
 | `multi` | Start Alpha with a marker of at most 59 characters. Its runtime `start` operation starts an independent Beta choice conversation on the same Computer. Answer each conversation independently. |
-| `stop` | Emit a waiting message, then wait for up to eight minutes. Use Slack’s native Stop, inspect its receipt, interruption and exact hold, and wait for cessation. Send a fresh mention followed by `case:progress` in the same thread to verify scoped resume. Failure to stop fails this case. |
+| `stop` | Emit a waiting message, then wait for up to eight minutes. Use Slack’s native Stop, inspect its receipt, interruption and exact hold, and wait for cessation. Send a fresh reply containing `case:progress` in the same thread to verify scoped resume. Failure to stop fails this case. |
 
 Every completed case returns `PRIVATE_RETURN_<marker>` privately. This value must
 remain absent from Slack and output/response events. Custom answers, notes and text answers remain absent from
@@ -108,7 +110,7 @@ prose, private-result isolation and coordinator completion. This child does not
 ask questions: human questions belong to the front Agent. With `case:stop`,
 Slack's native Stop targets the front and its owned child. The status remains
 processing while cessation is unconfirmed. After the one cessation notice,
-a fresh reply mentioning the front Agent followed by `case:progress` resumes
+a fresh reply containing `case:progress` resumes
 only the native Stop hold.
 
 ## Candidate smoke payloads
@@ -217,3 +219,34 @@ existing app, prove old-grant channel input and queued replies still work.
 
 Local fixtures and mocked API responses do not prove these Slack UI observations.
 Record candidate, app/workspace, granted scopes and rendered evidence explicitly.
+
+
+## Thread input and terminal status acceptance
+
+Use an authorized disposable Session in both a channel and a DM. These steps
+require the candidate control plane and Slack installation; local API fixtures do
+not prove Slack's rendered UI.
+
+1. Start channel work with a mention; wait for native status or an authored reply.
+   Continue with `case:progress` without a mention. Confirm the same Session owns
+   the new input. An unmentioned top-level channel post must not start work.
+2. Send `!aside case:progress`, then `!aside @Agent case:progress`. Neither should
+   create work. Quoted/code examples of `!aside` remain ordinary input.
+3. Send `!mute` and wait for its private confirmation. Send ordinary discussion;
+   it must not create work. Mention the Agent with `case:progress` once, then send
+   another unmentioned message: only the explicit invocation should run.
+4. Send `!unmute` and wait for confirmation. The next fresh reply runs; previous
+   muted posts never replay. Check duplicate delivery and delayed pre-unmute input
+   with the automated receipt tests, without replaying real human work.
+5. While muted, verify existing question answers and native Stop still work.
+   Mute/unmute must not release a native Stop hold or interrupt accepted work.
+6. Close through CLI/API, and separately allow configured idle closure. After
+   process cessation and final output settle, inspect Slack's native closed state
+   in channel and DM views. A single completed Turn must remain continuable.
+   Capture how closed looks on desktop/mobile; if it does not convey that input
+   is no longer accepted, record the gap before adding a short terminal notice.
+7. Reply to the closed thread. Confirm guidance to a new thread/top-level DM,
+   without a replacement Session or a new Turn in the ended Session.
+8. Repeat role/DM peer checks: Viewer cannot mute or submit ordinary work;
+   existing Viewer question-answer eligibility stays intact. No new control menu,
+   custom Stop button or lifecycle command is expected.

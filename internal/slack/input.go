@@ -82,3 +82,24 @@ func stripRoutingMention(text, bot string) string {
 	}
 	return result.String()
 }
+
+// Commands are first-token syntax, optionally after the Agent's routing mention.
+// Quotes, code and mention examples are ordinary input. State changes require a
+// whole message so prose cannot accidentally mute a conversation.
+func threadInputCommand(text, bot string) string {
+	text = strings.TrimSpace(text)
+	if bot != "" {
+		text = strings.TrimSpace(strings.TrimPrefix(text, "<@"+bot+">"))
+	}
+	fields := strings.Fields(text)
+	if len(fields) > 0 && fields[0] == "!aside" {
+		return "aside"
+	}
+	switch text {
+	case "!mute":
+		return "mute"
+	case "!unmute":
+		return "unmute"
+	}
+	return ""
+}

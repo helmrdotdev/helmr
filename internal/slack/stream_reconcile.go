@@ -190,8 +190,7 @@ func confirmStreamMessage(ctx context.Context, pool db.TxBeginner, installation,
 			return nil
 		}
 		var root *string
-		var statusEpoch int64
-		if err = tx.QueryRow(ctx, `SELECT thread_ts,claim_epoch FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&root, &statusEpoch); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT thread_ts FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&root); err != nil {
 			return err
 		}
 		if root == nil || *root != message.Thread {
@@ -230,10 +229,10 @@ func confirmStreamMessage(ctx context.Context, pool db.TxBeginner, installation,
 		if err != nil {
 			return err
 		}
-		// Exact positive evidence also settles a crashed start owner's duplicate
-		// content in the thread status lane. A different participant's newer lane
+		// Exact positive evidence also releases a crashed start owner's claim
+		// in the thread status lane. A different participant's newer lane
 		// is protected by the attempt identity; native status still needs repair.
-		if err = finishStreamLane(ctx, tx, PostClaim{ThreadID: thread, StatusEpoch: statusEpoch, AttemptID: *attempt}, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		if err = finishStreamLane(ctx, tx, PostClaim{ThreadID: thread, OwnsStatus: statusAffectingStream(*method), AttemptID: *attempt}, DeliveryResult{Disposition: Acknowledged}); err != nil {
 			return err
 		}
 		confirmed = true

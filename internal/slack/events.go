@@ -199,24 +199,28 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 		if e.User == bot {
 			return nil
 		}
-		// Routing syntax, not the Slack event type, decides whether this is work.
-		// Human discussion must not create requests or account-link prompts.
-		if !direct && stripRoutingMention(e.Text, bot) == e.Text {
+		command := threadInputCommand(e.Text, bot)
+		if command == "aside" {
 			return nil
 		}
-		if !direct && e.Type == "message" {
-			// Duplicate mention notifications are recognized by normalized source.
-			if e.Thread == "" {
-				return nil
-			}
-			var bound bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
- WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3)`, installation, e.Channel, e.Thread).Scan(&bound); err != nil {
+		mentioned := stripRoutingMention(e.Text, bot) != e.Text
+		var bound, muted, visible, open bool
+		var unmuted *time.Time
+		if e.Thread != "" {
+			err = tx.QueryRow(ctx, `SELECT front.status='open',t.input_muted,t.input_unmuted_at,t.last_acknowledged_status IS NOT NULL OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.message_ts IS NOT NULL) FROM slack_threads t JOIN sessions front ON (front.environment_id,front.id)=(t.environment_id,t.front_session_id) JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
+ WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3 AND t.deleted_at IS NULL`, installation, e.Channel, e.Thread).Scan(&open, &muted, &unmuted, &visible)
+			bound = err == nil
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
-			if !bound {
-				return nil
-			}
+		}
+		// Channel roots require an actual mention. Once bound, human replies are
+		// input regardless of whether Slack sends message or app_mention.
+		if !direct && (!bound || !visible) && (!mentioned || e.Type == "message" && !bound) {
+			return nil
+		}
+		if bound && open && command == "" && !mentioned && (muted || unmuted != nil && !occurred.After(*unmuted)) {
+			return nil
 		}
 		gesture := messageGesture{Channel: e.Channel, Timestamp: e.Timestamp, Thread: e.Thread, Text: e.Text, UnsupportedFiles: len(e.Files) > 0 || e.Subtype == "file_share"}
 		for _, file := range e.Files {
