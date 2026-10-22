@@ -118,8 +118,7 @@ func (p *PreparedMachines) reconcilePreparedLeaves(ctx context.Context, jobs *sy
 		headroom, err := p.optionalHeadroom(policy.LocalHeadroomSlots)
 		leaf.charge = p.HostSlot
 		if err == nil {
-			p.optional.cacheError = p.resizeOptionalCacheLocked(0)
-			_, err = p.Reservations.ReserveOptional(leaf.reservationKey(), leaf.charge, optionalCeiling(policy), headroom)
+			_, err = p.reserveOptionalWithCacheLocked(leaf.reservationKey(), leaf.charge, headroom)
 		}
 		if err != nil {
 			cancel()

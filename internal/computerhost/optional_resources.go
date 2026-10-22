@@ -73,8 +73,6 @@ func (p *PreparedMachines) reserveOptionalSeed(key reservation.Key, request rese
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()
 	policy := p.optional.policy
-	p.optional.cacheRefillAfter = time.Now().Add(30 * time.Second)
-	p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 	if p.optional.seeds == nil {
 		p.optional.seeds = make(map[reservation.Key]*optionalSeed)
 	}
@@ -92,7 +90,7 @@ func (p *PreparedMachines) reserveOptionalSeed(key reservation.Key, request rese
 	if err != nil {
 		return err
 	}
-	created, err := p.Reservations.ReserveOptional(key, request, optionalCeiling(policy), headroom)
+	created, err := p.reserveOptionalWithCacheLocked(key, request, headroom)
 	if err != nil {
 		seed.stop = true
 		p.optional.pressure = true

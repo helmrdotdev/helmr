@@ -195,3 +195,30 @@ func TestRealGrantReclaimsSeedLifecycleDiskBeforeAdmission(t *testing.T) {
 		}
 	})
 }
+
+func TestOptionalVMAdmissionPreservesCacheUntilDiskNeedsReclaim(t *testing.T) {
+	p := optionalCacheMachines(t)
+	policy := p.optional.policy
+	policy.LocalHeadroomSlots = 0
+	policy.Optional.CPUMillis = 3000
+	policy.Optional.MemoryBytes = 300
+	policy.Optional.VMSlots = 3
+	policy.Optional.MaxTasks = 3
+	p.ApplyResourcePolicy(policy)
+	resizeTestCache(t, p, 96<<20)
+	first := reservation.Vector{CPUMillis: 1000, MemoryBytes: 100, HostDiskBytes: 16 << 20, VMSlots: 1}
+	if err := p.reserveOptionalSeed(instanceReservationKey("first", 1), first); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Reservations.Snapshot().Optional[optionalCacheKey()].HostDiskBytes; got != 96<<20 {
+		t.Fatalf("cache discarded with room available: %d", got)
+	}
+	second := first
+	second.HostDiskBytes = 32 << 20
+	if err := p.reserveOptionalSeed(instanceReservationKey("second", 1), second); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Reservations.Snapshot().Optional[optionalCacheKey()].HostDiskBytes; got != 80<<20 {
+		t.Fatalf("cache did not shrink only by deficit: %d", got)
+	}
+}

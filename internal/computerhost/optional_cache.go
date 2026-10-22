@@ -70,6 +70,35 @@ func (p *PreparedMachines) resizeOptionalCacheLocked(want int64) error {
 	return nil
 }
 
+// reserveOptionalWithCacheLocked preserves reusable artifacts when the new VM
+// already fits. Under disk pressure, shrink only the cache's required deficit;
+// retained reader pins still prevent admission until physical release.
+func (p *PreparedMachines) reserveOptionalWithCacheLocked(key reservation.Key, request, headroom reservation.Vector) (bool, error) {
+	ceiling := optionalCeiling(p.optional.policy)
+	created, err := p.Reservations.ReserveOptional(key, request, ceiling, headroom)
+	if !errors.Is(err, reservation.ErrCapacityExceeded) {
+		return created, err
+	}
+	snapshot := p.Reservations.Snapshot()
+	old := snapshot.Optional[optionalCacheKey()].HostDiskBytes
+	var optionalDisk int64
+	for _, charge := range snapshot.Optional {
+		optionalDisk += charge.HostDiskBytes
+	}
+	want := max(int64(0), min(old,
+		ceiling.HostDiskBytes-optionalDisk+old-request.HostDiskBytes,
+		snapshot.Capacity.HostDiskBytes-snapshot.Used.HostDiskBytes+old-headroom.HostDiskBytes-request.HostDiskBytes))
+	if want >= old {
+		return created, err
+	}
+	p.optional.cacheRefillAfter = time.Now().Add(30 * time.Second)
+	p.optional.cacheError = p.resizeOptionalCacheLocked(want)
+	if p.optional.cacheError != nil {
+		return false, p.optional.cacheError
+	}
+	return p.Reservations.ReserveOptional(key, request, ceiling, headroom)
+}
+
 // RunOptionalResources is owned and joined by the Worker supervisor. Cache
 // changes are local and disposable; failures retain charges and are observed.
 func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
