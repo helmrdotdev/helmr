@@ -201,18 +201,75 @@ class Publication(unittest.TestCase):
     def test_npm_retry_compares_bytes_and_human_tag_never_resumes(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'sdk.tgz';p.write_bytes(b'original')
-            metadata=json.dumps(dict(dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))).encode()
+            version='0.1.0-preview.g01234567.b1'
+            metadata=json.dumps(dict(versions={version:dict(name='@helmr/sdk',version=version,dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))})).encode()
             for selected,remote,success in (
                 (dict(build=dict(mode='main', pr=None), version='v0.1.0-preview.g01234567.b1'), b'original', True),
                 (dict(build=dict(mode='pr', pr=7), version='v0.1.0-preview.g01234567.b1'), b'changed', False),
                 (dict(build=dict(mode='tag', pr=None), version='v1.0.0'), b'original', False),
             ):
-                with patch.object(publish.urllib.request,'urlopen',side_effect=[io.BytesIO(metadata),io.BytesIO(remote)]),patch.object(publish,'run') as command:
+                with patch.object(publish.urllib.request,'urlopen',side_effect=[io.BytesIO(b'{}'),io.BytesIO(metadata),io.BytesIO(remote)]),patch.object(publish,'run') as command:
                     if success:
                         publish.npm_publish(p,'@helmr/sdk','0.1.0-preview.g01234567.b1',selected)
                     else:
                         with self.assertRaises(ValueError):publish.npm_publish(p,'@helmr/sdk','0.1.0-preview.g01234567.b1',selected)
                     command.assert_not_called()
+
+    def test_npm_publication_waits_for_resolver_and_tarball_visibility(self):
+        import urllib.error
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'sdk.tgz';p.write_bytes(b'original')
+            version='0.1.0-preview.g01234567.b1'
+            metadata=json.dumps(dict(versions={version:dict(name='@helmr/sdk',version=version,
+                dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))})).encode()
+            missing=lambda:urllib.error.HTTPError('https://registry.npmjs.org/',404,'missing',{},None)
+            responses=[missing(),io.BytesIO(b'{"versions":{}}'),io.BytesIO(metadata),missing(),
+                       io.BytesIO(metadata),io.BytesIO(b'original')]
+            with patch.object(publish.urllib.request,'urlopen',side_effect=responses) as fetch, \
+                    patch.object(publish,'run') as command,patch.object(publish.time,'sleep') as sleep:
+                publish.npm_publish(p,'@helmr/sdk',version,selection('main'))
+                command.assert_called_once()
+                self.assertEqual(command.call_args.args[:2],('npm','publish'))
+                self.assertEqual(sleep.call_count,2)
+                self.assertEqual(fetch.call_args_list[1].args[0].get_header('Accept'),'application/vnd.npm.install-v1+json')
+
+    def test_npm_readback_times_out_without_republishing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'sdk.tgz';p.write_bytes(b'original')
+            with patch.object(publish.urllib.request,'urlopen',return_value=io.BytesIO(b'{"versions":{}}')), \
+                    patch.object(publish.time,'monotonic',side_effect=(0,601)),patch.object(publish,'run') as command:
+                with self.assertRaisesRegex(ValueError,'deadline'):
+                    publish.npm_readback(p,'@helmr/sdk','0.1.0')
+                command.assert_not_called()
+
+    def test_npm_readback_does_not_fetch_after_sleep_exhausts_deadline(self):
+        with patch.object(publish.urllib.request,'urlopen',return_value=io.BytesIO(b'{"versions":{}}')) as fetch, \
+                patch.object(publish.time,'monotonic',side_effect=(0,0,599,600)),patch.object(publish.time,'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError,'deadline'):
+                publish.npm_readback(Path('unused'),'@helmr/sdk','0.1.0')
+            fetch.assert_called_once()
+            sleep.assert_called_once_with(1)
+
+    def test_npm_readback_rejects_late_bytes_and_bounds_fetch_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'sdk.tgz';p.write_bytes(b'original')
+            metadata=json.dumps(dict(versions={'0.1.0':dict(name='@helmr/sdk',version='0.1.0',
+                dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))})).encode()
+            with patch.object(publish.urllib.request,'urlopen',side_effect=[io.BytesIO(metadata),io.BytesIO(b'original')]) as fetch, \
+                    patch.object(publish.time,'monotonic',side_effect=(0,590,595,601)):
+                with self.assertRaisesRegex(ValueError,'deadline'):
+                    publish.npm_readback(p,'@helmr/sdk','0.1.0')
+                self.assertEqual([c.kwargs['timeout'] for c in fetch.call_args_list],[10,5])
+
+    def test_npm_readback_rejects_registry_errors_without_retry(self):
+        import urllib.error
+        for status in (401,403,429,500):
+            with self.subTest(status=status),patch.object(publish.urllib.request,'urlopen',
+                    side_effect=urllib.error.HTTPError('https://registry.npmjs.org/',status,'failure',{},None)), \
+                    patch.object(publish.time,'sleep') as sleep:
+                with self.assertRaisesRegex(ValueError,'HTTP '+str(status)):
+                    publish.npm_readback(Path('unused'),'@helmr/sdk','0.1.0')
+                sleep.assert_not_called()
 
     def test_native_artifact_retry_and_corruption(self):
         with tempfile.TemporaryDirectory() as tmp:
